@@ -290,7 +290,7 @@ internal sealed class SimConnectWorker
       }
       catch (DllNotFoundException)
       {
-        Console.WriteLine("[Bridge] SimConnect.dll not found. Copy it into simconnect-bridge/lib/.");
+        Console.WriteLine("[Bridge] SimConnect.dll not found. Copy the managed DLL into simconnect-bridge/lib/.");
       }
       catch (Exception ex)
       {
