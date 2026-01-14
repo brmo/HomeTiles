@@ -39,6 +39,7 @@ public:
 
   // Update live sensor value (for web interface)
   void updateSensorValue(const String& entity_id, const String& value);
+  void registerSensorMeta(const String& entity_id, const String& name, const String& unit);
 
   String buildJsonPayload(const char* device_id,
                           const char* base_topic,

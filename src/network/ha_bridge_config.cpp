@@ -463,6 +463,60 @@ static String lookupKeyValue(const String& text, const String& key) {
   return "";
 }
 
+static void upsertKeyValueMap(String& text, const String& key, const String& value) {
+  if (!key.length() || !value.length()) return;
+
+  String newMap = "";
+  bool found = false;
+
+  int start = 0;
+  while (start < text.length()) {
+    int end = text.indexOf('\n', start);
+    if (end < 0) end = text.length();
+
+    String line = text.substring(start, end);
+    int eq = line.indexOf('=');
+
+    if (eq > 0) {
+      String entity = line.substring(0, eq);
+      entity.trim();
+
+      if (entity.equalsIgnoreCase(key)) {
+        if (newMap.length()) newMap += '\n';
+        newMap += key + "=" + value;
+        found = true;
+      } else {
+        if (newMap.length()) newMap += '\n';
+        newMap += line;
+      }
+    } else if (line.length() > 0) {
+      if (newMap.length()) newMap += '\n';
+      newMap += line;
+    }
+
+    start = end + 1;
+  }
+
+  if (!found) {
+    if (newMap.length()) newMap += '\n';
+    newMap += key + "=" + value;
+  }
+
+  text = newMap;
+}
+
+void HaBridgeConfig::registerSensorMeta(const String& entity_id, const String& name, const String& unit) {
+  if (entity_id.length() == 0) return;
+
+  if (!sensorExistsInList(data.sensors_text, entity_id)) {
+    if (data.sensors_text.length()) data.sensors_text += '\n';
+    data.sensors_text += entity_id;
+  }
+
+  upsertKeyValueMap(data.sensor_names_map, entity_id, name);
+  upsertKeyValueMap(data.sensor_units_map, entity_id, unit);
+}
+
 void HaBridgeConfig::updateSensorValue(const String& entity_id, const String& value) {
   if (entity_id.length() == 0) return;
 

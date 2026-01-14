@@ -1,4 +1,6 @@
 #include "src/game/game_ws_server.h"
+#include "src/network/ha_bridge_config.h"
+#include "src/ui/tab_tiles_unified.h"
 #include <ArduinoJson.h>
 
 // Globale Instanz
@@ -6,6 +8,53 @@ GameWSServer gameWSServer;
 
 // Statische Referenz für Callback
 static GameWSServer* g_instance = nullptr;
+
+static bool handle_sensor_update_message(const uint8_t* payload, size_t length) {
+  if (!payload || length == 0) return false;
+
+  DynamicJsonDocument doc(2048);
+  DeserializationError err = deserializeJson(doc, payload, length);
+  if (err) {
+    Serial.printf("[GameWS] JSON parse error: %s\n", err.c_str());
+    return false;
+  }
+
+  const char* type = doc["type"] | "";
+  if (strcmp(type, "pc_metrics") != 0 && strcmp(type, "sensor_update") != 0) {
+    return false;
+  }
+
+  JsonArray sensors = doc["sensors"].as<JsonArray>();
+  if (sensors.isNull()) {
+    sensors = doc["metrics"].as<JsonArray>();
+  }
+  if (sensors.isNull()) {
+    return true;
+  }
+
+  for (JsonVariant v : sensors) {
+    if (!v.is<JsonObject>()) continue;
+    const char* entity_id = v["entity_id"] | v["entity"] | v["id"] | "";
+    if (!entity_id || !*entity_id) continue;
+
+    String value = v["value"].as<String>();
+    value.trim();
+    if (!value.length()) continue;
+
+    String unit = v["unit"].as<String>();
+    unit.trim();
+    String name = v["name"].as<String>();
+    name.trim();
+
+    haBridgeConfig.registerSensorMeta(entity_id, name, unit);
+    haBridgeConfig.updateSensorValue(entity_id, value);
+    tiles_update_sensor_by_entity(GridType::TAB0, entity_id, value.c_str());
+    tiles_update_sensor_by_entity(GridType::TAB1, entity_id, value.c_str());
+    tiles_update_sensor_by_entity(GridType::TAB2, entity_id, value.c_str());
+  }
+
+  return true;
+}
 
 void GameWSServer::init(uint16_t port) {
   if (running) {
@@ -85,7 +134,9 @@ void GameWSServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* payload
     }
 
     case WStype_TEXT:
-      Serial.printf("[GameWS] Client #%u sent: %s\n", num, payload);
+      if (!handle_sensor_update_message(payload, length)) {
+        Serial.printf("[GameWS] Client #%u sent: %s\n", num, payload);
+      }
       // Hier könnten wir später Befehle vom Client empfangen (z.B. Button-Config)
       break;
 

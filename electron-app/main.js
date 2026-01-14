@@ -1,5 +1,7 @@
 const { app, BrowserWindow, ipcMain, Tray, Menu } = require('electron');
 const path = require('path');
+const os = require('os');
+const si = require('systeminformation');
 const WebSocket = require('ws');
 const Store = require('electron-store');
 
@@ -11,7 +13,16 @@ const kb = new Hardware(null); // null = kein spezifisches Fenster, globale Eing
 const store = new Store({
   defaults: {
     autostart: true,  // Standard: Autostart aktiviert
-    tab5_ip: '192.168.2.235'
+    tab5_ip: '192.168.2.235',
+    metrics: {
+      cpu_load: true,
+      cpu_temp: false,
+      gpu_temp: false,
+      gpu_load: false,
+      mem_used: true,
+      mem_pct: true,
+      uptime: true
+    }
   }
 });
 
@@ -21,12 +32,26 @@ let ws = null;
 let reconnectTimer = null;
 let pingInterval = null;
 let connectionAttempts = 0;
+let metricsInterval = null;
+let lastCpuSample = null;
+let metricsInFlight = false;
 
 const startHidden = process.argv.includes('--hidden');
 
 // Tab5 WebSocket Verbindung
 let TAB5_IP = store.get('tab5_ip'); // Aus Settings laden
 const TAB5_PORT = 8081;
+const METRICS_INTERVAL_MS = 5000;
+const DEFAULT_METRICS = {
+  cpu_load: true,
+  cpu_temp: false,
+  gpu_temp: false,
+  gpu_load: false,
+  mem_used: true,
+  mem_pct: true,
+  uptime: true
+};
+const lastMetricValues = {};
 
 // Scan Code zu Robot Key Mapping
 // Based on USB HID Usage Tables
@@ -67,6 +92,253 @@ const SCANCODE_MAP = {
   0xE0: 'controlLeft', 0xE1: 'shiftLeft', 0xE2: 'altLeft', 0xE3: 'metaLeft',
   0xE4: 'controlRight', 0xE5: 'shiftRight', 0xE6: 'altRight', 0xE7: 'metaRight'
 };
+
+function normalizeMetricsConfig(raw) {
+  const cfg = { ...DEFAULT_METRICS };
+  if (!raw || typeof raw !== 'object') return cfg;
+  for (const key of Object.keys(cfg)) {
+    if (raw[key] !== undefined) {
+      cfg[key] = !!raw[key];
+    }
+  }
+  return cfg;
+}
+
+function getMetricsConfig() {
+  return normalizeMetricsConfig(store.get('metrics', {}));
+}
+
+function setMetricsConfig(raw) {
+  const cfg = normalizeMetricsConfig(raw);
+  store.set('metrics', cfg);
+  return cfg;
+}
+
+function getMetricValue(entityId, value) {
+  if (value === null || value === undefined) {
+    if (Object.prototype.hasOwnProperty.call(lastMetricValues, entityId)) {
+      return lastMetricValues[entityId];
+    }
+    return '--';
+  }
+  lastMetricValues[entityId] = value;
+  return value;
+}
+
+function updateMetricsPreview(sensors) {
+  if (!mainWindow || !mainWindow.webContents) return;
+  const payload = Array.isArray(sensors) ? sensors : [];
+  mainWindow.webContents.send('metrics-update', payload);
+}
+
+function normalizeTemperature(value) {
+  if (!Number.isFinite(value)) return null;
+  if (value <= 0) return null;
+  return value;
+}
+
+function normalizePercent(value) {
+  if (!Number.isFinite(value)) return null;
+  return Math.max(0, Math.min(100, value));
+}
+
+function getCpuTempValue(cpuTemp) {
+  if (!cpuTemp) return null;
+  const main = normalizeTemperature(cpuTemp.main);
+  if (main !== null) return main;
+  if (Array.isArray(cpuTemp.cores) && cpuTemp.cores.length) {
+    const values = cpuTemp.cores
+      .map((v) => normalizeTemperature(v))
+      .filter((v) => v !== null);
+    if (values.length) {
+      const sum = values.reduce((acc, v) => acc + v, 0);
+      return sum / values.length;
+    }
+  }
+  return null;
+}
+
+function pickGpuController(graphics) {
+  if (!graphics || !Array.isArray(graphics.controllers)) return null;
+  return graphics.controllers.find((c) => {
+    const temp = normalizeTemperature(c.temperatureGpu);
+    const load = normalizePercent(Number(c.utilizationGpu));
+    return temp !== null || load !== null;
+  }) || null;
+}
+
+function getCpuUsagePercent() {
+  const cpus = os.cpus();
+  let idle = 0;
+  let total = 0;
+
+  for (const cpu of cpus) {
+    idle += cpu.times.idle;
+    total += cpu.times.user + cpu.times.nice + cpu.times.sys + cpu.times.idle + cpu.times.irq;
+  }
+
+  if (!lastCpuSample) {
+    lastCpuSample = { idle, total };
+    return null;
+  }
+
+  const idleDiff = idle - lastCpuSample.idle;
+  const totalDiff = total - lastCpuSample.total;
+  lastCpuSample = { idle, total };
+
+  if (totalDiff <= 0) return null;
+
+  let usage = (1 - idleDiff / totalDiff) * 100;
+  if (!Number.isFinite(usage)) return null;
+  usage = Math.max(0, Math.min(100, usage));
+  return usage;
+}
+
+async function buildPcMetricsPayload() {
+  const config = getMetricsConfig();
+  const sensors = [];
+  const tasks = [];
+  let cpuTemp = null;
+  let graphics = null;
+
+  if (config.cpu_temp) {
+    tasks.push(
+      si.cpuTemperature()
+        .then((data) => { cpuTemp = data; })
+        .catch(() => {})
+    );
+  }
+
+  if (config.gpu_temp || config.gpu_load) {
+    tasks.push(
+      si.graphics()
+        .then((data) => { graphics = data; })
+        .catch(() => {})
+    );
+  }
+
+  if (config.cpu_load) {
+    const cpuLoad = getCpuUsagePercent();
+    const value = cpuLoad !== null ? Number(cpuLoad.toFixed(1)) : null;
+    sensors.push({
+      entity_id: 'pc.cpu_load',
+      name: 'CPU Load',
+      unit: '%',
+      value: getMetricValue('pc.cpu_load', value)
+    });
+  }
+
+  if (config.mem_used || config.mem_pct) {
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    const usedMem = totalMem - freeMem;
+    const usedGb = usedMem / (1024 ** 3);
+    const usedPct = totalMem > 0 ? (usedMem / totalMem) * 100 : 0;
+
+    if (config.mem_used) {
+      sensors.push({
+        entity_id: 'pc.mem_used',
+        name: 'RAM Used',
+        unit: 'GB',
+        value: getMetricValue('pc.mem_used', Number(usedGb.toFixed(2)))
+      });
+    }
+
+    if (config.mem_pct) {
+      sensors.push({
+        entity_id: 'pc.mem_pct',
+        name: 'RAM Usage',
+        unit: '%',
+        value: getMetricValue('pc.mem_pct', Number(usedPct.toFixed(1)))
+      });
+    }
+  }
+
+  if (config.uptime) {
+    sensors.push({
+      entity_id: 'pc.uptime',
+      name: 'PC Uptime',
+      unit: 's',
+      value: getMetricValue('pc.uptime', Math.floor(os.uptime()))
+    });
+  }
+
+  if (tasks.length) {
+    await Promise.all(tasks);
+  }
+
+  if (config.cpu_temp) {
+    const temp = getCpuTempValue(cpuTemp);
+    const value = temp !== null ? Number(temp.toFixed(1)) : null;
+    sensors.push({
+      entity_id: 'pc.cpu_temp',
+      name: 'CPU Temp',
+      unit: 'C',
+      value: getMetricValue('pc.cpu_temp', value)
+    });
+  }
+
+  if (config.gpu_temp || config.gpu_load) {
+    const gpu = pickGpuController(graphics);
+    const gpuTemp = gpu ? normalizeTemperature(gpu.temperatureGpu) : null;
+    const gpuLoad = gpu ? normalizePercent(Number(gpu.utilizationGpu)) : null;
+
+    if (config.gpu_temp) {
+      const value = gpuTemp !== null ? Number(gpuTemp.toFixed(1)) : null;
+      sensors.push({
+        entity_id: 'pc.gpu_temp',
+        name: 'GPU Temp',
+        unit: 'C',
+        value: getMetricValue('pc.gpu_temp', value)
+      });
+    }
+
+    if (config.gpu_load) {
+      const value = gpuLoad !== null ? Number(gpuLoad.toFixed(1)) : null;
+      sensors.push({
+        entity_id: 'pc.gpu_load',
+        name: 'GPU Load',
+        unit: '%',
+        value: getMetricValue('pc.gpu_load', value)
+      });
+    }
+  }
+
+  updateMetricsPreview(sensors);
+  if (!sensors.length) return null;
+  return { type: 'pc_metrics', sensors };
+}
+
+async function sendPcMetrics() {
+  if (metricsInFlight) return;
+  metricsInFlight = true;
+  try {
+    const payload = await buildPcMetricsPayload();
+    if (!payload) return;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(payload));
+    }
+  } catch (err) {
+    log(`Metrics send error: ${err.message}`);
+  } finally {
+    metricsInFlight = false;
+  }
+}
+
+function startMetricsLoop() {
+  stopMetricsLoop();
+  lastCpuSample = null;
+  getCpuUsagePercent();
+  metricsInterval = setInterval(sendPcMetrics, METRICS_INTERVAL_MS);
+  setTimeout(sendPcMetrics, 1000);
+}
+
+function stopMetricsLoop() {
+  if (metricsInterval) {
+    clearInterval(metricsInterval);
+    metricsInterval = null;
+  }
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -172,6 +444,8 @@ function connectToTab5() {
         ws.ping();
       }
     }, 15000);
+
+    startMetricsLoop();
   });
 
   ws.on('message', (data) => {
@@ -196,6 +470,8 @@ function connectToTab5() {
       clearInterval(pingInterval);
       pingInterval = null;
     }
+    stopMetricsLoop();
+    stopMetricsLoop();
     ws = null;
 
     // Auto-Reconnect mit exponential backoff (max 30 Sekunden)
@@ -312,6 +588,15 @@ ipcMain.on('set-tab5-ip', (event, ip) => {
   log(`Tab5 IP changed to: ${ip}`);
 });
 
+ipcMain.on('get-metrics-config', (event) => {
+  event.returnValue = getMetricsConfig();
+});
+
+ipcMain.on('set-metrics-config', (event, config) => {
+  const next = setMetricsConfig(config);
+  log(`Metrics config updated: ${JSON.stringify(next)}`);
+});
+
 // Autostart Funktionen
 function setAutostart(enabled) {
   const loginItem = {
@@ -351,6 +636,7 @@ app.whenReady().then(() => {
 
   createTray();    // Tray zuerst erstellen
   createWindow();  // Dann Window (startet minimiert wenn Tray existiert)
+  startMetricsLoop();
 
   // Auto-Connect nach 2 Sekunden
   setTimeout(() => {
@@ -371,6 +657,7 @@ app.on('activate', () => {
 });
 
 app.on('before-quit', () => {
+  stopMetricsLoop();
   if (ws) {
     ws.close();
   }
