@@ -7,6 +7,9 @@
 #include "src/fonts/ui_fonts.h"
 
 static lv_obj_t *brightness_label = nullptr;
+static lv_obj_t *display_rotate_btn = nullptr;
+static lv_obj_t *display_rotate_label = nullptr;
+static bool display_rotated_180 = false;
 static hotspot_callback_t g_hotspot_callback = nullptr;
 
 // WiFi Status Labels
@@ -35,6 +38,9 @@ static lv_obj_t *sleep_battery_label = nullptr;
 // Power Status Labels
 static lv_obj_t *power_status_label = nullptr;
 static lv_obj_t *power_level_label = nullptr;
+
+static const uint8_t kDisplayRotationDefault = 1;
+static const uint8_t kDisplayRotationFlipped = 3;
 
 static const int kSettingsColLeftPct = 12;
 static const int kSettingsColMidPct = 26;
@@ -100,6 +106,18 @@ static void format_sleep_label_for_index(char* buf, size_t len, int32_t index) {
     return;
   }
   format_sleep_label(buf, len, sleep_seconds_from_index(index));
+}
+
+static void update_display_rotate_label() {
+  if (!display_rotate_label) return;
+  lv_label_set_text(display_rotate_label, display_rotated_180 ? "Normal" : "Rotate 180\u00b0");
+}
+
+static void on_display_rotate_clicked(lv_event_t *e) {
+  (void)e;
+  display_rotated_180 = !display_rotated_180;
+  M5.Display.setRotation(display_rotated_180 ? kDisplayRotationFlipped : kDisplayRotationDefault);
+  update_display_rotate_label();
 }
 
 static void on_brightness(lv_event_t *e) {
@@ -396,6 +414,21 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
       card_display, kSettingsColMidPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
   lv_obj_set_style_pad_left(display_col_mid, 16, 0);
   lv_obj_set_style_pad_right(display_col_mid, 8, 0);
+  display_rotate_btn = lv_button_create(display_col_mid);
+  lv_obj_set_width(display_rotate_btn, LV_PCT(kSettingsButtonWidthPct));
+  lv_obj_set_height(display_rotate_btn, kSettingsBtnHeight);
+  lv_obj_set_style_bg_color(display_rotate_btn, lv_color_hex(0x3B82F6), 0);
+  lv_obj_set_style_border_opa(display_rotate_btn, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_outline_opa(display_rotate_btn, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_shadow_opa(display_rotate_btn, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_radius(display_rotate_btn, 18, 0);
+  lv_obj_add_event_cb(display_rotate_btn, on_display_rotate_clicked, LV_EVENT_CLICKED, nullptr);
+
+  display_rotate_label = lv_label_create(display_rotate_btn);
+  lv_obj_set_style_text_font(display_rotate_label, &ui_font_24, 0);
+  lv_obj_set_style_text_color(display_rotate_label, lv_color_white(), 0);
+  lv_obj_center(display_rotate_label);
+  update_display_rotate_label();
 
   lv_obj_t *display_col_right = create_settings_column(
       card_display, kSettingsColRightPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
