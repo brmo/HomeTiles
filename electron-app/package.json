@@ -5,8 +5,9 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder",
-    "build:win": "electron-builder --win",
+    "build:bridge": "powershell -ExecutionPolicy Bypass -File ..\\\\simconnect-bridge\\\\scripts\\\\publish.ps1",
+    "build": "npm run build:bridge && electron-builder",
+    "build:win": "npm run build:bridge && electron-builder --win",
     "build:mac": "electron-builder --mac",
     "build:linux": "electron-builder --linux"
   },
@@ -31,6 +32,15 @@
     },
     "files": [
       "**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../simconnect-bridge/publish",
+        "to": "bridge"
+      }
+    ],
+    "asarUnpack": [
+      "**/bridge/**"
     ],
     "win": {
       "target": ["nsis"]

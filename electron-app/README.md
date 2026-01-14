@@ -99,3 +99,23 @@ MIT
 
 Use the SimConnect bridge in `../simconnect-bridge` to stream flight data into the app.
 Enable "Flight Simulator (SimConnect)" in the UI to forward data to Tab5.
+
+### Integrated Bridge (packaged app)
+The installer bundles a published bridge from `../simconnect-bridge/publish`.
+Build it before packaging:
+
+```
+npm run build:bridge
+```
+
+or:
+
+```
+powershell -ExecutionPolicy Bypass -File ..\simconnect-bridge\scripts\publish.ps1
+```
+
+When packaged, the app auto-starts the bridge if SimConnect is enabled.
+
+### SimVars
+The Flight Sim tab lets you edit the SimVar list (name, unit, type). Saving the list updates the bridge config
+and restarts the local bridge. The config file is stored in the user data folder.

@@ -14,9 +14,13 @@
     </Reference>
     <None Include="lib\Microsoft.FlightSimulator.SimConnect.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <TargetPath>Microsoft.FlightSimulator.SimConnect.dll</TargetPath>
     </None>
     <None Include="lib\SimConnect.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <TargetPath>SimConnect.dll</TargetPath>
     </None>
   </ItemGroup>
 </Project>

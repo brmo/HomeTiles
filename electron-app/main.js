@@ -1,9 +1,45 @@
 const { app, BrowserWindow, ipcMain, Tray, Menu } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const os = require('os');
 const si = require('systeminformation');
 const WebSocket = require('ws');
 const Store = require('electron-store');
+const { spawn } = require('child_process');
+
+const DEFAULT_METRICS = {
+  cpu_load: true,
+  cpu_temp: false,
+  gpu_temp: false,
+  gpu_load: false,
+  mem_used: true,
+  mem_pct: true,
+  uptime: true
+};
+
+const DEFAULT_SIMCONNECT = {
+  enabled: false,
+  host: '127.0.0.1',
+  port: 13375
+};
+
+const DEFAULT_SIM_VAR_LIST = [];
+
+const DEFAULT_SIM_METRICS = {};
+
+const SIMVAR_DEFAULTS = {
+  'AIRSPEED INDICATED': { unit: 'knots', type: 'float64' },
+  'AIRSPEED TRUE': { unit: 'knots', type: 'float64' },
+  'AIRSPEED MACH': { unit: 'mach', type: 'float64' },
+  'GPS GROUND SPEED': { unit: 'knots', type: 'float64' },
+  'PLANE ALTITUDE': { unit: 'feet', type: 'float64' },
+  'INDICATED ALTITUDE': { unit: 'feet', type: 'float64' },
+  'VERTICAL SPEED': { unit: 'feet per minute', type: 'float64' },
+  'PLANE HEADING DEGREES MAGNETIC': { unit: 'degrees', type: 'float64' },
+  'PLANE HEADING DEGREES TRUE': { unit: 'degrees', type: 'float64' },
+  'FUEL TOTAL QUANTITY': { unit: 'gallons', type: 'float64' },
+  'SIM ON GROUND': { unit: 'bool', type: 'int32' }
+};
 
 // keysender für schnelle Tastensimulation
 const { Hardware } = require('keysender');
@@ -14,20 +50,12 @@ const store = new Store({
   defaults: {
     autostart: true,  // Standard: Autostart aktiviert
     tab5_ip: '192.168.2.235',
-    metrics: {
-      cpu_load: true,
-      cpu_temp: false,
-      gpu_temp: false,
-      gpu_load: false,
-      mem_used: true,
-      mem_pct: true,
-      uptime: true
-    },
-    simconnect: {
-      enabled: false,
-      host: '127.0.0.1',
-      port: 13375
-    }
+    metrics: DEFAULT_METRICS,
+    pc_metrics_enabled: true,
+    key_output_enabled: true,
+    simconnect: DEFAULT_SIMCONNECT,
+    sim_vars: DEFAULT_SIM_VAR_LIST,
+    sim_metrics: DEFAULT_SIM_METRICS
   }
 });
 
@@ -44,6 +72,9 @@ let simWs = null;
 let simReconnectTimer = null;
 let simConnected = false;
 let lastSimSensors = [];
+let lastSimSensorsRaw = [];
+let simBridgeProcess = null;
+let simBridgeConfig = null;
 
 const startHidden = process.argv.includes('--hidden');
 
@@ -51,20 +82,6 @@ const startHidden = process.argv.includes('--hidden');
 let TAB5_IP = store.get('tab5_ip'); // Aus Settings laden
 const TAB5_PORT = 8081;
 const METRICS_INTERVAL_MS = 5000;
-const DEFAULT_METRICS = {
-  cpu_load: true,
-  cpu_temp: false,
-  gpu_temp: false,
-  gpu_load: false,
-  mem_used: true,
-  mem_pct: true,
-  uptime: true
-};
-const DEFAULT_SIMCONNECT = {
-  enabled: false,
-  host: '127.0.0.1',
-  port: 13375
-};
 const SIMCONNECT_RECONNECT_MS = 2000;
 const lastMetricValues = {};
 
@@ -129,6 +146,31 @@ function setMetricsConfig(raw) {
   return cfg;
 }
 
+function getPcMetricsEnabled() {
+  return !!store.get('pc_metrics_enabled', true);
+}
+
+function setPcMetricsEnabled(enabled) {
+  const next = !!enabled;
+  store.set('pc_metrics_enabled', next);
+  if (next) {
+    startMetricsLoop();
+  } else {
+    stopMetricsLoop();
+  }
+  return next;
+}
+
+function getKeyOutputEnabled() {
+  return !!store.get('key_output_enabled', true);
+}
+
+function setKeyOutputEnabled(enabled) {
+  const next = !!enabled;
+  store.set('key_output_enabled', next);
+  return next;
+}
+
 function normalizeSimConfig(raw) {
   const cfg = { ...DEFAULT_SIMCONNECT };
   if (!raw || typeof raw !== 'object') return cfg;
@@ -153,15 +195,252 @@ function setSimConfig(raw) {
   return cfg;
 }
 
-function getMetricValue(entityId, value) {
+function isLocalBridgeConfig(cfg) {
+  const host = (cfg.host || '').toLowerCase();
+  return host === '127.0.0.1' || host === 'localhost';
+}
+
+function getBridgeExecutablePath() {
+  if (app.isPackaged) {
+    const packagedPath = path.join(process.resourcesPath, 'bridge', 'SimConnectBridge.exe');
+    return fs.existsSync(packagedPath) ? packagedPath : null;
+  }
+  const candidates = [
+    path.join(__dirname, '..', 'simconnect-bridge', 'bin', 'Release', 'net8.0', 'SimConnectBridge.exe'),
+    path.join(__dirname, '..', 'simconnect-bridge', 'bin', 'Debug', 'net8.0', 'SimConnectBridge.exe')
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+async function startSimBridge(cfg) {
+  if (!cfg || !cfg.enabled) return;
+  if (!isLocalBridgeConfig(cfg)) return;
+
+  if (simBridgeProcess && simBridgeConfig &&
+      simBridgeConfig.host === cfg.host && simBridgeConfig.port === cfg.port) {
+    return;
+  }
+
+  await stopSimBridge();
+
+  const exePath = getBridgeExecutablePath();
+  if (!exePath) {
+    log('SimConnect bridge executable not found. Build/publish it first.');
+    return;
+  }
+
+  const configPath = writeSimBridgeConfigFile(getSimVarList());
+  const args = ['--host', cfg.host, '--port', String(cfg.port), '--config', configPath];
+  simBridgeConfig = { host: cfg.host, port: cfg.port, configPath };
+  simBridgeProcess = spawn(exePath, args, {
+    cwd: path.dirname(exePath),
+    windowsHide: true
+  });
+
+  log(`Starting SimConnect bridge: ${exePath}`);
+
+  simBridgeProcess.stdout.on('data', (data) => {
+    const text = data.toString().trim();
+    if (text.length) log(text);
+  });
+
+  simBridgeProcess.stderr.on('data', (data) => {
+    const text = data.toString().trim();
+    if (text.length) log(text);
+  });
+
+  simBridgeProcess.on('exit', (code) => {
+    log(`SimConnect bridge exited (${code ?? 'unknown'})`);
+    simBridgeProcess = null;
+    simBridgeConfig = null;
+  });
+}
+
+function stopSimBridge() {
+  return new Promise((resolve) => {
+    if (!simBridgeProcess) {
+      resolve();
+      return;
+    }
+    const proc = simBridgeProcess;
+    simBridgeProcess = null;
+    simBridgeConfig = null;
+
+    const timeout = setTimeout(() => {
+      try {
+        proc.kill('SIGKILL');
+      } catch {
+        // Ignore.
+      }
+      resolve();
+    }, 2000);
+
+    proc.once('exit', () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+
+    try {
+      proc.kill();
+    } catch {
+      clearTimeout(timeout);
+      resolve();
+    }
+  });
+}
+
+function getSimVarDefaults(simvar) {
+  const key = String(simvar || '').trim().toUpperCase();
+  return SIMVAR_DEFAULTS[key] || null;
+}
+
+function parseSimVarType(raw) {
+  const value = String(raw || '').trim().toLowerCase();
+  if (!value) return null;
+  if (value === 'int' || value === 'int32' || value === 'bool') return 'int32';
+  if (value === 'string' || value === 'string32') return 'string32';
+  if (value === 'string256') return 'string256';
+  return 'float64';
+}
+
+function normalizeSimVarType(raw, simvar) {
+  const parsed = parseSimVarType(raw);
+  if (parsed) return parsed;
+  const fallback = getSimVarDefaults(simvar);
+  const fallbackType = fallback ? parseSimVarType(fallback.type) : null;
+  return fallbackType || 'float64';
+}
+
+function normalizeSimVarUnit(simvar, rawUnit) {
+  const unit = String(rawUnit || '').trim();
+  if (unit) return unit;
+  const fallback = getSimVarDefaults(simvar);
+  return fallback ? fallback.unit || '' : '';
+}
+
+function normalizeSimVarDecimals(raw) {
+  if (raw === null || raw === undefined || raw === '') return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return null;
+  const rounded = Math.floor(parsed);
+  if (rounded < 0) return null;
+  return Math.min(6, rounded);
+}
+
+function normalizeSimVarList(raw) {
+  if (!Array.isArray(raw)) return [];
+  const result = [];
+  const seen = new Set();
+  raw.forEach((entry) => {
+    if (!entry || typeof entry !== 'object') return;
+    const entityId = String(entry.entity_id || entry.entityId || '').trim();
+    const simvar = String(entry.simvar || entry.simVar || '').trim();
+    if (!entityId || !simvar) return;
+    const key = entityId.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    const name = String(entry.name || simvar).trim();
+    const unit = normalizeSimVarUnit(simvar, entry.unit);
+    const type = normalizeSimVarType(entry.type, simvar);
+    const decimals = normalizeSimVarDecimals(entry.decimals);
+    result.push({
+      entity_id: entityId,
+      name: name || simvar,
+      simvar,
+      unit,
+      type,
+      ...(decimals === null ? {} : { decimals })
+    });
+  });
+  return result;
+}
+
+function getSimVarList() {
+  const raw = store.get('sim_vars', []);
+  return normalizeSimVarList(raw);
+}
+
+function setSimVarList(raw) {
+  const list = normalizeSimVarList(raw);
+  store.set('sim_vars', list);
+  writeSimBridgeConfigFile(list);
+  return list;
+}
+
+function getSimBridgeConfigPath() {
+  return path.join(app.getPath('userData'), 'simconnect-bridge-config.json');
+}
+
+function writeSimBridgeConfigFile(list) {
+  const configPath = getSimBridgeConfigPath();
+  const payload = {
+    version: 1,
+    simvars: list
+  };
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify(payload, null, 2), 'utf8');
+  return configPath;
+}
+
+function normalizeSimMetricsConfig(raw) {
+  const cfg = { ...DEFAULT_SIM_METRICS };
+  if (!raw || typeof raw !== 'object') return cfg;
+  for (const [key, value] of Object.entries(raw)) {
+    cfg[key] = !!value;
+  }
+  return cfg;
+}
+
+function getSimMetricsConfig() {
+  return normalizeSimMetricsConfig(store.get('sim_metrics', {}));
+}
+
+function setSimMetricsConfig(raw) {
+  const cfg = normalizeSimMetricsConfig(raw);
+  store.set('sim_metrics', cfg);
+  return cfg;
+}
+
+function isSimMetricEnabled(config, entityId) {
+  if (!entityId) return false;
+  if (Object.prototype.hasOwnProperty.call(config, entityId)) {
+    return !!config[entityId];
+  }
+  return true;
+}
+
+function filterSimSensors(sensors) {
+  if (!Array.isArray(sensors) || sensors.length === 0) return [];
+  const allowed = new Set(getSimVarList().map((entry) => entry.entity_id));
+  const cfg = getSimMetricsConfig();
+  return sensors.filter((sensor) => allowed.has(sensor.entity_id) && isSimMetricEnabled(cfg, sensor.entity_id));
+}
+
+function roundSensorValue(value, decimals) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return value;
+  let digits = 2;
+  if (typeof decimals === 'number' && Number.isFinite(decimals)) {
+    digits = Math.max(0, Math.min(6, Math.floor(decimals)));
+  }
+  const factor = 10 ** digits;
+  return Math.round(value * factor) / factor;
+}
+
+function getMetricValue(entityId, value, decimals) {
   if (value === null || value === undefined) {
     if (Object.prototype.hasOwnProperty.call(lastMetricValues, entityId)) {
       return lastMetricValues[entityId];
     }
     return '--';
   }
-  lastMetricValues[entityId] = value;
-  return value;
+  const rounded = roundSensorValue(value, decimals);
+  lastMetricValues[entityId] = rounded;
+  return rounded;
 }
 
 function updateMetricsPreview(sensors) {
@@ -176,7 +455,17 @@ function updateSimPreview(sensors) {
   mainWindow.webContents.send('sim-update', payload);
 }
 
-function normalizeIncomingSensors(rawSensors) {
+function buildSimVarDecimalsMap() {
+  const map = new Map();
+  getSimVarList().forEach((entry) => {
+    if (!entry || !entry.entity_id) return;
+    if (entry.decimals === null || entry.decimals === undefined) return;
+    map.set(entry.entity_id, entry.decimals);
+  });
+  return map;
+}
+
+function normalizeIncomingSensors(rawSensors, decimalsMap) {
   if (!Array.isArray(rawSensors)) return [];
   return rawSensors
     .map((sensor) => {
@@ -185,7 +474,8 @@ function normalizeIncomingSensors(rawSensors) {
       if (!entityId) return null;
       const name = sensor.name || entityId;
       const unit = sensor.unit || '';
-      const value = getMetricValue(entityId, sensor.value);
+      const decimals = decimalsMap ? decimalsMap.get(entityId) : null;
+      const value = getMetricValue(entityId, sensor.value, decimals);
       return { entity_id: entityId, name, unit, value };
     })
     .filter(Boolean);
@@ -377,6 +667,7 @@ function sendSensorsToTab5(sensors) {
 }
 
 async function sendPcMetrics() {
+  if (!getPcMetricsEnabled()) return;
   if (metricsInFlight) return;
   metricsInFlight = true;
   try {
@@ -391,6 +682,7 @@ async function sendPcMetrics() {
 }
 
 function startMetricsLoop() {
+  if (!getPcMetricsEnabled()) return;
   stopMetricsLoop();
   lastCpuSample = null;
   getCpuUsagePercent();
@@ -420,18 +712,27 @@ function handleSimBridgeMessage(data) {
     return;
   }
   if (!msg || !Array.isArray(msg.sensors)) return;
-  const sensors = normalizeIncomingSensors(msg.sensors);
+  const decimalsMap = buildSimVarDecimalsMap();
+  const sensors = normalizeIncomingSensors(msg.sensors, decimalsMap);
   if (!sensors.length) return;
-  lastSimSensors = sensors;
+  lastSimSensorsRaw = sensors;
+  const filtered = filterSimSensors(sensors);
+  lastSimSensors = filtered;
   updateSimPreview(sensors);
-  sendSensorsToTab5(sensors);
+  sendSensorsToTab5(filtered);
 }
 
-function connectSimBridge() {
+async function connectSimBridge() {
   const cfg = getSimConfig();
   if (!cfg.enabled) {
     updateSimStatus('disconnected');
+    await stopSimBridge();
     return;
+  }
+  if (isLocalBridgeConfig(cfg)) {
+    await startSimBridge(cfg);
+  } else {
+    await stopSimBridge();
   }
   if (simWs && (simWs.readyState === WebSocket.OPEN || simWs.readyState === WebSocket.CONNECTING)) {
     return;
@@ -489,11 +790,20 @@ function disconnectSimBridge() {
   updateSimStatus('disconnected');
 }
 
+function sendSimBridgeReload() {
+  if (simWs && simWs.readyState === WebSocket.OPEN) {
+    simWs.send(JSON.stringify({ command: 'reload' }));
+    log('Sent reload command to SimConnect bridge');
+  }
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 500,
-    height: 750,  // Etwas höher für Autostart-Checkbox
+    width: 520,
+    height: 700,
     show: false, // Nicht sofort anzeigen
+    resizable: false,
+    maximizable: false,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
@@ -527,7 +837,6 @@ function createWindow() {
 }
 
 function createTray() {
-  const fs = require('fs');
   const iconPath = path.join(__dirname, 'icon.png');
 
   if (!fs.existsSync(iconPath)) {
@@ -594,9 +903,12 @@ function connectToTab5() {
       }
     }, 15000);
 
-    startMetricsLoop();
-    if (lastSimSensors.length) {
-      sendSensorsToTab5(lastSimSensors);
+    if (getPcMetricsEnabled()) {
+      startMetricsLoop();
+    }
+    const filteredSim = filterSimSensors(lastSimSensorsRaw);
+    if (filteredSim.length) {
+      sendSensorsToTab5(filteredSim);
     }
   });
 
@@ -644,7 +956,9 @@ function handleTab5Message(msg) {
   log(`📩 Received: ${JSON.stringify(msg)}`);
 
   if (msg.type === 'button_press') {
-    simulateKeyPress(msg.key, msg.modifier);
+    if (getKeyOutputEnabled()) {
+      simulateKeyPress(msg.key, msg.modifier);
+    }
 
     // An Renderer senden für UI Update
     if (mainWindow) {
@@ -749,17 +1063,78 @@ ipcMain.on('set-metrics-config', (event, config) => {
   log(`Metrics config updated: ${JSON.stringify(next)}`);
 });
 
+ipcMain.on('get-pc-metrics-enabled', (event) => {
+  event.returnValue = getPcMetricsEnabled();
+});
+
+ipcMain.on('set-pc-metrics-enabled', (event, enabled) => {
+  const next = setPcMetricsEnabled(enabled);
+  log(`PC metrics ${next ? 'enabled' : 'disabled'}`);
+});
+
+ipcMain.on('get-key-output-enabled', (event) => {
+  event.returnValue = getKeyOutputEnabled();
+});
+
+ipcMain.on('set-key-output-enabled', (event, enabled) => {
+  const next = setKeyOutputEnabled(enabled);
+  log(`Key output ${next ? 'enabled' : 'disabled'}`);
+});
+
 ipcMain.on('get-sim-config', (event) => {
   event.returnValue = getSimConfig();
 });
 
-ipcMain.on('set-sim-config', (event, config) => {
+ipcMain.on('set-sim-config', async (event, config) => {
   const next = setSimConfig(config);
   log(`SimConnect config updated: ${JSON.stringify(next)}`);
   disconnectSimBridge();
+  await stopSimBridge();
   if (next.enabled) {
     connectSimBridge();
   }
+});
+
+ipcMain.on('get-sim-var-list', (event) => {
+  event.returnValue = getSimVarList();
+});
+
+ipcMain.on('get-sim-var-draft-list', (event) => {
+  event.returnValue = store.get('sim_vars_draft', null);
+});
+
+ipcMain.on('set-sim-var-list', (event, list) => {
+  const next = setSimVarList(list);
+  log(`SimConnect SimVars updated: ${JSON.stringify(next)}`);
+  event.returnValue = next;
+
+  // Clear cached values for sim metrics
+  for (const key of Object.keys(lastMetricValues)) {
+    if (key.startsWith('sim.')) {
+      delete lastMetricValues[key];
+    }
+  }
+
+  // Send reload command to bridge instead of restarting
+  sendSimBridgeReload();
+});
+
+ipcMain.on('set-sim-var-draft-list', (event, list) => {
+  store.set('sim_vars_draft', Array.isArray(list) ? list : []);
+  event.returnValue = store.get('sim_vars_draft');
+});
+
+ipcMain.on('get-sim-metrics-config', (event) => {
+  event.returnValue = getSimMetricsConfig();
+});
+
+ipcMain.on('set-sim-metrics-config', (event, config) => {
+  const next = setSimMetricsConfig(config);
+  log(`SimConnect metrics updated: ${JSON.stringify(next)}`);
+  const filtered = filterSimSensors(lastSimSensorsRaw);
+  lastSimSensors = filtered;
+  updateSimPreview(lastSimSensorsRaw);
+  sendSensorsToTab5(filtered);
 });
 
 // Autostart Funktionen
@@ -798,10 +1173,13 @@ app.whenReady().then(() => {
   // Autostart beim ersten Start aktivieren
   const autostartEnabled = getAutostart();
   setAutostart(autostartEnabled);
+  writeSimBridgeConfigFile(getSimVarList());
 
   createTray();    // Tray zuerst erstellen
   createWindow();  // Dann Window (startet minimiert wenn Tray existiert)
-  startMetricsLoop();
+  if (getPcMetricsEnabled()) {
+    startMetricsLoop();
+  }
   if (getSimConfig().enabled) {
     connectSimBridge();
   }
@@ -824,9 +1202,10 @@ app.on('activate', () => {
   }
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', async () => {
   stopMetricsLoop();
   disconnectSimBridge();
+  await stopSimBridge();
   if (ws) {
     ws.close();
   }

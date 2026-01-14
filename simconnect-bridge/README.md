@@ -25,7 +25,8 @@ dotnet run
 Options:
 - `--host 127.0.0.1`
 - `--port 13375`
-- `--rate 2` (Hz)
+- `--rate 10` (Hz)
+- `--config C:\path\to\simconnect-bridge-config.json`
 
 The bridge serves WebSocket on `ws://127.0.0.1:13375` and emits messages like:
 ```
@@ -34,6 +35,36 @@ The bridge serves WebSocket on `ws://127.0.0.1:13375` and emits messages like:
   "timestamp": 1730000000000,
   "sensors": [
     {"entity_id":"sim.ias","name":"IAS","unit":"kt","value":120.5}
+  ]
+}
+```
+
+## Publish (for Electron packaging)
+```
+powershell -ExecutionPolicy Bypass -File scripts/publish.ps1
+```
+
+This outputs to `simconnect-bridge/publish/` for `electron-builder` extraResources.
+
+Default sensors (configurable via `--config`):
+- `sim.ias` (INDICATED AIRSPEED, knots)
+- `sim.tas` (AIRSPEED TRUE, knots)
+- `sim.mach` (AIRSPEED MACH, mach)
+- `sim.gs` (GPS GROUND SPEED, knots)
+- `sim.altitude` (PLANE ALTITUDE, feet)
+- `sim.altitude_indicated` (INDICATED ALTITUDE, feet)
+- `sim.vs` (VERTICAL SPEED, feet per minute)
+- `sim.heading` (PLANE HEADING DEGREES MAGNETIC, degrees)
+- `sim.heading_true` (PLANE HEADING DEGREES TRUE, degrees)
+- `sim.fuel_total` (FUEL TOTAL QUANTITY, gallons)
+- `sim.on_ground` (SIM ON GROUND, bool)
+
+Config file format:
+```
+{
+  "version": 1,
+  "simvars": [
+    { "entity_id": "sim.ias", "name": "Indicated Airspeed", "simvar": "INDICATED AIRSPEED", "unit": "knots", "type": "float64" }
   ]
 }
 ```
