@@ -8,8 +8,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Reference Include="SimConnect">
-      <HintPath>lib\SimConnect.dll</HintPath>
+    <Reference Include="Microsoft.FlightSimulator.SimConnect">
+      <HintPath>lib\Microsoft.FlightSimulator.SimConnect.dll</HintPath>
       <Private>true</Private>
     </Reference>
   </ItemGroup>

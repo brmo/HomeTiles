@@ -37,4 +37,5 @@ Thumbs.db
 simconnect-bridge/bin/
 simconnect-bridge/obj/
 simconnect-bridge/lib/SimConnect.dll
+simconnect-bridge/lib/Microsoft.FlightSimulator.SimConnect.dll
 simconnect-bridge/lib/SimConnect.pdb

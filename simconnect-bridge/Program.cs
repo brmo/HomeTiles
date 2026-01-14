@@ -1,7 +1,9 @@
 using System.Diagnostics;
+using System.IO;
 using System.Net;
 using System.Net.WebSockets;
 using System.Runtime.InteropServices;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -14,6 +16,30 @@ internal static class Program
 
   public static async Task Main(string[] args)
   {
+    AppDomain.CurrentDomain.AssemblyResolve += (_, eventArgs) =>
+    {
+      if (!eventArgs.Name.StartsWith("Microsoft.FlightSimulator.SimConnect", StringComparison.OrdinalIgnoreCase))
+      {
+        return null;
+      }
+      string baseDir = AppContext.BaseDirectory;
+      string[] candidates =
+      {
+        Path.Combine(baseDir, "Microsoft.FlightSimulator.SimConnect.dll"),
+        Path.Combine(baseDir, "SimConnect.dll"),
+        Path.Combine(baseDir, "lib", "Microsoft.FlightSimulator.SimConnect.dll"),
+        Path.Combine(baseDir, "lib", "SimConnect.dll")
+      };
+      foreach (string path in candidates)
+      {
+        if (File.Exists(path))
+        {
+          return Assembly.LoadFrom(path);
+        }
+      }
+      return null;
+    };
+
     var settings = BridgeSettings.Parse(args, DefaultPort, DefaultRateHz);
     Console.WriteLine($"[Bridge] SimConnect WebSocket: ws://{settings.Host}:{settings.Port}");
     Console.WriteLine($"[Bridge] Rate: {settings.RateHz} Hz");
