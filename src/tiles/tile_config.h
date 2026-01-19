@@ -97,6 +97,7 @@ public:
   bool saveFolderGrid(uint16_t folder_id, const TileGridConfig& grid);
 
   bool setActiveFolder(uint16_t folder_id);
+  bool setActiveFolderCached(uint16_t folder_id, const TileGridConfig& grid);
   uint16_t getActiveFolderId() const { return active_folder_id; }
   const TileGridConfig& getActiveGrid() const { return active_grid; }
   TileGridConfig& getActiveGrid() { return active_grid; }

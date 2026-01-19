@@ -1500,6 +1500,13 @@ bool TileConfig::setActiveFolder(uint16_t folder_id) {
   return true;
 }
 
+bool TileConfig::setActiveFolderCached(uint16_t folder_id, const TileGridConfig& grid) {
+  if (!folderExists(folder_id)) return false;
+  active_folder_id = folder_id;
+  active_grid = grid;
+  return true;
+}
+
 const FolderEntry* TileConfig::getFolder(uint16_t folder_id) const {
   for (const auto& entry : folders) {
     if (entry.id == folder_id) return &entry;

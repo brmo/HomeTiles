@@ -13,12 +13,31 @@ static const int GRID_PAD_PX = GRID_PAD;
 
 /* === Globale State (unified for all 3 grids) === */
 static lv_obj_t* g_tiles_grids[3] = {nullptr};           // [TAB0, TAB1, TAB2]
+static lv_obj_t* g_tiles_roots[3] = {nullptr};
 static scene_publish_cb_t g_tiles_scene_cbs[3] = {nullptr};
 static lv_obj_t* g_tiles_objs[3][TILES_PER_GRID] = {nullptr};
 static bool g_tiles_loaded[3] = {false, false, false};
 static bool g_tiles_reload_requested[3] = {false, false, false};
 static bool g_tiles_reload_only_if_loaded[3] = {true, true, true};
 static bool g_tiles_release_requested[3] = {false, false, false};
+
+static constexpr size_t kFolderCacheSize = 3;
+static constexpr uint16_t kInvalidFolderId = 0xFFFF;
+
+struct FolderCacheEntry {
+  uint16_t folder_id = kInvalidFolderId;
+  lv_obj_t* grid = nullptr;
+  bool loaded = false;
+  bool dirty = false;
+  bool grid_loaded = false;
+  bool widgets_valid = false;
+  TileGridConfig grid_config{};
+  TileWidgetCache widgets{};
+  uint32_t last_used_ms = 0;
+};
+
+static FolderCacheEntry g_folder_cache[kFolderCacheSize];
+static FolderCacheEntry* g_active_cache = nullptr;
 
 /* === Entity-State Cache (for lazy-loaded tabs) === */
 struct EntityCacheEntry {
@@ -69,6 +88,8 @@ static bool get_cached_entity_payload(const char* entity_id, String& out) {
   return false;
 }
 
+static lv_obj_t* create_tiles_grid(lv_obj_t* parent);
+
 /* === Helper: Get grid config by type === */
 static const TileGridConfig& getGridConfig(GridType type) {
   (void)type;
@@ -100,6 +121,104 @@ static void mark_occupied(bool occupied[GRID_ROWS][GRID_COLS], uint8_t col, uint
       }
     }
   }
+}
+
+static FolderCacheEntry* find_folder_cache(uint16_t folder_id) {
+  for (size_t i = 0; i < kFolderCacheSize; ++i) {
+    if (g_folder_cache[i].folder_id == folder_id) {
+      return &g_folder_cache[i];
+    }
+  }
+  return nullptr;
+}
+
+static void clear_cache_entry(FolderCacheEntry& entry) {
+  if (entry.grid) {
+    lv_obj_del_async(entry.grid);
+    entry.grid = nullptr;
+  }
+  entry.loaded = false;
+  entry.dirty = false;
+  entry.grid_loaded = false;
+  entry.widgets_valid = false;
+}
+
+static void reset_cache_entry(FolderCacheEntry& entry) {
+  clear_cache_entry(entry);
+  entry.folder_id = kInvalidFolderId;
+  entry.grid_config = TileGridConfig{};
+  entry.last_used_ms = 0;
+}
+
+static FolderCacheEntry* allocate_folder_cache(uint16_t folder_id) {
+  for (size_t i = 0; i < kFolderCacheSize; ++i) {
+    if (g_folder_cache[i].folder_id == kInvalidFolderId) {
+      g_folder_cache[i].folder_id = folder_id;
+      return &g_folder_cache[i];
+    }
+  }
+
+  FolderCacheEntry* lru = nullptr;
+  for (size_t i = 0; i < kFolderCacheSize; ++i) {
+    FolderCacheEntry* entry = &g_folder_cache[i];
+    if (entry == g_active_cache) continue;
+    if (!lru || entry->last_used_ms < lru->last_used_ms) {
+      lru = entry;
+    }
+  }
+
+  if (!lru) {
+    lru = g_active_cache;
+  }
+  if (!lru) return nullptr;
+
+  reset_cache_entry(*lru);
+  lru->folder_id = folder_id;
+  return lru;
+}
+
+static void snapshot_active_cache() {
+  if (!g_active_cache) return;
+  tile_renderer_snapshot_tab0(&g_active_cache->widgets);
+  g_active_cache->widgets_valid = true;
+  g_active_cache->last_used_ms = millis();
+}
+
+static void build_folder_cache_entry(FolderCacheEntry& entry, GridType grid_type) {
+  const uint8_t idx = static_cast<uint8_t>(grid_type);
+  if (!g_tiles_roots[idx]) return;
+
+  clear_cache_entry(entry);
+
+  if (!entry.grid_loaded || entry.dirty) {
+    if (entry.folder_id == tileConfig.getActiveFolderId()) {
+      entry.grid_config = tileConfig.getActiveGrid();
+    } else {
+      tileConfig.loadFolderGrid(entry.folder_id, entry.grid_config);
+    }
+    entry.grid_loaded = true;
+  }
+  TileGridConfig& config = entry.grid_config;
+
+  TileWidgetCache saved{};
+  tile_renderer_snapshot_tab0(&saved);
+
+  entry.grid = create_tiles_grid(g_tiles_roots[idx]);
+  if (!entry.grid) {
+    tile_renderer_restore_tab0(&saved);
+    return;
+  }
+  lv_obj_add_flag(entry.grid, LV_OBJ_FLAG_HIDDEN);
+
+  render_tile_grid(entry.grid, config, grid_type, g_tiles_scene_cbs[idx]);
+
+  tile_renderer_snapshot_tab0(&entry.widgets);
+  entry.widgets_valid = true;
+  tile_renderer_restore_tab0(&saved);
+
+  entry.loaded = true;
+  entry.dirty = false;
+  entry.last_used_ms = millis();
 }
 
 /* === Create tiles grid === */
@@ -159,17 +278,31 @@ void build_tiles_tab(lv_obj_t *parent, GridType grid_type, scene_publish_cb_t sc
   lv_obj_set_style_anim_duration(parent, 0, 0);
   lv_obj_set_style_pad_all(parent, OUTER, 0);
 
-  g_tiles_grids[idx] = create_tiles_grid(parent);
+  g_tiles_roots[idx] = parent;
+  g_tiles_grids[idx] = nullptr;
+  g_tiles_loaded[idx] = false;
+
   if (grid_type == GridType::TAB0) {
-    tiles_reload_layout(grid_type);
+    for (size_t i = 0; i < kFolderCacheSize; ++i) {
+      reset_cache_entry(g_folder_cache[i]);
+    }
+    g_active_cache = nullptr;
+    tiles_switch_to_folder(tileConfig.getActiveFolderId());
   } else {
-    g_tiles_loaded[idx] = false;
+    g_tiles_grids[idx] = create_tiles_grid(parent);
+    g_tiles_loaded[idx] = (g_tiles_grids[idx] != nullptr);
+    if (g_tiles_grids[idx]) {
+      tiles_reload_layout(grid_type);
+    }
   }
 }
 
 /* === Reload layout (unified) === */
 void tiles_reload_layout(GridType grid_type) {
   uint8_t idx = (uint8_t)grid_type;
+  if (grid_type == GridType::TAB0 && g_active_cache) {
+    g_tiles_grids[idx] = g_active_cache->grid;
+  }
   if (!g_tiles_grids[idx]) return;
 
   displayManager.debugFlushNext(40);
@@ -240,12 +373,28 @@ void tiles_reload_layout(GridType grid_type) {
     lv_obj_invalidate(g_tiles_grids[idx]);
     lv_refr_now(disp);
   }
+  if (grid_type == GridType::TAB0 && g_active_cache) {
+    g_active_cache->grid_config = tileConfig.getActiveGrid();
+    g_active_cache->grid_loaded = true;
+    tile_renderer_snapshot_tab0(&g_active_cache->widgets);
+    g_active_cache->widgets_valid = true;
+    g_active_cache->dirty = false;
+    g_active_cache->last_used_ms = millis();
+  }
   Serial.printf("[%s] Layout neu geladen\n", getGridName(grid_type));
 }
 
 void tiles_release_layout(GridType grid_type) {
   uint8_t idx = (uint8_t)grid_type;
   if (!g_tiles_grids[idx] || !g_tiles_loaded[idx]) return;
+
+  if (grid_type == GridType::TAB0 && g_active_cache) {
+    clear_cache_entry(*g_active_cache);
+    g_active_cache = nullptr;
+    g_tiles_grids[idx] = nullptr;
+    g_tiles_loaded[idx] = false;
+    return;
+  }
 
   reset_sensor_widgets(grid_type);
   reset_switch_widgets(grid_type);
@@ -259,6 +408,12 @@ void tiles_release_layout(GridType grid_type) {
 }
 
 void tiles_release_all() {
+  for (size_t i = 0; i < kFolderCacheSize; ++i) {
+    reset_cache_entry(g_folder_cache[i]);
+  }
+  g_active_cache = nullptr;
+  g_tiles_grids[0] = nullptr;
+  g_tiles_loaded[0] = false;
   tiles_release_layout(GridType::TAB0);
   tiles_release_layout(GridType::TAB1);
   tiles_release_layout(GridType::TAB2);
@@ -304,6 +459,62 @@ void tiles_request_release(GridType grid_type) {
 void tiles_request_release_all() {
   for (uint8_t i = 0; i < 3; ++i) {
     g_tiles_release_requested[i] = true;
+  }
+}
+
+void tiles_switch_to_folder(uint16_t folder_id) {
+  const uint8_t idx = static_cast<uint8_t>(GridType::TAB0);
+  if (!g_tiles_roots[idx]) return;
+  if (!tileConfig.folderExists(folder_id)) return;
+
+  FolderCacheEntry* target = find_folder_cache(folder_id);
+  if (!target) {
+    target = allocate_folder_cache(folder_id);
+  }
+  if (!target) return;
+
+  if (!target->loaded || target->dirty) {
+    build_folder_cache_entry(*target, GridType::TAB0);
+  }
+  if (!target->grid) return;
+
+  if (target->grid_loaded) {
+    tileConfig.setActiveFolderCached(folder_id, target->grid_config);
+  }
+
+  if (g_active_cache && g_active_cache != target) {
+    snapshot_active_cache();
+    if (g_active_cache->grid) {
+      lv_obj_add_flag(g_active_cache->grid, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+
+  if (target->widgets_valid) {
+    tile_renderer_restore_tab0(&target->widgets);
+  }
+
+  g_tiles_grids[idx] = target->grid;
+  g_tiles_loaded[idx] = true;
+  g_active_cache = target;
+  target->last_used_ms = millis();
+
+  lv_obj_clear_flag(target->grid, LV_OBJ_FLAG_HIDDEN);
+  apply_cached_states(GridType::TAB0, tileConfig.getActiveGrid());
+
+  lv_display_t* disp = lv_obj_get_display(target->grid);
+  if (disp) {
+    lv_obj_invalidate(target->grid);
+    lv_refr_now(disp);
+  }
+}
+
+void tiles_invalidate_folder(uint16_t folder_id) {
+  FolderCacheEntry* entry = find_folder_cache(folder_id);
+  if (!entry) return;
+  entry->dirty = true;
+  entry->grid_loaded = false;
+  if (entry != g_active_cache) {
+    clear_cache_entry(*entry);
   }
 }
 

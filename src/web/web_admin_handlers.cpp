@@ -743,6 +743,7 @@ void WebAdminServer::handleSaveTiles() {
         server.send(500, "application/json", "{\"success\":false,\"error\":\"Folder delete failed\"}");
         return;
       }
+      tiles_invalidate_folder(target_id);
     }
   }
 
@@ -768,6 +769,7 @@ void WebAdminServer::handleSaveTiles() {
     mqttReloadDynamicSlots();
     Serial.println("[WebAdmin] MQTT Routes neu aufgebaut");
 
+    tiles_invalidate_folder(folder_id);
     if (tileConfig.getActiveFolderId() == folder_id) {
       tiles_request_reload_if_loaded(GridType::TAB0);
     }
@@ -859,6 +861,7 @@ void WebAdminServer::handleReorderTiles() {
   bool success = tileConfig.saveFolderGrid(folder_id, grid);
   if (success) {
     mqttReloadDynamicSlots();
+    tiles_invalidate_folder(folder_id);
     if (tileConfig.getActiveFolderId() == folder_id) {
       tiles_request_reload_if_loaded(GridType::TAB0);
     }

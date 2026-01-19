@@ -283,8 +283,7 @@ void UIManager::switchToTab(uint8_t index) {
 }
 
 void UIManager::switchToFolder(uint16_t folder_id) {
-  if (!tileConfig.setActiveFolder(folder_id)) return;
-  tiles_request_reload(GridType::TAB0);
+  tiles_switch_to_folder(folder_id);
   switchToTab(0);
 }
 

@@ -10,6 +10,7 @@
 #include "src/ui/image_popup.h"
 #include "src/fonts/ui_fonts.h"
 #include <Arduino.h>
+#include <cstring>
 #include <math.h>
 #include <stdlib.h>
 
@@ -30,20 +31,6 @@ static const int32_t GAUGE_ARC_STEPS = 1000;
 #define FONT_UNIT (&ui_font_24)
 
 /* === Globale State für Updates === */
-struct SensorTileWidgets {
-  lv_obj_t* value_label = nullptr;
-  lv_obj_t* unit_label = nullptr;
-  lv_obj_t* gauge = nullptr;
-  int32_t gauge_min = 0;
-  int32_t gauge_max = 100;
-};
-
-struct SwitchTileWidgets {
-  lv_obj_t* icon_label = nullptr;
-  lv_obj_t* title_label = nullptr;
-  lv_obj_t* switch_obj = nullptr;
-};
-
 static SensorTileWidgets g_tab0_sensors[TILES_PER_GRID];
 static SensorTileWidgets g_tab1_sensors[TILES_PER_GRID];
 static SensorTileWidgets g_tab2_sensors[TILES_PER_GRID];
@@ -51,22 +38,6 @@ static SensorTileWidgets g_tab2_sensors[TILES_PER_GRID];
 static SwitchTileWidgets g_tab0_switches[TILES_PER_GRID];
 static SwitchTileWidgets g_tab1_switches[TILES_PER_GRID];
 static SwitchTileWidgets g_tab2_switches[TILES_PER_GRID];
-
-struct SwitchState {
-  bool has_state = false;
-  bool is_on = false;
-  bool has_color = false;
-  uint32_t color = 0;
-  bool has_hs = false;
-  float hs_h = 0.0f;
-  float hs_s = 0.0f;
-  bool has_brightness = false;
-  uint8_t brightness_pct = 100;
-  bool supports_color = false;
-  bool supports_brightness = false;
-  bool supported_modes_known = false;
-  bool supported_onoff_only = false;
-};
 
 static SwitchState g_tab0_switch_states[TILES_PER_GRID];
 static SwitchState g_tab1_switch_states[TILES_PER_GRID];
@@ -135,6 +106,20 @@ void reset_switch_widget(GridType grid_type, uint8_t grid_index) {
 
 void reset_switch_widgets(GridType grid_type) {
   clear_switch_widgets(grid_type);
+}
+
+void tile_renderer_snapshot_tab0(TileWidgetCache* out) {
+  if (!out) return;
+  memcpy(out->sensors, g_tab0_sensors, sizeof(g_tab0_sensors));
+  memcpy(out->switches, g_tab0_switches, sizeof(g_tab0_switches));
+  memcpy(out->switch_states, g_tab0_switch_states, sizeof(g_tab0_switch_states));
+}
+
+void tile_renderer_restore_tab0(const TileWidgetCache* in) {
+  if (!in) return;
+  memcpy(g_tab0_sensors, in->sensors, sizeof(g_tab0_sensors));
+  memcpy(g_tab0_switches, in->switches, sizeof(g_tab0_switches));
+  memcpy(g_tab0_switch_states, in->switch_states, sizeof(g_tab0_switch_states));
 }
 
 /* === Thread-Safe Update Queue (MQTT → Main Loop) === */
