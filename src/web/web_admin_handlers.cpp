@@ -72,6 +72,73 @@ void appendJsonEscaped(String& out, const String& value) {
   }
 }
 
+struct TileRect {
+  uint8_t col;
+  uint8_t row;
+  uint8_t span_w;
+  uint8_t span_h;
+};
+
+static bool buildTileRect(uint8_t col, uint8_t row, uint8_t span_w, uint8_t span_h, TileRect& out) {
+  if (col >= GRID_COLS || row >= GRID_ROWS) return false;
+  if (span_w < 1 || span_h < 1) return false;
+  if (span_w > GRID_COLS - col) return false;
+  if (span_h > GRID_ROWS - row) return false;
+  out = TileRect{col, row, span_w, span_h};
+  return true;
+}
+
+static bool getTileRect(const Tile& tile, TileRect& out) {
+  uint8_t span_w = tile.span_w < 1 ? 1 : tile.span_w;
+  uint8_t span_h = tile.span_h < 1 ? 1 : tile.span_h;
+  return buildTileRect(tile.col, tile.row, span_w, span_h, out);
+}
+
+static bool rectsOverlap(const TileRect& a, const TileRect& b) {
+  return !(a.col + a.span_w <= b.col ||
+           b.col + b.span_w <= a.col ||
+           a.row + a.span_h <= b.row ||
+           b.row + b.span_h <= a.row);
+}
+
+static bool placementOverlaps(const TileGridConfig& grid, size_t self_index, const TileRect& rect, size_t ignore_index = static_cast<size_t>(-1)) {
+  for (size_t i = 0; i < TILES_PER_GRID; ++i) {
+    if (i == self_index || i == ignore_index) continue;
+    const Tile& other = grid.tiles[i];
+    if (other.type == TILE_EMPTY) continue;
+    TileRect other_rect{};
+    if (!getTileRect(other, other_rect)) continue;
+    if (rectsOverlap(rect, other_rect)) return true;
+  }
+  return false;
+}
+
+static uint16_t getNavigateTargetId(const Tile& tile) {
+  return static_cast<uint16_t>((static_cast<uint16_t>(tile.key_modifier) << 8) | tile.key_code);
+}
+
+static void setNavigateTargetId(Tile& tile, uint16_t folder_id) {
+  tile.key_code = static_cast<uint8_t>(folder_id & 0xFF);
+  tile.key_modifier = static_cast<uint8_t>((folder_id >> 8) & 0xFF);
+}
+
+static bool parseFolderIdArg(WebServer& server, uint16_t& out) {
+  String raw;
+  if (server.hasArg("folder")) raw = server.arg("folder");
+  else if (server.hasArg("folder_id")) raw = server.arg("folder_id");
+  else if (server.hasArg("tab")) {
+    String tab = server.arg("tab");
+    tab.toLowerCase();
+    if (tab == "home" || tab == "tab0") raw = "0";
+  }
+  raw.trim();
+  if (!raw.length()) return false;
+  int v = raw.toInt();
+  if (v < 0 || v > 0xFFFF) return false;
+  out = static_cast<uint16_t>(v);
+  return true;
+}
+
 }  // namespace
 
 void WebAdminServer::handleSaveMQTT() {
@@ -327,22 +394,71 @@ void WebAdminServer::handleRestart() {
 }
 
 void WebAdminServer::handleGetTiles() {
-  // GET /api/tiles?tab=home|game|weather[&index=0-11]
-  // If index is omitted, return all tiles as array
-  if (!server.hasArg("tab")) {
-    server.send(400, "application/json", "{\"error\":\"Missing tab parameter\"}");
+  // GET /api/tiles?folder=<id>[&index=0-23]
+  if (!server.hasArg("tab") && !server.hasArg("folder") && !server.hasArg("folder_id")) {
+    server.send(400, "application/json", "{\"error\":\"Missing folder parameter\"}");
     return;
   }
 
-  String tab = server.arg("tab");
-  if (tab != "home" && tab != "game" && tab != "weather" && tab != "tab0" && tab != "tab1" && tab != "tab2") {
-    server.send(400, "application/json", "{\"error\":\"Invalid tab\"}");
+  uint16_t folder_id = 0;
+  if (!parseFolderIdArg(server, folder_id) || !tileConfig.folderExists(folder_id)) {
+    server.send(404, "application/json", "{\"error\":\"Folder not found\"}");
     return;
   }
 
-  const TileGridConfig& grid = (tab == "home" || tab == "tab0") ? tileConfig.getTab0Grid() : ((tab == "game" || tab == "tab1") ? tileConfig.getTab1Grid() : tileConfig.getTab2Grid());
+  TileGridConfig grid{};
+  tileConfig.loadFolderGrid(folder_id, grid);
 
-  // Single tile request
+  auto appendTileJson = [&](String& out, const Tile& tile) {
+    out += "{\"type\":";
+    out += String(static_cast<int>(tile.type));
+    out += ",\"title\":\"";
+    appendJsonEscaped(out, tile.title);
+    out += "\",\"icon_name\":\"";
+    appendJsonEscaped(out, tile.icon_name);
+    out += "\",\"bg_color\":";
+    out += String(tile.bg_color);
+    out += ",\"col\":";
+    out += String(tile.col);
+    out += ",\"row\":";
+    out += String(tile.row);
+    out += ",\"span_w\":";
+    out += String(tile.span_w);
+    out += ",\"span_h\":";
+    out += String(tile.span_h);
+    out += ",\"sensor_entity\":\"";
+    appendJsonEscaped(out, tile.sensor_entity);
+    out += "\",\"sensor_unit\":\"";
+    appendJsonEscaped(out, tile.sensor_unit);
+    out += "\",\"sensor_decimals\":";
+    out += String(tile.sensor_decimals == 0xFF ? -1 : static_cast<int>(tile.sensor_decimals));
+    out += ",\"sensor_value_font\":";
+    out += String(tile.sensor_value_font);
+    out += ",\"sensor_gauge\":";
+    out += String(tile.sensor_gauge_enabled ? 1 : 0);
+    out += ",\"sensor_gauge_min\":";
+    out += String(tile.sensor_gauge_min);
+    out += ",\"sensor_gauge_max\":";
+    out += String(tile.sensor_gauge_max);
+    out += ",\"scene_alias\":\"";
+    appendJsonEscaped(out, tile.scene_alias);
+    out += "\",\"key_macro\":\"";
+    appendJsonEscaped(out, tile.key_macro);
+    out += "\",\"key_code\":";
+    out += String(tile.key_code);
+    out += ",\"key_modifier\":";
+    out += String(tile.key_modifier);
+    out += ",\"switch_style\":";
+    out += String((tile.type == TILE_SWITCH && tile.sensor_decimals == 1) ? 1 : 0);
+    out += ",\"image_path\":\"";
+    appendJsonEscaped(out, tile.image_path);
+    out += "\",\"image_slideshow_sec\":";
+    out += String(tile.image_slideshow_sec);
+    out += ",\"navigate_target\":";
+    out += String((tile.type == TILE_FOLDER) ? getNavigateTargetId(tile) : 0);
+    out += "}";
+  };
+
   if (server.hasArg("index")) {
     int index = server.arg("index").toInt();
     if (index < 0 || index >= TILES_PER_GRID) {
@@ -350,113 +466,86 @@ void WebAdminServer::handleGetTiles() {
       return;
     }
 
-    const Tile& tile = grid.tiles[index];
-
-    // Build JSON response for single tile
-    String json = "{";
-    json += "\"type\":" + String((int)tile.type) + ",";
-    json += "\"title\":\"";
-    json += tile.title;
-    json += "\",\"icon_name\":\"";
-    json += tile.icon_name;
-    json += "\",\"bg_color\":" + String(tile.bg_color) + ",";
-    json += "\"sensor_entity\":\"";
-    json += tile.sensor_entity;
-    json += "\",\"sensor_unit\":\"";
-    json += tile.sensor_unit;
-    json += "\",\"sensor_decimals\":";
-    json += String(tile.sensor_decimals == 0xFF ? -1 : (int)tile.sensor_decimals);
-    json += ",\"sensor_value_font\":";
-    json += String(tile.sensor_value_font);
-    json += ",\"sensor_gauge\":";
-    json += String(tile.sensor_gauge_enabled ? 1 : 0);
-    json += ",\"sensor_gauge_min\":";
-    json += String(tile.sensor_gauge_min);
-    json += ",\"sensor_gauge_max\":";
-    json += String(tile.sensor_gauge_max);
-    json += ",\"scene_alias\":\"";
-    json += tile.scene_alias;
-    json += "\",\"key_macro\":\"";
-    json += tile.key_macro;
-    json += "\",\"key_code\":" + String(tile.key_code) + ",";
-    json += "\"key_modifier\":" + String(tile.key_modifier);
-    json += ",\"switch_style\":";
-    json += String((tile.type == TILE_SWITCH && tile.sensor_decimals == 1) ? 1 : 0);
-    json += ",\"image_path\":\"";
-    json += tile.image_path;
-    json += "\",\"image_slideshow_sec\":";
-    json += String(tile.image_slideshow_sec);
-    json += "}";
-
+    String json;
+    appendTileJson(json, grid.tiles[index]);
     server.send(200, "application/json", json);
     return;
   }
 
-  // All tiles request - return array
   String json = "[";
   for (uint8_t i = 0; i < TILES_PER_GRID; i++) {
-    const Tile& tile = grid.tiles[i];
-
     if (i > 0) json += ",";
-    json += "{";
-    json += "\"type\":" + String((int)tile.type) + ",";
-    json += "\"title\":\"";
-    json += tile.title;
-    json += "\",\"icon_name\":\"";
-    json += tile.icon_name;
-    json += "\",\"bg_color\":" + String(tile.bg_color) + ",";
-    json += "\"sensor_entity\":\"";
-    json += tile.sensor_entity;
-    json += "\",\"sensor_unit\":\"";
-    json += tile.sensor_unit;
-    json += "\",\"sensor_decimals\":";
-    json += String(tile.sensor_decimals == 0xFF ? -1 : (int)tile.sensor_decimals);
-    json += ",\"sensor_value_font\":";
-    json += String(tile.sensor_value_font);
-    json += ",\"sensor_gauge\":";
-    json += String(tile.sensor_gauge_enabled ? 1 : 0);
-    json += ",\"sensor_gauge_min\":";
-    json += String(tile.sensor_gauge_min);
-    json += ",\"sensor_gauge_max\":";
-    json += String(tile.sensor_gauge_max);
-    json += ",\"scene_alias\":\"";
-    json += tile.scene_alias;
-    json += "\",\"key_macro\":\"";
-    json += tile.key_macro;
-    json += "\",\"key_code\":" + String(tile.key_code) + ",";
-    json += "\"key_modifier\":" + String(tile.key_modifier);
-    json += ",\"switch_style\":";
-    json += String((tile.type == TILE_SWITCH && tile.sensor_decimals == 1) ? 1 : 0);
-    json += ",\"image_path\":\"";
-    json += tile.image_path;
-    json += "\",\"image_slideshow_sec\":";
-    json += String(tile.image_slideshow_sec);
-    json += "}";
+    appendTileJson(json, grid.tiles[i]);
   }
   json += "]";
 
   server.send(200, "application/json", json);
 }
 
+
 void WebAdminServer::handleSaveTiles() {
   // POST /api/tiles
-  if (!server.hasArg("tab") || !server.hasArg("index") || !server.hasArg("type")) {
+  if (!server.hasArg("index") || !server.hasArg("type")) {
     server.send(400, "application/json", "{\"success\":false,\"error\":\"Missing parameters\"}");
     return;
   }
 
-  String tab = server.arg("tab");
+  uint16_t folder_id = 0;
+  if (!parseFolderIdArg(server, folder_id) || !tileConfig.folderExists(folder_id)) {
+    server.send(404, "application/json", "{\"success\":false,\"error\":\"Folder not found\"}");
+    return;
+  }
+
   int index = server.arg("index").toInt();
   int type = server.arg("type").toInt();
 
-  if ((tab != "home" && tab != "game" && tab != "weather" && tab != "tab0" && tab != "tab1" && tab != "tab2") || index < 0 || index >= TILES_PER_GRID) {
+  if (index < 0 || index >= TILES_PER_GRID) {
     server.send(400, "application/json", "{\"success\":false,\"error\":\"Invalid parameters\"}");
     return;
   }
 
-  // Get current grid (mutable reference)
-  TileGridConfig& grid = (tab == "home" || tab == "tab0") ? tileConfig.getTab0Grid() : ((tab == "game" || tab == "tab1") ? tileConfig.getTab1Grid() : tileConfig.getTab2Grid());
+  TileGridConfig grid{};
+  tileConfig.loadFolderGrid(folder_id, grid);
+
   Tile& tile = grid.tiles[index];
+  Tile previous_tile = tile;
+  const bool is_root = (folder_id == 0);
+  const bool was_settings_tile = is_root && previous_tile.type == TILE_SETTINGS;
+  const bool was_back_tile = (!is_root) && previous_tile.type == TILE_BACK;
+  const bool force_settings_tile = was_settings_tile;
+  const bool force_back_tile = was_back_tile;
+
+  if (force_settings_tile) type = TILE_SETTINGS;
+  if (force_back_tile) type = TILE_BACK;
+
+  if (type == TILE_SETTINGS && !is_root) {
+    server.send(400, "application/json", "{\"success\":false,\"error\":\"Settings tile only allowed in Home\"}");
+    return;
+  }
+  if (type == TILE_BACK && is_root) {
+    server.send(400, "application/json", "{\"success\":false,\"error\":\"Back tile only allowed in folders\"}");
+    return;
+  }
+  if (type == TILE_SETTINGS && !force_settings_tile) {
+    for (size_t i = 0; i < TILES_PER_GRID; ++i) {
+      if (i == static_cast<size_t>(index)) continue;
+      if (grid.tiles[i].type == TILE_SETTINGS) {
+        server.send(409, "application/json", "{\"success\":false,\"error\":\"Settings tile already exists\"}");
+        return;
+      }
+    }
+  }
+  if (type == TILE_BACK && !force_back_tile) {
+    for (size_t i = 0; i < TILES_PER_GRID; ++i) {
+      if (i == static_cast<size_t>(index)) continue;
+      if (grid.tiles[i].type == TILE_BACK) {
+        server.send(409, "application/json", "{\"success\":false,\"error\":\"Back tile already exists\"}");
+        return;
+      }
+    }
+  }
+
+  const bool deleting_folder = (previous_tile.type == TILE_FOLDER && type == TILE_EMPTY);
 
   // Update tile data
   tile.type = static_cast<TileType>(type);
@@ -473,6 +562,45 @@ void WebAdminServer::handleSaveTiles() {
   if (server.hasArg("bg_color")) {
     tile.bg_color = server.arg("bg_color").toInt();
   }
+
+  // Parse layout (0-based col/row, span >= 1)
+  uint8_t col = tile.col;
+  uint8_t row = tile.row;
+  uint8_t span_w = tile.span_w < 1 ? 1 : tile.span_w;
+  uint8_t span_h = tile.span_h < 1 ? 1 : tile.span_h;
+
+  if (server.hasArg("col")) {
+    int raw = server.arg("col").toInt();
+    if (raw < 0) raw = 0;
+    if (raw >= GRID_COLS) raw = GRID_COLS - 1;
+    col = static_cast<uint8_t>(raw);
+  }
+  if (server.hasArg("row")) {
+    int raw = server.arg("row").toInt();
+    if (raw < 0) raw = 0;
+    if (raw >= GRID_ROWS) raw = GRID_ROWS - 1;
+    row = static_cast<uint8_t>(raw);
+  }
+  if (server.hasArg("span_w")) {
+    int raw = server.arg("span_w").toInt();
+    if (raw < 1) raw = 1;
+    if (raw > GRID_COLS) raw = GRID_COLS;
+    span_w = static_cast<uint8_t>(raw);
+  }
+  if (server.hasArg("span_h")) {
+    int raw = server.arg("span_h").toInt();
+    if (raw < 1) raw = 1;
+    if (raw > GRID_ROWS) raw = GRID_ROWS;
+    span_h = static_cast<uint8_t>(raw);
+  }
+
+  if (span_w > GRID_COLS - col) span_w = GRID_COLS - col;
+  if (span_h > GRID_ROWS - row) span_h = GRID_ROWS - row;
+
+  tile.col = col;
+  tile.row = row;
+  tile.span_w = span_w;
+  tile.span_h = span_h;
 
   // Type-specific fields
   if (type == TILE_SENSOR) {
@@ -540,13 +668,43 @@ void WebAdminServer::handleSaveTiles() {
 
     tile.key_code = key_code;
     tile.key_modifier = modifier;
-  } else if (type == TILE_NAVIGATE) {
-    // Element-Pool: sensor_decimals = target tab (0=Tab0, 1=Tab1, 2=Tab2)
-    bool hasArg = server.hasArg("navigate_target");
-    String argValue = hasArg ? server.arg("navigate_target") : "NOT_FOUND";
-    int targetValue = argValue.toInt();
-    Serial.printf("[DEBUG] Navigate Backend - hasArg=%d, argValue='%s', targetValue=%d\n", hasArg, argValue.c_str(), targetValue);
-    tile.sensor_decimals = hasArg ? targetValue : 0;
+  } else if (type == TILE_FOLDER) {
+    uint16_t target_id = 0;
+    int raw = server.hasArg("navigate_target") ? server.arg("navigate_target").toInt() : -1;
+    if (raw <= 0 || !tileConfig.folderExists(static_cast<uint16_t>(raw))) {
+      uint16_t new_id = 0;
+      if (!tileConfig.createFolder(folder_id, tile.title, tile.icon_name, new_id)) {
+        tile = previous_tile;
+        server.send(500, "application/json", "{\"success\":false,\"error\":\"Folder create failed\"}");
+        return;
+      }
+      target_id = new_id;
+    } else {
+      target_id = static_cast<uint16_t>(raw);
+    }
+    tileConfig.updateFolder(target_id, tile.title, tile.icon_name);
+
+    tile.sensor_decimals = 0xFF;
+    setNavigateTargetId(tile, target_id);
+    tile.sensor_value_font = 0;
+    tile.sensor_gauge_enabled = false;
+    tile.sensor_gauge_min = 0;
+    tile.sensor_gauge_max = 100;
+  } else if (type == TILE_SETTINGS) {
+    if (!tile.title.length()) tile.title = "Settings";
+    if (!tile.icon_name.length()) tile.icon_name = "cog";
+    tile.sensor_decimals = 0xFF;
+    tile.key_code = 0;
+    tile.key_modifier = 0;
+    tile.sensor_value_font = 0;
+    tile.sensor_gauge_enabled = false;
+    tile.sensor_gauge_min = 0;
+    tile.sensor_gauge_max = 100;
+  } else if (type == TILE_BACK) {
+    if (!tile.icon_name.length()) tile.icon_name = "arrow-left";
+    tile.sensor_decimals = 0xFF;
+    tile.key_code = 0;
+    tile.key_modifier = 0;
     tile.sensor_value_font = 0;
     tile.sensor_gauge_enabled = false;
     tile.sensor_gauge_min = 0;
@@ -575,63 +733,135 @@ void WebAdminServer::handleSaveTiles() {
     tile.sensor_gauge_enabled = false;
     tile.sensor_gauge_min = 0;
     tile.sensor_gauge_max = 100;
-  } else {
-    tile.sensor_decimals = 0xFF;
-    tile.sensor_value_font = 0;
-    tile.sensor_gauge_enabled = false;
-    tile.sensor_gauge_min = 0;
-    tile.sensor_gauge_max = 100;
   }
 
-  // Save to NVS (nur das betroffene Grid)
-  const char* grid_name = (tab == "home" || tab == "tab0") ? "tab0" : ((tab == "game" || tab == "tab1") ? "tab1" : "tab2");
-  bool success = tileConfig.saveSingleGrid(grid_name, grid);
+  if (deleting_folder) {
+    const uint16_t target_id = getNavigateTargetId(previous_tile);
+    if (target_id != 0) {
+      if (!tileConfig.deleteFolder(target_id)) {
+        tile = previous_tile;
+        server.send(500, "application/json", "{\"success\":false,\"error\":\"Folder delete failed\"}");
+        return;
+      }
+    }
+  }
 
+  if (tile.type != TILE_EMPTY) {
+    TileRect rect{};
+    if (!buildTileRect(col, row, span_w, span_h, rect)) {
+      tile = previous_tile;
+      server.send(400, "application/json", "{\"success\":false,\"error\":\"Invalid layout\"}");
+      return;
+    }
+    if (placementOverlaps(grid, index, rect)) {
+      tile = previous_tile;
+      server.send(409, "application/json", "{\"success\":false,\"error\":\"Tile overlaps\"}");
+      return;
+    }
+  }
+
+  bool success = tileConfig.saveFolderGrid(folder_id, grid);
   if (success) {
-    Serial.printf("[WebAdmin] Tile %s[%d] gespeichert - Type: %d\n", tab.c_str(), index, type);
+    Serial.printf("[WebAdmin] Tile folder %u[%d] gespeichert - Type: %d\n", static_cast<unsigned>(folder_id), index, type);
 
     // Rebuild MQTT dynamic routes for new sensor entities
     mqttReloadDynamicSlots();
     Serial.println("[WebAdmin] MQTT Routes neu aufgebaut");
 
-    // Update only the changed tile on display to avoid flicker
-    GridType gridType = (tab == "home" || tab == "tab0") ? GridType::TAB0 : ((tab == "game" || tab == "tab1") ? GridType::TAB1 : GridType::TAB2);
-    tiles_update_tile(gridType, static_cast<uint8_t>(index));
-    Serial.printf("[WebAdmin] Tile %s[%d] aktualisiert\n", tab.c_str(), index);
+    if (tileConfig.getActiveFolderId() == folder_id) {
+      tiles_request_reload_if_loaded(GridType::TAB0);
+    }
 
     server.send(200, "application/json", "{\"success\":true}");
   } else {
-    Serial.printf("[WebAdmin] Fehler beim Speichern von Tile %s[%d]\n", tab.c_str(), index);
+    Serial.printf("[WebAdmin] Fehler beim Speichern von Tile folder %u[%d]\n", static_cast<unsigned>(folder_id), index);
     server.send(500, "application/json", "{\"success\":false,\"error\":\"Save failed\"}");
   }
 }
 
+
 void WebAdminServer::handleReorderTiles() {
-  // POST /api/tiles/reorder with tab=home|game|weather, from, to
-  if (!server.hasArg("tab") || !server.hasArg("from") || !server.hasArg("to")) {
+  if (!server.hasArg("from") || !server.hasArg("to")) {
     server.send(400, "application/json", "{\"success\":false,\"error\":\"Missing parameters\"}");
     return;
   }
 
-  String tab = server.arg("tab");
+  uint16_t folder_id = 0;
+  if (!parseFolderIdArg(server, folder_id) || !tileConfig.folderExists(folder_id)) {
+    server.send(404, "application/json", "{\"success\":false,\"error\":\"Folder not found\"}");
+    return;
+  }
+
   int from = server.arg("from").toInt();
   int to = server.arg("to").toInt();
 
-  if ((tab != "home" && tab != "game" && tab != "weather" && tab != "tab0" && tab != "tab1" && tab != "tab2") || from < 0 || from >= TILES_PER_GRID || to < 0 || to >= TILES_PER_GRID) {
+  if (from < 0 || from >= TILES_PER_GRID || to < 0 || to >= TILES_PER_GRID) {
     server.send(400, "application/json", "{\"success\":false,\"error\":\"Invalid parameters\"}");
     return;
   }
 
-  TileGridConfig& grid = (tab == "home" || tab == "tab0") ? tileConfig.getTab0Grid() : ((tab == "game" || tab == "tab1") ? tileConfig.getTab1Grid() : tileConfig.getTab2Grid());
-  std::swap(grid.tiles[from], grid.tiles[to]);
+  TileGridConfig grid{};
+  tileConfig.loadFolderGrid(folder_id, grid);
 
-  const char* grid_name = (tab == "home" || tab == "tab0") ? "tab0" : ((tab == "game" || tab == "tab1") ? "tab1" : "tab2");
-  bool success = tileConfig.saveSingleGrid(grid_name, grid);
+  Tile& tile_from = grid.tiles[from];
+  Tile& tile_to = grid.tiles[to];
+
+  int target_col_raw = server.hasArg("target_col") ? server.arg("target_col").toInt() : -1;
+  int target_row_raw = server.hasArg("target_row") ? server.arg("target_row").toInt() : -1;
+  uint8_t target_col = (target_col_raw >= 0 && target_col_raw < GRID_COLS) ? static_cast<uint8_t>(target_col_raw) : tile_to.col;
+  uint8_t target_row = (target_row_raw >= 0 && target_row_raw < GRID_ROWS) ? static_cast<uint8_t>(target_row_raw) : tile_to.row;
+
+  if (target_col >= GRID_COLS || target_row >= GRID_ROWS) {
+    server.send(400, "application/json", "{\"success\":false,\"error\":\"Invalid target\"}");
+    return;
+  }
+
+  const uint8_t from_col = tile_from.col;
+  const uint8_t from_row = tile_from.row;
+
+  if (tile_from.type != TILE_EMPTY) {
+    TileRect rect{};
+    if (!buildTileRect(target_col, target_row,
+                       tile_from.span_w < 1 ? 1 : tile_from.span_w,
+                       tile_from.span_h < 1 ? 1 : tile_from.span_h,
+                       rect)) {
+      server.send(400, "application/json", "{\"success\":false,\"error\":\"Invalid layout\"}");
+      return;
+    }
+    if (placementOverlaps(grid, static_cast<size_t>(from), rect, static_cast<size_t>(to))) {
+      server.send(409, "application/json", "{\"success\":false,\"error\":\"Tile overlaps\"}");
+      return;
+    }
+  }
+
+  if (to != from) {
+    if (tile_to.type != TILE_EMPTY) {
+      TileRect rect{};
+      if (!buildTileRect(from_col, from_row,
+                         tile_to.span_w < 1 ? 1 : tile_to.span_w,
+                         tile_to.span_h < 1 ? 1 : tile_to.span_h,
+                         rect)) {
+        server.send(400, "application/json", "{\"success\":false,\"error\":\"Invalid layout\"}");
+        return;
+      }
+      if (placementOverlaps(grid, static_cast<size_t>(to), rect, static_cast<size_t>(from))) {
+        server.send(409, "application/json", "{\"success\":false,\"error\":\"Tile overlaps\"}");
+        return;
+      }
+    }
+    tile_to.col = from_col;
+    tile_to.row = from_row;
+  }
+
+  tile_from.col = target_col;
+  tile_from.row = target_row;
+
+  bool success = tileConfig.saveFolderGrid(folder_id, grid);
   if (success) {
     mqttReloadDynamicSlots();
-    GridType gridType = (tab == "home" || tab == "tab0") ? GridType::TAB0 : ((tab == "game" || tab == "tab1") ? GridType::TAB1 : GridType::TAB2);
-    tiles_update_tile(gridType, static_cast<uint8_t>(from));
-    tiles_update_tile(gridType, static_cast<uint8_t>(to));
+    if (tileConfig.getActiveFolderId() == folder_id) {
+      tiles_request_reload_if_loaded(GridType::TAB0);
+    }
     server.send(200, "application/json", "{\"success\":true}");
   } else {
     server.send(500, "application/json", "{\"success\":false,\"error\":\"Save failed\"}");
@@ -707,68 +937,24 @@ void WebAdminServer::handleGetSdImages() {
   server.send(200, "application/json", json);
 }
 
-// ========== Tab Names API ==========
+// ========== Folder API ==========
 
-void WebAdminServer::handleGetTabs() {
-  String json = "{\"tabs\":[";
-  json += "{\"id\":0,\"name\":\"";
-  json += tileConfig.getTabName(0);
-  json += "\",\"icon_name\":\"";
-  json += tileConfig.getTabIcon(0);
-  json += "\",\"type\":\"tab0\"},";
-  json += "{\"id\":1,\"name\":\"";
-  json += tileConfig.getTabName(1);
-  json += "\",\"icon_name\":\"";
-  json += tileConfig.getTabIcon(1);
-  json += "\",\"type\":\"tab1\"},";
-  json += "{\"id\":2,\"name\":\"";
-  json += tileConfig.getTabName(2);
-  json += "\",\"icon_name\":\"";
-  json += tileConfig.getTabIcon(2);
-  json += "\",\"type\":\"tab2\"},";
-  json += "{\"id\":3,\"name\":\"";
-  json += tileConfig.getTabName(3);
-  json += "\",\"icon_name\":\"";
-  json += tileConfig.getTabIcon(3);
-  json += "\",\"type\":\"tab3\"}";
-  json += "]}";
+void WebAdminServer::handleGetFolders() {
+  const auto& folders = tileConfig.getFolders();
+  String json = "[";
+  for (size_t i = 0; i < folders.size(); ++i) {
+    const auto& entry = folders[i];
+    if (i > 0) json += ",";
+    json += "{\"id\":";
+    json += String(entry.id);
+    json += ",\"parent_id\":";
+    json += String(entry.parent_id);
+    json += ",\"name\":\"";
+    appendJsonEscaped(json, entry.name);
+    json += "\",\"icon_name\":\"";
+    appendJsonEscaped(json, entry.icon_name);
+    json += "\"}";
+  }
+  json += "]";
   server.send(200, "application/json", json);
-  Serial.println("[WebAdmin] Tab names and icons sent");
-}
-
-void WebAdminServer::handleRenameTab() {
-  if (!server.hasArg("tab") || !server.hasArg("name")) {
-    server.send(400, "application/json", "{\"error\":\"Missing tab or name parameter\"}");
-    return;
-  }
-
-  String tab = server.arg("tab");
-  String name = server.arg("name");
-  String icon_name = server.hasArg("icon_name") ? server.arg("icon_name") : "";
-
-  uint8_t tab_index = 255;
-  if (tab == "home" || tab == "0" || tab == "tab0") {
-    tab_index = 0;
-  } else if (tab == "game" || tab == "1" || tab == "tab1") {
-    tab_index = 1;
-  } else if (tab == "weather" || tab == "2" || tab == "tab2") {
-    tab_index = 2;
-  } else if (tab == "3" || tab == "tab3") {
-    tab_index = 3;
-  }
-
-  if (tab_index == 255) {
-    server.send(400, "application/json", "{\"error\":\"Invalid tab\"}");
-    return;
-  }
-
-  tileConfig.setTabName(tab_index, name.c_str());
-  tileConfig.setTabIcon(tab_index, icon_name.c_str());
-  tileConfig.saveTabNames();
-
-  // Display Live-Update: Tab-Button sofort aktualisieren
-  uiManager.refreshTabButton(tab_index);
-
-  server.send(200, "application/json", "{\"success\":true}");
-  Serial.printf("[WebAdmin] Tab %u renamed to: %s (icon: %s)\n", tab_index, name.c_str(), icon_name.c_str());
 }

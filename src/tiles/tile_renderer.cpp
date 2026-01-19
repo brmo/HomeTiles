@@ -14,7 +14,6 @@
 #include <stdlib.h>
 
 /* === Layout-Konstanten === */
-static const int CARD_H = 150;
 static const int32_t GAUGE_ARC_STEPS = 1000;
 
 /* === Fonts === */
@@ -155,9 +154,8 @@ static uint32_t g_queue_overflow_count = 0;
 
 static uint8_t get_sensor_decimals(GridType grid_type, uint8_t grid_index) {
   if (grid_index >= TILES_PER_GRID) return 0xFF;
-  const TileGridConfig& grid = (grid_type == GridType::TAB1)
-                                 ? tileConfig.getTab1Grid()
-                                 : (grid_type == GridType::TAB2 ? tileConfig.getTab2Grid() : tileConfig.getTab0Grid());
+  (void)grid_type;
+  const TileGridConfig& grid = tileConfig.getActiveGrid();
   return grid.tiles[grid_index].sensor_decimals;
 }
 
@@ -791,9 +789,8 @@ static void update_switch_tile_state(GridType grid_type, uint8_t grid_index, con
     state.color = prev.color;
   }
 
-  const TileGridConfig& grid = (grid_type == GridType::TAB1)
-                                 ? tileConfig.getTab1Grid()
-                                 : (grid_type == GridType::TAB2 ? tileConfig.getTab2Grid() : tileConfig.getTab0Grid());
+  (void)grid_type;
+  const TileGridConfig& grid = tileConfig.getActiveGrid();
   const Tile& tile = grid.tiles[grid_index];
   const String& entity_id = tile.sensor_entity;
   const bool is_light_entity = is_light_entity_id(entity_id);
@@ -889,6 +886,38 @@ static void set_label_style(lv_obj_t* lbl, lv_color_t c, const lv_font_t* f) {
   lv_obj_set_style_text_font(lbl, f, 0);
 }
 
+static void set_tile_grid_cell(lv_obj_t* obj, uint8_t col, uint8_t row, uint8_t span_w, uint8_t span_h) {
+  if (!obj) return;
+  uint8_t w = span_w < 1 ? 1 : span_w;
+  uint8_t h = span_h < 1 ? 1 : span_h;
+  if (w > GRID_COLS - col) w = GRID_COLS - col;
+  if (h > GRID_ROWS - row) h = GRID_ROWS - row;
+  lv_obj_set_grid_cell(obj,
+      LV_GRID_ALIGN_STRETCH, col, w,
+      LV_GRID_ALIGN_STRETCH, row, h);
+}
+
+static bool get_tile_layout(const Tile& tile, uint8_t& col, uint8_t& row, uint8_t& span_w, uint8_t& span_h) {
+  if (tile.col >= GRID_COLS || tile.row >= GRID_ROWS) return false;
+  col = tile.col;
+  row = tile.row;
+  span_w = tile.span_w < 1 ? 1 : tile.span_w;
+  span_h = tile.span_h < 1 ? 1 : tile.span_h;
+  if (span_w > GRID_COLS - col) span_w = GRID_COLS - col;
+  if (span_h > GRID_ROWS - row) span_h = GRID_ROWS - row;
+  return true;
+}
+
+static void mark_occupied(bool occupied[GRID_ROWS][GRID_COLS], uint8_t col, uint8_t row, uint8_t span_w, uint8_t span_h) {
+  for (uint8_t r = row; r < row + span_h; ++r) {
+    for (uint8_t c = col; c < col + span_w; ++c) {
+      if (r < GRID_ROWS && c < GRID_COLS) {
+        occupied[r][c] = true;
+      }
+    }
+  }
+}
+
 void render_tile_grid(lv_obj_t* parent, const TileGridConfig& config, GridType grid_type, scene_publish_cb_t scene_cb) {
   // Memory Monitoring - Vorher
   uint32_t heap_before = ESP.getFreeHeap();
@@ -900,29 +929,62 @@ void render_tile_grid(lv_obj_t* parent, const TileGridConfig& config, GridType g
   clear_sensor_widgets(grid_type);
   clear_switch_widgets(grid_type);
 
-  for (int i = 0; i < TILES_PER_GRID; ++i) {
-    int row = i / 3;
-    int col = i % 3;
-
-    // Fehlerbehandlung: Ein defektes Tile crasht nicht das ganze System
-    if (parent == nullptr) {
-      Serial.println("[TileRenderer] ERROR: Parent ist NULL!");
-      return;
-    }
-
-    Serial.printf("[TileRenderer] Erstelle Tile %d/%d...\n", i + 1, TILES_PER_GRID);
-
-    render_tile(parent, col, row, config.tiles[i], i, grid_type, scene_cb);
-
-    // PROGRESSIVES RENDERING: Pause zwischen Tiles (verhindert Crash)
-    yield();                    // Watchdog füttern
-    delay(10);                 // 10ms Pause für System Processing (120ms total)
-    yield();                   // Nochmal Watchdog
-    // KEIN lv_timer_handler() hier! Sonst werden unfertige Tiles gezeichnet!
-
-    Serial.printf("[TileRenderer] ✓ Tile %d/%d fertig\n", i + 1, TILES_PER_GRID);
+  if (parent == nullptr) {
+    Serial.println("[TileRenderer] ERROR: Parent ist NULL!");
+    return;
   }
 
+  bool occupied[GRID_ROWS][GRID_COLS] = {};
+  struct TileLayout {
+    uint8_t col = 0;
+    uint8_t row = 0;
+    uint8_t span_w = 1;
+    uint8_t span_h = 1;
+    bool valid = false;
+  };
+  TileLayout layouts[TILES_PER_GRID]{};
+
+  for (int i = 0; i < TILES_PER_GRID; ++i) {
+    const Tile& tile = config.tiles[i];
+    if (tile.type == TILE_EMPTY) continue;
+    uint8_t col = 0;
+    uint8_t row = 0;
+    uint8_t span_w = 1;
+    uint8_t span_h = 1;
+    if (!get_tile_layout(tile, col, row, span_w, span_h)) continue;
+    layouts[i] = {col, row, span_w, span_h, true};
+    mark_occupied(occupied, col, row, span_w, span_h);
+  }
+
+  for (uint8_t r = 0; r < GRID_ROWS; ++r) {
+    for (uint8_t c = 0; c < GRID_COLS; ++c) {
+      if (!occupied[r][c]) {
+        render_empty_tile(parent, c, r);
+      }
+    }
+    yield();
+  }
+
+  size_t render_count = 0;
+  for (int i = 0; i < TILES_PER_GRID; ++i) {
+    if (!layouts[i].valid) continue;
+    Serial.printf("[TileRenderer] Erstelle Tile %d/%d...\n", i + 1, TILES_PER_GRID);
+
+    Tile layout_tile = config.tiles[i];
+    layout_tile.col = layouts[i].col;
+    layout_tile.row = layouts[i].row;
+    layout_tile.span_w = layouts[i].span_w;
+    layout_tile.span_h = layouts[i].span_h;
+    render_tile(parent, layouts[i].col, layouts[i].row, layout_tile, i, grid_type, scene_cb);
+
+    if ((++render_count % GRID_COLS) == 0) {
+      yield();
+      delay(1);
+      yield();
+    }
+
+    Serial.printf("[TileRenderer] Tile %d/%d fertig\n", i + 1, TILES_PER_GRID);
+  }
   // Memory Monitoring - Nachher
   uint32_t heap_after = ESP.getFreeHeap();
   uint32_t psram_after = ESP.getFreePsram();
@@ -945,7 +1007,9 @@ lv_obj_t* render_tile(lv_obj_t* parent, int col, int row, const Tile& tile, uint
       return render_scene_tile(parent, col, row, tile, index, scene_cb);
     case TILE_KEY:
       return render_key_tile(parent, col, row, tile, index, grid_type);
-    case TILE_NAVIGATE:
+    case TILE_FOLDER:
+    case TILE_SETTINGS:
+    case TILE_BACK:
       return render_navigate_tile(parent, col, row, tile, index);
     case TILE_SWITCH:
       return render_switch_tile(parent, col, row, tile, index, grid_type);
@@ -998,12 +1062,9 @@ lv_obj_t* render_sensor_tile(lv_obj_t* parent, int col, int row, const Tile& til
   lv_obj_set_style_shadow_width(card, 0, 0);
   lv_obj_set_style_pad_hor(card, 20, 0);
   lv_obj_set_style_pad_ver(card, 24, 0);
-  lv_obj_set_height(card, CARD_H);
   lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
-  lv_obj_set_grid_cell(card,
-      LV_GRID_ALIGN_STRETCH, col, 1,
-      LV_GRID_ALIGN_STRETCH, row, 1);
+  set_tile_grid_cell(card, col, row, tile.span_w, tile.span_h);
 
   // Icon Label (optional, falls icon_name vorhanden) - rechtsbündig
   lv_obj_t* icon_lbl = nullptr;
@@ -1163,12 +1224,9 @@ lv_obj_t* render_scene_tile(lv_obj_t* parent, int col, int row, const Tile& tile
   lv_obj_set_style_bg_color(btn, lv_color_hex(pressed_color), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
   lv_obj_set_style_shadow_width(btn, 0, 0);
-  lv_obj_set_height(btn, CARD_H);
   lv_obj_remove_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
 
-  lv_obj_set_grid_cell(btn,
-      LV_GRID_ALIGN_STRETCH, col, 1,
-      LV_GRID_ALIGN_STRETCH, row, 1);
+  set_tile_grid_cell(btn, col, row, tile.span_w, tile.span_h);
 
   // Icon Label (optional, falls icon_name vorhanden)
   lv_obj_t* icon_lbl = nullptr;
@@ -1261,12 +1319,9 @@ lv_obj_t* render_key_tile(lv_obj_t* parent, int col, int row, const Tile& tile, 
   lv_obj_set_style_bg_color(btn, lv_color_hex(pressed_color), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
   lv_obj_set_style_shadow_width(btn, 0, 0);
-  lv_obj_set_height(btn, CARD_H);
   lv_obj_remove_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
 
-  lv_obj_set_grid_cell(btn,
-      LV_GRID_ALIGN_STRETCH, col, 1,
-      LV_GRID_ALIGN_STRETCH, row, 1);
+  set_tile_grid_cell(btn, col, row, tile.span_w, tile.span_h);
 
   // Icon Label (optional, falls icon_name vorhanden) - wie bei Scene
   lv_obj_t* icon_lbl = nullptr;
@@ -1352,9 +1407,14 @@ lv_obj_t* render_key_tile(lv_obj_t* parent, int col, int row, const Tile& tile, 
 }
 
 struct NavigateEventData {
-  uint8_t target_tab;
+  uint8_t target_kind;
+  uint16_t target_folder_id;
   String title;
 };
+
+static uint16_t navFolderIdFromTile(const Tile& tile) {
+  return static_cast<uint16_t>((static_cast<uint16_t>(tile.key_modifier) << 8) | tile.key_code);
+}
 
 lv_obj_t* render_navigate_tile(lv_obj_t* parent, int col, int row, const Tile& tile, uint8_t index) {
   lv_obj_t* btn = lv_button_create(parent);
@@ -1370,12 +1430,9 @@ lv_obj_t* render_navigate_tile(lv_obj_t* parent, int col, int row, const Tile& t
   lv_obj_set_style_bg_color(btn, lv_color_hex(pressed_color), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
   lv_obj_set_style_shadow_width(btn, 0, 0);
-  lv_obj_set_height(btn, CARD_H);
   lv_obj_remove_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
 
-  lv_obj_set_grid_cell(btn,
-      LV_GRID_ALIGN_STRETCH, col, 1,
-      LV_GRID_ALIGN_STRETCH, row, 1);
+  set_tile_grid_cell(btn, col, row, tile.span_w, tile.span_h);
 
   // Icon Label (optional, falls icon_name vorhanden)
   lv_obj_t* icon_lbl = nullptr;
@@ -1417,43 +1474,61 @@ lv_obj_t* render_navigate_tile(lv_obj_t* parent, int col, int row, const Tile& t
   }
 
   // Event-Handler für Tab-Navigation
-  // Element-Pool: sensor_decimals = target tab (0=Tab0, 1=Tab1, 2=Tab2)
-  uint8_t target_tab = tile.sensor_decimals;
-  Serial.printf("[Navigate] Render Navigation-Tile - sensor_decimals=%d, target_tab=%d\n", tile.sensor_decimals, target_tab);
-
-  if (target_tab <= 2) {  // Nur gültige Tabs
-    Serial.printf("[Navigate] Event-Handler wird registriert für Tab %d\n", target_tab);
-    // Allocate permanent storage for event data
-    NavigateEventData* event_data = new NavigateEventData{
-      target_tab,
-      tile.title
-    };
-
-    lv_obj_add_event_cb(
-        btn,
-        [](lv_event_t* e) {
-          if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-          NavigateEventData* data = static_cast<NavigateEventData*>(lv_event_get_user_data(e));
-          if (data) {
-            Serial.printf("[Tile] Navigation CLICKED! Ziel-Tab: %d, Titel: %s\n", data->target_tab, data->title.c_str());
-            uiManager.switchToTab(data->target_tab);
-            Serial.printf("[Tile] switchToTab(%d) aufgerufen\n", data->target_tab);
-          }
-        },
-        LV_EVENT_CLICKED,
-        event_data);
-    lv_obj_add_event_cb(
-        btn,
-        [](lv_event_t* e) {
-          if (lv_event_get_code(e) != LV_EVENT_DELETE) return;
-          NavigateEventData* data = static_cast<NavigateEventData*>(lv_event_get_user_data(e));
-          delete data;
-        },
-        LV_EVENT_DELETE,
-        event_data);
+  static constexpr uint8_t NAV_KIND_FOLDER = 0;
+  static constexpr uint8_t NAV_KIND_SETTINGS = 1;
+  static constexpr uint8_t NAV_KIND_BACK = 2;
+  uint8_t target_kind = NAV_KIND_FOLDER;
+  uint16_t target_folder = 0;
+  if (tile.type == TILE_SETTINGS) {
+    target_kind = NAV_KIND_SETTINGS;
+  } else if (tile.type == TILE_BACK) {
+    target_kind = NAV_KIND_BACK;
   } else {
-    Serial.printf("[Navigate] WARNUNG: target_tab=%d ist ungültig (>2), Event-Handler NICHT registriert!\n", target_tab);
+    target_kind = NAV_KIND_FOLDER;
+    target_folder = navFolderIdFromTile(tile);
   }
+  Serial.printf("[Navigate] Render Navigation-Tile - kind=%u, folder=%u\n",
+                static_cast<unsigned>(target_kind),
+                static_cast<unsigned>(target_folder));
+
+  NavigateEventData* event_data = new NavigateEventData{
+    target_kind,
+    target_folder,
+    tile.title
+  };
+
+  lv_obj_add_event_cb(
+      btn,
+      [](lv_event_t* e) {
+        if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+        NavigateEventData* data = static_cast<NavigateEventData*>(lv_event_get_user_data(e));
+        if (!data) return;
+        if (data->target_kind == NAV_KIND_SETTINGS) {
+          Serial.printf("[Tile] Navigation CLICKED! Settings, Titel: %s\n", data->title.c_str());
+          uiManager.switchToTab(3);
+        } else if (data->target_kind == NAV_KIND_BACK) {
+          uint16_t current = tileConfig.getActiveFolderId();
+          uint16_t parent = tileConfig.getFolderParent(current);
+          Serial.printf("[Tile] Navigation CLICKED! Back to %u, Titel: %s\n",
+                        static_cast<unsigned>(parent), data->title.c_str());
+          uiManager.switchToFolder(parent);
+        } else {
+          Serial.printf("[Tile] Navigation CLICKED! Folder %u, Titel: %s\n",
+                        static_cast<unsigned>(data->target_folder_id), data->title.c_str());
+          uiManager.switchToFolder(data->target_folder_id);
+        }
+      },
+      LV_EVENT_CLICKED,
+      event_data);
+  lv_obj_add_event_cb(
+      btn,
+      [](lv_event_t* e) {
+        if (lv_event_get_code(e) != LV_EVENT_DELETE) return;
+        NavigateEventData* data = static_cast<NavigateEventData*>(lv_event_get_user_data(e));
+        delete data;
+      },
+      LV_EVENT_DELETE,
+      event_data);
 
   return btn;
 }
@@ -1493,9 +1568,7 @@ static LightPopupInit build_light_popup_init(const SwitchEventData* data) {
   init.is_light = is_light_entity_id(data->entity_id);
 
   // Get icon from tile config
-  const TileGridConfig& grid = (data->grid_type == GridType::TAB1)
-                                 ? tileConfig.getTab1Grid()
-                                 : (data->grid_type == GridType::TAB2 ? tileConfig.getTab2Grid() : tileConfig.getTab0Grid());
+  const TileGridConfig& grid = tileConfig.getActiveGrid();
   if (data->index < TILES_PER_GRID) {
     init.icon_name = grid.tiles[data->index].icon_name;
   }
@@ -1562,12 +1635,9 @@ lv_obj_t* render_switch_tile(lv_obj_t* parent, int col, int row, const Tile& til
     lv_obj_set_style_pad_ver(container, 24, 0);
     lv_obj_add_flag(container, LV_OBJ_FLAG_CLICKABLE);
   }
-  lv_obj_set_height(container, CARD_H);
   lv_obj_remove_flag(container, LV_OBJ_FLAG_SCROLLABLE);
 
-  lv_obj_set_grid_cell(container,
-      LV_GRID_ALIGN_STRETCH, col, 1,
-      LV_GRID_ALIGN_STRETCH, row, 1);
+  set_tile_grid_cell(container, col, row, tile.span_w, tile.span_h);
 
   // Icon Label (optional, falls icon_name vorhanden)
   lv_obj_t* icon_lbl = nullptr;
@@ -1743,12 +1813,9 @@ lv_obj_t* render_image_tile(lv_obj_t* parent, int col, int row, const Tile& tile
   lv_obj_set_style_bg_color(btn, lv_color_hex(pressed_color), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
   lv_obj_set_style_shadow_width(btn, 0, 0);
-  lv_obj_set_height(btn, CARD_H);
   lv_obj_remove_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
 
-  lv_obj_set_grid_cell(btn,
-      LV_GRID_ALIGN_STRETCH, col, 1,
-      LV_GRID_ALIGN_STRETCH, row, 1);
+  set_tile_grid_cell(btn, col, row, tile.span_w, tile.span_h);
 
   // Icon Label (optional)
   lv_obj_t* icon_lbl = nullptr;
@@ -1830,10 +1897,7 @@ lv_obj_t* render_empty_tile(lv_obj_t* parent, int col, int row) {
   lv_obj_t* placeholder = lv_obj_create(parent);
   lv_obj_set_style_bg_opa(placeholder, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(placeholder, 0, 0);
-  lv_obj_set_height(placeholder, CARD_H);
-  lv_obj_set_grid_cell(placeholder,
-      LV_GRID_ALIGN_STRETCH, col, 1,
-      LV_GRID_ALIGN_STRETCH, row, 1);
+  set_tile_grid_cell(placeholder, col, row, 1, 1);
   return placeholder;
 }
 

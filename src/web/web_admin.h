@@ -42,8 +42,7 @@ public:
   void handleGetTiles();
   void handleSaveTiles();
   void handleReorderTiles();
-  void handleGetTabs();
-  void handleRenameTab();
+  void handleGetFolders();
   void handleGetSensorValues();
   void handleGetSdImages();
 

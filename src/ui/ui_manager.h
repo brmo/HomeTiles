@@ -26,6 +26,7 @@ public:
 
   // Tab wechseln (public für Navigation-Tiles)
   void switchToTab(uint8_t index);
+  void switchToFolder(uint16_t folder_id);
 
 private:
   static constexpr uint8_t TAB_COUNT = 4;

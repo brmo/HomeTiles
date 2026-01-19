@@ -13,7 +13,7 @@ enum class GridType : uint8_t {
   TAB2 = 2
 };
 
-// Rendert ein komplettes Tile-Grid (12 Kacheln, 3×4)
+// Rendert ein komplettes Tile-Grid (6x4)
 void render_tile_grid(lv_obj_t* parent, const TileGridConfig& config, GridType grid_type, scene_publish_cb_t scene_cb = nullptr);
 
 // Rendert eine einzelne Kachel basierend auf Typ und liefert das erzeugte Objekt

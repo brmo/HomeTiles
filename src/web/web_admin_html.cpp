@@ -12,59 +12,53 @@
 #include "src/web/web_admin_styles.h"
 #include "src/tiles/tile_config.h"
 
-// Helper function to generate tile tab HTML (unified for all 3 tabs)
+// Helper function to generate tile tab HTML (unified for all folders)
 static void appendTileTabHTML(
     String& html,
-    uint8_t tab_index,
+    uint16_t folder_id,
+    const FolderEntry& folder,
     const TileGridConfig& grid,
     const std::vector<String>& sensorOptions,
     const std::vector<SceneOption>& sceneOptions,
     const std::vector<String>& switchOptions,
-    const std::function<String(const String&, uint8_t)>& formatSensorValue
+    const std::function<String(const String&, uint8_t)>& formatSensorValue,
+    const String& navigateOptionsHtml
 ) {
-  String tab_id = "tab" + String(tab_index);
-  String tab_label = "Tab " + String(tab_index + 1);
+  String tab_id = "folder" + String(folder_id);
 
   html += R"html(
-      <!-- Tile Tab )html";
-  html += String(tab_index);
-  html += R"html( -->
+      <!-- Tile Folder -->
       <div id="tab-tiles-)html";
   html += tab_id;
-  html += R"html(" class="tab-content">
-        <p class="hint">Klicke auf eine Kachel, um sie zu bearbeiten. Waehle den Typ (Sensor/Szene/Key/Navigation/Switch) und passe die Einstellungen an.</p>
-
-        <!-- Tab Settings (Above Grid) -->
-        <div class="tab-settings-top">
-          <h3 style="margin:0 0 12px;font-size:14px;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;">Tab Einstellungen</h3>
-          <label style="font-size:13px;font-weight:600;color:#475569;display:block;margin-bottom:6px;">Tab-Name</label>
-          <input type="text" id=")html";
+  html += R"html(" class="tab-content tile-tab" data-tab-id=")html";
   html += tab_id;
-  html += R"html(_tab_name" placeholder="Leer = Nummer, z.B. Home" value=")html";
-  html += tileConfig.getTabName(tab_index);
-  html += R"html(" oninput="debouncedSaveTabName()html";
-  html += String(tab_index);
-  html += R"html(, this.value)" style="width:100%;max-width:300px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;box-sizing:border-box;margin-bottom:12px;">
-          <label style="font-size:13px;font-weight:600;color:#475569;display:block;margin-bottom:6px;">Tab-Icon</label>
-          <input type="text" id=")html";
-  html += tab_id;
-  html += R"html(_tab_icon" placeholder="Leer = kein Icon, z.B. home" value=")html";
-  html += tileConfig.getTabIcon(tab_index);
-  html += R"html(" oninput="debouncedSaveTabIcon()html";
-  html += String(tab_index);
-  html += R"html(, this.value)" style="width:100%;max-width:300px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;box-sizing:border-box;">
-        </div>
+  html += R"html(" data-folder-id=")html";
+  html += String(folder_id);
+  html += R"html(" data-folder-parent=")html";
+  html += String(folder.parent_id);
+  html += R"html(" data-folder-name=")html";
+  appendHtmlEscaped(html, folder.name);
+  html += R"html(" data-folder-icon=")html";
+  appendHtmlEscaped(html, folder.icon_name);
+  html += R"html(">
+        <p class="hint">Klicke auf eine Kachel, um sie zu bearbeiten. Waehle den Typ (Sensor/Szene/Key/Ordner/Settings/Switch/Bild) und passe die Einstellungen an.</p>
 
         <div class="tile-editor">
           <!-- Grid Preview -->
           <div class="tile-grid">
 )html";
 
-  // Generate 12 tiles
-  for (int i = 0; i < 12; i++) {
+  // Generate tiles
+  for (size_t i = 0; i < TILES_PER_GRID; ++i) {
     const Tile& tile = grid.tiles[i];
     String cssClass = "tile";
     String tileStyle = "";
+    uint8_t col = (tile.col < GRID_COLS) ? tile.col : 0;
+    uint8_t row = (tile.row < GRID_ROWS) ? tile.row : 0;
+    uint8_t span_w = (tile.span_w < 1) ? 1 : tile.span_w;
+    uint8_t span_h = (tile.span_h < 1) ? 1 : tile.span_h;
+    if (span_w > GRID_COLS - col) span_w = GRID_COLS - col;
+    if (span_h > GRID_ROWS - row) span_h = GRID_ROWS - row;
 
     if (tile.type == TILE_EMPTY) {
       cssClass += " empty";
@@ -98,7 +92,7 @@ static void appendTileTabHTML(
       } else {
         tileStyle = "background:#353535";
       }
-    } else if (tile.type == TILE_NAVIGATE) {
+    } else if (tile.type == TILE_FOLDER || tile.type == TILE_SETTINGS || tile.type == TILE_BACK) {
       cssClass += " navigate";
       if (tile.bg_color != 0) {
         char colorHex[8];
@@ -130,10 +124,28 @@ static void appendTileTabHTML(
       }
     }
 
+    tileStyle += ";grid-column:";
+    tileStyle += String(static_cast<unsigned>(col + 1));
+    tileStyle += " / span ";
+    tileStyle += String(static_cast<unsigned>(span_w));
+    tileStyle += ";grid-row:";
+    tileStyle += String(static_cast<unsigned>(row + 1));
+    tileStyle += " / span ";
+    tileStyle += String(static_cast<unsigned>(span_h));
+    tileStyle += ";";
+
     html += "<div class=\"";
     html += cssClass;
     html += "\" data-index=\"";
     html += String(i);
+    html += "\" data-col=\"";
+    html += String(static_cast<unsigned>(col));
+    html += "\" data-row=\"";
+    html += String(static_cast<unsigned>(row));
+    html += "\" data-span-w=\"";
+    html += String(static_cast<unsigned>(span_w));
+    html += "\" data-span-h=\"";
+    html += String(static_cast<unsigned>(span_h));
     html += "\" draggable=\"true\" id=\"";
     html += tab_id;
     html += "-tile-";
@@ -221,9 +233,11 @@ static void appendTileTabHTML(
               <option value="1">Sensor</option>
               <option value="2">Szene</option>
               <option value="3">Key</option>
-              <option value="4">Navigation</option>
+              <option value="4">Ordner</option>
               <option value="5">Schalter</option>
               <option value="6">Bild</option>
+              <option value="7">Settings</option>
+              <option value="8">Zurueck</option>
             </select>
 
             <label>Titel</label>
@@ -243,6 +257,33 @@ static void appendTileTabHTML(
             <input type="color" id=")html";
   html += tab_id;
   html += R"html(_tile_color" value="#2A2A2A" style="height:40px;">
+
+            <div class="tile-layout">
+              <div class="layout-field">
+                <label>Spalte (1-6)</label>
+                <input type="number" id=")html";
+  html += tab_id;
+  html += R"html(_tile_col" min="1" max="6" step="1" value="1">
+              </div>
+              <div class="layout-field">
+                <label>Zeile (1-4)</label>
+                <input type="number" id=")html";
+  html += tab_id;
+  html += R"html(_tile_row" min="1" max="4" step="1" value="1">
+              </div>
+              <div class="layout-field">
+                <label>Breite (Zellen)</label>
+                <input type="number" id=")html";
+  html += tab_id;
+  html += R"html(_tile_span_w" min="1" max="6" step="1" value="1">
+              </div>
+              <div class="layout-field">
+                <label>Hoehe (Zellen)</label>
+                <input type="number" id=")html";
+  html += tab_id;
+  html += R"html(_tile_span_h" min="1" max="4" step="1" value="1">
+              </div>
+            </div>
 
             <!-- Sensor Fields -->
             <div id=")html";
@@ -341,20 +382,18 @@ static void appendTileTabHTML(
             <div id=")html";
   html += tab_id;
   html += R"html(_navigate_fields" class="type-fields">
-              <label>Ziel-Tab</label>
+              <label>Ziel-Ordner</label>
               <select id=")html";
   html += tab_id;
   html += R"html(_navigate_target">
-                <option value="0">)html";
-  html += tileConfig.getTabName(0);
-  html += R"html(</option>
-                <option value="1">)html";
-  html += tileConfig.getTabName(1);
-  html += R"html(</option>
-                <option value="2">)html";
-  html += tileConfig.getTabName(2);
-  html += R"html(</option>
+                <option value="0">Neuer Ordner</option>
+)html";
+  html += navigateOptionsHtml;
+  html += R"html(
               </select>
+              <div id=")html";
+  html += tab_id;
+  html += R"html(_navigate_note" style="font-size:11px;color:#64748b;margin-top:6px;"></div>
             </div>
 
             <!-- Switch Fields -->
@@ -430,7 +469,7 @@ static void appendTileTabHTML(
               </div>
             </div>
             <div style="margin-top:12px;border-top:1px solid #e2e8f0;padding-top:10px;">
-              <div style="font-size:12px;color:#64748b;margin-bottom:6px;">Import / Export (alle Tabs & Kacheln)</div>
+              <div style="font-size:12px;color:#64748b;margin-bottom:6px;">Import / Export (alle Ordner & Kacheln)</div>
               <div style="display:flex;gap:8px;flex-wrap:wrap;">
                 <button type="button" class="btn" style="padding:8px 12px;font-size:12px;min-width:110px;" onclick="exportTilesConfig()">Export</button>
                 <input type="file" id=")html";
@@ -442,7 +481,7 @@ static void appendTileTabHTML(
   html += tab_id;
   html += R"html(')">Import</button>
               </div>
-              <div style="font-size:11px;color:#94a3b8;margin-top:6px;">Import ueberschreibt alle Kacheln & Tab-Namen.</div>
+              <div style="font-size:11px;color:#94a3b8;margin-top:6px;">Import ueberschreibt alle Kacheln der vorhandenen Ordner.</div>
             </div>
             </div><!-- /tile-specific-settings -->
           </div>
@@ -493,6 +532,23 @@ String WebAdminServer::getAdminPage() {
     return String(f, static_cast<unsigned int>(d));
   };
 
+  const auto& folders = tileConfig.getFolders();
+  String navigateOptionsHtml;
+  for (const auto& entry : folders) {
+    if (entry.id == 0) continue;
+    String label = String(entry.name);
+    label.trim();
+    if (!label.length()) {
+      label = "Ordner ";
+      label += String(entry.id);
+    }
+    navigateOptionsHtml += "<option value=\"";
+    navigateOptionsHtml += String(entry.id);
+    navigateOptionsHtml += "\">";
+    appendHtmlEscaped(navigateOptionsHtml, label);
+    navigateOptionsHtml += "</option>\n";
+  }
+
   String html;
   html.reserve(12000);
   html += R"html(
@@ -517,142 +573,57 @@ String WebAdminServer::getAdminPage() {
 
       <!-- Tab Navigation -->
       <div class="tab-nav">
-        <button class="tab-btn" onclick="switchTab('tab-tiles-tab0')">)html";
+)html";
 
-  // Tab 0 - Icon + Name (oder Fallback "1")
-  String icon0 = String(tileConfig.getTabIcon(0));
-  String name0 = String(tileConfig.getTabName(0));
-  bool has_icon0 = (icon0.length() > 0);
-  bool has_name0 = (name0.length() > 0);
-
-  if (has_icon0) {
-    icon0.trim();
-    icon0.toLowerCase();
-    if (icon0.startsWith("mdi:")) icon0 = icon0.substring(4);
-    else if (icon0.startsWith("mdi-")) icon0 = icon0.substring(4);
+  for (const auto& entry : folders) {
+    String tab_id = "folder" + String(entry.id);
+    String icon = String(entry.icon_name);
+    String name = String(entry.name);
+    icon.trim();
+    icon.toLowerCase();
+    if (icon.startsWith("mdi:")) icon = icon.substring(4);
+    else if (icon.startsWith("mdi-")) icon = icon.substring(4);
+    name.trim();
+    if (!name.length()) {
+      name = (entry.id == 0) ? "Home" : String("Ordner ") + String(entry.id);
+    }
 
     html += R"html(
+        <button class="tab-btn" onclick="switchTab('tab-tiles-)html";
+    html += tab_id;
+    html += R"html(')">)html";
+    if (icon.length()) {
+      html += R"html(
           <i class="mdi mdi-)html";
-    html += icon0;
-    html += R"html(" style="font-size:24px;"></i>)html";
-  }
-  html += R"html(
-          <span id="tab-name-0" style="font-size:14px;font-weight:600;">)html";
-  if (has_name0) {
-    html += name0;
-  } else if (!has_icon0) {
-    html += "1";  // Fallback
-  }
-  html += R"html(</span>
+      html += icon;
+      html += R"html(" style="font-size:24px;"></i>)html";
+    }
+    html += R"html(
+          <span style="font-size:14px;font-weight:600;">)html";
+    appendHtmlEscaped(html, name);
+    html += R"html(</span>
         </button>
-        <button class="tab-btn" onclick="switchTab('tab-tiles-tab1')">)html";
-
-  // Tab 1 - Icon + Name (oder Fallback "2")
-  String icon1 = String(tileConfig.getTabIcon(1));
-  String name1 = String(tileConfig.getTabName(1));
-  bool has_icon1 = (icon1.length() > 0);
-  bool has_name1 = (name1.length() > 0);
-
-  if (has_icon1) {
-    icon1.trim();
-    icon1.toLowerCase();
-    if (icon1.startsWith("mdi:")) icon1 = icon1.substring(4);
-    else if (icon1.startsWith("mdi-")) icon1 = icon1.substring(4);
-
-    html += R"html(
-          <i class="mdi mdi-)html";
-    html += icon1;
-    html += R"html(" style="font-size:24px;"></i>)html";
+)html";
   }
+
   html += R"html(
-          <span id="tab-name-1" style="font-size:14px;font-weight:600;">)html";
-  if (has_name1) {
-    html += name1;
-  } else if (!has_icon1) {
-    html += "2";  // Fallback
-  }
-  html += R"html(</span>
-        </button>
-        <button class="tab-btn" onclick="switchTab('tab-tiles-tab2')">)html";
-
-  // Tab 2 - Icon + Name (oder Fallback "3")
-  String icon2 = String(tileConfig.getTabIcon(2));
-  String name2 = String(tileConfig.getTabName(2));
-  bool has_icon2 = (icon2.length() > 0);
-  bool has_name2 = (name2.length() > 0);
-
-  if (has_icon2) {
-    icon2.trim();
-    icon2.toLowerCase();
-    if (icon2.startsWith("mdi:")) icon2 = icon2.substring(4);
-    else if (icon2.startsWith("mdi-")) icon2 = icon2.substring(4);
-
-    html += R"html(
-          <i class="mdi mdi-)html";
-    html += icon2;
-    html += R"html(" style="font-size:24px;"></i>)html";
-  }
-  html += R"html(
-          <span id="tab-name-2" style="font-size:14px;font-weight:600;">)html";
-  if (has_name2) {
-    html += name2;
-  } else if (!has_icon2) {
-    html += "3";  // Fallback
-  }
-  html += R"html(</span>
-        </button>
-        <button class="tab-btn" onclick="switchTab('tab-network')">)html";
-
-  // Tab 3 (Settings) - Icon + Name (oder Fallback "Settings")
-  String icon3 = String(tileConfig.getTabIcon(3));
-  String name3 = String(tileConfig.getTabName(3));
-  bool has_icon3 = (icon3.length() > 0);
-  bool has_name3 = (name3.length() > 0);
-
-  if (has_icon3) {
-    icon3.trim();
-    icon3.toLowerCase();
-    if (icon3.startsWith("mdi:")) icon3 = icon3.substring(4);
-    else if (icon3.startsWith("mdi-")) icon3 = icon3.substring(4);
-
-    html += R"html(
-          <i class="mdi mdi-)html";
-    html += icon3;
-    html += R"html(" style="font-size:24px;"></i>)html";
-  }
-  html += R"html(
-          <span id="tab-name-3" style="font-size:14px;font-weight:600;">)html";
-  if (has_name3) {
-    html += name3;
-  } else if (!has_icon3) {
-    html += "Settings";  // Fallback
-  }
-  html += R"html(</span>
+        <button class="tab-btn" onclick="switchTab('tab-network')">
+          <i class="mdi mdi-cog" style="font-size:24px;"></i>
+          <span style="font-size:14px;font-weight:600;">Settings</span>
         </button>
       </div>
 )html";
 
-  // Generate three unified tile tabs
-  appendTileTabHTML(html, 0, tileConfig.getTab0Grid(), sensorOptions, sceneOptions, switchOptions, formatSensorValue);
-  appendTileTabHTML(html, 1, tileConfig.getTab1Grid(), sensorOptions, sceneOptions, switchOptions, formatSensorValue);
-  appendTileTabHTML(html, 2, tileConfig.getTab2Grid(), sensorOptions, sceneOptions, switchOptions, formatSensorValue);
+  // Generate folder tile tabs
+  for (const auto& entry : folders) {
+    TileGridConfig grid{};
+    tileConfig.loadFolderGrid(entry.id, grid);
+    appendTileTabHTML(html, entry.id, entry, grid, sensorOptions, sceneOptions, switchOptions, formatSensorValue, navigateOptionsHtml);
+  }
 
   html += R"html(
       <!-- Tab 3: Settings (Network/MQTT Configuration) -->
       <div id="tab-network" class="tab-content">
-        <!-- Tab Settings (Above Content) -->
-        <div class="tab-settings-top">
-          <h3 style="margin:0 0 12px;font-size:14px;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;">Tab Einstellungen</h3>
-          <label style="font-size:13px;font-weight:600;color:#475569;display:block;margin-bottom:6px;">Tab-Name</label>
-          <input type="text" id="tab3_tab_name" placeholder="Leer = Settings" value=")html";
-  html += tileConfig.getTabName(3);
-  html += R"html(" oninput="debouncedSaveTabName(3, this.value)" style="width:100%;max-width:300px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;box-sizing:border-box;margin-bottom:12px;">
-          <label style="font-size:13px;font-weight:600;color:#475569;display:block;margin-bottom:6px;">Tab-Icon</label>
-          <input type="text" id="tab3_tab_icon" placeholder="Leer = kein Icon, z.B. cog" value=")html";
-  html += tileConfig.getTabIcon(3);
-  html += R"html(" oninput="debouncedSaveTabIcon(3, this.value)" style="width:100%;max-width:300px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;box-sizing:border-box;margin-bottom:20px;">
-        </div>
-
         <div class="status">
           <div>
             <div class="status-label">WiFi Status</div>

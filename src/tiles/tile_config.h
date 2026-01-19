@@ -2,17 +2,29 @@
 #define TILE_CONFIG_H
 
 #include <Arduino.h>
+#include <vector>
 
-static constexpr size_t TILES_PER_GRID = 12;
+// Grid Layout: 6 columns x 4 rows = 24 tiles max
+static constexpr uint8_t GRID_COLS = 6;
+static constexpr uint8_t GRID_ROWS = 4;
+static constexpr size_t TILES_PER_GRID = GRID_COLS * GRID_ROWS;
+
+// Grid Dimensions (pixels)
+static constexpr int GRID_GAP = 24;       // Gap between tiles
+static constexpr int GRID_PAD = 16;       // Edge padding
+static constexpr int GRID_CELL_W = 188;   // Single cell width
+static constexpr int GRID_CELL_H = 154;   // Single cell height
 
 enum TileType : uint8_t {
   TILE_EMPTY = 0,
   TILE_SENSOR = 1,
   TILE_SCENE = 2,
   TILE_KEY = 3,
-  TILE_NAVIGATE = 4,
+  TILE_FOLDER = 4,
   TILE_SWITCH = 5,
-  TILE_IMAGE = 6
+  TILE_IMAGE = 6,
+  TILE_SETTINGS = 7,
+  TILE_BACK = 8
 };
 
 struct Tile {
@@ -20,6 +32,12 @@ struct Tile {
   String title;              // Für alle Typen
   String icon_name;          // MDI Icon Name (z.B. "home", "thermometer")
   uint32_t bg_color;         // Hintergrundfarbe (0 = Standard)
+
+  // Grid Position & Size
+  uint8_t col;               // Column (0-5)
+  uint8_t row;               // Row (0-3)
+  uint8_t span_w;            // Width in cells (1-6)
+  uint8_t span_h;            // Height in cells (1-4)
 
   // Sensor-spezifisch
   String sensor_entity;      // HA Entity ID (z.B. "sensor.temperature")
@@ -45,6 +63,10 @@ struct Tile {
   Tile()
       : type(TILE_EMPTY),
         bg_color(0),
+        col(0),
+        row(0),
+        span_w(1),
+        span_h(1),
         sensor_decimals(0xFF),  // 0xFF = keine Rundung, Originalwert anzeigen
         sensor_value_font(0),
         sensor_gauge_enabled(false),
@@ -59,14 +81,11 @@ struct TileGridConfig {
   Tile tiles[TILES_PER_GRID];
 };
 
-struct TabConfig {
-  char name[32];      // Custom tab name (empty = use default)
-  char icon_name[32]; // MDI Icon Name (empty = no icon)
-
-  TabConfig() {
-    name[0] = '\0';      // Empty = use default
-    icon_name[0] = '\0'; // Empty = no icon
-  }
+struct FolderEntry {
+  uint16_t id;
+  uint16_t parent_id;
+  char name[32];
+  char icon_name[32];
 };
 
 class TileConfig {
@@ -74,37 +93,38 @@ public:
   TileConfig();
 
   bool load();
-  bool save(const TileGridConfig& tab0, const TileGridConfig& tab1, const TileGridConfig& tab2);
-  bool saveSingleGrid(const char* grid_name, const TileGridConfig& grid);
+  bool loadFolderGrid(uint16_t folder_id, TileGridConfig& out);
+  bool saveFolderGrid(uint16_t folder_id, const TileGridConfig& grid);
 
-  const TileGridConfig& getTab0Grid() const { return tab0_grid; }
-  const TileGridConfig& getTab1Grid() const { return tab1_grid; }
-  const TileGridConfig& getTab2Grid() const { return tab2_grid; }
+  bool setActiveFolder(uint16_t folder_id);
+  uint16_t getActiveFolderId() const { return active_folder_id; }
+  const TileGridConfig& getActiveGrid() const { return active_grid; }
+  TileGridConfig& getActiveGrid() { return active_grid; }
 
-  TileGridConfig& getTab0Grid() { return tab0_grid; }
-  TileGridConfig& getTab1Grid() { return tab1_grid; }
-  TileGridConfig& getTab2Grid() { return tab2_grid; }
-
-  // Tab names (configurable via web interface)
-  const char* getTabName(uint8_t tab_index) const;
-  void setTabName(uint8_t tab_index, const char* name);
-
-  // Tab icons (configurable via web interface)
-  const char* getTabIcon(uint8_t tab_index) const;
-  void setTabIcon(uint8_t tab_index, const char* icon_name);
-
-  bool loadTabNames();
-  bool saveTabNames();
+  const FolderEntry* getFolder(uint16_t folder_id) const;
+  uint16_t getFolderParent(uint16_t folder_id) const;
+  const std::vector<FolderEntry>& getFolders() const { return folders; }
+  bool folderExists(uint16_t folder_id) const;
+  bool createFolder(uint16_t parent_id, const String& name, const String& icon, uint16_t& out_id);
+  bool updateFolder(uint16_t folder_id, const String& name, const String& icon);
+  bool deleteFolder(uint16_t folder_id);
 
 private:
-  TileGridConfig tab0_grid;
-  TileGridConfig tab1_grid;
-  TileGridConfig tab2_grid;
+  static constexpr uint16_t kRootFolderId = 0;
+  static constexpr uint16_t kInvalidFolderId = 0xFFFF;
 
-  TabConfig tab_configs[4];  // [0]=Tab0, [1]=Tab1, [2]=Tab2, [3]=Tab3(Settings)
+  TileGridConfig active_grid;
+  uint16_t active_folder_id = kRootFolderId;
+  std::vector<FolderEntry> folders;
 
-  bool loadGrid(const char* prefix, TileGridConfig& grid);
-  bool saveGrid(const char* prefix, const TileGridConfig& grid);
+  bool loadFolders();
+  bool saveFolders() const;
+  bool loadGrid(uint16_t folder_id, TileGridConfig& grid);
+  bool saveGrid(uint16_t folder_id, const TileGridConfig& grid);
+  uint16_t nextFolderId() const;
+  void ensureRootFolder();
+  bool ensureSettingsTile(TileGridConfig& grid);
+  bool ensureBackTile(uint16_t folder_id, TileGridConfig& grid);
 };
 
 extern TileConfig tileConfig;

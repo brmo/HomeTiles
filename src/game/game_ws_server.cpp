@@ -49,8 +49,6 @@ static bool handle_sensor_update_message(const uint8_t* payload, size_t length) 
     haBridgeConfig.registerSensorMeta(entity_id, name, unit);
     haBridgeConfig.updateSensorValue(entity_id, value);
     tiles_update_sensor_by_entity(GridType::TAB0, entity_id, value.c_str());
-    tiles_update_sensor_by_entity(GridType::TAB1, entity_id, value.c_str());
-    tiles_update_sensor_by_entity(GridType::TAB2, entity_id, value.c_str());
   }
 
   return true;

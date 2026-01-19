@@ -16,158 +16,199 @@ void appendAdminScripts(String& html) {
     try { localStorage.setItem('activeAdminTab', tabName); } catch (e) {}
   }
 
-  // Gespeicherte Tab-Daten (verhindert Überschreiben bei schnellem Tippen)
-  const savedTabData = {
-    0: {name: '', icon: ''},
-    1: {name: '', icon: ''},
-    2: {name: '', icon: ''},
-    3: {name: '', icon: ''}
-  };
+  // Tile Editor State
+  const GRID_COLS = 6;
+  const GRID_ROWS = 4;
+  const tileTabs = [];
+  const folderByTab = {};
+  const tabByFolder = {};
+  let currentTileTab = '';
+  let currentTileIndex = -1;
+  let drafts = {};
+  let tilesData = {};
+  let autoSaveTimers = {};
 
-  // Initialisierung beim Laden der Seite
-  function initSavedTabData() {
-    console.log('[DEBUG] initSavedTabData() called');
-    for (let i = 0; i < 4; i++) {
-      const nameInput = document.getElementById('tab' + i + '_tab_name');
-      const iconInput = document.getElementById('tab' + i + '_tab_icon');
-      if (nameInput) savedTabData[i].name = nameInput.value.trim();
-      if (iconInput) savedTabData[i].icon = iconInput.value.trim();
-      console.log('[DEBUG] Tab ' + i + ' initialized: name="' + savedTabData[i].name + '", icon="' + savedTabData[i].icon + '"');
-    }
-  }
-
-  // Debounce Helper (500ms Verzögerung) - NUR EINER für beide Felder!
-  const tabSaveTimers = {};
-
-  function debouncedSaveTab(tabIndex) {
-    // Cache SOFORT aktualisieren aus Input-Feldern
-    const nameInput = document.getElementById('tab' + tabIndex + '_tab_name');
-    const iconInput = document.getElementById('tab' + tabIndex + '_tab_icon');
-
-    console.log('[DEBUG] debouncedSaveTab(' + tabIndex + '): nameInput found=' + (nameInput !== null) + ', value="' + (nameInput ? nameInput.value : 'NULL') + '"');
-    console.log('[DEBUG] debouncedSaveTab(' + tabIndex + '): iconInput found=' + (iconInput !== null) + ', value="' + (iconInput ? iconInput.value : 'NULL') + '"');
-
-    savedTabData[tabIndex].name = nameInput ? nameInput.value.trim() : '';
-    savedTabData[tabIndex].icon = iconInput ? iconInput.value.trim() : '';
-    console.log('[DEBUG] debouncedSaveTab(' + tabIndex + '): Cache updated to name="' + savedTabData[tabIndex].name + '", icon="' + savedTabData[tabIndex].icon + '"');
-
-    // Clear existing timer for this tab
-    if (tabSaveTimers[tabIndex]) {
-      clearTimeout(tabSaveTimers[tabIndex]);
-    }
-    // Set new timer - EINE Funktion für beide Felder!
-    tabSaveTimers[tabIndex] = setTimeout(() => {
-      saveTab(tabIndex);
-    }, 500);
-  }
-
-  // Diese Funktionen rufen die gemeinsame debounced Funktion auf
-  function debouncedSaveTabName(tabIndex, newName) {
-    debouncedSaveTab(tabIndex);
-  }
-
-  function debouncedSaveTabIcon(tabIndex, newIcon) {
-    debouncedSaveTab(tabIndex);
-  }
-
-  // EINE gemeinsame Save-Funktion für beide Felder (wie bei Tiles!)
-  function saveTab(tabIndex) {
-    const tabName = savedTabData[tabIndex].name;
-    const iconName = savedTabData[tabIndex].icon;
-    console.log('[DEBUG] saveTab(' + tabIndex + '): name="' + tabName + '", icon="' + iconName + '"');
-
-    fetch('/api/tabs/rename', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-      body: 'tab=' + tabIndex + '&name=' + encodeURIComponent(tabName) + '&icon_name=' + encodeURIComponent(iconName)
-    })
-    .then(r => r.json())
-    .then(data => {
-      if (data.success) {
-        updateTabButton(tabIndex, tabName, iconName);
-        console.log('Tab ' + tabIndex + ' saved: name="' + tabName + '", icon="' + iconName + '"');
-      } else {
-        console.error('Error updating tab:', data.error);
-        alert('Fehler beim Aktualisieren: ' + (data.error || 'Unbekannt'));
+  function initTileTabs() {
+    tileTabs.length = 0;
+    Object.keys(folderByTab).forEach(k => delete folderByTab[k]);
+    Object.keys(tabByFolder).forEach(k => delete tabByFolder[k]);
+    document.querySelectorAll('.tile-tab').forEach(tabEl => {
+      const tabId = tabEl.dataset.tabId || '';
+      if (!tabId) return;
+      tileTabs.push(tabId);
+      const folderId = parseInt(tabEl.dataset.folderId, 10);
+      if (!isNaN(folderId)) {
+        folderByTab[tabId] = folderId;
+        tabByFolder[folderId] = tabId;
       }
-    })
-    .catch(e => {
-      console.error('Error updating tab:', e);
-      alert('Fehler beim Aktualisieren: ' + e);
+      if (!drafts[tabId]) drafts[tabId] = {};
+      if (!tilesData[tabId]) tilesData[tabId] = [];
+      if (!autoSaveTimers[tabId]) autoSaveTimers[tabId] = null;
+    });
+    if (!currentTileTab && tileTabs.length) currentTileTab = tileTabs[0];
+  }
+
+  function getFolderIdForTab(tab) {
+    return folderByTab[tab];
+  }
+
+  function getTilesData(tab) {
+    return tilesData[tab] || [];
+  }
+  function clampInt(value, min, max, fallback) {
+    const v = parseInt(value, 10);
+    if (isNaN(v)) return fallback !== undefined ? fallback : min;
+    if (v < min) return min;
+    if (v > max) return max;
+    return v;
+  }
+
+  function normalizeTileLayout(tile, index) {
+    const fallbackCol = index % GRID_COLS;
+    const fallbackRow = Math.floor(index / GRID_COLS);
+    const col = clampInt(tile?.col, 0, GRID_COLS - 1, fallbackCol);
+    const row = clampInt(tile?.row, 0, GRID_ROWS - 1, fallbackRow);
+    let spanW = clampInt(tile?.span_w, 1, GRID_COLS, 1);
+    let spanH = clampInt(tile?.span_h, 1, GRID_ROWS, 1);
+    if (spanW > GRID_COLS - col) spanW = GRID_COLS - col;
+    if (spanH > GRID_ROWS - row) spanH = GRID_ROWS - row;
+    return { col, row, span_w: spanW, span_h: spanH };
+  }
+
+  function setTileGridPosition(el, col, row, spanW, spanH) {
+    if (!el) return;
+    el.style.gridColumn = (col + 1) + ' / span ' + spanW;
+    el.style.gridRow = (row + 1) + ' / span ' + spanH;
+    el.dataset.col = String(col);
+    el.dataset.row = String(row);
+    el.dataset.spanW = String(spanW);
+    el.dataset.spanH = String(spanH);
+  }
+
+  function getTileElementLayout(tab, index) {
+    const el = document.getElementById(tab + '-tile-' + index);
+    if (!el) return null;
+    const col = clampInt(el.dataset.col, 0, GRID_COLS - 1, null);
+    const row = clampInt(el.dataset.row, 0, GRID_ROWS - 1, null);
+    const spanW = clampInt(el.dataset.spanW, 1, GRID_COLS, null);
+    const spanH = clampInt(el.dataset.spanH, 1, GRID_ROWS, null);
+    if (col === null || row === null || spanW === null || spanH === null) return null;
+    return { col, row, span_w: spanW, span_h: spanH };
+  }
+
+  function layoutTiles(tab, tiles) {
+    if (!Array.isArray(tiles)) return;
+    const occupied = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(false));
+    const emptyIndices = [];
+
+    tiles.forEach((tile, idx) => {
+      const typeNum = Number(tile?.type);
+      if (!tile || isNaN(typeNum) || typeNum === 0) {
+        emptyIndices.push(idx);
+        return;
+      }
+      const layout = normalizeTileLayout(tile, idx);
+      const el = document.getElementById(tab + '-tile-' + idx);
+      if (el) {
+        setTileGridPosition(el, layout.col, layout.row, layout.span_w, layout.span_h);
+        el.style.display = '';
+      }
+      for (let r = layout.row; r < layout.row + layout.span_h; r++) {
+        for (let c = layout.col; c < layout.col + layout.span_w; c++) {
+          if (r < GRID_ROWS && c < GRID_COLS) occupied[r][c] = true;
+        }
+      }
+    });
+
+    const freeCells = [];
+    for (let r = 0; r < GRID_ROWS; r++) {
+      for (let c = 0; c < GRID_COLS; c++) {
+        if (!occupied[r][c]) freeCells.push({ col: c, row: r });
+      }
+    }
+
+    emptyIndices.forEach((idx, i) => {
+      const el = document.getElementById(tab + '-tile-' + idx);
+      if (!el) return;
+      if (i < freeCells.length) {
+        const cell = freeCells[i];
+        setTileGridPosition(el, cell.col, cell.row, 1, 1);
+        el.style.display = '';
+      } else {
+        el.style.display = 'none';
+      }
     });
   }
 
-  function updateTabButton(tabIndex, tabName, iconName) {
-    console.log('[DEBUG] updateTabButton(' + tabIndex + '): tabName="' + tabName + '", iconName="' + iconName + '"');
+  function normalizeLayoutInputs(tab) {
+    const prefix = tab;
+    const colEl = document.getElementById(prefix + '_tile_col');
+    const rowEl = document.getElementById(prefix + '_tile_row');
+    const spanWEl = document.getElementById(prefix + '_tile_span_w');
+    const spanHEl = document.getElementById(prefix + '_tile_span_h');
 
-    // Update tab button to show icon and name (beide optional)
-    const tabNameSpan = document.getElementById('tab-name-' + tabIndex);
-    let tabBtn;
-
-    if (tabNameSpan) {
-      tabBtn = tabNameSpan.parentElement;
-    } else {
-      // Fallback: Button direkt finden über Attribut-Selektor
-      const allBtns = document.querySelectorAll('.tab-btn');
-      if (allBtns[tabIndex]) {
-        tabBtn = allBtns[tabIndex];
-      }
+    if (!colEl || !rowEl || !spanWEl || !spanHEl) {
+      const fallback = getTileElementLayout(tab, currentTileIndex);
+      if (fallback) return fallback;
+      return { col: 0, row: 0, span_w: 1, span_h: 1 };
     }
 
-    if (!tabBtn) return;
+    let col = clampInt(colEl.value, 1, GRID_COLS, 1);
+    let row = clampInt(rowEl.value, 1, GRID_ROWS, 1);
+    let spanW = clampInt(spanWEl.value, 1, GRID_COLS, 1);
+    let spanH = clampInt(spanHEl.value, 1, GRID_ROWS, 1);
 
-    // Normalize icon name
-    let normalizedIcon = (iconName || '').trim().toLowerCase();
-    if (normalizedIcon.startsWith('mdi:')) normalizedIcon = normalizedIcon.substring(4);
-    else if (normalizedIcon.startsWith('mdi-')) normalizedIcon = normalizedIcon.substring(4);
+    const maxSpanW = GRID_COLS - (col - 1);
+    const maxSpanH = GRID_ROWS - (row - 1);
+    if (spanW > maxSpanW) spanW = maxSpanW;
+    if (spanH > maxSpanH) spanH = maxSpanH;
 
-    // Clear existing content
-    tabBtn.innerHTML = '';
+    colEl.value = String(col);
+    rowEl.value = String(row);
+    spanWEl.value = String(spanW);
+    spanHEl.value = String(spanH);
 
-    const hasIcon = normalizedIcon && normalizedIcon.length > 0;
-    const hasName = tabName && tabName.trim().length > 0;
-    console.log('[DEBUG] updateTabButton(' + tabIndex + '): hasIcon=' + hasIcon + ', hasName=' + hasName + ', normalizedIcon="' + normalizedIcon + '"');
+    return { col: col - 1, row: row - 1, span_w: spanW, span_h: spanH };
+  }
 
-    // Add icon if present
-    if (hasIcon) {
-      const iconEl = document.createElement('i');
-      iconEl.className = 'mdi mdi-' + normalizedIcon;
-      iconEl.style.cssText = 'font-size:24px;';
-      tabBtn.appendChild(iconEl);
+  function updateLayoutFromInputs(tab) {
+    if (currentTileIndex === -1) return;
+    const layout = normalizeLayoutInputs(tab);
+    const tiles = getTilesData(tab);
+    const tileEl = document.getElementById(tab + '-tile-' + currentTileIndex);
+    if (tileEl && (!Array.isArray(tiles) || tiles.length === 0)) {
+      setTileGridPosition(tileEl, layout.col, layout.row, layout.span_w, layout.span_h);
+      return;
     }
+    if (!Array.isArray(tiles) || currentTileIndex >= tiles.length) return;
+    const tile = tiles[currentTileIndex] || {};
+    tile.col = layout.col;
+    tile.row = layout.row;
+    tile.span_w = layout.span_w;
+    tile.span_h = layout.span_h;
+    const typeEl = document.getElementById(tab + '_tile_type');
+    const typeNum = typeEl ? parseInt(typeEl.value, 10) : 0;
+    tile.type = isNaN(typeNum) ? 0 : typeNum;
+    tiles[currentTileIndex] = tile;
+    layoutTiles(tab, tiles);
+  }
 
-    // Add text, or fallback number if both empty
-    if (hasName) {
-      const textSpan = document.createElement('span');
-      textSpan.id = 'tab-name-' + tabIndex;
-      textSpan.textContent = tabName;
-      textSpan.style.cssText = 'font-size:14px;font-weight:600;';
-      tabBtn.appendChild(textSpan);
-    } else if (!hasIcon && tabIndex < 3) {
-      // Fallback: Wenn beides leer, zeige Nummer "1", "2", "3"
-      const textSpan = document.createElement('span');
-      textSpan.id = 'tab-name-' + tabIndex;
-      textSpan.textContent = String(tabIndex + 1);
-      textSpan.style.cssText = 'font-size:14px;font-weight:600;';
-      tabBtn.appendChild(textSpan);
-    } else {
-      // Leerer Span für ID (damit Button später gefunden werden kann)
-      const textSpan = document.createElement('span');
-      textSpan.id = 'tab-name-' + tabIndex;
-      textSpan.textContent = '';
-      textSpan.style.cssText = 'display:none;';
-      tabBtn.appendChild(textSpan);
+  function applyLayoutInputsFromLayout(tab, layout) {
+    if (!layout) return;
+    const colEl = document.getElementById(tab + '_tile_col');
+    const rowEl = document.getElementById(tab + '_tile_row');
+    const colVal = String(layout.col + 1);
+    const rowVal = String(layout.row + 1);
+    if (colEl) colEl.value = colVal;
+    if (rowEl) rowEl.value = rowVal;
+    const tabDrafts = drafts[tab];
+    if (tabDrafts && tabDrafts[currentTileIndex]) {
+      tabDrafts[currentTileIndex].col = colVal;
+      tabDrafts[currentTileIndex].row = rowVal;
+      persistDrafts();
     }
   }
 
-  // Tile Editor State
-  const tileTabs = ['tab0', 'tab1', 'tab2'];
-  let currentTileTab = 'tab0';
-  let currentTileIndex = -1;
-  let drafts = { tab0: {}, tab1: {}, tab2: {} };
-  let tab0TilesData = [];
-  let tab1TilesData = [];
-  let tab2TilesData = [];
   const slideshowTokenLegacy = '__slideshow__';
   const slideshowTokenBin = '__slideshow_bin__';
   const slideshowTokenJpeg = '__slideshow_jpeg__';
@@ -176,6 +217,56 @@ void appendAdminScripts(String& html) {
   const slideshowIntervalDefault = '10';
   let sdImageList = [];
   let sdImageListLoaded = false;
+  function normalizeIconName(value) {
+    let icon = String(value || '').trim().toLowerCase();
+    if (icon.startsWith('mdi:')) icon = icon.substring(4);
+    else if (icon.startsWith('mdi-')) icon = icon.substring(4);
+    return icon;
+  }
+  function formatFolderLabel(name, folderId) {
+    let label = String(name || '').trim();
+    if (!label.length) label = 'Ordner ' + folderId;
+    return label;
+  }
+  function updateFolderTabUi(folderId, name, icon) {
+    if (folderId === undefined || folderId === null) return;
+    const folderNum = parseInt(folderId, 10);
+    if (isNaN(folderNum)) return;
+    const label = formatFolderLabel(name, folderNum);
+    const iconName = normalizeIconName(icon);
+    const tabId = tabByFolder[folderNum];
+    if (tabId) {
+      const tabEl = document.getElementById('tab-tiles-' + tabId);
+      if (tabEl) {
+        tabEl.dataset.folderName = label;
+        tabEl.dataset.folderIcon = iconName;
+      }
+      const btns = Array.from(document.querySelectorAll('.tab-btn'));
+      const btn = btns.find(b => b.getAttribute('onclick')?.includes('tab-tiles-' + tabId));
+      if (btn) {
+        const labelEl = btn.querySelector('span');
+        if (labelEl) labelEl.textContent = label;
+        let iconEl = btn.querySelector('i.mdi');
+        if (iconName) {
+          if (!iconEl) {
+            iconEl = document.createElement('i');
+            iconEl.className = 'mdi';
+            iconEl.style.fontSize = '24px';
+            if (labelEl) btn.insertBefore(iconEl, labelEl);
+            else btn.appendChild(iconEl);
+          }
+          iconEl.className = 'mdi mdi-' + iconName;
+          iconEl.style.fontSize = '24px';
+        } else if (iconEl) {
+          iconEl.remove();
+        }
+      }
+    }
+    document.querySelectorAll('select[id$="_navigate_target"]').forEach(select => {
+      const opt = select.querySelector('option[value="' + folderNum + '"]');
+      if (opt) opt.textContent = label;
+    });
+  }
   function isImageUrl(value) {
     return /^https?:\/\//i.test(String(value || '').trim());
   }
@@ -339,7 +430,7 @@ void appendAdminScripts(String& html) {
         }
       }
     } catch (e) {
-      drafts = { tab0: {}, tab1: {}, tab2: {} };
+      drafts = {};
     }
   }
   function clearDraft(tab, index) {
@@ -369,6 +460,10 @@ void appendAdminScripts(String& html) {
       title: document.getElementById(prefix + '_tile_title')?.value || '',
       icon: document.getElementById(prefix + '_tile_icon')?.value || '',
       color: document.getElementById(prefix + '_tile_color')?.value || '#2A2A2A',
+      col: document.getElementById(prefix + '_tile_col')?.value || '1',
+      row: document.getElementById(prefix + '_tile_row')?.value || '1',
+      span_w: document.getElementById(prefix + '_tile_span_w')?.value || '1',
+      span_h: document.getElementById(prefix + '_tile_span_h')?.value || '1',
       sensor_entity: document.getElementById(prefix + '_sensor_entity')?.value || '',
       sensor_unit: document.getElementById(prefix + '_sensor_unit')?.value || '',
       sensor_decimals: document.getElementById(prefix + '_sensor_decimals')?.value || '',
@@ -398,6 +493,14 @@ void appendAdminScripts(String& html) {
     document.getElementById(prefix + '_tile_title').value = d.title || '';
     document.getElementById(prefix + '_tile_icon').value = d.icon || '';
     document.getElementById(prefix + '_tile_color').value = d.color || '#2A2A2A';
+    const colEl = document.getElementById(prefix + '_tile_col');
+    if (colEl) colEl.value = d.col || '1';
+    const rowEl = document.getElementById(prefix + '_tile_row');
+    if (rowEl) rowEl.value = d.row || '1';
+    const spanWEl = document.getElementById(prefix + '_tile_span_w');
+    if (spanWEl) spanWEl.value = d.span_w || '1';
+    const spanHEl = document.getElementById(prefix + '_tile_span_h');
+    if (spanHEl) spanHEl.value = d.span_h || '1';
     if (d.type === '1') {
       document.getElementById(prefix + '_sensor_entity').value = d.sensor_entity || '';
       document.getElementById(prefix + '_sensor_unit').value = d.sensor_unit || '';
@@ -454,6 +557,8 @@ void appendAdminScripts(String& html) {
       title: document.getElementById(prefix + '_tile_title')?.value || '',
       icon: document.getElementById(prefix + '_tile_icon')?.value || '',
       color: document.getElementById(prefix + '_tile_color')?.value || '#2A2A2A',
+      span_w: document.getElementById(prefix + '_tile_span_w')?.value || '1',
+      span_h: document.getElementById(prefix + '_tile_span_h')?.value || '1',
       sensor_entity: document.getElementById(prefix + '_sensor_entity')?.value || '',
       sensor_unit: document.getElementById(prefix + '_sensor_unit')?.value || '',
       sensor_decimals: document.getElementById(prefix + '_sensor_decimals')?.value || '',
@@ -485,6 +590,10 @@ void appendAdminScripts(String& html) {
     if (iconEl) iconEl.value = data.icon || '';
     const colorEl = document.getElementById(prefix + '_tile_color');
     if (colorEl) colorEl.value = data.color || '#2A2A2A';
+    const spanWEl = document.getElementById(prefix + '_tile_span_w');
+    if (spanWEl) spanWEl.value = data.span_w || '1';
+    const spanHEl = document.getElementById(prefix + '_tile_span_h');
+    if (spanHEl) spanHEl.value = data.span_h || '1';
 
     const sensorEntityEl = document.getElementById(prefix + '_sensor_entity');
     if (sensorEntityEl) sensorEntityEl.value = data.sensor_entity || '';
@@ -622,7 +731,7 @@ void appendAdminScripts(String& html) {
   function setupLivePreview(tab) {
     const prefix = tab;
       const fields = [
-        '_tile_title','_tile_color','_tile_type','_sensor_entity','_sensor_unit',
+        '_tile_title','_tile_color','_tile_col','_tile_row','_tile_span_w','_tile_span_h','_tile_type','_sensor_entity','_sensor_unit',
         '_sensor_decimals','_sensor_value_font','_sensor_gauge','_sensor_gauge_min','_sensor_gauge_max',
         '_scene_alias','_key_macro','_navigate_target','_switch_entity','_switch_style',
         '_image_path','_image_select','_image_slideshow_sec','_image_url'
@@ -635,6 +744,10 @@ void appendAdminScripts(String& html) {
     const titleInput = document.getElementById(prefix + '_tile_title');
     const iconInput = document.getElementById(prefix + '_tile_icon');
     const colorInput = document.getElementById(prefix + '_tile_color');
+    const colInput = document.getElementById(prefix + '_tile_col');
+    const rowInput = document.getElementById(prefix + '_tile_row');
+    const spanWInput = document.getElementById(prefix + '_tile_span_w');
+    const spanHInput = document.getElementById(prefix + '_tile_span_h');
     const typeSelect = document.getElementById(prefix + '_tile_type');
       const entitySelect = document.getElementById(prefix + '_sensor_entity');
       const unitInput = document.getElementById(prefix + '_sensor_unit');
@@ -655,6 +768,10 @@ void appendAdminScripts(String& html) {
     if (titleInput) titleInput.addEventListener('input', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     if (iconInput) iconInput.addEventListener('input', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     if (colorInput) colorInput.addEventListener('input', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
+    if (colInput) colInput.addEventListener('input', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
+    if (rowInput) rowInput.addEventListener('input', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
+    if (spanWInput) spanWInput.addEventListener('input', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
+    if (spanHInput) spanHInput.addEventListener('input', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     if (typeSelect) typeSelect.addEventListener('change', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     if (entitySelect) entitySelect.addEventListener('change', () => { maybeFillTitleFromSensor(tab); updateTilePreview(tab); updateSensorValuePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
       if (unitInput) unitInput.addEventListener('input', () => { updateSensorValuePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
@@ -949,7 +1066,6 @@ void appendAdminScripts(String& html) {
       tileElem.classList.add('empty');
       tileElem.innerHTML = '';
       if (wasActive) tileElem.classList.add('active');
-      return;
     } else if (type === '1') {
       tileElem.classList.add('sensor');
       tileElem.style.background = color || '#2A2A2A';
@@ -959,7 +1075,7 @@ void appendAdminScripts(String& html) {
     } else if (type === '3') {
       tileElem.classList.add('key');
       tileElem.style.background = color || '#353535';
-    } else if (type === '4') {
+    } else if (type === '4' || type === '7' || type === '8') {
       tileElem.classList.add('navigate');
       tileElem.style.background = color || '#353535';
     } else if (type === '5') {
@@ -973,15 +1089,16 @@ void appendAdminScripts(String& html) {
 
     let html = '';
 
-    // Icon (optional)
-    if (iconName) {
-      html += '<i class="mdi mdi-' + iconName + ' tile-icon"></i>';
-    }
+    if (type !== '0') {
+      // Icon (optional)
+      if (iconName) {
+        html += '<i class="mdi mdi-' + iconName + ' tile-icon"></i>';
+      }
 
-    // Title (nur wenn vorhanden)
-    if (title) {
-      html += '<div class="tile-title" id="' + tileId + '-title">' + title + '</div>';
-    }
+      // Title (nur wenn vorhanden)
+      if (title) {
+        html += '<div class="tile-title" id="' + tileId + '-title">' + title + '</div>';
+      }
 
       if (type === '1') {
         const entitySelect = document.getElementById(prefix + '_sensor_entity');
@@ -993,14 +1110,14 @@ void appendAdminScripts(String& html) {
         html += '</div>';
         if (entity) {
           tileElem.innerHTML = html;
-        if (wasActive) tileElem.classList.add('active');
-        updateSensorValuePreview(tab);
-        return;
+          if (wasActive) tileElem.classList.add('active');
+          updateSensorValuePreview(tab);
+        }
       }
-    }
 
-    if (type === '5' && switchStyle === '1') {
-      html += '<div class="tile-switch" id="' + tileId + '-switch"><div class="tile-switch-knob"></div></div>';
+      if (type === '5' && switchStyle === '1') {
+        html += '<div class="tile-switch" id="' + tileId + '-switch"><div class="tile-switch-knob"></div></div>';
+      }
     }
 
     tileElem.innerHTML = html;
@@ -1011,18 +1128,47 @@ void appendAdminScripts(String& html) {
       document.getElementById(settingsId)?.classList.remove('hidden');
     }
     if (type === '5') updateSwitchValuePreview(tab);
+    updateLayoutFromInputs(tab);
 }
 
   function loadTileData(index, tab) {
-    fetch('/api/tiles?tab=' + tab + '&index=' + index)
+    const folderId = getFolderIdForTab(tab);
+    if (folderId === undefined) return;
+    fetch('/api/tiles?folder=' + encodeURIComponent(folderId) + '&index=' + index)
       .then(res => res.json())
       .then(data => {
+        if (!tilesData[tab]) tilesData[tab] = [];
+        tilesData[tab][index] = data;
         const prefix = tab;
         document.getElementById(prefix + '_tile_type').value = data.type || 0;
         updateTileType(tab);
         document.getElementById(prefix + '_tile_title').value = data.title || '';
         document.getElementById(prefix + '_tile_icon').value = data.icon_name || '';
         document.getElementById(prefix + '_tile_color').value = rgbToHex(data.bg_color || 0x2A2A2A);
+        const colEl = document.getElementById(prefix + '_tile_col');
+        const rowEl = document.getElementById(prefix + '_tile_row');
+        const spanWEl = document.getElementById(prefix + '_tile_span_w');
+        const spanHEl = document.getElementById(prefix + '_tile_span_h');
+        if (colEl && rowEl && spanWEl && spanHEl) {
+          const fallbackLayout = (data.type === 0) ? getTileElementLayout(tab, index) : null;
+          const layoutInput = {
+            col: data.col,
+            row: data.row,
+            span_w: data.span_w,
+            span_h: data.span_h
+          };
+          if (fallbackLayout) {
+            layoutInput.col = fallbackLayout.col;
+            layoutInput.row = fallbackLayout.row;
+            layoutInput.span_w = fallbackLayout.span_w;
+            layoutInput.span_h = fallbackLayout.span_h;
+          }
+          const layout = normalizeTileLayout(layoutInput, index);
+          colEl.value = String(layout.col + 1);
+          rowEl.value = String(layout.row + 1);
+          spanWEl.value = String(layout.span_w);
+          spanHEl.value = String(layout.span_h);
+        }
       if (data.type === 1) {
         document.getElementById(prefix + '_sensor_entity').value = data.sensor_entity || '';
         document.getElementById(prefix + '_sensor_unit').value = data.sensor_unit || '';
@@ -1044,7 +1190,7 @@ void appendAdminScripts(String& html) {
           document.getElementById(prefix + '_key_macro').value = data.key_macro || '';
         } else if (data.type === 4) {
           const navEl = document.getElementById(prefix + '_navigate_target');
-          if (navEl) navEl.value = (data.sensor_decimals !== undefined && data.sensor_decimals <= 2) ? data.sensor_decimals : '0';
+          if (navEl) navEl.value = (data.navigate_target !== undefined && data.navigate_target !== null) ? String(data.navigate_target) : '0';
         } else if (data.type === 5) {
           document.getElementById(prefix + '_switch_entity').value = data.sensor_entity || '';
           const styleEl = document.getElementById(prefix + '_switch_style');
@@ -1062,11 +1208,11 @@ void appendAdminScripts(String& html) {
       if (data.type !== 1 && fontEl) fontEl.value = '0';
       const gaugeEl = document.getElementById(prefix + '_sensor_gauge');
       if (data.type !== 1 && gaugeEl) gaugeEl.checked = false;
-      const gaugeMinEl = document.getElementById(prefix + '_sensor_gauge_min');
-      if (data.type !== 1 && gaugeMinEl) gaugeMinEl.value = '';
-      const gaugeMaxEl = document.getElementById(prefix + '_sensor_gauge_max');
-      if (data.type !== 1 && gaugeMaxEl) gaugeMaxEl.value = '';
-      syncGaugeUi(tab);
+        const gaugeMinEl = document.getElementById(prefix + '_sensor_gauge_min');
+        if (data.type !== 1 && gaugeMinEl) gaugeMinEl.value = '';
+        const gaugeMaxEl = document.getElementById(prefix + '_sensor_gauge_max');
+        if (data.type !== 1 && gaugeMaxEl) gaugeMaxEl.value = '';
+        syncGaugeUi(tab);
         const tileElem = document.getElementById(tab + '-tile-' + index);
         if (tileElem) tileElem.classList.add('active');
         const draft = (drafts[tab] || {})[index];
@@ -1076,12 +1222,42 @@ void appendAdminScripts(String& html) {
           if (draft && data.type === 0 && draft.type !== data.type) clearDraft(tab, index);
           updateTilePreview(tab);
         }
-      });
+    });
+  }
+
+  function getCurrentTileType(tab) {
+    const tiles = getTilesData(tab);
+    if (tiles && currentTileIndex >= 0 && tiles[currentTileIndex]) {
+      return String(tiles[currentTileIndex].type ?? '0');
+    }
+    const typeEl = document.getElementById(tab + '_tile_type');
+    return typeEl ? String(typeEl.value) : '0';
+  }
+
+  function isLockedTileType(typeValue) {
+    return String(typeValue) === '7' || String(typeValue) === '8';
+  }
+
+  function applySpecialTileUiState(tab) {
+    const prefix = tab;
+    const typeEl = document.getElementById(prefix + '_tile_type');
+    const navSelect = document.getElementById(prefix + '_navigate_target');
+    const noteEl = document.getElementById(prefix + '_navigate_note');
+    const typeValue = typeEl ? String(typeEl.value) : '0';
+    const locked = isLockedTileType(typeValue);
+    if (typeEl) typeEl.disabled = locked;
+    if (navSelect) navSelect.disabled = (typeValue !== '4');
+    if (noteEl) {
+      if (typeValue === '7') noteEl.textContent = 'Settings-Kachel (fest)';
+      else if (typeValue === '8') noteEl.textContent = 'Zurueck-Kachel (fest)';
+      else noteEl.textContent = '';
+    }
   }
 
   function updateTileType(tab) {
     const prefix = tab;
-    const typeValue = document.getElementById(prefix + '_tile_type').value;
+    const typeEl = document.getElementById(prefix + '_tile_type');
+    let typeValue = typeEl ? typeEl.value : '0';
     document.querySelectorAll('#' + prefix + 'Settings .type-fields').forEach(f => f.classList.remove('show'));
     if (typeValue === '1') document.getElementById(prefix + '_sensor_fields').classList.add('show');
     else if (typeValue === '2') document.getElementById(prefix + '_scene_fields').classList.add('show');
@@ -1095,6 +1271,7 @@ void appendAdminScripts(String& html) {
       applyImageUiState(tab, path);
     }
     syncGaugeUi(tab);
+    applySpecialTileUiState(tab);
   }
 
   function showNotification(message, success = true) {
@@ -1105,7 +1282,6 @@ void appendAdminScripts(String& html) {
     setTimeout(() => { notification.classList.remove('show'); }, 3000);
   }
 
-  let autoSaveTimers = { tab0: null, tab1: null, tab2: null };
   function scheduleAutoSave(tab) {
     if (autoSaveTimers[tab]) clearTimeout(autoSaveTimers[tab]);
     autoSaveTimers[tab] = setTimeout(() => saveTile(tab, true), 250);
@@ -1113,6 +1289,11 @@ void appendAdminScripts(String& html) {
 
   function resetTile(tab) {
     if (currentTileIndex === -1) return;
+    const tileType = getCurrentTileType(tab);
+    if (isLockedTileType(tileType)) {
+      showNotification('Diese Kachel kann nicht geloescht werden', false);
+      return;
+    }
     const prefix = tab;
     document.getElementById(prefix + '_tile_type').value = '0';
     document.getElementById(prefix + '_tile_title').value = '';
@@ -1144,9 +1325,22 @@ void appendAdminScripts(String& html) {
   function saveTile(tab, silent = false) {
     if (currentTileIndex === -1) return;
     const prefix = tab;
+    const tiles = getTilesData(tab);
+    const previousTile = Array.isArray(tiles) ? tiles[currentTileIndex] : null;
+    const previousType = previousTile ? Number(previousTile.type) : NaN;
     const formData = new FormData();
-    formData.append('tab', tab);
+    const layout = normalizeLayoutInputs(tab);
+    const folderId = getFolderIdForTab(tab);
+    if (folderId === undefined) {
+      showNotification('Ordner nicht gefunden', false);
+      return;
+    }
+    formData.append('folder', folderId);
     formData.append('index', currentTileIndex);
+    formData.append('col', layout.col);
+    formData.append('row', layout.row);
+    formData.append('span_w', layout.span_w);
+    formData.append('span_h', layout.span_h);
     formData.append('type', document.getElementById(prefix + '_tile_type').value);
     formData.append('title', document.getElementById(prefix + '_tile_title').value);
     formData.append('icon_name', document.getElementById(prefix + '_tile_icon').value);
@@ -1164,12 +1358,11 @@ void appendAdminScripts(String& html) {
       formData.append('scene_alias', document.getElementById(prefix + '_scene_alias').value);
     } else if (typeValue === '3') {
       formData.append('key_macro', document.getElementById(prefix + '_key_macro').value);
-    } else if (typeValue === '4') {
-      const navTargetElement = document.getElementById(prefix + '_navigate_target');
-      const navTargetValue = navTargetElement ? navTargetElement.value : 'ELEMENT_NOT_FOUND';
-      console.log('[DEBUG] Navigate Target - Element:', navTargetElement, 'Value:', navTargetValue, 'Prefix:', prefix);
-      formData.append('navigate_target', navTargetValue);
-      } else if (typeValue === '5') {
+      } else if (typeValue === '4') {
+        const navTargetElement = document.getElementById(prefix + '_navigate_target');
+        const navTargetValue = navTargetElement ? navTargetElement.value : '0';
+        formData.append('navigate_target', navTargetValue);
+        } else if (typeValue === '5') {
         formData.append('switch_entity', document.getElementById(prefix + '_switch_entity').value);
         const styleEl = document.getElementById(prefix + '_switch_style');
         formData.append('switch_style', styleEl ? styleEl.value : '0');
@@ -1185,17 +1378,30 @@ void appendAdminScripts(String& html) {
         formData.append('image_path', finalPath);
         formData.append('image_slideshow_sec', document.getElementById(prefix + '_image_slideshow_sec').value);
       }
-    fetch('/api/tiles', { method:'POST', body:formData })
-      .then(res => res.json())
-      .then(data => {
-        if (data.success) {
-          if (!silent) showNotification('Kachel gespeichert & Display aktualisiert!');
-          clearDraft(tab, currentTileIndex);
-          loadSensorValues();
-        } else {
-          showNotification('Fehler: ' + (data.error || 'Unbekannt'), false);
-        }
-      })
+      fetch('/api/tiles', { method:'POST', body:formData })
+        .then(res => res.json())
+        .then(data => {
+          if (data.success) {
+            if (!silent) showNotification('Kachel gespeichert & Display aktualisiert!');
+            clearDraft(tab, currentTileIndex);
+            loadSensorValues();
+            if (typeValue === '4') {
+              const navTarget = document.getElementById(prefix + '_navigate_target')?.value || '';
+              if (String(navTarget) === '0') {
+                setTimeout(() => location.reload(), 400);
+              } else {
+                const titleVal = document.getElementById(prefix + '_tile_title')?.value || '';
+                const iconVal = document.getElementById(prefix + '_tile_icon')?.value || '';
+                updateFolderTabUi(navTarget, titleVal, iconVal);
+              }
+            }
+            if (previousType === 4 && typeValue === '0') {
+              setTimeout(() => location.reload(), 400);
+            }
+          } else {
+            showNotification('Fehler: ' + (data.error || 'Unbekannt'), false);
+          }
+        })
       .catch(() => showNotification('Netzwerkfehler beim Speichern', false));
   }
 
@@ -1225,21 +1431,39 @@ void appendAdminScripts(String& html) {
 
   async function exportTilesConfig() {
     try {
-      const [tabsRes, tab0Tiles, tab1Tiles, tab2Tiles] = await Promise.all([
-        fetch('/api/tabs').then(res => res.json()),
-        fetch('/api/tiles?tab=tab0').then(res => res.json()),
-        fetch('/api/tiles?tab=tab1').then(res => res.json()),
-        fetch('/api/tiles?tab=tab2').then(res => res.json())
-      ]);
+      const tabs = tileTabs.slice();
+      const tileRequests = tabs.map(tab => {
+        const folderId = getFolderIdForTab(tab);
+        if (folderId === undefined) return Promise.resolve([]);
+        return fetch('/api/tiles?folder=' + encodeURIComponent(folderId))
+          .then(res => res.json())
+          .catch(() => []);
+      });
+      const tilesLists = await Promise.all(tileRequests);
+      const folders = tabs.map(tab => {
+        const folderId = getFolderIdForTab(tab);
+        const tabEl = document.getElementById('tab-tiles-' + tab);
+        const parentId = tabEl ? parseInt(tabEl.dataset.folderParent || '0', 10) : 0;
+        return {
+          id: folderId,
+          parent_id: isNaN(parentId) ? 0 : parentId,
+          name: tabEl ? (tabEl.dataset.folderName || '') : '',
+          icon_name: tabEl ? (tabEl.dataset.folderIcon || '') : ''
+        };
+      }).filter(entry => entry.id !== undefined);
+
+      const grids = {};
+      tabs.forEach((tab, idx) => {
+        const folderId = getFolderIdForTab(tab);
+        if (folderId === undefined) return;
+        grids[String(folderId)] = Array.isArray(tilesLists[idx]) ? tilesLists[idx] : [];
+      });
+
       const payload = {
-        version: 1,
+        version: 2,
         exported_at: new Date().toISOString(),
-        tabs: Array.isArray(tabsRes.tabs) ? tabsRes.tabs : [],
-        grids: {
-          tab0: Array.isArray(tab0Tiles) ? tab0Tiles : [],
-          tab1: Array.isArray(tab1Tiles) ? tab1Tiles : [],
-          tab2: Array.isArray(tab2Tiles) ? tab2Tiles : []
-        }
+        folders: folders,
+        grids: grids
       };
       const ts = new Date().toISOString().replace(/[:.]/g, '-');
       downloadJsonFile('tab5_tiles_' + ts + '.json', JSON.stringify(payload, null, 2));
@@ -1278,26 +1502,23 @@ void appendAdminScripts(String& html) {
         showNotification('Import-JSON ungueltig', false);
         return;
       }
-      const grids = payload.grids || {};
-      if (!grids.tab0 && Array.isArray(payload.tab0)) grids.tab0 = payload.tab0;
-      if (!grids.tab1 && Array.isArray(payload.tab1)) grids.tab1 = payload.tab1;
-      if (!grids.tab2 && Array.isArray(payload.tab2)) grids.tab2 = payload.tab2;
+      const grids = (payload.grids && typeof payload.grids === 'object') ? payload.grids : {};
+      if (!Object.keys(grids).length) {
+        if (Array.isArray(payload.tab0)) grids['0'] = payload.tab0;
+        if (Array.isArray(payload.tab1)) grids['1'] = payload.tab1;
+        if (Array.isArray(payload.tab2)) grids['2'] = payload.tab2;
+      }
 
       showNotification('Import laeuft...');
 
-      const tabs = Array.isArray(payload.tabs) ? payload.tabs : [];
-      for (const tab of tabs) {
-        const tabKey = tab.type || (tab.id === 0 ? 'tab0' : tab.id === 1 ? 'tab1' : tab.id === 2 ? 'tab2' : tab.id === 3 ? 'tab3' : '');
-        if (!tabKey) continue;
-        await postTabRename(tabKey, tab.name || '', tab.icon_name || '');
-      }
-
-      const tabNames = ['tab0', 'tab1', 'tab2'];
-      for (const tabName of tabNames) {
-        const tiles = grids[tabName];
+      const entries = Object.entries(grids);
+      for (const [folderIdRaw, tiles] of entries) {
+        const folderId = parseInt(folderIdRaw, 10);
+        if (isNaN(folderId)) continue;
         if (!Array.isArray(tiles)) continue;
-        for (let i = 0; i < tiles.length && i < 12; i++) {
-          await postTile(tabName, i, tiles[i] || {});
+        if (!tabByFolder[folderId]) continue;
+        for (let i = 0; i < tiles.length && i < (GRID_COLS * GRID_ROWS); i++) {
+          await postTile(folderId, i, tiles[i] || {});
         }
       }
 
@@ -1310,28 +1531,26 @@ void appendAdminScripts(String& html) {
     }
   }
 
-  async function postTabRename(tabKey, name, iconName) {
-    const fd = new FormData();
-    fd.append('tab', tabKey);
-    fd.append('name', name || '');
-    if (iconName !== undefined && iconName !== null) fd.append('icon_name', iconName || '');
-    const res = await fetch('/api/tabs/rename', { method: 'POST', body: fd });
-    const data = await res.json();
-    if (!data.success) {
-      throw new Error('Tab speichern fehlgeschlagen');
-    }
-  }
-
-  async function postTile(tab, index, tile) {
+  async function postTile(folderId, index, tile) {
     const fd = new FormData();
     const type = Number(tile.type);
-    const safeType = isNaN(type) ? 0 : type;
-    fd.append('tab', tab);
+    let safeType = isNaN(type) ? 0 : type;
+    if (safeType === 4 && tile.navigate_kind !== undefined && tile.navigate_kind !== null) {
+      const kind = Number(tile.navigate_kind);
+      if (kind === 1) safeType = 7;
+      else if (kind === 2) safeType = 8;
+    }
+    fd.append('folder', folderId);
     fd.append('index', index);
     fd.append('type', safeType);
     fd.append('title', tile.title || '');
     fd.append('icon_name', tile.icon_name || '');
     fd.append('bg_color', parseBgColorValue(tile.bg_color));
+    const layout = normalizeTileLayout(tile, index);
+    fd.append('col', layout.col);
+    fd.append('row', layout.row);
+    fd.append('span_w', layout.span_w);
+    fd.append('span_h', layout.span_h);
 
     if (safeType === 1) {
       fd.append('sensor_entity', tile.sensor_entity || '');
@@ -1357,8 +1576,8 @@ void appendAdminScripts(String& html) {
     } else if (safeType === 4) {
       const target = (tile.navigate_target !== undefined && tile.navigate_target !== null)
         ? tile.navigate_target
-        : tile.sensor_decimals;
-      fd.append('navigate_target', target !== undefined && target !== null ? target : 0);
+        : 0;
+      fd.append('navigate_target', target);
     } else if (safeType === 5) {
       fd.append('switch_entity', tile.sensor_entity || '');
       const style = (tile.switch_style !== undefined && tile.switch_style !== null)
@@ -1388,7 +1607,7 @@ void appendAdminScripts(String& html) {
     if (tile.type === 1) cls.push('sensor');
     else if (tile.type === 2) cls.push('scene');
     else if (tile.type === 3) cls.push('key');
-    else if (tile.type === 4) cls.push('navigate');
+    else if (tile.type === 4 || tile.type === 7 || tile.type === 8) cls.push('navigate');
     else if (tile.type === 5) {
       cls.push('switch');
       if (tile.switch_style === 1) cls.push('switch-toggle');
@@ -1438,24 +1657,31 @@ void appendAdminScripts(String& html) {
   }
 
   function loadSensorValues() {
+    const tabs = tileTabs.slice();
+    const tileRequests = tabs.map(tab => {
+      const folderId = getFolderIdForTab(tab);
+      if (folderId === undefined) return Promise.resolve([]);
+      return fetch('/api/tiles?folder=' + encodeURIComponent(folderId))
+        .then(res => res.json())
+        .catch(() => []);
+    });
+
     Promise.all([
-      fetch('/api/sensor_values').then(res => res.json()),
-      fetch('/api/tiles?tab=tab0').then(res => res.json()),
-      fetch('/api/tiles?tab=tab1').then(res => res.json()),
-      fetch('/api/tiles?tab=tab2').then(res => res.json())
+      fetch('/api/sensor_values').then(res => res.json()).catch(() => ({})),
+      ...tileRequests
     ])
-    .then(([sensorValues, tab0Tiles, tab1Tiles, tab2Tiles]) => {
-      tab0TilesData = tab0Tiles;
-      tab1TilesData = tab1Tiles;
-      tab2TilesData = tab2Tiles;
-      tab0Tiles.forEach((tile, idx) => renderTileFromData('tab0', idx, tile, sensorValues));
-      tab1Tiles.forEach((tile, idx) => renderTileFromData('tab1', idx, tile, sensorValues));
-      tab2Tiles.forEach((tile, idx) => renderTileFromData('tab2', idx, tile, sensorValues));
-      if (currentTileIndex !== -1) {
-        const tab = currentTileTab;
-        const settingsId = tab + 'Settings';
+    .then(results => {
+      const sensorValues = results[0] || {};
+      tabs.forEach((tab, idx) => {
+        const tiles = Array.isArray(results[idx + 1]) ? results[idx + 1] : [];
+        tilesData[tab] = tiles;
+        tiles.forEach((tile, i) => renderTileFromData(tab, i, tile, sensorValues));
+        layoutTiles(tab, tiles);
+      });
+      if (currentTileIndex !== -1 && currentTileTab) {
+        const settingsId = currentTileTab + 'Settings';
         document.getElementById(settingsId)?.classList.remove('hidden');
-        const activeTile = document.getElementById(tab + '-tile-' + currentTileIndex);
+        const activeTile = document.getElementById(currentTileTab + '-tile-' + currentTileIndex);
         if (activeTile) activeTile.classList.add('active');
       }
     })
@@ -1513,27 +1739,51 @@ void appendAdminScripts(String& html) {
         const targetIndex = parseInt(tile.dataset.index);
         if (isNaN(targetIndex)) return;
         if (dragSource.index === targetIndex) return;
-        reorderTiles(dragSource.tab, dragSource.index, targetIndex);
+        reorderTiles(dragSource.tab, dragSource.index, targetIndex, tile.dataset.col, tile.dataset.row);
       });
     });
   }
 
-  function reorderTiles(tab, fromIdx, toIdx) {
+  function reorderTiles(tab, fromIdx, toIdx, targetCol, targetRow) {
+    const sourceLayout = getTileElementLayout(tab, fromIdx);
+    const targetLayout = getTileElementLayout(tab, toIdx);
+    let col = parseInt(targetCol, 10);
+    let row = parseInt(targetRow, 10);
+    if (isNaN(col)) col = -1;
+    if (isNaN(row)) row = -1;
+    const folderId = getFolderIdForTab(tab);
+    if (folderId === undefined) {
+      showNotification('Ordner nicht gefunden', false);
+      return;
+    }
     fetch('/api/tiles/reorder', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: 'tab=' + encodeURIComponent(tab) + '&from=' + encodeURIComponent(fromIdx) + '&to=' + encodeURIComponent(toIdx)
+      body: 'folder=' + encodeURIComponent(folderId) +
+            '&from=' + encodeURIComponent(fromIdx) +
+            '&to=' + encodeURIComponent(toIdx) +
+            '&target_col=' + encodeURIComponent(col) +
+            '&target_row=' + encodeURIComponent(row)
     })
     .then(res => res.json())
     .then(data => {
-      if (data.success) {
-        if (tab === currentTileTab) {
-          if (currentTileIndex === fromIdx) currentTileIndex = toIdx;
-          else if (currentTileIndex === toIdx) currentTileIndex = fromIdx;
-        }
-        swapDrafts(tab, fromIdx, toIdx);
-        showNotification('Kacheln verschoben & gespeichert!');
-        loadSensorValues();
+        if (data.success) {
+          showNotification('Kacheln verschoben & gespeichert!');
+          const tiles = getTilesData(tab);
+          if (tiles[fromIdx]) {
+            tiles[fromIdx].col = (col >= 0) ? col : (targetLayout ? targetLayout.col : tiles[fromIdx].col);
+            tiles[fromIdx].row = (row >= 0) ? row : (targetLayout ? targetLayout.row : tiles[fromIdx].row);
+          }
+          if (toIdx !== fromIdx && tiles[toIdx] && sourceLayout) {
+            tiles[toIdx].col = sourceLayout.col;
+            tiles[toIdx].row = sourceLayout.row;
+          }
+          tilesData[tab] = tiles;
+          if (currentTileTab === tab && currentTileIndex !== -1) {
+            if (currentTileIndex === fromIdx) applyLayoutInputsFromLayout(tab, targetLayout);
+            else if (currentTileIndex === toIdx) applyLayoutInputsFromLayout(tab, sourceLayout);
+          }
+          loadSensorValues();
       } else {
         showNotification('Fehler beim Verschieben', false);
       }
@@ -1544,23 +1794,22 @@ void appendAdminScripts(String& html) {
   function loadTileDataAndSelect(tab, index) { selectTile(index, tab); }
 
   document.addEventListener('DOMContentLoaded', () => {
-    // Verzögerte Initialisierung, damit Input-Felder vom Browser gefüllt werden
-    setTimeout(() => {
-      initSavedTabData();  // Tab-Daten initialisieren (verhindert Überschreiben)
-    }, 100);
+    initTileTabs();
     loadDraftsFromStorage();
     loadTileClipboard();
     loadSensorValues();
     let savedTab = null;
     try { savedTab = localStorage.getItem('activeAdminTab'); } catch (e) {}
-    const targetTab = savedTab && document.getElementById(savedTab) ? savedTab : 'tab-tiles-tab0';
+    const defaultTab = tileTabs.length ? ('tab-tiles-' + tileTabs[0]) : 'tab-network';
+    const targetTab = savedTab && document.getElementById(savedTab) ? savedTab : defaultTab;
     const targetBtn = Array.from(document.querySelectorAll('.tab-btn')).find(btn => btn.getAttribute('onclick')?.includes(targetTab)) || document.querySelector('.tab-btn');
     if (targetBtn) targetBtn.click();
     setInterval(loadSensorValues, 5000);
-    enableTileDrag('tab0');
-    enableTileDrag('tab1');
-    enableTileDrag('tab2');
+    tileTabs.forEach(tab => enableTileDrag(tab));
   });
   </script>
 )html";
 }
+
+
+

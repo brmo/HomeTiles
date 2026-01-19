@@ -7,9 +7,9 @@
 #include <Arduino.h>
 
 /* === Layout-Konstanten === */
-static const int GAP = 24;
+static const int GAP = GRID_GAP;
 static const int OUTER = 0;
-static const int GRID_PAD = 24;
+static const int GRID_PAD_PX = GRID_PAD;
 
 /* === Globale State (unified for all 3 grids) === */
 static lv_obj_t* g_tiles_grids[3] = {nullptr};           // [TAB0, TAB1, TAB2]
@@ -71,21 +71,34 @@ static bool get_cached_entity_payload(const char* entity_id, String& out) {
 
 /* === Helper: Get grid config by type === */
 static const TileGridConfig& getGridConfig(GridType type) {
-  switch(type) {
-    case GridType::TAB0:    return tileConfig.getTab0Grid();
-    case GridType::TAB1:    return tileConfig.getTab1Grid();
-    case GridType::TAB2:    return tileConfig.getTab2Grid();
-    default:                return tileConfig.getTab0Grid();
-  }
+  (void)type;
+  return tileConfig.getActiveGrid();
 }
 
 /* === Helper: Get grid name for logging === */
 static const char* getGridName(GridType type) {
-  switch(type) {
-    case GridType::TAB0:    return "TilesTab0";
-    case GridType::TAB1:    return "TilesTab1";
-    case GridType::TAB2:    return "TilesTab2";
-    default:                return "TilesUnknown";
+  (void)type;
+  return "TilesFolder";
+}
+
+static bool get_tile_layout(const Tile& tile, uint8_t& col, uint8_t& row, uint8_t& span_w, uint8_t& span_h) {
+  if (tile.col >= GRID_COLS || tile.row >= GRID_ROWS) return false;
+  col = tile.col;
+  row = tile.row;
+  span_w = tile.span_w < 1 ? 1 : tile.span_w;
+  span_h = tile.span_h < 1 ? 1 : tile.span_h;
+  if (span_w > GRID_COLS - col) span_w = GRID_COLS - col;
+  if (span_h > GRID_ROWS - row) span_h = GRID_ROWS - row;
+  return true;
+}
+
+static void mark_occupied(bool occupied[GRID_ROWS][GRID_COLS], uint8_t col, uint8_t row, uint8_t span_w, uint8_t span_h) {
+  for (uint8_t r = row; r < row + span_h; ++r) {
+    for (uint8_t c = col; c < col + span_w; ++c) {
+      if (r < GRID_ROWS && c < GRID_COLS) {
+        occupied[r][c] = true;
+      }
+    }
   }
 }
 
@@ -96,20 +109,18 @@ static lv_obj_t* create_tiles_grid(lv_obj_t* parent) {
   lv_obj_set_style_bg_color(grid, lv_color_hex(0x000000), 0);
   lv_obj_set_style_bg_opa(grid, LV_OPA_COVER, 0);
   lv_obj_set_style_border_width(grid, 0, 0);
-  lv_obj_set_style_pad_all(grid, GRID_PAD, 0);
+  lv_obj_set_style_pad_all(grid, GRID_PAD_PX, 0);
   lv_obj_remove_flag(grid, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_size(grid, LV_PCT(100), LV_PCT(100));
   lv_obj_set_style_pad_column(grid, GAP, 0);
   lv_obj_set_style_pad_row(grid, GAP, 0);
 
   static lv_coord_t col_dsc[] = {
-    LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST
+    GRID_CELL_W, GRID_CELL_W, GRID_CELL_W, GRID_CELL_W, GRID_CELL_W, GRID_CELL_W,
+    LV_GRID_TEMPLATE_LAST
   };
   static lv_coord_t row_dsc[] = {
-    LV_GRID_CONTENT,
-    LV_GRID_CONTENT,
-    LV_GRID_CONTENT,
-    LV_GRID_CONTENT,
+    GRID_CELL_H, GRID_CELL_H, GRID_CELL_H, GRID_CELL_H,
     LV_GRID_TEMPLATE_LAST
   };
   lv_obj_set_grid_dsc_array(grid, col_dsc, row_dsc);
@@ -175,13 +186,48 @@ void tiles_reload_layout(GridType grid_type) {
   }
   lv_obj_clean(g_tiles_grids[idx]);
 
-  // Render tile grid using unified system
   const TileGridConfig& config = getGridConfig(grid_type);
+  bool occupied[GRID_ROWS][GRID_COLS] = {};
+  struct TileLayout {
+    uint8_t col = 0;
+    uint8_t row = 0;
+    uint8_t span_w = 1;
+    uint8_t span_h = 1;
+    bool valid = false;
+  };
+  TileLayout layouts[TILES_PER_GRID]{};
+
   for (uint8_t i = 0; i < TILES_PER_GRID; ++i) {
-    int row = i / 3;
-    int col = i % 3;
-    g_tiles_objs[idx][i] = render_tile(g_tiles_grids[idx], col, row, config.tiles[i], i, grid_type, g_tiles_scene_cbs[idx]);
-    if ((i % 3) == 2) {
+    const Tile& tile = config.tiles[i];
+    if (tile.type == TILE_EMPTY) continue;
+    uint8_t col = 0;
+    uint8_t row = 0;
+    uint8_t span_w = 1;
+    uint8_t span_h = 1;
+    if (!get_tile_layout(tile, col, row, span_w, span_h)) continue;
+    layouts[i] = {col, row, span_w, span_h, true};
+    mark_occupied(occupied, col, row, span_w, span_h);
+  }
+
+  for (uint8_t r = 0; r < GRID_ROWS; ++r) {
+    for (uint8_t c = 0; c < GRID_COLS; ++c) {
+      if (!occupied[r][c]) {
+        render_empty_tile(g_tiles_grids[idx], c, r);
+      }
+    }
+    yield();
+  }
+
+  size_t render_count = 0;
+  for (uint8_t i = 0; i < TILES_PER_GRID; ++i) {
+    if (!layouts[i].valid) continue;
+    Tile layout_tile = config.tiles[i];
+    layout_tile.col = layouts[i].col;
+    layout_tile.row = layouts[i].row;
+    layout_tile.span_w = layouts[i].span_w;
+    layout_tile.span_h = layouts[i].span_h;
+    g_tiles_objs[idx][i] = render_tile(g_tiles_grids[idx], layouts[i].col, layouts[i].row, layout_tile, i, grid_type, g_tiles_scene_cbs[idx]);
+    if ((++render_count % GRID_COLS) == 0) {
       yield();
       delay(1);
     }
@@ -297,29 +343,8 @@ void tiles_update_tile(GridType grid_type, uint8_t index) {
   if (!g_tiles_loaded[idx]) return;
   if (index >= TILES_PER_GRID) return;
 
-  const TileGridConfig& config = getGridConfig(grid_type);
-  const Tile& tile = config.tiles[index];
-  reset_sensor_widget(grid_type, index);
-  reset_switch_widget(grid_type, index);
-  int row = index / 3;
-  int col = index % 3;
-  lv_obj_t* old_tile = g_tiles_objs[idx][index];
-  lv_obj_t* new_tile = render_tile(g_tiles_grids[idx], col, row, tile, index, grid_type, g_tiles_scene_cbs[idx]);
-  g_tiles_objs[idx][index] = new_tile;
-  if (tile.type == TILE_SENSOR || tile.type == TILE_SWITCH) {
-    String payload;
-    if (get_cached_entity_payload(tile.sensor_entity.c_str(), payload)) {
-      if (tile.type == TILE_SENSOR) {
-        const char* unit = tile.sensor_unit.length() > 0 ? tile.sensor_unit.c_str() : nullptr;
-        queue_sensor_tile_update(grid_type, index, payload.c_str(), unit);
-      } else {
-        queue_switch_tile_update(grid_type, index, payload.c_str());
-      }
-    }
-  }
-  if (old_tile) {
-    lv_obj_del_async(old_tile);
-  }
+  // Layout changes (position/span) require a full rebuild to keep placeholders in sync.
+  tiles_reload_layout(grid_type);
 }
 
 /* === Update sensor by entity (unified) === */

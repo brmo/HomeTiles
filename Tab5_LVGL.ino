@@ -5,6 +5,8 @@
 #include <SD.h>   // SD Card Support
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <nvs_flash.h>
+#include <esp_err.h>
 
 #include "src/core/display_manager.h"
 #include "src/core/power_manager.h"
@@ -90,6 +92,20 @@ static void set_hotspot_mode(bool enable) {
   }
 }
 
+static bool init_nvs() {
+  esp_err_t err = nvs_flash_init();
+  if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    nvs_flash_erase();
+    err = nvs_flash_init();
+  }
+  if (err != ESP_OK) {
+    Serial.printf("[Setup] NVS init failed: %s (%d)\n", esp_err_to_name(err), err);
+    return false;
+  }
+  Serial.println("[Setup] NVS ready");
+  return true;
+}
+
 void setup() {
   Serial.begin(115200);
   delay(2000);
@@ -133,6 +149,11 @@ void setup() {
   Serial.flush();
   powerManager.init();
   Serial.println("[Setup] Power OK");
+  Serial.flush();
+
+  Serial.println("[Setup] NVS init...");
+  Serial.flush();
+  init_nvs();
   Serial.flush();
 
   Serial.println("[Setup] Loading configs...");

@@ -4,6 +4,8 @@
 #include "src/ui/tab_settings.h"
 #include "src/core/config_manager.h"
 #include "src/tiles/mdi_icons.h"
+#include "src/tiles/tile_config.h"
+#include "src/ui/ui_manager.h"
 #include "src/fonts/ui_fonts.h"
 
 static lv_obj_t *brightness_label = nullptr;
@@ -55,6 +57,7 @@ static const int kSettingsSliderValueWidth = 70;
 static const int kSettingsSliderHeight = 18;
 static const int kSettingsSliderKnobSize = 40;
 static const int kSettingsSliderClickPad = 22;
+static const uint8_t kSettingsCardColStart = 1;
 
 // Forward declarations
 void settings_update_ap_mode(bool running);
@@ -184,6 +187,38 @@ static void create_icon_block(lv_obj_t *parent, const char *icon_name, const cha
   lv_obj_set_style_text_font(label, &ui_font_24, 0);
   lv_obj_set_style_text_color(label, lv_color_white(), 0);
   lv_obj_set_style_margin_top(label, 8, 0);
+}
+
+static void on_settings_back_clicked(lv_event_t *e) {
+  (void)e;
+  uiManager.switchToTab(0);
+}
+
+static void create_settings_back_button(lv_obj_t *parent) {
+  lv_obj_t *btn = lv_button_create(parent);
+  lv_obj_set_style_radius(btn, 22, 0);
+  lv_obj_set_style_border_width(btn, 0, 0);
+  lv_obj_set_style_shadow_width(btn, 0, 0);
+  lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+  lv_obj_remove_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_grid_cell(btn,
+      LV_GRID_ALIGN_STRETCH, 0, 1,
+      LV_GRID_ALIGN_STRETCH, 0, 1);
+
+  uint32_t btn_color = 0x353535;
+  lv_obj_set_style_bg_color(btn, lv_color_hex(btn_color), LV_PART_MAIN | LV_STATE_DEFAULT);
+  lv_obj_set_style_bg_color(btn, lv_color_hex(btn_color + 0x101010), LV_PART_MAIN | LV_STATE_PRESSED);
+
+  lv_obj_add_event_cb(btn, on_settings_back_clicked, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t *icon = lv_label_create(btn);
+  String icon_char = getMdiChar(String("arrow-left"));
+  lv_label_set_text(icon, icon_char.c_str());
+  if (FONT_MDI_ICONS) {
+    lv_obj_set_style_text_font(icon, FONT_MDI_ICONS, 0);
+  }
+  lv_obj_set_style_text_color(icon, lv_color_white(), 0);
+  lv_obj_center(icon);
 }
 
 static void on_sleep_slider(lv_event_t *e) {
@@ -340,7 +375,8 @@ static void on_ap_mode_clicked(lv_event_t *e) {
 
 static lv_obj_t *create_settings_card(lv_obj_t *parent, uint8_t col, uint8_t row) {
   lv_obj_t *card = lv_obj_create(parent);
-  lv_obj_set_grid_cell(card, LV_GRID_ALIGN_STRETCH, col, 1, LV_GRID_ALIGN_STRETCH, row, 1);
+  uint8_t span = (col < GRID_COLS) ? (GRID_COLS - col) : 1;
+  lv_obj_set_grid_cell(card, LV_GRID_ALIGN_STRETCH, col, span, LV_GRID_ALIGN_STRETCH, row, 1);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_bg_color(card, lv_color_hex(0x2A2A2A), 0);
   lv_obj_set_style_border_opa(card, LV_OPA_TRANSP, 0);
@@ -401,28 +437,33 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   lv_obj_set_style_bg_color(tab, lv_color_hex(0x000000), 0);
   lv_obj_set_style_bg_opa(tab, LV_OPA_COVER, 0);
   lv_obj_set_style_border_opa(tab, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_pad_all(tab, 24, 0);
+  lv_obj_set_style_pad_all(tab, GRID_PAD, 0);
 
-  static int32_t col_dsc[] = {LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
+  static int32_t col_dsc[] = {
+    GRID_CELL_W, GRID_CELL_W, GRID_CELL_W, GRID_CELL_W, GRID_CELL_W, GRID_CELL_W,
+    LV_GRID_TEMPLATE_LAST
+  };
   static int32_t row_dsc[] = {
-    LV_GRID_FR(1),
-    LV_GRID_FR(1),
-    LV_GRID_FR(1),
-    LV_GRID_FR(1),
+    GRID_CELL_H,
+    GRID_CELL_H,
+    GRID_CELL_H,
+    GRID_CELL_H,
     LV_GRID_TEMPLATE_LAST
   };
   lv_obj_set_grid_dsc_array(tab, col_dsc, row_dsc);
-  lv_obj_set_style_pad_column(tab, 24, 0);
-  lv_obj_set_style_pad_row(tab, 24, 0);
+  lv_obj_set_style_pad_column(tab, GRID_GAP, 0);
+  lv_obj_set_style_pad_row(tab, GRID_GAP, 0);
 
   const DeviceConfig& cfg = configManager.getConfig();
   display_rotated_180 = cfg.display_rotated_180;
 
   // Display tile
-  lv_obj_t *card_display = create_settings_card(tab, 0, 0);
+  create_settings_back_button(tab);
+
+  lv_obj_t *card_display = create_settings_card(tab, kSettingsCardColStart, 0);
   lv_obj_t *display_col_left = create_settings_column(
       card_display, kSettingsColLeftPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  create_icon_block(display_col_left, "brightness-5", "Display");
+  create_icon_block(display_col_left, "monitor", "Display");
 
   lv_obj_t *display_col_mid = create_settings_column(
       card_display, kSettingsColMidPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
@@ -476,7 +517,7 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   lv_label_set_text(brightness_label, bright_buf);
 
   // WiFi tile
-  lv_obj_t *card_wifi = create_settings_card(tab, 0, 1);
+  lv_obj_t *card_wifi = create_settings_card(tab, kSettingsCardColStart, 1);
   lv_obj_t *wifi_col_left = create_settings_column(
       card_wifi, kSettingsColLeftPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   create_icon_block(wifi_col_left, "wifi", "WLAN");
@@ -568,7 +609,7 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   lv_obj_center(ap_no_label);
 
   // Sleep mains tile
-  lv_obj_t *card_mains = create_settings_card(tab, 0, 2);
+  lv_obj_t *card_mains = create_settings_card(tab, kSettingsCardColStart, 2);
   lv_obj_t *mains_col_left = create_settings_column(
       card_mains, kSettingsColLeftPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   create_icon_block(mains_col_left, "power-plug", "Netzteil");
@@ -612,7 +653,7 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   lv_label_set_text(sleep_time_label, sleep_buf);
 
   // Sleep battery tile
-  lv_obj_t *card_battery = create_settings_card(tab, 0, 3);
+  lv_obj_t *card_battery = create_settings_card(tab, kSettingsCardColStart, 3);
   lv_obj_t *battery_col_left = create_settings_column(
       card_battery, kSettingsColLeftPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   create_icon_block(battery_col_left, "battery", "Batterie");

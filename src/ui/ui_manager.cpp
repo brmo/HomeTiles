@@ -48,8 +48,6 @@ void UIManager::buildUI(scene_publish_cb_t scene_cb, hotspot_start_cb_t hotspot_
   lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), 0);
   lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
 
-  static const int TABBAR_MARGIN = 22;
-  static const int SIDEBAR_WIDTH = 180;
 
   for (uint8_t i = 0; i < TAB_COUNT; ++i) {
     tab_panels[i] = nullptr;
@@ -60,60 +58,6 @@ void UIManager::buildUI(scene_publish_cb_t scene_cb, hotspot_start_cb_t hotspot_
   nav_container = nullptr;
   tab_content_container = nullptr;
 
-  lv_obj_t *sidebar = lv_obj_create(scr);
-  lv_obj_set_style_bg_color(sidebar, lv_color_hex(0x2A2A2A), 0);
-  lv_obj_set_style_bg_opa(sidebar, LV_OPA_COVER, 0);
-  lv_obj_set_style_radius(sidebar, 34, 0);
-  lv_obj_set_style_border_width(sidebar, 0, 0);
-  lv_obj_set_style_shadow_width(sidebar, 0, 0);
-  lv_obj_set_style_clip_corner(sidebar, true, 0);
-  lv_obj_set_width(sidebar, SIDEBAR_WIDTH);
-  lv_obj_set_height(sidebar, 720);
-  lv_obj_set_style_pad_top(sidebar, TABBAR_MARGIN, 0);
-  lv_obj_set_style_pad_bottom(sidebar, 6, 0);
-  lv_obj_set_style_pad_left(sidebar, 6, 0);
-  lv_obj_set_style_pad_right(sidebar, 6, 0);
-  lv_obj_set_style_pad_gap(sidebar, 16, 0);
-  lv_obj_set_pos(sidebar, 0, 0);
-  lv_obj_set_flex_flow(sidebar, LV_FLEX_FLOW_COLUMN);
-  lv_obj_clear_flag(sidebar, LV_OBJ_FLAG_SCROLLABLE);
-
-  statusbarInit(sidebar);
-
-  nav_container = lv_obj_create(sidebar);
-  lv_obj_set_size(nav_container, LV_PCT(100), LV_PCT(100));
-  lv_obj_set_style_bg_opa(nav_container, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(nav_container, 0, 0);
-  lv_obj_set_style_pad_left(nav_container, 4, 0);
-  lv_obj_set_style_pad_right(nav_container, 4, 0);
-  lv_obj_set_style_pad_top(nav_container, 8, 0);  // Mehr Abstand oben, damit Button nicht abgeschnitten wird
-  lv_obj_set_style_pad_bottom(nav_container, 4, 0);
-  lv_obj_set_style_pad_row(nav_container, 12, 0);
-  lv_obj_set_flex_flow(nav_container, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(nav_container, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_flex_grow(nav_container, 1);
-  lv_obj_clear_flag(nav_container, LV_OBJ_FLAG_SCROLLABLE);
-
-  // Tab-Konfiguration aus tileConfig holen
-  for (uint8_t i = 0; i < TAB_COUNT; ++i) {
-    lv_obj_t *btn = lv_button_create(nav_container);
-
-    // Alle Tabs (0-3) sind konfigurierbar
-    const char* tabName = tileConfig.getTabName(i);
-    const char* iconName = tileConfig.getTabIcon(i);
-
-    // Fallback für Tab 3: "Settings" nur wenn BEIDE leer
-    if (i == 3 && (!tabName || strlen(tabName) == 0) && (!iconName || strlen(iconName) == 0)) {
-      tab_labels[i] = setupTabButton(btn, i, "", "Settings");
-    } else {
-      tab_labels[i] = setupTabButton(btn, i, iconName, tabName);
-    }
-
-    lv_obj_set_flex_grow(btn, 1);
-    lv_obj_add_event_cb(btn, nav_button_event_cb, LV_EVENT_CLICKED, this);
-    tab_buttons[i] = btn;
-    tab_button_overlays[i] = nullptr;  // Nicht verwendet
-  }
 
   tab_content_container = lv_obj_create(scr);
   lv_obj_set_style_bg_color(tab_content_container, lv_color_hex(0x000000), 0);
@@ -121,22 +65,15 @@ void UIManager::buildUI(scene_publish_cb_t scene_cb, hotspot_start_cb_t hotspot_
   lv_obj_set_style_border_width(tab_content_container, 0, 0);
   lv_obj_set_style_pad_all(tab_content_container, 0, 0);
   lv_obj_clear_flag(tab_content_container, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_size(tab_content_container, 1280 - SIDEBAR_WIDTH, 720);
-  lv_obj_set_pos(tab_content_container, SIDEBAR_WIDTH, 0);
+  lv_obj_set_size(tab_content_container, 1280, 720);
+  lv_obj_set_pos(tab_content_container, 0, 0);
 
   tab_panels[0] = createTabPanel(tab_content_container);
   tab_panels[1] = createTabPanel(tab_content_container);
   tab_panels[2] = createTabPanel(tab_content_container);
   tab_panels[3] = createTabPanel(tab_content_container);
 
-  // SIDEBAR ZUERST RENDERN (vor Tiles!)
-  Serial.println("[UI] Rendere Sidebar...");
-  Serial.println("[UI] Sidebar fertig, lade nun Tiles...");
-  // updateStatusbar() wird später in Loop aufgerufen wenn Fonts geladen sind
-
   build_tiles_tab(tab_panels[0], GridType::TAB0, scene_cb);
-  build_tiles_tab(tab_panels[1], GridType::TAB1, scene_cb);
-  build_tiles_tab(tab_panels[2], GridType::TAB2, scene_cb);
   build_settings_tab(tab_panels[3], hotspot_cb);
   for (uint8_t i = 0; i < TAB_COUNT; ++i) {
     if (tab_panels[i]) {
@@ -145,14 +82,10 @@ void UIManager::buildUI(scene_publish_cb_t scene_cb, hotspot_start_cb_t hotspot_
   }
   switchToTab(0);
 
-  // Preload hidden tabs and popup so first use is instant.
-  tiles_reload_layout(GridType::TAB1);
-  tiles_reload_layout(GridType::TAB2);
+  // Preload popups so first use is instant.
   preload_light_popup();
   preload_sensor_popup();
-  preload_image_tiles_from_grid(tileConfig.getTab0Grid());
-  preload_image_tiles_from_grid(tileConfig.getTab1Grid());
-  preload_image_tiles_from_grid(tileConfig.getTab2Grid());
+  preload_image_tiles_from_grid(tileConfig.getActiveGrid());
 
   // Warm settings buffer once to reduce the first-open hitch.
   switchToTab(3);
@@ -311,8 +244,8 @@ void UIManager::switchToTab(uint8_t index) {
   if (index >= TAB_COUNT) return;
   if (active_tab_index == index) return;
 
-  static constexpr size_t kTilesBufferLines = 155;
-  static constexpr size_t kSettingsBufferLines = 155;
+  static constexpr size_t kTilesBufferLines = SCREEN_HEIGHT / GRID_ROWS;
+  static constexpr size_t kSettingsBufferLines = kTilesBufferLines;
   if (index == 3) {
     displayManager.setBufferLines(kSettingsBufferLines);
   } else {
@@ -347,6 +280,12 @@ void UIManager::switchToTab(uint8_t index) {
   // Label bleibt IMMER weiss - nicht aendern!
 
   active_tab_index = index;
+}
+
+void UIManager::switchToFolder(uint16_t folder_id) {
+  if (!tileConfig.setActiveFolder(folder_id)) return;
+  tiles_request_reload(GridType::TAB0);
+  switchToTab(0);
 }
 
 void UIManager::nav_button_event_cb(lv_event_t *e) {
@@ -503,73 +442,10 @@ void UIManager::serviceNtpSync() {
 
 // ========== Tab-Button Live-Update ==========
 void UIManager::refreshTabButton(uint8_t tab_index) {
-  // Alle Tabs 0-3 sind konfigurierbar
-  if (tab_index >= 4) return;
-  if (!tab_buttons[tab_index]) return;
-
-  lv_obj_t *btn = tab_buttons[tab_index];
-
-  // Alle Children löschen (Icon + Text Label)
-  lv_obj_clean(btn);
-
-  // Flexbox column Layout wiederherstellen (wird durch clean gelöscht)
-  lv_obj_set_flex_flow(btn, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(btn, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_gap(btn, 12, 0);  // Größerer Abstand wie bei Scene-Kacheln
-
-  // Neue Werte aus tileConfig holen
-  const char* tabName = tileConfig.getTabName(tab_index);
-  const char* iconName = tileConfig.getTabIcon(tab_index);
-
-  bool has_icon = (iconName && strlen(iconName) > 0);
-  bool has_name = (tabName && strlen(tabName) > 0);
-
-  // Icon (wenn gesetzt)
-  if (has_icon) {
-    String iconChar = getMdiChar(String(iconName));
-    if (iconChar.length() > 0 && FONT_MDI_ICONS != nullptr) {
-      lv_obj_t *icon_label = lv_label_create(btn);
-      lv_label_set_text(icon_label, iconChar.c_str());
-      lv_obj_set_style_text_color(icon_label, lv_color_white(), 0);
-      lv_obj_set_style_text_font(icon_label, FONT_MDI_ICONS, 0);
-    }
-  }
-
-  // Name oder Fallback-Nummer
-  if (has_name) {
-    lv_obj_t *text_label = lv_label_create(btn);
-    lv_label_set_text(text_label, tabName);
-    lv_obj_set_style_text_color(text_label, lv_color_white(), 0);
-    lv_obj_set_style_text_font(text_label, &ui_font_24, 0);
-    lv_label_set_long_mode(text_label, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(text_label, LV_PCT(90));
-    lv_obj_set_style_text_align(text_label, LV_TEXT_ALIGN_CENTER, 0);
-
-    // Update tab_labels array für potenzielle spätere Verwendung
-    tab_labels[tab_index] = text_label;
-  } else if (!has_icon) {
-    // Fallback: Wenn beides leer
-    lv_obj_t *text_label = lv_label_create(btn);
-    const char* fallback = (tab_index == 3) ? "Settings" : "";
-    if (fallback[0] == '\0') {
-      char num_fallback[2];
-      snprintf(num_fallback, sizeof(num_fallback), "%d", tab_index + 1);
-      lv_label_set_text(text_label, num_fallback);
-    } else {
-      lv_label_set_text(text_label, fallback);
-    }
-    lv_obj_set_style_text_color(text_label, lv_color_white(), 0);
-    lv_obj_set_style_text_font(text_label, &ui_font_24, 0);
-    lv_obj_set_style_text_align(text_label, LV_TEXT_ALIGN_CENTER, 0);
-
-    tab_labels[tab_index] = text_label;
-  }
-
-  // Display neu zeichnen (wichtig für sofortiges Update!)
-  lv_obj_invalidate(btn);
-
-  Serial.printf("[UI] Tab-Button %u aktualisiert: %s (icon: %s)\n", tab_index, tabName, iconName);
+  (void)tab_index;
+  // Tabs sind im Device-UI deaktiviert (Navigation ueber Ordner-Kacheln).
 }
+
 
 
 

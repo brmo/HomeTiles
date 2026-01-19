@@ -1089,19 +1089,13 @@ static void refresh_url_cache_entries(uint32_t now) {
     updated.push_back(entry);
   };
 
-  const TileGridConfig* grids[] = {
-    &tileConfig.getTab0Grid(),
-    &tileConfig.getTab1Grid(),
-    &tileConfig.getTab2Grid()
-  };
-  for (const TileGridConfig* grid : grids) {
-    for (size_t i = 0; i < TILES_PER_GRID; ++i) {
-      const Tile& tile = grid->tiles[i];
-      if (tile.type != TILE_IMAGE) continue;
-      if (!is_url_path(tile.image_path)) continue;
-      uint32_t interval_ms = normalize_url_cache_interval_ms(tile.image_slideshow_sec);
-      add_entry(tile.image_path, interval_ms);
-    }
+  const TileGridConfig& grid = tileConfig.getActiveGrid();
+  for (size_t i = 0; i < TILES_PER_GRID; ++i) {
+    const Tile& tile = grid.tiles[i];
+    if (tile.type != TILE_IMAGE) continue;
+    if (!is_url_path(tile.image_path)) continue;
+    uint32_t interval_ms = normalize_url_cache_interval_ms(tile.image_slideshow_sec);
+    add_entry(tile.image_path, interval_ms);
   }
   g_url_cache_entries.swap(updated);
 }

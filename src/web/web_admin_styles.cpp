@@ -71,13 +71,13 @@ void appendAdminStyles(String& html) {
       max-width:600px;
     }
 
-    /* Tile Editor - M5Stack Tab5: Content 1100x720 (50% Web-Skalierung) */
-    /* Original: Tile 335x150px, Gap 24px  Web: Tile 168x75px, Gap 12px */
+    /* Tile Editor - Tab5: 1280x720 (scaled preview) */
+    /* Original: Tile 188x154px, Gap 24px, Pad 16px */
     .tile-editor { display:grid; grid-template-columns:auto 350px; gap:24px; align-items:start; }
     .tile-grid {
       display:grid;
-      grid-template-columns:repeat(3, 168px);
-      grid-template-rows:repeat(4, 75px);
+      grid-template-columns:repeat(6, 96px);
+      grid-template-rows:repeat(4, 80px);
       gap:12px;
       padding:12px;
       background:#000;
@@ -93,7 +93,7 @@ void appendAdminStyles(String& html) {
       border-radius:11px;
       cursor:pointer;
       border:3px solid transparent;
-      padding:12px 10px;
+      padding:8px;
       position:relative;
       box-sizing:border-box;
       overflow:hidden;
@@ -248,6 +248,14 @@ void appendAdminStyles(String& html) {
     .tile-settings h3 { margin:0 0 16px; color:#1e293b; font-size:18px; }
     .type-fields { display:none; margin-top:12px; }
     .type-fields.show { display:block; }
+    .tile-layout {
+      display:grid;
+      grid-template-columns:repeat(2, minmax(0, 1fr));
+      gap:10px;
+      margin:12px 0 12px;
+    }
+    .layout-field label { margin-bottom:4px; font-size:12px; }
+    .layout-field input { padding:10px; }
     .inline-checkbox { display:flex; align-items:center; gap:8px; font-weight:600; margin-top:8px; }
     .inline-checkbox input { margin:0; }
     .gauge-fields { padding-left:4px; }

@@ -268,7 +268,7 @@ bool DisplayManager::init() {
   }
 
   // Kleinere DMA-Puffer fuer mehr verfuegbaren Heap (wichtig bei vielen Kacheln!)
-  static constexpr size_t TARGET_LINES   = 155;
+  static constexpr size_t TARGET_LINES   = SCREEN_HEIGHT / 4;
   static constexpr size_t FALLBACK_LINES = 96;
 
   auto release_buffers = []() {
