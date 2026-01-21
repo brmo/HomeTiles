@@ -139,7 +139,7 @@ lv_obj_t* render_sensor_tile(lv_obj_t* parent, int col, int row, const Tile& til
   lv_label_set_long_mode(v, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(v, LV_PCT(100));
   lv_obj_set_style_text_align(v, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_text_line_space(v, 2, 0);
+  lv_obj_set_style_text_line_space(v, 8, 0);
   lv_label_set_text(v, "--");
   if (gauge_enabled) {
     lv_obj_align(v, LV_ALIGN_BOTTOM_MID, 0, 12);
