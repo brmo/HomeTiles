@@ -1,4 +1,10 @@
 #include "src/web/web_admin_styles.h"
+#include "src/types/image/web_styles.h"
+#include "src/types/key/web_styles.h"
+#include "src/types/navigate/web_styles.h"
+#include "src/types/scene/web_styles.h"
+#include "src/types/sensor/web_styles.h"
+#include "src/types/switch/web_styles.h"
 
 void appendAdminStyles(String& html) {
   html += R"html(
@@ -107,12 +113,6 @@ void appendAdminStyles(String& html) {
       background-clip:padding-box;
       clip-path: inset(0 round 11px);
     }
-    .tile.sensor { display:grid; grid-template-rows:auto 1fr; grid-template-columns:1fr; }
-    .tile.scene,
-    .tile.key,
-    .tile.navigate,
-    .tile.switch,
-    .tile.image { display:flex; flex-direction:column; align-items:center; justify-content:center; }
     .tile.active {
       border:3px solid #4A9EFF;
       box-shadow:0 0 12px rgba(74,158,255,0.6);
@@ -153,32 +153,6 @@ void appendAdminStyles(String& html) {
       white-space:nowrap;
       align-self:start;
     }
-    .tile.sensor .tile-title {
-      text-align:left;
-      align-self:start;
-      width:100%;
-    }
-    .tile.scene .tile-title,
-    .tile.key .tile-title,
-    .tile.navigate .tile-title,
-    .tile.switch .tile-title,
-    .tile.image .tile-title { text-align:center; align-self:auto; width:100%; }
-    .tile-value {
-      color:#fff;
-      font-size:24px;
-      font-weight:normal;
-      text-align:center;
-      opacity:0.95;
-      line-height:1;
-      align-self:center;
-      justify-self:center;
-      margin-left:-15px;
-      margin-top:9px;
-    }
-    .tile-value.sensor-value-size-default { font-size:28px; }
-    .tile-value.sensor-value-size-24 { font-size:24px; }
-    .tile-value.sensor-value-size-20 { font-size:20px; }
-    .tile-unit { color:#e6e6e6; font-size:14px; opacity:0.95; margin-left:7px; }
 
     /* Tile Icons (MDI) */
     .tile-icon {
@@ -186,54 +160,6 @@ void appendAdminStyles(String& html) {
       font-size:24px;
       line-height:1;
     }
-    /* Sensor: Icon rechtsbündig, Titel linksbündig */
-    .tile.sensor .tile-icon {
-      position:absolute;
-      top:10px;
-      right:8px;
-    }
-    /* Scene/Key/Navigate/Image: Icon oben-mittig (flexbox zentriert automatisch) */
-    .tile.scene .tile-icon,
-    .tile.key .tile-icon,
-    .tile.navigate .tile-icon,
-    .tile.switch .tile-icon,
-    .tile.image .tile-icon {
-      margin-bottom:4px;
-    }
-    .tile.scene .tile-title,
-    .tile.key .tile-title,
-    .tile.navigate .tile-title,
-    .tile.switch .tile-title,
-    .tile.image .tile-title {
-      margin-top:4px;
-    }
-    .tile.switch.switch-toggle { display:grid; grid-template-rows:auto 1fr; grid-template-columns:1fr; }
-    .tile.switch.switch-toggle .tile-title { text-align:left; align-self:start; width:100%; margin-top:0; }
-    .tile.switch.switch-toggle .tile-icon { position:absolute; top:10px; right:8px; margin:0; }
-    .tile-switch {
-      width:58px;
-      height:28px;
-      border-radius:999px;
-      background:#555;
-      position:relative;
-      align-self:center;
-      justify-self:center;
-      margin-top:10px;
-      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.2);
-    }
-    .tile-switch .tile-switch-knob {
-      position:absolute;
-      top:3px;
-      left:3px;
-      width:22px;
-      height:22px;
-      border-radius:50%;
-      background:#f8fafc;
-      transition:transform 0.15s ease, background 0.15s ease;
-    }
-    .tile-switch.is-on { background: var(--switch-on-color, #FFD54F); }
-    .tile-switch.is-on .tile-switch-knob { transform: translateX(30px); }
-
     /* Settings Panel */
     .tile-settings {
       background:#f8fafc;
@@ -280,4 +206,11 @@ void appendAdminStyles(String& html) {
     .notification.show { opacity:1; transform:translateY(0); }
   </style>
 )html";
+
+  append_sensor_styles(html);
+  append_scene_styles(html);
+  append_key_styles(html);
+  append_navigate_styles(html);
+  append_switch_styles(html);
+  append_image_styles(html);
 }

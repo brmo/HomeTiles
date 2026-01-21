@@ -11,6 +11,12 @@
 #include "src/web/web_admin_scripts.h"
 #include "src/web/web_admin_styles.h"
 #include "src/tiles/tile_config.h"
+#include "src/types/sensor/web_html.h"
+#include "src/types/scene/web_html.h"
+#include "src/types/key/web_html.h"
+#include "src/types/navigate/web_html.h"
+#include "src/types/switch/web_html.h"
+#include "src/types/image/web_html.h"
 
 // Helper function to generate tile tab HTML (unified for all folders)
 static void appendTileTabHTML(
@@ -285,176 +291,17 @@ static void appendTileTabHTML(
               </div>
             </div>
 
-            <!-- Sensor Fields -->
-            <div id=")html";
-  html += tab_id;
-  html += R"html(_sensor_fields" class="type-fields">
-              <label>Sensor Entity</label>
-              <select id=")html";
-  html += tab_id;
-  html += R"html(_sensor_entity">
-                <option value="">Keine Auswahl</option>
 )html";
 
-  for (const auto& opt : sensorOptions) {
-    html += "<option value=\"";
-    appendHtmlEscaped(html, opt);
-    html += "\">";
-    String label = humanizeIdentifier(opt, true) + " - " + opt;
-    appendHtmlEscaped(html, label);
-    html += "</option>";
-  }
+            append_sensor_fields_html(html, tab_id, sensorOptions);
+            append_scene_fields_html(html, tab_id, sceneOptions);
+            append_key_fields_html(html, tab_id);
+            append_navigate_fields_html(html, tab_id, navigateOptionsHtml);
+            append_switch_fields_html(html, tab_id, switchOptions);
+            append_image_fields_html(html, tab_id);
 
   html += R"html(
-              </select>
-              <label>Einheit</label>
-              <input type="text" id=")html";
-  html += tab_id;
-  html += R"html(_sensor_unit" placeholder="z.B. °C">
-                <label>Nachkommastellen (leer = Originalwert)</label>
-                <input type="number" id=")html";
-    html += tab_id;
-    html += R"html(_sensor_decimals" min="0" max="6" step="1" placeholder="z.B. 1">
-                <label>Wert-Groesse</label>
-                <select id=")html";
-    html += tab_id;
-    html += R"html(_sensor_value_font">
-                  <option value="0">Standard</option>
-                  <option value="1">20</option>
-                  <option value="2">24</option>
-                </select>
-                <label class="inline-checkbox">
-                  <input type="checkbox" id=")html";
-  html += tab_id;
-  html += R"html(_sensor_gauge">
-                  Zeiger-Gauge anzeigen
-                </label>
-                <div id=")html";
-  html += tab_id;
-  html += R"html(_sensor_gauge_fields" class="gauge-fields hidden">
-                  <label>Gauge Min</label>
-                  <input type="number" id=")html";
-  html += tab_id;
-  html += R"html(_sensor_gauge_min" step="1" placeholder="z.B. 0">
-                  <label>Gauge Max</label>
-                  <input type="number" id=")html";
-  html += tab_id;
-  html += R"html(_sensor_gauge_max" step="1" placeholder="z.B. 100">
-                </div>
-            </div>
-
-            <!-- Scene Fields -->
-            <div id=")html";
-  html += tab_id;
-  html += R"html(_scene_fields" class="type-fields">
-              <label>Szene</label>
-              <select id=")html";
-  html += tab_id;
-  html += R"html(_scene_alias">
-                <option value="">Keine Auswahl</option>
-)html";
-
-  for (const auto& opt : sceneOptions) {
-    html += "<option value=\"";
-    appendHtmlEscaped(html, opt.alias);
-    html += "\">";
-    String label = humanizeIdentifier(opt.alias, false) + " - " + opt.entity;
-    appendHtmlEscaped(html, label);
-    html += "</option>";
-  }
-
-  html += R"html(
-              </select>
-            </div>
-
-            <!-- Key Fields -->
-            <div id=")html";
-  html += tab_id;
-  html += R"html(_key_fields" class="type-fields">
-              <label>Makro</label>
-              <input type="text" id=")html";
-  html += tab_id;
-  html += R"html(_key_macro" placeholder="z.B. ctrl+g">
-              <div style="font-size:11px;color:#64748b;margin-top:4px;">Beispiele: g, ctrl+g, ctrl+shift+a</div>
-            </div>
-
-            <!-- Navigate Fields -->
-            <div id=")html";
-  html += tab_id;
-  html += R"html(_navigate_fields" class="type-fields">
-              <label>Ziel-Ordner</label>
-              <select id=")html";
-  html += tab_id;
-  html += R"html(_navigate_target">
-                <option value="0">Neuer Ordner</option>
-)html";
-  html += navigateOptionsHtml;
-  html += R"html(
-              </select>
-              <div id=")html";
-  html += tab_id;
-  html += R"html(_navigate_note" style="font-size:11px;color:#64748b;margin-top:6px;"></div>
-            </div>
-
-            <!-- Switch Fields -->
-            <div id=")html";
-  html += tab_id;
-  html += R"html(_switch_fields" class="type-fields">
-              <label>Schalter/Licht</label>
-              <select id=")html";
-  html += tab_id;
-  html += R"html(_switch_entity">
-                <option value="">Keine Auswahl</option>
-)html";
-
-  for (const auto& opt : switchOptions) {
-    html += "<option value=\"";
-    appendHtmlEscaped(html, opt);
-    html += "\">";
-    String label = humanizeIdentifier(opt, true) + " - " + opt;
-    appendHtmlEscaped(html, label);
-    html += "</option>";
-  }
-
-  html += R"html(
-              </select>
-              <label>Anzeige</label>
-              <select id=")html";
-  html += tab_id;
-  html += R"html(_switch_style">
-                <option value="0">Icon Button</option>
-                <option value="1">LVGL Switch</option>
-              </select>
-            </div>
-
-            <!-- Image Fields -->
-            <div id=")html";
-  html += tab_id;
-  html += R"html(_image_fields" class="type-fields">
-              <label>Bildauswahl (.bin/.jpg von SD)</label>
-              <select id=")html";
-  html += tab_id;
-  html += R"html(_image_select">
-              </select>
-              <div id=")html";
-  html += tab_id;
-  html += R"html(_image_url_fields" style="display:none;">
-                <label>Bild-URL (HTTP/HTTPS)</label>
-                <input type="url" id=")html";
-  html += tab_id;
-  html += R"html(_image_url" placeholder="https://example.com/bild.jpg">
-              </div>
-              <label id=")html";
-  html += tab_id;
-  html += R"html(_image_interval_label">Diashow Intervall (Sekunden)</label>
-              <input type="number" min="1" max="3600" step="1" id=")html";
-  html += tab_id;
-  html += R"html(_image_slideshow_sec" value="10">
-              <input type="hidden" id=")html";
-  html += tab_id;
-  html += R"html(_image_path">
-            </div>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:12px;color:#64748b;gap:10px;">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:12px;color:#64748b;gap:10px;">
               <span>Aenderungen werden automatisch gespeichert.</span>
               <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
                 <button type="button" class="btn" style="padding:8px 12px;font-size:12px;min-width:90px;" onclick="copyTile(')html";

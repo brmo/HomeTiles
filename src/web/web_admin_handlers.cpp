@@ -8,6 +8,13 @@
 #include "src/tiles/tile_config.h"
 #include "src/ui/tab_tiles_unified.h"
 #include "src/ui/ui_manager.h"
+#include "src/web/web_admin_tile_helpers.h"
+#include "src/types/sensor/web_handler.h"
+#include "src/types/scene/web_handler.h"
+#include "src/types/key/web_handler.h"
+#include "src/types/navigate/web_handler.h"
+#include "src/types/switch/web_handler.h"
+#include "src/types/image/web_handler.h"
 #include <algorithm>
 #include <vector>
 #include <SD.h>
@@ -113,14 +120,6 @@ static bool placementOverlaps(const TileGridConfig& grid, size_t self_index, con
   return false;
 }
 
-static uint16_t getNavigateTargetId(const Tile& tile) {
-  return static_cast<uint16_t>((static_cast<uint16_t>(tile.key_modifier) << 8) | tile.key_code);
-}
-
-static void setNavigateTargetId(Tile& tile, uint16_t folder_id) {
-  tile.key_code = static_cast<uint8_t>(folder_id & 0xFF);
-  tile.key_modifier = static_cast<uint8_t>((folder_id >> 8) & 0xFF);
-}
 
 static bool parseFolderIdArg(WebServer& server, uint16_t& out) {
   String raw;
@@ -604,92 +603,19 @@ void WebAdminServer::handleSaveTiles() {
 
   // Type-specific fields
   if (type == TILE_SENSOR) {
-    tile.sensor_entity = server.hasArg("sensor_entity") ? server.arg("sensor_entity") : "";
-    tile.sensor_unit = server.hasArg("sensor_unit") ? server.arg("sensor_unit") : "";
-
-    uint8_t decimals = 0xFF;
-    if (server.hasArg("sensor_decimals")) {
-      String decStr = server.arg("sensor_decimals");
-      decStr.trim();
-      if (decStr.length() > 0) {
-        int dec = decStr.toInt();
-        if (dec < 0) dec = 0;
-        if (dec > 6) dec = 6;
-        decimals = static_cast<uint8_t>(dec);
-      }
-    }
-    tile.sensor_decimals = decimals;
-    uint8_t value_font = 0;
-    if (server.hasArg("sensor_value_font")) {
-      int raw = server.arg("sensor_value_font").toInt();
-      value_font = (raw == 1 || raw == 2) ? static_cast<uint8_t>(raw) : 0;
-    }
-    tile.sensor_value_font = value_font;
-    tile.sensor_gauge_enabled = false;
-    tile.sensor_gauge_min = 0;
-    tile.sensor_gauge_max = 100;
-    if (server.hasArg("sensor_gauge")) {
-      tile.sensor_gauge_enabled = (server.arg("sensor_gauge").toInt() == 1);
-    }
-    if (server.hasArg("sensor_gauge_min")) {
-      String raw = server.arg("sensor_gauge_min");
-      raw.trim();
-      if (raw.length() > 0) tile.sensor_gauge_min = raw.toInt();
-    }
-    if (server.hasArg("sensor_gauge_max")) {
-      String raw = server.arg("sensor_gauge_max");
-      raw.trim();
-      if (raw.length() > 0) tile.sensor_gauge_max = raw.toInt();
-    }
-    if (tile.sensor_gauge_max <= tile.sensor_gauge_min) {
-      tile.sensor_gauge_min = 0;
-      tile.sensor_gauge_max = 100;
-    }
+    apply_sensor_fields_from_request(server, tile);
   } else if (type == TILE_SCENE) {
-    tile.scene_alias = server.hasArg("scene_alias") ? server.arg("scene_alias") : "";
-    tile.sensor_decimals = 0xFF;
-    tile.sensor_value_font = 0;
-    tile.sensor_gauge_enabled = false;
-    tile.sensor_gauge_min = 0;
-    tile.sensor_gauge_max = 100;
+    apply_scene_fields_from_request(server, tile);
   } else if (type == TILE_KEY) {
-    tile.key_macro = server.hasArg("key_macro") ? server.arg("key_macro") : "";
-    tile.sensor_decimals = 0xFF;
-    tile.sensor_value_font = 0;
-    tile.sensor_gauge_enabled = false;
-    tile.sensor_gauge_min = 0;
-    tile.sensor_gauge_max = 100;
-
-    // Parse macro to key_code and modifier
-    uint8_t modifier = 0;
-    uint8_t key_code = 0;
-
-    parseKeyMacro(tile.key_macro, key_code, modifier);
-
-    tile.key_code = key_code;
-    tile.key_modifier = modifier;
+    apply_key_fields_from_request(server, tile);
   } else if (type == TILE_FOLDER) {
-    uint16_t target_id = 0;
-    int raw = server.hasArg("navigate_target") ? server.arg("navigate_target").toInt() : -1;
-    if (raw <= 0 || !tileConfig.folderExists(static_cast<uint16_t>(raw))) {
-      uint16_t new_id = 0;
-      if (!tileConfig.createFolder(folder_id, tile.title, tile.icon_name, new_id)) {
-        tile = previous_tile;
-        server.send(500, "application/json", "{\"success\":false,\"error\":\"Folder create failed\"}");
-        return;
-      }
-      target_id = new_id;
-    } else {
-      target_id = static_cast<uint16_t>(raw);
+    String error_message;
+    if (!apply_navigate_fields_from_request(server, tile, folder_id, tileConfig, error_message)) {
+      tile = previous_tile;
+      String err = error_message.length() ? error_message : "Folder create failed";
+      server.send(500, "application/json", String("{\"success\":false,\"error\":\"") + err + "\"}");
+      return;
     }
-    tileConfig.updateFolder(target_id, tile.title, tile.icon_name);
-
-    tile.sensor_decimals = 0xFF;
-    setNavigateTargetId(tile, target_id);
-    tile.sensor_value_font = 0;
-    tile.sensor_gauge_enabled = false;
-    tile.sensor_gauge_min = 0;
-    tile.sensor_gauge_max = 100;
   } else if (type == TILE_SETTINGS) {
     if (!tile.title.length()) tile.title = "Settings";
     if (!tile.icon_name.length()) tile.icon_name = "cog";
@@ -710,29 +636,9 @@ void WebAdminServer::handleSaveTiles() {
     tile.sensor_gauge_min = 0;
     tile.sensor_gauge_max = 100;
   } else if (type == TILE_SWITCH) {
-    // Element-Pool: sensor_entity = target entity for switch/light
-    tile.sensor_entity = server.hasArg("switch_entity") ? server.arg("switch_entity") : "";
-    uint8_t style = 0;
-    if (server.hasArg("switch_style")) {
-      int raw = server.arg("switch_style").toInt();
-      style = (raw == 1) ? 1 : 0;
-    }
-    tile.sensor_decimals = style;
-    tile.sensor_value_font = 0;
-    tile.sensor_gauge_enabled = false;
-    tile.sensor_gauge_min = 0;
-    tile.sensor_gauge_max = 100;
+    apply_switch_fields_from_request(server, tile);
   } else if (type == TILE_IMAGE) {
-    // Element-Pool: image_path wird in sensor_entity gespeichert (siehe tile_config.cpp packTile/unpackTile)
-    tile.image_path = server.hasArg("image_path") ? server.arg("image_path") : "";
-    tile.image_path.trim();
-    tile.key_macro = "";
-    Serial.printf("[WebAdmin] IMAGE Tile - Empfangener Pfad: '%s'\n", tile.image_path.c_str());
-    tile.sensor_decimals = 0xFF;
-    tile.sensor_value_font = 0;
-    tile.sensor_gauge_enabled = false;
-    tile.sensor_gauge_min = 0;
-    tile.sensor_gauge_max = 100;
+    apply_image_fields_from_request(server, tile);
   }
 
   if (deleting_folder) {

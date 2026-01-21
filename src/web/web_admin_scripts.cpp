@@ -1,4 +1,10 @@
 #include "src/web/web_admin_scripts.h"
+#include "src/types/image/web_scripts.h"
+#include "src/types/key/web_scripts.h"
+#include "src/types/navigate/web_scripts.h"
+#include "src/types/scene/web_scripts.h"
+#include "src/types/sensor/web_scripts.h"
+#include "src/types/switch/web_scripts.h"
 
 void appendAdminScripts(String& html) {
   html += R"html(
@@ -206,211 +212,6 @@ void appendAdminScripts(String& html) {
       tabDrafts[currentTileIndex].col = colVal;
       tabDrafts[currentTileIndex].row = rowVal;
       persistDrafts();
-    }
-  }
-
-  const slideshowTokenLegacy = '__slideshow__';
-  const slideshowTokenBin = '__slideshow_bin__';
-  const slideshowTokenJpeg = '__slideshow_jpeg__';
-  const imageUrlToken = '__url__';
-  const urlIntervalDefault = '3600';
-  const slideshowIntervalDefault = '10';
-  let sdImageList = [];
-  let sdImageListLoaded = false;
-  function normalizeIconName(value) {
-    let icon = String(value || '').trim().toLowerCase();
-    if (icon.startsWith('mdi:')) icon = icon.substring(4);
-    else if (icon.startsWith('mdi-')) icon = icon.substring(4);
-    return icon;
-  }
-  function formatFolderLabel(name, folderId) {
-    let label = String(name || '').trim();
-    if (!label.length) label = 'Ordner ' + folderId;
-    return label;
-  }
-  function updateFolderTabUi(folderId, name, icon) {
-    if (folderId === undefined || folderId === null) return;
-    const folderNum = parseInt(folderId, 10);
-    if (isNaN(folderNum)) return;
-    const label = formatFolderLabel(name, folderNum);
-    const iconName = normalizeIconName(icon);
-    const tabId = tabByFolder[folderNum];
-    if (tabId) {
-      const tabEl = document.getElementById('tab-tiles-' + tabId);
-      if (tabEl) {
-        tabEl.dataset.folderName = label;
-        tabEl.dataset.folderIcon = iconName;
-      }
-      const btns = Array.from(document.querySelectorAll('.tab-btn'));
-      const btn = btns.find(b => b.getAttribute('onclick')?.includes('tab-tiles-' + tabId));
-      if (btn) {
-        const labelEl = btn.querySelector('span');
-        if (labelEl) labelEl.textContent = label;
-        let iconEl = btn.querySelector('i.mdi');
-        if (iconName) {
-          if (!iconEl) {
-            iconEl = document.createElement('i');
-            iconEl.className = 'mdi';
-            iconEl.style.fontSize = '24px';
-            if (labelEl) btn.insertBefore(iconEl, labelEl);
-            else btn.appendChild(iconEl);
-          }
-          iconEl.className = 'mdi mdi-' + iconName;
-          iconEl.style.fontSize = '24px';
-        } else if (iconEl) {
-          iconEl.remove();
-        }
-      }
-    }
-    document.querySelectorAll('select[id$="_navigate_target"]').forEach(select => {
-      const opt = select.querySelector('option[value="' + folderNum + '"]');
-      if (opt) opt.textContent = label;
-    });
-  }
-  function isImageUrl(value) {
-    return /^https?:\/\//i.test(String(value || '').trim());
-  }
-  function normalizeImageToken(value) {
-    if (!value) return '';
-    if (value === slideshowTokenLegacy) return slideshowTokenBin;
-    return value;
-  }
-
-  function populateImageSelect(tab, list) {
-    const prefix = tab;
-    const select = document.getElementById(prefix + '_image_select');
-    if (!select) return;
-    const current = select.value;
-    const inputVal = document.getElementById(prefix + '_image_path')?.value || '';
-    const urlInput = document.getElementById(prefix + '_image_url');
-    const items = Array.isArray(list) ? list : [];
-    select.innerHTML = '';
-    const slideshowBinOpt = document.createElement('option');
-    slideshowBinOpt.value = slideshowTokenBin;
-    slideshowBinOpt.textContent = 'Alle .bin (Diashow)';
-    select.appendChild(slideshowBinOpt);
-    const slideshowJpegOpt = document.createElement('option');
-    slideshowJpegOpt.value = slideshowTokenJpeg;
-    slideshowJpegOpt.textContent = 'Alle JPEG (Diashow)';
-    select.appendChild(slideshowJpegOpt);
-    const urlOpt = document.createElement('option');
-    urlOpt.value = imageUrlToken;
-    urlOpt.textContent = 'URL (HTTP/HTTPS)';
-    select.appendChild(urlOpt);
-    items.forEach(p => {
-      const opt = document.createElement('option');
-      opt.value = p;
-      opt.textContent = p;
-      select.appendChild(opt);
-    });
-    const preferred = normalizeImageToken(inputVal || current || '');
-    const isUrlValue = isImageUrl(preferred) || preferred === imageUrlToken;
-    const valid = preferred === slideshowTokenBin || preferred === slideshowTokenJpeg || items.includes(preferred) || isUrlValue;
-    if (valid) {
-      select.value = isUrlValue ? imageUrlToken : preferred;
-    } else if (!inputVal && !current) {
-      select.value = slideshowTokenBin;
-      setImagePath(tab, slideshowTokenBin, false);
-    } else {
-      select.value = slideshowTokenBin;
-    }
-    if (isUrlValue && urlInput && inputVal) urlInput.value = inputVal;
-    updateImageUrlVisibility(tab, select.value, inputVal || '');
-  }
-
-  function refreshImageSelect(tab, force) {
-    if (!force && sdImageListLoaded) {
-      populateImageSelect(tab, sdImageList);
-      return;
-    }
-    fetch('/api/sd_images')
-      .then(res => res.json())
-      .then(list => {
-        sdImageList = Array.isArray(list) ? list : [];
-        sdImageListLoaded = true;
-        populateImageSelect(tab, sdImageList);
-      })
-      .catch(() => {
-        sdImageListLoaded = false;
-      });
-  }
-
-  function applyImageUiState(tab, path) {
-    const prefix = tab;
-    const select = document.getElementById(prefix + '_image_select');
-    if (!select) return;
-    const urlInput = document.getElementById(prefix + '_image_url');
-    if (!path) {
-      setImagePath(tab, slideshowTokenBin, false);
-      return;
-    }
-    const normalized = normalizeImageToken(path);
-    if (isImageUrl(normalized) || normalized === imageUrlToken) {
-      select.value = imageUrlToken;
-      if (urlInput) urlInput.value = normalized === imageUrlToken ? '' : normalized;
-    } else {
-      select.value = normalized;
-      if (select.value !== normalized) select.value = slideshowTokenBin;
-      if (urlInput) urlInput.value = '';
-    }
-    updateImageUrlVisibility(tab, select.value, path);
-  }
-
-  function setImagePath(tab, value, autosave = true) {
-    const prefix = tab;
-    const input = document.getElementById(prefix + '_image_path');
-    if (!input) return;
-    const normalized = normalizeImageToken(value || '');
-    input.value = normalized;
-    const urlInput = document.getElementById(prefix + '_image_url');
-    if (urlInput) urlInput.value = '';
-    const select = document.getElementById(prefix + '_image_select');
-    if (select) {
-      select.value = input.value;
-      if (select.value !== input.value) select.value = slideshowTokenBin;
-    }
-    updateImageUrlVisibility(tab, select ? select.value : '', input.value);
-    if (autosave) {
-      updateTilePreview(tab);
-      updateDraft(tab);
-      scheduleAutoSave(tab);
-    }
-  }
-
-  function setImageUrl(tab, url, autosave = true) {
-    const prefix = tab;
-    const input = document.getElementById(prefix + '_image_path');
-    if (!input) return;
-    const normalized = String(url || '').trim();
-    input.value = normalized;
-    const urlInput = document.getElementById(prefix + '_image_url');
-    if (urlInput) urlInput.value = normalized;
-    const select = document.getElementById(prefix + '_image_select');
-    if (select) select.value = imageUrlToken;
-    updateImageUrlVisibility(tab, imageUrlToken, normalized);
-    if (autosave) {
-      updateTilePreview(tab);
-      updateDraft(tab);
-      scheduleAutoSave(tab);
-    }
-  }
-
-  function updateImageUrlVisibility(tab, selectedValue, currentPath) {
-    const prefix = tab;
-    const wrap = document.getElementById(prefix + '_image_url_fields');
-    if (!wrap) return;
-    const show = selectedValue === imageUrlToken || isImageUrl(currentPath || '');
-    wrap.style.display = show ? 'block' : 'none';
-    const label = document.getElementById(prefix + '_image_interval_label');
-    if (label) {
-      label.textContent = show ? 'URL Cache Intervall (Sekunden)' : 'Diashow Intervall (Sekunden)';
-    }
-    const intervalInput = document.getElementById(prefix + '_image_slideshow_sec');
-    if (show && intervalInput) {
-      const val = String(intervalInput.value || '').trim();
-      if (val === '' || val === slideshowIntervalDefault) {
-        intervalInput.value = urlIntervalDefault;
-      }
     }
   }
 
@@ -674,21 +475,6 @@ void appendAdminScripts(String& html) {
     setupLivePreview(tab);
   }
 
-  function maybeFillTitleFromScene(tab) {
-    const prefix = tab;
-    const typeSel = document.getElementById(prefix + '_tile_type');
-    const titleInput = document.getElementById(prefix + '_tile_title');
-    const sceneSel = document.getElementById(prefix + '_scene_alias');
-    if (!typeSel || !titleInput || !sceneSel) return;
-    if (typeSel.value !== '2') return;
-    if (titleInput.value && titleInput.value.trim().length) return;
-    const opt = sceneSel.selectedOptions && sceneSel.selectedOptions[0];
-    if (!opt) return;
-    const label = opt.textContent || opt.innerText || '';
-    const title = label.split(' - ')[0] || opt.value || '';
-    if (title.trim().length) titleInput.value = title.trim();
-  }
-
   function titleFromOption(option) {
     if (!option) return '';
     const label = String(option.textContent || option.innerText || '').trim();
@@ -718,14 +504,6 @@ void appendAdminScripts(String& html) {
     let title = titleFromOption(opt);
     if (!title.length) title = titleFromEntity(selectEl.value);
     if (title.length) titleInput.value = title;
-  }
-
-  function maybeFillTitleFromSensor(tab) {
-    maybeFillTitleFromEntity(tab, '_sensor_entity');
-  }
-
-  function maybeFillTitleFromSwitch(tab) {
-    maybeFillTitleFromEntity(tab, '_switch_entity');
   }
 
   function setupLivePreview(tab) {
@@ -798,238 +576,6 @@ void appendAdminScripts(String& html) {
       setImageUrl(tab, imageUrlInput.value || '');
     });
     if (imageIntervalInput) imageIntervalInput.addEventListener('input', () => { updateDraft(tab); scheduleAutoSave(tab); });
-  }
-
-  function formatSensorValue(value, decimals) {
-    if (value === undefined || value === null) return '--';
-    let text = String(value).trim();
-    if (!text.length) return '--';
-    const lower = text.toLowerCase();
-    if (lower === 'unavailable' || lower === 'unknown' || lower === 'none') return '--';
-    if (decimals === undefined || decimals === null || decimals === '' || Number(decimals) === -1) return text;
-    const num = parseFloat(text.replace(',', '.'));
-    if (isNaN(num) || !isFinite(num)) return text;
-    const d = Math.max(0, Math.min(6, parseInt(decimals, 10) || 0));
-    return num.toFixed(d);
-  }
-
-  const SWITCH_ICON_ON = '#FFD54F';
-  const SWITCH_ICON_OFF = '#B0B0B0';
-
-  function parseOnOff(text) {
-    const lower = String(text || '').trim().toLowerCase();
-    if (['on', 'true', '1', 'yes'].includes(lower)) return true;
-    if (['off', 'false', '0', 'no'].includes(lower)) return false;
-    return null;
-  }
-
-  function parseHexColor(text) {
-    let t = String(text || '').trim();
-    if (t.startsWith('#')) t = t.substring(1);
-    if (t.startsWith('0x') || t.startsWith('0X')) t = t.substring(2);
-    if (t.length !== 6) return null;
-    if (!/^[0-9a-fA-F]{6}$/.test(t)) return null;
-    return '#' + t.toLowerCase();
-  }
-
-  function rgbToHexColor(r, g, b) {
-    const clamp = (v) => Math.max(0, Math.min(255, v));
-    const rr = clamp(r).toString(16).padStart(2, '0');
-    const gg = clamp(g).toString(16).padStart(2, '0');
-    const bb = clamp(b).toString(16).padStart(2, '0');
-    return '#' + rr + gg + bb;
-  }
-
-  function parseRgbList(list) {
-    if (Array.isArray(list) && list.length >= 3) {
-      return rgbToHexColor(Number(list[0]), Number(list[1]), Number(list[2]));
-    }
-    const parts = String(list || '').split(',');
-    if (parts.length < 3) return null;
-    return rgbToHexColor(parseInt(parts[0], 10), parseInt(parts[1], 10), parseInt(parts[2], 10));
-  }
-
-  function hsToRgb(h, s) {
-    const hh = ((h % 360) + 360) % 360;
-    const sat = Math.max(0, Math.min(100, s)) / 100;
-    const c = sat;
-    const x = c * (1 - Math.abs((hh / 60) % 2 - 1));
-    const m = 1 - c;
-    let r1 = 0, g1 = 0, b1 = 0;
-    if (hh < 60) { r1 = c; g1 = x; b1 = 0; }
-    else if (hh < 120) { r1 = x; g1 = c; b1 = 0; }
-    else if (hh < 180) { r1 = 0; g1 = c; b1 = x; }
-    else if (hh < 240) { r1 = 0; g1 = x; b1 = c; }
-    else if (hh < 300) { r1 = x; g1 = 0; b1 = c; }
-    else { r1 = c; g1 = 0; b1 = x; }
-    return rgbToHexColor(Math.round((r1 + m) * 255), Math.round((g1 + m) * 255), Math.round((b1 + m) * 255));
-  }
-
-  function parseSwitchPayload(value) {
-    const out = { hasState: false, isOn: false, hasColor: false, color: null };
-    if (value === undefined || value === null) return out;
-    const text = String(value).trim();
-    if (!text.length) return out;
-
-    if (text.startsWith('{')) {
-      try {
-        const obj = JSON.parse(text);
-        if (obj && typeof obj === 'object') {
-          if (obj.state !== undefined) {
-            const on = parseOnOff(obj.state);
-            if (on !== null) {
-              out.hasState = true;
-              out.isOn = on;
-            }
-          }
-          if (obj.color) {
-            const hex = parseHexColor(obj.color);
-            if (hex) {
-              out.hasColor = true;
-              out.color = hex;
-            }
-          }
-          if (!out.hasColor && obj.rgb_color) {
-            const hex = parseRgbList(obj.rgb_color);
-            if (hex) {
-              out.hasColor = true;
-              out.color = hex;
-            }
-          }
-          if (!out.hasColor && obj.hs_color && Array.isArray(obj.hs_color) && obj.hs_color.length >= 2) {
-            out.hasColor = true;
-            out.color = hsToRgb(Number(obj.hs_color[0]), Number(obj.hs_color[1]));
-          }
-        }
-      } catch (e) {}
-    }
-
-    if (!out.hasState) {
-      const on = parseOnOff(text);
-      if (on !== null) {
-        out.hasState = true;
-        out.isOn = on;
-      }
-    }
-
-    if (!out.hasColor) {
-      const hex = parseHexColor(text);
-      if (hex) {
-        out.hasColor = true;
-        out.color = hex;
-      } else if (text.startsWith('rgb(') && text.endsWith(')')) {
-        const hexRgb = parseRgbList(text.substring(4, text.length - 1));
-        if (hexRgb) {
-          out.hasColor = true;
-          out.color = hexRgb;
-        }
-      }
-    }
-
-    if (!out.hasState && out.hasColor) {
-      out.hasState = true;
-      out.isOn = true;
-    }
-    return out;
-  }
-
-  function applySwitchPreviewState(tileElem, state) {
-    if (!tileElem) return;
-    if (!state.hasState && !state.hasColor) return;
-    const iconEl = tileElem.querySelector('.tile-icon');
-    const switchEl = tileElem.querySelector('.tile-switch');
-    let isOn = state.hasState ? state.isOn : state.hasColor;
-    let color = SWITCH_ICON_OFF;
-    if (isOn) color = state.hasColor ? state.color : SWITCH_ICON_ON;
-    if (iconEl) iconEl.style.color = color;
-    if (switchEl) {
-      if (isOn) switchEl.classList.add('is-on');
-      else switchEl.classList.remove('is-on');
-      if (isOn && state.hasColor) switchEl.style.setProperty('--switch-on-color', state.color);
-      else switchEl.style.removeProperty('--switch-on-color');
-    }
-  }
-
-  function updateSensorValuePreview(tab) {
-    if (currentTileIndex === -1) return;
-    const prefix = tab;
-    const entitySelect = document.getElementById(prefix + '_sensor_entity');
-    const unitInput = document.getElementById(prefix + '_sensor_unit');
-    const decimalsInput = document.getElementById(prefix + '_sensor_decimals');
-    const valueFontSelect = document.getElementById(prefix + '_sensor_value_font');
-    if (!entitySelect) return;
-    const entity = entitySelect.value;
-    if (!entity) {
-      const valueElem = document.getElementById(tab + '-tile-' + currentTileIndex + '-value');
-      if (valueElem) {
-        const unit = unitInput ? unitInput.value : '';
-        valueElem.innerHTML = '--' + (unit ? '<span class="tile-unit">' + unit + '</span>' : '');
-        applySensorValueFontClass(valueElem, valueFontSelect ? valueFontSelect.value : '0');
-      }
-      return;
-    }
-    fetch('/api/sensor_values')
-      .then(res => res.json())
-      .then(values => {
-        const valueElem = document.getElementById(tab + '-tile-' + currentTileIndex + '-value');
-        if (valueElem) {
-          const decimals = decimalsInput ? decimalsInput.value : '';
-          let value = formatSensorValue(values[entity] ?? '--', decimals);
-          const unit = unitInput ? unitInput.value : '';
-          valueElem.innerHTML = value + (unit ? '<span class="tile-unit">' + unit + '</span>' : '');
-          applySensorValueFontClass(valueElem, valueFontSelect ? valueFontSelect.value : '0');
-        }
-      })
-      .catch(err => console.error('Fehler beim Laden des Sensorwerts:', err));
-  }
-
-  function updateSwitchValuePreview(tab) {
-    if (currentTileIndex === -1) return;
-    const prefix = tab;
-    const entitySelect = document.getElementById(prefix + '_switch_entity');
-    if (!entitySelect) return;
-    const entity = entitySelect.value;
-    const tileElem = document.getElementById(tab + '-tile-' + currentTileIndex);
-    if (!entity || !tileElem) return;
-    fetch('/api/sensor_values')
-      .then(res => res.json())
-      .then(values => {
-        const state = parseSwitchPayload(values[entity] ?? '');
-        applySwitchPreviewState(tileElem, state);
-      })
-      .catch(err => console.error('Fehler beim Laden des Switch-Status:', err));
-  }
-
-  function normalizeSensorValueFont(value) {
-    const v = String(value || '0');
-    return (v === '1' || v === '2') ? v : '0';
-  }
-
-  function getSensorValueFontClass(value) {
-    const v = normalizeSensorValueFont(value);
-    if (v === '1') return 'sensor-value-size-20';
-    if (v === '2') return 'sensor-value-size-24';
-    return 'sensor-value-size-default';
-  }
-
-  function applySensorValueFontClass(el, value) {
-    if (!el) return;
-    el.classList.remove('sensor-value-size-20', 'sensor-value-size-24', 'sensor-value-size-default');
-    el.classList.add(getSensorValueFontClass(value));
-  }
-
-  function syncGaugeUi(tab) {
-    const prefix = tab;
-    const typeValue = document.getElementById(prefix + '_tile_type')?.value || '0';
-    const gaugeWrap = document.getElementById(prefix + '_sensor_gauge_fields');
-    if (!gaugeWrap) return;
-    if (typeValue !== '1') {
-      gaugeWrap.classList.add('hidden');
-      return;
-    }
-    const gaugeEnabled = document.getElementById(prefix + '_sensor_gauge')?.checked;
-    if (gaugeEnabled) gaugeWrap.classList.remove('hidden');
-    else gaugeWrap.classList.add('hidden');
   }
 
   function updateTilePreview(tab) {
@@ -1809,6 +1355,13 @@ void appendAdminScripts(String& html) {
   });
   </script>
 )html";
+
+  append_sensor_scripts(html);
+  append_scene_scripts(html);
+  append_key_scripts(html);
+  append_switch_scripts(html);
+  append_navigate_scripts(html);
+  append_image_scripts(html);
 }
 
 
