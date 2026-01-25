@@ -93,11 +93,23 @@ lv_obj_t* render_sensor_tile(lv_obj_t* parent, int col, int row, const Tile& til
 
   lv_obj_t* gauge = nullptr;
   if (gauge_enabled) {
-    const int gauge_size = 350;
+    // Get gauge appearance from tile settings (with defaults)
+    uint16_t arc_degrees = tile.sensor_gauge_arc;
+    if (arc_degrees < 90) arc_degrees = 90;
+    if (arc_degrees > 359) arc_degrees = 359;
+    uint16_t gauge_size = tile.sensor_gauge_size;
+    if (gauge_size < 100) gauge_size = 100;
+    if (gauge_size > 800) gauge_size = 800;
+    int16_t y_offset = tile.sensor_gauge_y_offset;
+    if (y_offset < -100) y_offset = -100;
+    if (y_offset > 200) y_offset = 200;
+    // Calculate rotation so gap is always at bottom: rotation = 270 - arc/2
+    uint16_t rotation = 270 - (arc_degrees / 2);
+
     gauge = lv_arc_create(card);
     if (gauge) {
       lv_obj_set_size(gauge, gauge_size, gauge_size);
-      lv_obj_align(gauge, LV_ALIGN_TOP_MID, 0, 12);
+      lv_obj_align(gauge, LV_ALIGN_TOP_MID, 0, y_offset);
       lv_obj_remove_flag(gauge, LV_OBJ_FLAG_CLICKABLE);
       lv_obj_remove_flag(gauge, LV_OBJ_FLAG_SCROLLABLE);
       lv_obj_set_style_bg_opa(gauge, LV_OPA_TRANSP, LV_PART_MAIN);
@@ -107,9 +119,9 @@ lv_obj_t* render_sensor_tile(lv_obj_t* parent, int col, int row, const Tile& til
 
       lv_arc_set_range(gauge, 0, GAUGE_ARC_STEPS);
       lv_arc_set_value(gauge, 0);
-      lv_arc_set_rotation(gauge, 220);
-      lv_arc_set_bg_angles(gauge, 0, 100);
-      lv_arc_set_angles(gauge, 0, 100);
+      lv_arc_set_rotation(gauge, rotation);
+      lv_arc_set_bg_angles(gauge, 0, arc_degrees);
+      lv_arc_set_angles(gauge, 0, arc_degrees);
 
       lv_obj_set_style_arc_width(gauge, 14, LV_PART_MAIN);
       lv_obj_set_style_arc_color(gauge, lv_color_hex(0x2E2E2E), LV_PART_MAIN);
@@ -141,10 +153,16 @@ lv_obj_t* render_sensor_tile(lv_obj_t* parent, int col, int row, const Tile& til
   lv_obj_set_style_text_align(v, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_line_space(v, 8, 0);
   lv_label_set_text(v, "--");
+
+  // Get value y offset from tile settings (with defaults and clamping)
+  int16_t value_y_offset = tile.sensor_value_y_offset;
+  if (value_y_offset < -100) value_y_offset = -100;
+  if (value_y_offset > 200) value_y_offset = 200;
+
   if (gauge_enabled) {
-    lv_obj_align(v, LV_ALIGN_BOTTOM_MID, 0, 12);
+    lv_obj_align(v, LV_ALIGN_BOTTOM_MID, 0, 12 + value_y_offset);
   } else {
-    lv_obj_align(v, LV_ALIGN_CENTER, 0, 28);  // Nach unten verschoben (war 18)
+    lv_obj_align(v, LV_ALIGN_CENTER, 0, 28 + value_y_offset);  // Nach unten verschoben (war 18)
   }
 
   // Speichern für spätere Updates

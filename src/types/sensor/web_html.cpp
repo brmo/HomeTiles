@@ -57,7 +57,23 @@ void append_sensor_fields_html(String& html, const String& tab_id, const std::ve
                   <input type="number" id=")html";
   html += tab_id;
   html += R"html(_sensor_gauge_max" step="1" placeholder="z.B. 100">
+                  <label>Bogengrad (90-359)</label>
+                  <input type="number" id=")html";
+  html += tab_id;
+  html += R"html(_sensor_gauge_arc" min="90" max="359" step="1" placeholder="100">
+                  <label>Gauge Groesse (100-800 px)</label>
+                  <input type="number" id=")html";
+  html += tab_id;
+  html += R"html(_sensor_gauge_size" min="100" max="800" step="1" placeholder="350">
+                  <label>Y-Offset (-100 bis 200)</label>
+                  <input type="number" id=")html";
+  html += tab_id;
+  html += R"html(_sensor_gauge_y_offset" min="-100" max="200" step="1" placeholder="12">
                 </div>
+                <label>Wert Y-Offset (-100 bis 200)</label>
+                <input type="number" id=")html";
+  html += tab_id;
+  html += R"html(_sensor_value_y_offset" min="-100" max="200" step="1" placeholder="0">
             </div>
 )html";
 }

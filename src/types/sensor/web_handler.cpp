@@ -42,4 +42,46 @@ void apply_sensor_fields_from_request(WebServer& server, Tile& tile) {
     tile.sensor_gauge_min = 0;
     tile.sensor_gauge_max = 100;
   }
+  // Gauge appearance settings - preserve existing values if no new value sent
+  if (server.hasArg("sensor_gauge_arc")) {
+    String raw = server.arg("sensor_gauge_arc");
+    raw.trim();
+    if (raw.length() > 0) {
+      int val = raw.toInt();
+      if (val >= 90 && val <= 359) tile.sensor_gauge_arc = static_cast<uint16_t>(val);
+    }
+  } else if (tile.sensor_gauge_arc < 90 || tile.sensor_gauge_arc > 359) {
+    tile.sensor_gauge_arc = 100;  // Default only if current value is invalid
+  }
+  if (server.hasArg("sensor_gauge_size")) {
+    String raw = server.arg("sensor_gauge_size");
+    raw.trim();
+    if (raw.length() > 0) {
+      int val = raw.toInt();
+      if (val >= 100 && val <= 800) tile.sensor_gauge_size = static_cast<uint16_t>(val);
+    }
+  } else if (tile.sensor_gauge_size < 100 || tile.sensor_gauge_size > 800) {
+    tile.sensor_gauge_size = 350;  // Default only if current value is invalid
+  }
+  if (server.hasArg("sensor_gauge_y_offset")) {
+    String raw = server.arg("sensor_gauge_y_offset");
+    raw.trim();
+    if (raw.length() > 0) {
+      int val = raw.toInt();
+      if (val >= -100 && val <= 200) tile.sensor_gauge_y_offset = static_cast<int16_t>(val);
+    }
+  } else if (tile.sensor_gauge_y_offset < -100 || tile.sensor_gauge_y_offset > 200) {
+    tile.sensor_gauge_y_offset = 12;  // Default only if current value is invalid
+  }
+  // Value Y-Offset settings - preserve existing values if no new value sent
+  if (server.hasArg("sensor_value_y_offset")) {
+    String raw = server.arg("sensor_value_y_offset");
+    raw.trim();
+    if (raw.length() > 0) {
+      int val = raw.toInt();
+      if (val >= -100 && val <= 200) tile.sensor_value_y_offset = static_cast<int16_t>(val);
+    }
+  } else if (tile.sensor_value_y_offset < -100 || tile.sensor_value_y_offset > 200) {
+    tile.sensor_value_y_offset = 0;  // Default only if current value is invalid
+  }
 }

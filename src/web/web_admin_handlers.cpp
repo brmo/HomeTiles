@@ -440,6 +440,14 @@ void WebAdminServer::handleGetTiles() {
     out += String(tile.sensor_gauge_min);
     out += ",\"sensor_gauge_max\":";
     out += String(tile.sensor_gauge_max);
+    out += ",\"sensor_gauge_arc\":";
+    out += String(tile.sensor_gauge_arc);
+    out += ",\"sensor_gauge_size\":";
+    out += String(tile.sensor_gauge_size);
+    out += ",\"sensor_gauge_y_offset\":";
+    out += String(tile.sensor_gauge_y_offset);
+    out += ",\"sensor_value_y_offset\":";
+    out += String(tile.sensor_value_y_offset);
     out += ",\"scene_alias\":\"";
     appendJsonEscaped(out, tile.scene_alias);
     out += "\",\"key_macro\":\"";

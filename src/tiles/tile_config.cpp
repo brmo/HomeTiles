@@ -379,7 +379,37 @@ static void packTile(const Tile& in, PackedTileV6& out) {
   copyString(in.title, out.title, sizeof(out.title));
   copyString(in.icon_name, out.icon_name, sizeof(out.icon_name));
   copyString(in.sensor_unit, out.sensor_unit, sizeof(out.sensor_unit));
-  copyString(in.scene_alias, out.scene_alias, sizeof(out.scene_alias));
+  // For TILE_SENSOR, store gauge appearance in scene_alias with magic prefix
+  if (in.type == TILE_SENSOR) {
+    memset(out.scene_alias, 0, sizeof(out.scene_alias));
+    out.scene_alias[0] = 0x01;  // Magic byte
+    // Clamp and store arc degrees (90-359, default 100)
+    uint16_t arc = in.sensor_gauge_arc;
+    if (arc < 90) arc = 90;
+    if (arc > 359) arc = 359;
+    out.scene_alias[1] = static_cast<char>(arc & 0xFF);
+    out.scene_alias[2] = static_cast<char>((arc >> 8) & 0xFF);
+    // Clamp and store gauge size (100-800, default 350)
+    uint16_t size = in.sensor_gauge_size;
+    if (size < 100) size = 100;
+    if (size > 800) size = 800;
+    out.scene_alias[3] = static_cast<char>(size & 0xFF);
+    out.scene_alias[4] = static_cast<char>((size >> 8) & 0xFF);
+    // Clamp and store y offset (-100 to 200, default 12)
+    int16_t y_off = in.sensor_gauge_y_offset;
+    if (y_off < -100) y_off = -100;
+    if (y_off > 200) y_off = 200;
+    out.scene_alias[5] = static_cast<char>(y_off & 0xFF);
+    out.scene_alias[6] = static_cast<char>((y_off >> 8) & 0xFF);
+    // Clamp and store value y offset (-100 to 200, default 0)
+    int16_t val_y_off = in.sensor_value_y_offset;
+    if (val_y_off < -100) val_y_off = -100;
+    if (val_y_off > 200) val_y_off = 200;
+    out.scene_alias[7] = static_cast<char>(val_y_off & 0xFF);
+    out.scene_alias[8] = static_cast<char>((val_y_off >> 8) & 0xFF);
+  } else {
+    copyString(in.scene_alias, out.scene_alias, sizeof(out.scene_alias));
+  }
   if (in.type == TILE_IMAGE) {
     // TILE_IMAGE speichert image_path nicht im NVS (liegt auf SD).
     out.sensor_entity[0] = '\0';
@@ -446,6 +476,28 @@ static void unpackTileV6(const PackedTileV6& in, Tile& out) {
   out.sensor_gauge_min = in.sensor_gauge_min;
   out.sensor_gauge_max = in.sensor_gauge_max;
   normalizeGaugeRange(out.sensor_gauge_min, out.sensor_gauge_max);
+  // Read gauge appearance from scene_alias for TILE_SENSOR
+  out.sensor_gauge_arc = 100;     // Default
+  out.sensor_gauge_size = 350;    // Default
+  out.sensor_gauge_y_offset = 12; // Default
+  out.sensor_value_y_offset = 0;  // Default
+  if (out.type == TILE_SENSOR && in.scene_alias[0] == 0x01) {
+    // Magic byte found, extract gauge appearance data
+    uint16_t arc = static_cast<uint8_t>(in.scene_alias[1]) |
+                   (static_cast<uint8_t>(in.scene_alias[2]) << 8);
+    if (arc >= 90 && arc <= 359) out.sensor_gauge_arc = arc;
+    uint16_t size = static_cast<uint8_t>(in.scene_alias[3]) |
+                    (static_cast<uint8_t>(in.scene_alias[4]) << 8);
+    if (size >= 100 && size <= 800) out.sensor_gauge_size = size;
+    int16_t y_off = static_cast<int16_t>(
+        static_cast<uint8_t>(in.scene_alias[5]) |
+        (static_cast<uint8_t>(in.scene_alias[6]) << 8));
+    if (y_off >= -100 && y_off <= 200) out.sensor_gauge_y_offset = y_off;
+    int16_t val_y_off = static_cast<int16_t>(
+        static_cast<uint8_t>(in.scene_alias[7]) |
+        (static_cast<uint8_t>(in.scene_alias[8]) << 8));
+    if (val_y_off >= -100 && val_y_off <= 200) out.sensor_value_y_offset = val_y_off;
+  }
   out.key_code = in.key_code;
   out.key_modifier = in.key_modifier;
   if (out.type == TILE_SETTINGS || out.type == TILE_BACK) {
@@ -457,7 +509,12 @@ static void unpackTileV6(const PackedTileV6& in, Tile& out) {
   out.icon_name = String(in.icon_name);
   out.sensor_entity = String(in.sensor_entity);
   out.sensor_unit = String(in.sensor_unit);
-  out.scene_alias = String(in.scene_alias);
+  // For TILE_SENSOR, scene_alias stores gauge appearance, not a scene alias
+  if (out.type == TILE_SENSOR) {
+    out.scene_alias = "";
+  } else {
+    out.scene_alias = String(in.scene_alias);
+  }
   out.key_macro = String(in.key_macro);
   if (out.type == TILE_IMAGE) {
     if (looksLikeImagePath(out.sensor_entity)) {
@@ -494,6 +551,10 @@ static void unpackTileV5(const PackedTileV5& in, Tile& out, uint8_t index) {
   out.sensor_gauge_min = in.sensor_gauge_min;
   out.sensor_gauge_max = in.sensor_gauge_max;
   normalizeGaugeRange(out.sensor_gauge_min, out.sensor_gauge_max);
+  out.sensor_gauge_arc = 100;
+  out.sensor_gauge_size = 350;
+  out.sensor_gauge_y_offset = 12;
+  out.sensor_value_y_offset = 0;
   out.key_code = in.key_code;
   out.key_modifier = in.key_modifier;
   if (out.type == TILE_SETTINGS || out.type == TILE_BACK) {
@@ -541,6 +602,10 @@ static void unpackTileV3(const PackedTileV3& in, Tile& out, uint8_t index) {
   out.sensor_gauge_enabled = false;
   out.sensor_gauge_min = 0;
   out.sensor_gauge_max = 100;
+  out.sensor_gauge_arc = 100;
+  out.sensor_gauge_size = 350;
+  out.sensor_gauge_y_offset = 12;
+  out.sensor_value_y_offset = 0;
   out.key_code = in.key_code;
   out.key_modifier = in.key_modifier;
   if (out.type == TILE_SETTINGS || out.type == TILE_BACK) {
@@ -588,6 +653,10 @@ static void unpackTileV2(const PackedTileV2& in, Tile& out, uint8_t index) {
   out.sensor_gauge_enabled = false;
   out.sensor_gauge_min = 0;
   out.sensor_gauge_max = 100;
+  out.sensor_gauge_arc = 100;
+  out.sensor_gauge_size = 350;
+  out.sensor_gauge_y_offset = 12;
+  out.sensor_value_y_offset = 0;
   out.key_code = in.key_code;
   out.key_modifier = in.key_modifier;
   if (out.type == TILE_SETTINGS || out.type == TILE_BACK) {
@@ -635,6 +704,10 @@ static void unpackTileV4(const PackedTileV4& in, Tile& out, uint8_t index) {
   out.sensor_gauge_enabled = false;
   out.sensor_gauge_min = 0;
   out.sensor_gauge_max = 100;
+  out.sensor_gauge_arc = 100;
+  out.sensor_gauge_size = 350;
+  out.sensor_gauge_y_offset = 12;
+  out.sensor_value_y_offset = 0;
   out.key_code = in.key_code;
   out.key_modifier = in.key_modifier;
   if (out.type == TILE_SETTINGS || out.type == TILE_BACK) {
@@ -682,6 +755,10 @@ static void unpackTileV1(const PackedTileV1& in, Tile& out, uint8_t index) {
   out.sensor_gauge_enabled = false;
   out.sensor_gauge_min = 0;
   out.sensor_gauge_max = 100;
+  out.sensor_gauge_arc = 100;
+  out.sensor_gauge_size = 350;
+  out.sensor_gauge_y_offset = 12;
+  out.sensor_value_y_offset = 0;
   out.key_code = in.key_code;
   out.key_modifier = in.key_modifier;
   if (out.type == TILE_SETTINGS || out.type == TILE_BACK) {
@@ -922,6 +999,10 @@ static bool loadGridLegacy(const char* prefix, TileGridConfig& grid) {
     grid.tiles[i].sensor_gauge_enabled = false;
     grid.tiles[i].sensor_gauge_min = 0;
     grid.tiles[i].sensor_gauge_max = 100;
+    grid.tiles[i].sensor_gauge_arc = 100;
+    grid.tiles[i].sensor_gauge_size = 350;
+    grid.tiles[i].sensor_gauge_y_offset = 12;
+    grid.tiles[i].sensor_value_y_offset = 0;
 
     snprintf(key, sizeof(key), "%s_t%u_scene", prefix, static_cast<unsigned>(i));
     grid.tiles[i].scene_alias = prefs.getString(key, "");

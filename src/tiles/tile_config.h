@@ -48,6 +48,10 @@ struct Tile {
   bool sensor_gauge_enabled; // Zeiger-Gauge anzeigen
   int32_t sensor_gauge_min;  // Gauge-Min
   int32_t sensor_gauge_max;  // Gauge-Max
+  uint16_t sensor_gauge_arc; // Gauge Bogengrad (90-359, Default: 100)
+  uint16_t sensor_gauge_size; // Gauge Größe in Pixel (100-800, Default: 350)
+  int16_t sensor_gauge_y_offset; // Gauge Y-Offset (-100 bis 200, Default: 12)
+  int16_t sensor_value_y_offset; // Wert Y-Offset (-100 bis 200, Default: 0)
 
   // Scene-spezifisch
   String scene_alias;        // HA Scene Alias
@@ -73,6 +77,10 @@ struct Tile {
         sensor_gauge_enabled(false),
         sensor_gauge_min(0),
         sensor_gauge_max(100),
+        sensor_gauge_arc(100),
+        sensor_gauge_size(350),
+        sensor_gauge_y_offset(12),
+        sensor_value_y_offset(0),
         key_code(0),
         key_modifier(0),
         image_slideshow_sec(10) {}
