@@ -1,337 +1,276 @@
-# Neuer Tile-Typ (ausfuehrlicher Leitfaden)
+# Neuer Tile-Typ (vollstaendiger Leitfaden)
 
-Dieser Guide beschreibt **alle Schritte** und typische Erweiterungen
-(neue Felder, MQTT, WebSocket, URL/HTTP, Popups). Ziel: Kein Schritt
-geht verloren.
-
----
-
-## Schnelluebersicht: Pflichtdateien
-
-Pflicht:
-- `src/tiles/tile_config.h` (Enum erweitern)
-- `src/tiles/tile_renderer.h` (Renderer deklarieren)
-- `src/types/<name>/...` (neuer Typ-Ordner)
-- `src/types/types_registry.cpp` (Registry + Wrapper)
-- `src/web/web_admin_scripts.cpp` (Live-Preview + Import/Export)
-
-Optional:
-- `src/web/web_admin_html.cpp` (Hint-Text)
+Dieser Guide beschreibt **alle Schritte** fuer einen neuen Tile-Typ.
+Ziel: keine vergessenen Stellen, klarer Ablauf, sauberer Build.
 
 ---
 
-## 0) Typ-Name festlegen
+## 0) Schreibweisen festlegen
 
 Beispiel: `weather`
-- Gross: `WEATHER`
+- GROSS: `WEATHER`
 - CamelCase: `Weather`
-- Klein: `weather`
+- klein: `weather`
 
-Diese drei Schreibweisen brauchst du.
+Du brauchst alle drei Varianten (Dateinamen, Funktionen, Konstanten).
 
 ---
 
-## 1) Python-Script benutzen (empfohlen)
+## 1) Schnellstart per Python-Script (empfohlen)
 
 Script:
-`scripts/create_tile_type.py`
-
-Beispiel:
 ```
 python scripts/create_tile_type.py weather
 ```
 
-Das Script:
-- kopiert das Template nach `src/types/weather`
-- ersetzt `TEMPLATE` / `Template` / `template`
-- schreibt einen Hinweis zu den naechsten manuellen Schritten
+Das Script macht:
+- kopiert `templates/tile_type_template/` nach `src/types/weather`
+- ersetzt Platzhalter `TEMPLATE` / `Template` / `template`
+- gibt eine kurze Next-Steps-Liste aus
+
+Das Script macht **nicht**:
+- Enum/Registry/Web-Admin aendern
+- neue Felder in den zentralen Handlern verdrahten
+
+---
+
+## 2) Template: Was du wirklich aendern musst
+
+Das Template ist **eine funktionierende Basis**, aber du musst es anpassen:
+
+Pflicht:
+- Ordnername + Includes auf deinen Typ
+- Funktionsnamen (render/apply/web)
+- Beispiel-Feldnamen (`template_value`, `TemplateFields`, CSS-Klasse)
+
+Merke: Das Script ersetzt **3 Platzhalter**, aber **alle Beispiel-Feldnamen**
+musst du selbst sinnvoll benennen.
+
+Typische Aenderungen im Template:
+- `template_value` -> `weather_city`
+- `append_template_fields_html` -> `append_weather_fields_html`
+- CSS `.tile.template` -> `.tile.weather`
+
+---
+
+## 3) Schritt-fuer-Schritt (manuell, ohne Script)
+
+### 3.1 Ordner anlegen
+Kopiere Template:
+`templates/tile_type_template/` -> `src/types/<name>/`
+
+Ersetze:
+- `TEMPLATE` -> `WEATHER`
+- `Template` -> `Weather`
+- `template` -> `weather`
+
+### 3.2 Enum erweitern
+Datei: `src/tiles/tile_config.h`
+```
+TILE_WEATHER = <freie_id>
+```
+
+### 3.3 Renderer deklarieren
+Datei: `src/tiles/tile_renderer.h`
+```
+lv_obj_t* render_weather_tile(lv_obj_t* parent, int col, int row, const Tile& tile, uint8_t index);
+```
+
+### 3.4 Renderer implementieren
+Datei: `src/types/<name>/renderer.cpp`
+
+Pflicht:
+- `lv_button_create(...)`
+- `set_tile_grid_cell(card, col, row, tile.span_w, tile.span_h)`
+- Farben/Rundung/Shadow setzen
+- Optional: Icon + Title rendern
 
 Hinweis:
-Das Script **aendert keine zentralen Dateien**.
-Registry/Enum/Web-Admin musst du weiterhin selbst anpassen.
+Fonts kommen aus `src/tiles/tile_renderer_fonts.h`.
 
----
-
-## 2) Template manuell kopieren (Alternative)
-
-Template-Ordner:
-`templates/tile_type_template/`
-
-Kopiere nach:
-`src/types/<name>/`
-
-Danach **alle Platzhalter ersetzen**:
-- `TEMPLATE`  -> `WEATHER`
-- `Template`  -> `Weather`
-- `template`  -> `weather`
-
-Wichtig:
-In den Includes steht `src/types/template/...` und muss auf deinen
-Ordner angepasst werden.
-
----
-
-## 3) Daten festlegen (wo speichern?)
-
-Die `Tile`-Struktur hat feste Felder (Packed-Storage).
-Diese solltest du wiederverwenden.
-
-Limits:
-- title: 32
-- icon_name: 32
-- sensor_entity: 64
-- sensor_unit: 16
-- scene_alias: 32
-- key_macro: 32
+### 3.5 Web-HTML fuer Felder
+Datei: `src/types/<name>/web_html.cpp`
 
 Regeln:
-- `TILE_SENSOR` nutzt `scene_alias` intern fuer Gauge-Infos.
-  Dieses Feld dort nicht fuer eigene Daten verwenden.
-- `TILE_IMAGE` speichert Pfad auf SD (nicht im Packed).
-- Fuer laengere Daten: SD oder neue Packed-Version.
+- Container-ID: `<tab>_<fields_suffix>_fields`
+- Feld-IDs: `<tab>_<feldname>`
 
----
+### 3.6 Web-Scripts (Load/Save/Reset)
+Datei: `src/types/<name>/web_scripts.cpp`
 
-## 4) Enum erweitern
-
-Datei: `src/tiles/tile_config.h`
-
-Neuen Typ hinzufuegen:
-```
-TILE_<NAME> = <freie_id>
-```
-
----
-
-## 5) Renderer deklarieren
-
-Datei: `src/tiles/tile_renderer.h`
-
-Neue Funktion:
-```
-lv_obj_t* render_<name>_tile(lv_obj_t* parent, int col, int row, const Tile& tile, uint8_t index);
-```
-
----
-
-## 6) Typ-Ordner ausfuellen
-
-Ordner: `src/types/<name>/`
-
-Pflichtdateien:
-- `renderer.h/.cpp`
-- `web_html.h/.cpp`
-- `web_styles.h/.cpp`
-- `web_scripts.h/.cpp`
-- `web_handler.h/.cpp`
-
-Was dort passiert:
-
-### A) renderer.cpp
-- Tile erstellen (`lv_button_create`)
-- Farbe/Radius/Shadow setzen
-- `set_tile_grid_cell(...)`
-- Optional: Icon + Title
-- Eigene Anzeige-Logik
-- Events (Click/Long-Press) registrieren
-
-### B) web_html.cpp
-- HTML-Block fuer Einstellungen erzeugen
-- IDs muessen dem Pattern folgen:
-  `<tab>_<feldname>`
-- Block-ID muss sein:
-  `<tab>_<fields_suffix>_fields`
-
-### C) web_scripts.cpp
 Pflichtfunktionen:
 - `load<Name>Fields(tab, data)`
 - `save<Name>Fields(tab, formData)`
 - `reset<Name>Fields(tab)`
 
-### D) web_handler.cpp
+Wichtig:
+Die FormData-Keys muessen exakt zu den Keys passen, die der Web-Handler liest.
+
+### 3.7 Web-Handler (Apply)
+Datei: `src/types/<name>/web_handler.cpp`
+
+Pflicht:
 - Werte aus `server.arg("...")` lesen
-- In `tile.<feld>` speichern
-- Sensor-Standardwerte zuruecksetzen (damit keine alten Werte bleiben)
+- in `tile.<feld>` speichern
+- alte Felder zuruecksetzen, damit keine Altwerte bleiben
 
-### E) web_styles.cpp
-- CSS fuer Preview (`.tile.<css_class>`)
-
----
-
-## 7) Registry eintragen
-
+### 3.8 Registry eintragen
 Datei: `src/types/types_registry.cpp`
 
 Du musst:
-1) Includes hinzufuegen
-2) Wrapper-Funktionen anlegen
-3) Eintrag in `kTileTypes`
+1) Includes hinzufuegen (renderer + web_*)
+2) Wrapper-Funktionen erstellen (render/apply/append)
+3) Eintrag in `kTileTypes` anlegen
 
-Beispiel:
+Beispiel-Eintrag:
 ```
 {
-  TILE_MYTYPE,
-  "My Type",
-  "mytype",
-  "mytype",
+  TILE_WEATHER,
+  "Weather",
+  "weather",
+  "weather",
   "none",
   nullptr,
-  "loadMyTypeFields",
-  "saveMyTypeFields",
-  "resetMyTypeFields",
+  "loadWeatherFields",
+  "saveWeatherFields",
+  "resetWeatherFields",
   0x353535,
   false,
-  render_mytype_wrapper,
-  apply_mytype_wrapper,
-  append_mytype_fields_wrapper,
-  append_mytype_styles,
-  append_mytype_scripts
+  render_weather_wrapper,
+  apply_weather_wrapper,
+  append_weather_fields_wrapper,
+  append_weather_styles,
+  append_weather_scripts
 },
 ```
 
 Erklaerung:
-- `css_class`: CSS Klasse fuer Preview
+- `css_class`: CSS-Klasse fuer Preview
 - `fields_suffix`: muss zu `<tab>_<fields_suffix>_fields` passen
-- `preview_kind`: `none`, `sensor`, `switch`, `clock` oder eigener Wert
-- `locked`: feste Tiles (z.B. Settings/Back)
+- `preview_kind`: `none`, `sensor`, `switch`, `clock`, `text` oder eigener Wert
+- `js_on_select`: optionaler JS Hook beim Typwechsel
 
----
-
-## 8) Web-Admin zentral verdrahten
-
+### 3.9 Web-Admin verdrahten (wichtig)
 Datei: `src/web/web_admin_scripts.cpp`
 
-### A) Live-Preview + Autosave
-In `setupLivePreview(...)`:
-- Feld-IDs in `fields` Array aufnehmen
-- Event-Listener anhaengen
+Pflicht, wenn du neue Felder hast:
+1) In `setupLivePreview(...)`:
+   - Feld-ID in `fields` aufnehmen
+   - Event-Listener setzen (updatePreview + autosave)
+2) In `postTile(...)`:
+   - deine Felder in FormData appenden (Import/Export)
+3) In `updateTilePreview(...)`:
+   - falls Preview deine neuen Felder braucht
+4) In `renderTileFromData(...)`:
+   - falls Preview deinen neuen Typ darstellen soll
 
-### B) Preview Rendering
-Wenn `preview_kind` neu ist:
-- `updateTilePreview(...)` erweitern
-- `renderTileFromData(...)` erweitern
+Wenn du nur `title/icon/bg` nutzt, reichen 1) und 2).
 
-### C) Import/Export
-In `postTile(...)` deine Felder in `FormData` appenden.
-
----
-
-## 9) Optional: Hint-Text
-
+### 3.10 Optional: Hint-Text
 Datei: `src/web/web_admin_html.cpp`
-
-Nur wenn die Typ-Liste im Hinweistext aktualisiert werden soll.
-
----
-
-## 10) Zusatzfunktionen (ausfuehrlich)
-
-### 10.1 Neue Felder (mehr Inputs)
-1) Feld in `web_html.cpp` anlegen (ID: `<tab>_<feld>`)
-2) `load<Name>Fields` / `save<Name>Fields` / `reset<Name>Fields` erweitern
-3) `apply_<name>_fields_from_request` erweitert das `Tile`
-4) `setupLivePreview(...)` ergaenzen
-5) `postTile(...)` fuer Import/Export ergaenzen
+Nur noetig, wenn du die Typ-Liste im Info-Text pflegen willst.
 
 ---
 
-### 10.2 MQTT (eingehend)
+## 4) Datenfluss: Speichern + Aktualisieren (sehr wichtig)
 
-Es gibt zwei typische Wege:
+### 4.1 Web-Flow (Standard)
+1) Web-UI sammelt Felder -> `save<Name>Fields(...)`
+2) `POST /api/tiles` -> `WebAdminServer::handleSaveTiles()`
+3) `desc->apply(...)` ruft `apply_<name>_fields_from_request(...)`
+4) `tileConfig.saveFolderGrid(...)`
+5) `tiles_invalidate_folder(folder_id)`
+6) falls aktiv: `tiles_request_reload_if_loaded(GridType::TAB0)`
 
-**A) Dynamische Sensor-Updates (entity-basiert)**  
-Wenn dein Typ Daten wie Sensoren bekommen soll:
-- in `src/network/mqtt_handlers.cpp` die Funktion
-  `rebuildDynamicRoutes(...)` erweitern, damit dein Typ aufgenommen wird
-- in `src/ui/tab_tiles_unified.cpp` die Funktion
-  `tiles_update_sensor_by_entity(...)` erweitern, damit dein Typ Updates bekommt
-- im Renderer ein Widget speichern und per Queue updaten
+### 4.2 Runtime-Updates (ohne Web)
+Wenn dein Tile zur Laufzeit etwas speichert:
+- Grid laden, Tile aendern
+- `tileConfig.saveFolderGrid(...)`
+- `tiles_invalidate_folder(...)`
+- ggf. `tiles_request_reload_if_loaded(...)`
 
-**B) Eigene feste Topics**  
-Wenn dein Typ eigene MQTT-Topics hat:
-- `src/network/mqtt_topics.{h,cpp}` -> neuen TopicKey eintragen
-- `src/network/mqtt_handlers.cpp` -> Route + Handler eintragen
-- Handler darf **kein LVGL direkt** anfassen:
-  nutze Queue-Mechanismen oder Flags, die im Loop verarbeitet werden
-
----
-
-### 10.3 MQTT (ausgehend)
-
-Bestehende Helfer:
-- `mqttPublishScene(...)`
-- `mqttPublishSwitchCommand(...)`
-- `mqttPublishLightCommand(...)`
-
-Wenn du neue Kommandos brauchst:
-- neue TopicKeys + Publish-Funktion in `mqtt_handlers.cpp`
-- im Tile-Event diese Publish-Funktion aufrufen
-
----
-
-### 10.4 WebSocket
+### 4.3 MQTT-Updates (Live)
+LVGL darf **nicht** im MQTT-Callback aktualisiert werden.
+Nutze Queue/Flags und update im Main Loop.
 
 Beispiel:
+- `queue_sensor_tile_update(...)`
+- `process_sensor_update_queue()` im Loop
+
+---
+
+## 5) Zusatzfunktionen (optional, aber haeufig)
+
+### 5.1 Neue Felder (Checkliste)
+Wenn du ein neues Feld hinzufuegst:
+1) HTML Input (ID)
+2) JS load/save/reset
+3) Web-Handler apply
+4) Live-Preview wiring
+5) Import/Export (postTile)
+
+### 5.2 MQTT (eingehend)
+Entity-basiert:
+- `rebuildDynamicRoutes(...)`
+- `tiles_update_sensor_by_entity(...)`
+
+Eigene Topics:
+- `mqtt_topics.*` + `mqtt_handlers.cpp`
+- Update ueber Queue, nicht direkt LVGL
+
+### 5.3 MQTT (ausgehend)
+Nutze vorhandene Publish-Helpers oder erweitere `mqtt_handlers.cpp`.
+
+### 5.4 WebSocket
+Beispiele:
 - `src/game/game_ws_server.*`
-- init in `Tab5_LVGL.ino` (Port 8081)
-- Verwendung in `src/types/key/renderer.cpp`
+- `src/types/key/renderer.cpp`
 
-Wenn du WebSocket fuer deinen Typ willst:
-- eigene Broadcast-Funktion oder vorhandenen Server nutzen
-- im Renderer bei Click/Long-Press senden
-
----
-
-### 10.5 HTTP/URL (Daten von URL holen)
-
+### 5.5 HTTP/URL
 Beispiel:
-- `src/ui/image_popup.cpp` (HTTPClient + HTTPS)
+- `src/ui/image_popup.cpp`
 
-Hinweise:
-- Netz-Requests nicht im LVGL-Event blockieren
-- Daten zwischenspeichern (cache) und dann UI aktualisieren
+Regel:
+Kein Netzwerk im LVGL-Event blockieren.
 
----
-
-### 10.6 Popups
-
+### 5.6 Popups
 Beispiele:
 - `src/ui/sensor_popup.*`
 - `src/ui/light_popup.*`
 
-Pattern:
-- im Renderer Event-Handler fuer Click/Long-Press
-- Popup-Funktion aufrufen (z.B. `show_sensor_popup(...)`)
-- optional Queue-Update nutzen (thread-safe)
-
----
-
-### 10.7 Speicherung auf SD (lange Texte, Assets)
-
-Wenn Packed-Fields zu klein sind:
+### 5.7 Lange Daten auf SD
+Wenn Felder zu klein sind:
 - eigene Dateien auf SD
-- Pfad + Index z.B. wie bei `TILE_IMAGE` in `tile_config.cpp`
-- bei Load/Save lesen/schreiben
+- nur Pfad/ID im Tile speichern
 
 ---
 
-## 11) Testablauf
+## 6) Wichtige Limits (damit nix kaputt geht)
 
-- Typ erscheint im Web-Dropdown
-- Felder werden sichtbar
-- Live-Preview reagiert
-- Speichern klappt
-- Neustart uebersteht
-- Display zeigt korrekt
+- `Tile` Felder sind fest gepackt.
+- Neue Felder im `Tile` bedeuten:
+  Update der Packed-Struktur + Save/Load + evtl. Migration.
+- Besser: vorhandene Felder wiederverwenden oder SD nutzen.
 
 ---
 
-## 12) Kurz-Checkliste
+## 7) Testablauf
 
-- [ ] Script oder Template genutzt
-- [ ] Enum erweitert (`tile_config.h`)
-- [ ] Renderer deklariert (`tile_renderer.h`)
+1) Typ erscheint im Dropdown
+2) Felder sichtbar + editierbar
+3) Live-Preview reagiert
+4) Speichern klappt
+5) Neustart laedt korrekt
+6) Display zeigt Layout + Inhalt
+
+---
+
+## 8) Kurz-Checkliste
+
+- [ ] Template kopiert / Script genutzt
+- [ ] Enum in `tile_config.h`
+- [ ] Renderer in `tile_renderer.h`
 - [ ] Typ-Ordner fertig
-- [ ] Registry Eintrag (`types_registry.cpp`)
-- [ ] Web-Admin Wiring (`web_admin_scripts.cpp`)
+- [ ] Registry-Eintrag in `types_registry.cpp`
+- [ ] Web-Admin wiring in `web_admin_scripts.cpp`
 - [ ] Build + Test
