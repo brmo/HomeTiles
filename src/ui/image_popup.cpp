@@ -3,6 +3,7 @@
 #include "light_popup.h"
 #include "src/core/display_manager.h"
 #include "src/tiles/tile_config.h"
+#include "src/ui/tab_tiles_unified.h"
 #include <SD.h>
 #include <M5Unified.h>
 #include <vector>
@@ -51,9 +52,16 @@ static bool g_image_ram_active = false;
 static String g_image_ram_source;
 static String g_open_url;
 static const char* kUrlCacheDir = "/_url_cache";
+static const char* kThumbDir = "/_thumbs";
 static constexpr uint32_t kUrlCacheIntervalMs = 1000UL;
 static constexpr uint32_t kUrlCacheInitialDelayMs = 30UL * 1000UL;
 static uint32_t g_url_cache_next_ms = 0;
+static constexpr uint32_t kThumbWorkDelayMs = 250UL;
+static constexpr uint32_t kThumbIdleDelayMs = 5000UL;
+static uint32_t g_thumb_next_ms = 0;
+static constexpr uint32_t kThumbCleanupIntervalMs = 3600000UL;
+static uint32_t g_thumb_cleanup_next_ms = 0;
+static std::vector<String> g_thumb_refresh_list;
 
 struct UrlCacheEntry {
   String url;
@@ -295,6 +303,55 @@ static String make_url_cache_base(const String& url) {
 
 static String make_url_cache_bin_path(const String& url) {
   return make_url_cache_base(url) + ".bin";
+}
+
+static bool ensure_thumb_dir() {
+  if (!ensure_sd_ready()) return false;
+  if (SD.exists(kThumbDir)) return true;
+  return SD.mkdir(kThumbDir);
+}
+
+static String normalize_thumb_key(String raw) {
+  raw.trim();
+  if (raw.startsWith("S:")) raw = raw.substring(2);
+  if (is_url_path(raw)) return raw;
+  if (!raw.startsWith("/")) raw = "/" + raw;
+  return raw;
+}
+
+static String make_thumb_path(const String& key, uint16_t w, uint16_t h) {
+  uint32_t hval = hash_url(key);
+  char buf[96];
+  snprintf(buf, sizeof(buf), "%s/t%08lX_%ux%u.bin", kThumbDir, static_cast<unsigned long>(hval),
+           static_cast<unsigned int>(w), static_cast<unsigned int>(h));
+  return String(buf);
+}
+
+static void remove_thumb_variants_for_key(const String& raw_key) {
+  if (!ensure_sd_ready()) return;
+  if (!SD.exists(kThumbDir)) return;
+  String key = normalize_thumb_key(raw_key);
+  uint32_t hval = hash_url(key);
+  char prefix[16];
+  snprintf(prefix, sizeof(prefix), "t%08lX_", static_cast<unsigned long>(hval));
+  File root = SD.open(kThumbDir);
+  if (!root) return;
+  File file = root.openNextFile();
+  while (file) {
+    String name = file.name();
+    bool is_dir = file.isDirectory();
+    file.close();
+    if (!is_dir && name.length()) {
+      int slash = name.lastIndexOf('/');
+      String base = slash >= 0 ? name.substring(slash + 1) : name;
+      if (base.startsWith(prefix)) {
+        String full = String(kThumbDir) + "/" + base;
+        SD.remove(full);
+      }
+    }
+    file = root.openNextFile();
+  }
+  root.close();
 }
 
 static bool write_bin_file(const String& bin_path, const lv_image_header_t& header, const uint8_t* data, size_t data_len, String& error) {
@@ -575,6 +632,378 @@ static bool ends_with_ignore_case(const String& value, const char* suffix) {
   String s = suffix;
   s.toLowerCase();
   return v.endsWith(s);
+}
+
+struct ThumbJob {
+  String src_path;
+  String dst_path;
+  bool force_refresh = false;
+  uint16_t dst_w = 0;
+  uint16_t dst_h = 0;
+};
+
+static void calc_thumb_pixel_size(const Tile& tile, uint16_t& out_w, uint16_t& out_h) {
+  uint8_t span_w = tile.span_w < 1 ? 1 : tile.span_w;
+  uint8_t span_h = tile.span_h < 1 ? 1 : tile.span_h;
+  if (span_w > GRID_COLS) span_w = GRID_COLS;
+  if (span_h > GRID_ROWS) span_h = GRID_ROWS;
+  out_w = static_cast<uint16_t>(span_w * GRID_CELL_W + (span_w - 1) * GRID_GAP);
+  out_h = static_cast<uint16_t>(span_h * GRID_CELL_H + (span_h - 1) * GRID_GAP);
+}
+
+static bool read_bin_header(File& file, lv_image_header_t& header) {
+  if (!file) return false;
+  if (!file.seek(0)) return false;
+  size_t header_len = sizeof(lv_image_header_t);
+  if (file.read(reinterpret_cast<uint8_t*>(&header), header_len) != header_len) return false;
+  if (header.magic != LV_IMAGE_HEADER_MAGIC) return false;
+  if (header.w == 0 || header.h == 0) return false;
+  return true;
+}
+
+static bool load_bin_header(const String& path, lv_image_header_t& header) {
+  File f = SD.open(path, FILE_READ);
+  if (!f) return false;
+  bool ok = read_bin_header(f, header);
+  f.close();
+  return ok;
+}
+
+static bool resolve_thumb_source(const String& raw, String& out_src_path, String& out_key) {
+  String path = raw;
+  path.trim();
+  if (!path.length()) return false;
+  if (get_slideshow_mode(path) != SlideshowMode::None) return false;
+  String key = normalize_thumb_key(path);
+  if (is_url_path(key)) {
+    out_src_path = make_url_cache_bin_path(key);
+  } else {
+    out_src_path = key;
+  }
+  out_key = key;
+  if (!SD.exists(out_src_path)) return false;
+  if (!ends_with_ignore_case(out_src_path, ".bin")) return false;
+  return true;
+}
+
+static bool create_thumb_from_bin(const String& src_path, const String& dst_path, uint16_t dst_w, uint16_t dst_h, String& error) {
+  if (dst_w == 0 || dst_h == 0) {
+    error = "Thumb Groesse ungueltig";
+    return false;
+  }
+  File src = SD.open(src_path, FILE_READ);
+  if (!src) {
+    error = "BIN Lesen fehlgeschlagen";
+    return false;
+  }
+  lv_image_header_t src_header{};
+  if (!read_bin_header(src, src_header)) {
+    src.close();
+    error = "BIN Header Fehler";
+    return false;
+  }
+
+  const uint16_t src_w = src_header.w;
+  const uint16_t src_h = src_header.h;
+  uint32_t src_stride = src_header.stride;
+  if (src_stride == 0) src_stride = static_cast<uint32_t>(src_w) * 2U;
+  if (src_stride < static_cast<uint32_t>(src_w) * 2U) src_stride = static_cast<uint32_t>(src_w) * 2U;
+
+  uint16_t crop_x = 0;
+  uint16_t crop_y = 0;
+  uint16_t crop_w = src_w;
+  uint16_t crop_h = src_h;
+  const uint32_t wide_cmp = static_cast<uint32_t>(src_w) * dst_h;
+  const uint32_t tall_cmp = static_cast<uint32_t>(src_h) * dst_w;
+  if (wide_cmp >= tall_cmp) {
+    crop_h = src_h;
+    crop_w = static_cast<uint16_t>((static_cast<uint32_t>(src_h) * dst_w) / dst_h);
+    if (crop_w == 0) crop_w = 1;
+    if (crop_w > src_w) crop_w = src_w;
+    crop_x = static_cast<uint16_t>((src_w - crop_w) / 2);
+  } else {
+    crop_w = src_w;
+    crop_h = static_cast<uint16_t>((static_cast<uint32_t>(src_w) * dst_h) / dst_w);
+    if (crop_h == 0) crop_h = 1;
+    if (crop_h > src_h) crop_h = src_h;
+    crop_y = static_cast<uint16_t>((src_h - crop_h) / 2);
+  }
+
+  uint16_t* x_map = static_cast<uint16_t*>(alloc_image_buf(dst_w * sizeof(uint16_t), true));
+  uint16_t* y_map = static_cast<uint16_t*>(alloc_image_buf(dst_h * sizeof(uint16_t), true));
+  uint8_t* src_row = static_cast<uint8_t*>(alloc_image_buf(src_stride, true));
+  uint8_t* dst_row = static_cast<uint8_t*>(alloc_image_buf(static_cast<size_t>(dst_w) * 2U, true));
+  if (!x_map || !y_map || !src_row || !dst_row) {
+    src.close();
+    if (x_map) heap_caps_free(x_map);
+    if (y_map) heap_caps_free(y_map);
+    if (src_row) heap_caps_free(src_row);
+    if (dst_row) heap_caps_free(dst_row);
+    error = "Thumb RAM Fehler";
+    return false;
+  }
+
+  for (uint16_t x = 0; x < dst_w; ++x) {
+    uint32_t sx = crop_x + (static_cast<uint32_t>(x) * crop_w) / dst_w;
+    if (sx >= src_w) sx = src_w - 1;
+    x_map[x] = static_cast<uint16_t>(sx);
+  }
+  for (uint16_t y = 0; y < dst_h; ++y) {
+    uint32_t sy = crop_y + (static_cast<uint32_t>(y) * crop_h) / dst_h;
+    if (sy >= src_h) sy = src_h - 1;
+    y_map[y] = static_cast<uint16_t>(sy);
+  }
+
+  if (!ensure_thumb_dir()) {
+    src.close();
+    heap_caps_free(x_map);
+    heap_caps_free(y_map);
+    heap_caps_free(src_row);
+    heap_caps_free(dst_row);
+    error = "Thumb Ordner Fehler";
+    return false;
+  }
+
+  String tmp_path = dst_path + ".tmp";
+  if (SD.exists(tmp_path)) SD.remove(tmp_path);
+  File dst = SD.open(tmp_path, FILE_WRITE);
+  if (!dst) {
+    src.close();
+    heap_caps_free(x_map);
+    heap_caps_free(y_map);
+    heap_caps_free(src_row);
+    heap_caps_free(dst_row);
+    error = "Thumb Schreiben fehlgeschlagen";
+    return false;
+  }
+
+  lv_image_header_t dst_header{};
+  dst_header.magic = LV_IMAGE_HEADER_MAGIC;
+  dst_header.cf = src_header.cf;
+  dst_header.flags = 0;
+  dst_header.w = dst_w;
+  dst_header.h = dst_h;
+  dst_header.stride = static_cast<uint32_t>(dst_w) * 2U;
+  dst_header.reserved_2 = 0;
+
+  size_t header_len = sizeof(lv_image_header_t);
+  if (dst.write(reinterpret_cast<const uint8_t*>(&dst_header), header_len) != header_len) {
+    dst.close();
+    src.close();
+    heap_caps_free(x_map);
+    heap_caps_free(y_map);
+    heap_caps_free(src_row);
+    heap_caps_free(dst_row);
+    SD.remove(tmp_path);
+    error = "Thumb Header Fehler";
+    return false;
+  }
+
+  int32_t current_src_y = -1;
+  for (uint16_t y = 0; y < dst_h; ++y) {
+    uint16_t src_y = y_map[y];
+    if (static_cast<int32_t>(src_y) != current_src_y) {
+      uint32_t offset = static_cast<uint32_t>(src_y) * src_stride;
+      if (!src.seek(header_len + offset)) {
+        dst.close();
+        src.close();
+        heap_caps_free(x_map);
+        heap_caps_free(y_map);
+        heap_caps_free(src_row);
+        heap_caps_free(dst_row);
+        SD.remove(tmp_path);
+        error = "Thumb Seek Fehler";
+        return false;
+      }
+      if (src.read(src_row, src_stride) != src_stride) {
+        dst.close();
+        src.close();
+        heap_caps_free(x_map);
+        heap_caps_free(y_map);
+        heap_caps_free(src_row);
+        heap_caps_free(dst_row);
+        SD.remove(tmp_path);
+        error = "Thumb Read Fehler";
+        return false;
+      }
+      current_src_y = src_y;
+    }
+
+    for (uint16_t x = 0; x < dst_w; ++x) {
+      uint16_t src_x = x_map[x];
+      size_t src_off = static_cast<size_t>(src_x) * 2U;
+      size_t dst_off = static_cast<size_t>(x) * 2U;
+      dst_row[dst_off] = src_row[src_off];
+      dst_row[dst_off + 1] = src_row[src_off + 1];
+    }
+    if (dst.write(dst_row, static_cast<size_t>(dst_w) * 2U) != static_cast<size_t>(dst_w) * 2U) {
+      dst.close();
+      src.close();
+      heap_caps_free(x_map);
+      heap_caps_free(y_map);
+      heap_caps_free(src_row);
+      heap_caps_free(dst_row);
+      SD.remove(tmp_path);
+      error = "Thumb Write Fehler";
+      return false;
+    }
+    if ((y & 0x1F) == 0) delay(1);
+  }
+
+  dst.close();
+  src.close();
+  heap_caps_free(x_map);
+  heap_caps_free(y_map);
+  heap_caps_free(src_row);
+  heap_caps_free(dst_row);
+
+  if (SD.exists(dst_path)) SD.remove(dst_path);
+  if (!SD.rename(tmp_path, dst_path)) {
+    SD.remove(tmp_path);
+    error = "Thumb Rename Fehler";
+    return false;
+  }
+  return SD.exists(dst_path);
+}
+
+static bool thumb_list_contains(const std::vector<String>& list, const String& value);
+
+static bool get_next_thumbnail_job(ThumbJob& job) {
+  const TileGridConfig& grid = tileConfig.getActiveGrid();
+  for (size_t i = 0; i < TILES_PER_GRID; ++i) {
+    const Tile& tile = grid.tiles[i];
+    if (tile.type != TILE_IMAGE) continue;
+    if (tile.sensor_display_mode == 0) continue;
+    if (tile.image_path.length() == 0) continue;
+
+    uint16_t dst_w = 0;
+    uint16_t dst_h = 0;
+    calc_thumb_pixel_size(tile, dst_w, dst_h);
+    if (dst_w == 0 || dst_h == 0) continue;
+
+    String src_path;
+    String key;
+    if (!resolve_thumb_source(tile.image_path, src_path, key)) continue;
+
+    lv_image_header_t header{};
+    if (!load_bin_header(src_path, header)) continue;
+
+    String dst_path = make_thumb_path(key, dst_w, dst_h);
+    bool force_refresh = thumb_list_contains(g_thumb_refresh_list, dst_path);
+    if (SD.exists(dst_path) && !force_refresh) continue;
+
+    job.src_path = src_path;
+    job.dst_path = dst_path;
+    job.force_refresh = force_refresh;
+    job.dst_w = dst_w;
+    job.dst_h = dst_h;
+    return true;
+  }
+  return false;
+}
+
+static void service_tile_thumbnails(uint32_t now) {
+  if (g_thumb_next_ms != 0 && (int32_t)(now - g_thumb_next_ms) < 0) return;
+  ThumbJob job;
+  if (!get_next_thumbnail_job(job)) {
+    g_thumb_next_ms = now + kThumbIdleDelayMs;
+    return;
+  }
+  String error;
+  if (create_thumb_from_bin(job.src_path, job.dst_path, job.dst_w, job.dst_h, error)) {
+    Serial.printf("[Thumb] %s (%ux%u)\n", job.dst_path.c_str(),
+                  static_cast<unsigned int>(job.dst_w),
+                  static_cast<unsigned int>(job.dst_h));
+    if (job.force_refresh) {
+      for (auto it = g_thumb_refresh_list.begin(); it != g_thumb_refresh_list.end(); ++it) {
+        if (*it == job.dst_path) {
+          g_thumb_refresh_list.erase(it);
+          break;
+        }
+      }
+    }
+    // Kein Full-Reload hier, sonst flackern Sensorwerte bei jedem Thumb.
+  } else if (error.length() > 0) {
+    Serial.printf("[Thumb] Fehler: %s\n", error.c_str());
+  }
+  g_thumb_next_ms = now + kThumbWorkDelayMs;
+}
+
+static bool thumb_list_contains(const std::vector<String>& list, const String& value) {
+  for (const auto& entry : list) {
+    if (entry == value) return true;
+  }
+  return false;
+}
+
+static void collect_needed_thumbs(std::vector<String>& out, const String* key_filter) {
+  auto add_grid = [&](uint16_t folder_id) {
+    TileGridConfig grid{};
+    if (!tileConfig.loadFolderGrid(folder_id, grid)) return;
+    for (size_t i = 0; i < TILES_PER_GRID; ++i) {
+      const Tile& tile = grid.tiles[i];
+      if (tile.type != TILE_IMAGE) continue;
+      if (tile.sensor_display_mode == 0) continue;
+      if (tile.image_path.length() == 0) continue;
+      uint16_t w = 0;
+      uint16_t h = 0;
+      calc_thumb_pixel_size(tile, w, h);
+      if (w == 0 || h == 0) continue;
+      String key = normalize_thumb_key(tile.image_path);
+      if (key_filter && key != *key_filter) continue;
+      String thumb = make_thumb_path(key, w, h);
+      if (!thumb_list_contains(out, thumb)) {
+        out.push_back(thumb);
+      }
+    }
+  };
+
+  add_grid(0);
+  const auto& folders = tileConfig.getFolders();
+  for (const auto& folder : folders) {
+    if (folder.id == 0) continue;
+    add_grid(folder.id);
+  }
+}
+
+static void schedule_thumb_refresh_for_key(const String& raw_key) {
+  String key = normalize_thumb_key(raw_key);
+  std::vector<String> needed;
+  collect_needed_thumbs(needed, &key);
+  for (const auto& thumb : needed) {
+    if (!thumb_list_contains(g_thumb_refresh_list, thumb)) {
+      g_thumb_refresh_list.push_back(thumb);
+    }
+  }
+}
+
+static void cleanup_unused_thumbnails(uint32_t now) {
+  if (g_thumb_cleanup_next_ms != 0 && (int32_t)(now - g_thumb_cleanup_next_ms) < 0) return;
+  g_thumb_cleanup_next_ms = now + kThumbCleanupIntervalMs;
+  if (!ensure_sd_ready()) return;
+  if (!SD.exists(kThumbDir)) return;
+
+  std::vector<String> needed;
+  collect_needed_thumbs(needed, nullptr);
+
+  File root = SD.open(kThumbDir);
+  if (!root) return;
+  File file = root.openNextFile();
+  while (file) {
+    String name = file.name();
+    bool is_dir = file.isDirectory();
+    file.close();
+    if (!is_dir && name.length()) {
+      int slash = name.lastIndexOf('/');
+      String base = slash >= 0 ? name.substring(slash + 1) : name;
+      String full = String(kThumbDir) + "/" + base;
+      if (!thumb_list_contains(needed, full)) {
+        SD.remove(full);
+      }
+    }
+    file = root.openNextFile();
+  }
+  root.close();
 }
 
 struct JpegDecodeContext {
@@ -1311,6 +1740,7 @@ static void process_url_cache_done() {
   while (xQueueReceive(g_url_cache_done_queue, &job, 0) == pdTRUE) {
     if (!job.url[0]) continue;
     String url = String(job.url);
+    schedule_thumb_refresh_for_key(url);
     String cached = make_url_cache_bin_path(url);
     String cached_src = "S:" + cached;
     lv_image_cache_drop(cached_src.c_str());
@@ -1320,6 +1750,7 @@ static void process_url_cache_done() {
       displayManager.setReverseFlushOnce();
       show_image_popup_internal(cached, false, true);
     }
+    cleanup_unused_thumbnails(millis());
   }
 }
 
@@ -1495,9 +1926,11 @@ static void apply_slideshow_display_mode(bool enable) {
 void image_popup_service_url_cache() {
   process_url_cache_done();
   if (!ensure_sd_ready()) return;
-  if (WiFi.status() != WL_CONNECTED) return;
 
   uint32_t now = millis();
+  service_tile_thumbnails(now);
+  cleanup_unused_thumbnails(now);
+  if (WiFi.status() != WL_CONNECTED) return;
   if (g_url_cache_next_ms == 0) {
     g_url_cache_next_ms = now + kUrlCacheInitialDelayMs;
     return;
