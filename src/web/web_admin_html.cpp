@@ -43,7 +43,7 @@ static void appendTileTabHTML(
   html += R"html(" data-folder-icon=")html";
   appendHtmlEscaped(html, folder.icon_name);
   html += R"html(">
-        <p class="hint">Klicke auf eine Kachel, um sie zu bearbeiten. Waehle den Typ (Sensor/Szene/Key/Ordner/Settings/Switch/Bild) und passe die Einstellungen an.</p>
+        <p class="hint">Klicke auf eine Kachel, um sie zu bearbeiten. Waehle den Typ (Sensor/Szene/Key/Ordner/Settings/Switch/Bild/Uhr/Text) und passe die Einstellungen an.</p>
 
         <div class="tile-editor">
           <!-- Grid Preview -->

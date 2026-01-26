@@ -36,7 +36,7 @@ void append_sensor_fields_html(String& html, const String& tab_id, const std::ve
                 <select id=")html";
   html += tab_id;
   html += R"html(_sensor_value_font">
-                  <option value="0">Standard</option>
+                  <option value="0">40 (Default)</option>
                   <option value="1">20</option>
                   <option value="2">24</option>
                 </select>

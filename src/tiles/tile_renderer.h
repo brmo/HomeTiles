@@ -65,6 +65,7 @@ lv_obj_t* render_navigate_tile(lv_obj_t* parent, int col, int row, const Tile& t
 lv_obj_t* render_switch_tile(lv_obj_t* parent, int col, int row, const Tile& tile, uint8_t index, GridType grid_type);
 lv_obj_t* render_image_tile(lv_obj_t* parent, int col, int row, const Tile& tile, uint8_t index);
 lv_obj_t* render_clock_tile(lv_obj_t* parent, int col, int row, const Tile& tile, uint8_t index);
+lv_obj_t* render_text_tile(lv_obj_t* parent, int col, int row, const Tile& tile, uint8_t index);
 lv_obj_t* render_empty_tile(lv_obj_t* parent, int col, int row);
 
 // Update-Funktionen (für Sensoren)
