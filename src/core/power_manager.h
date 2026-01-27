@@ -11,7 +11,7 @@
 #define FPS_HIGH            60    // 60 FPS für flüssige Bedienung
 #define FPS_LOW             10    // 10 FPS zum Stromsparen
 #define FPS_SLEEP           1     // 1 FPS im Display-Sleep (nur für Touch-Erkennung)
-#define IDLE_TIMEOUT_MS     3000  // 3 Sekunden High-Performance nach letztem Touch
+#define IDLE_TIMEOUT_MS     10000  // 3 Sekunden High-Performance nach letztem Touch
 #define SLEEP_TIMEOUT_MS_BATTERY 3000 // 30 Sekunden im Batteriebetrieb (fest)
 
 // Power Manager - Verwaltet Energiemodi und Performance
