@@ -7,6 +7,7 @@ static const char* PREF_NAMESPACE = "tab5_config";
 static void logList(const char* label, const String& text);
 static bool sensorExistsInList(const String& list, const String& candidate);
 static bool aliasExistsInList(const String& list, const String& alias);
+static String normalizeLineLocal(const String& line);
 static int countListEntries(const String& text);
 static int countMapEntries(const String& text);
 static bool listEqualsIgnoringOrder(const String& a, const String& b);
@@ -420,13 +421,20 @@ static bool aliasExistsInList(const String& list, const String& alias) {
   return false;
 }
 
+static String normalizeLineLocal(const String& line) {
+  String t = line;
+  t.replace("\r", "");
+  t.trim();
+  return t;
+}
+
 static int countListEntries(const String& text) {
   int count = 0;
   int start = 0;
   while (start < text.length()) {
     int end = text.indexOf('\n', start);
     if (end < 0) end = text.length();
-    String line = normalizeLine(text.substring(start, end));
+    String line = normalizeLineLocal(text.substring(start, end));
     if (line.length()) {
       ++count;
     }
@@ -441,7 +449,7 @@ static int countMapEntries(const String& text) {
   while (start < text.length()) {
     int end = text.indexOf('\n', start);
     if (end < 0) end = text.length();
-    String line = normalizeLine(text.substring(start, end));
+    String line = normalizeLineLocal(text.substring(start, end));
     if (line.length()) {
       int eq = line.indexOf('=');
       if (eq > 0) {
@@ -466,7 +474,7 @@ static bool listEqualsIgnoringOrder(const String& a, const String& b) {
   while (start < a.length()) {
     int end = a.indexOf('\n', start);
     if (end < 0) end = a.length();
-    String line = normalizeLine(a.substring(start, end));
+    String line = normalizeLineLocal(a.substring(start, end));
     if (line.length() && !sensorExistsInList(b, line)) {
       return false;
     }
@@ -477,7 +485,7 @@ static bool listEqualsIgnoringOrder(const String& a, const String& b) {
   while (start < b.length()) {
     int end = b.indexOf('\n', start);
     if (end < 0) end = b.length();
-    String line = normalizeLine(b.substring(start, end));
+    String line = normalizeLineLocal(b.substring(start, end));
     if (line.length() && !sensorExistsInList(a, line)) {
       return false;
     }
@@ -494,7 +502,7 @@ static bool mapEqualsIgnoringOrder(const String& a, const String& b) {
   while (start < a.length()) {
     int end = a.indexOf('\n', start);
     if (end < 0) end = a.length();
-    String line = normalizeLine(a.substring(start, end));
+    String line = normalizeLineLocal(a.substring(start, end));
     if (line.length()) {
       int eq = line.indexOf('=');
       if (eq > 0) {
@@ -517,7 +525,7 @@ static bool mapEqualsIgnoringOrder(const String& a, const String& b) {
   while (start < b.length()) {
     int end = b.indexOf('\n', start);
     if (end < 0) end = b.length();
-    String line = normalizeLine(b.substring(start, end));
+    String line = normalizeLineLocal(b.substring(start, end));
     if (line.length()) {
       int eq = line.indexOf('=');
       if (eq > 0) {
