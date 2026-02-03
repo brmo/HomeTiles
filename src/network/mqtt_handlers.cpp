@@ -146,7 +146,7 @@ static bool tryHandleDynamicSensor(const char* topic, const char* payload) {
 }
 
 static constexpr size_t SMALL_BUF = 96;
-static constexpr size_t LARGE_BUF = 4096;
+static constexpr size_t LARGE_BUF = 16384;
 static char small_buf[SMALL_BUF];
 static char large_buf[LARGE_BUF];
 
@@ -156,7 +156,7 @@ void mqttCallback(char* topic, uint8_t* payload, unsigned int length) {
 
   const char* apply_topic = networkManager.getBridgeApplyTopic();
   if (apply_topic && strcmp(topic, apply_topic) == 0) {
-    static char cfg_buf[8192];  // Reduziert fuer mehr verfuegbaren Heap
+    static char cfg_buf[16384];  // Groesser fuer lange Config-Payloads
     if (length >= sizeof(cfg_buf)) {
       Serial.printf("[Bridge] WARNUNG: Payload zu gross (%u bytes), wird abgeschnitten!\n", length);
     }

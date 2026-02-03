@@ -38,7 +38,7 @@ void Tab5NetworkManager::init() {
     // MQTT-Setup
     mqtt_client.setClient(net_client);
     mqtt_client.setServer(cfg.mqtt_host, cfg.mqtt_port);
-    mqtt_client.setBufferSize(4096);  // Für große History-CSV-Daten
+    mqtt_client.setBufferSize(16384);  // Groessere Config-Payloads (viele Entities)
     mqtt_client.setCallback(mqttCallback);
   } else {
     Serial.println("MQTT: keine Konfiguration vorhanden - ueberspringe Verbindung");
