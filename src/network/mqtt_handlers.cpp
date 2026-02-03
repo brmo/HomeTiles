@@ -166,16 +166,17 @@ void mqttCallback(char* topic, uint8_t* payload, unsigned int length) {
     yield();  // Nach großem Copy
     Serial.printf("[Bridge] apply-topic hit (%u bytes)\n", (unsigned)copy_len);
     bool reload = false;
-    if (haBridgeConfig.applyJson(cfg_buf, &reload)) {
+    bool icons_changed = false;
+    if (haBridgeConfig.applyJson(cfg_buf, &reload, &icons_changed)) {
       Serial.println("[Bridge] Konfiguration von HA empfangen");
       if (reload) {
         yield();  // Nach JSON Parse
         networkManager.publishBridgeConfig();
         yield();  // Nach Publish
-        // Reload grids im Loop (nicht im MQTT-Callback)
-        tiles_request_reload_all();
-        yield();  // Nach Reload-Request
         mqttReloadDynamicSlots();
+      }
+      if (icons_changed) {
+        tiles_request_icon_refresh();
       }
     } else {
       Serial.println("[Bridge] Ungueltige Bridge-Konfiguration empfangen");

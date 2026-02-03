@@ -5,6 +5,7 @@
 #include "src/ui/sensor_popup.h"
 #include "src/network/ha_bridge_config.h"
 #include "src/types/image/renderer.h"
+#include "src/tiles/mdi_icons.h"
 #include <misc/cache/instance/lv_image_cache.h>
 #include <Arduino.h>
 
@@ -22,6 +23,7 @@ static bool g_tiles_loaded[3] = {false, false, false};
 static bool g_tiles_reload_requested[3] = {false, false, false};
 static bool g_tiles_reload_only_if_loaded[3] = {true, true, true};
 static bool g_tiles_release_requested[3] = {false, false, false};
+static bool g_tiles_icon_refresh_requested = false;
 
 static constexpr size_t kFolderCacheSize = 3;
 static constexpr uint16_t kInvalidFolderId = 0xFFFF;
@@ -129,6 +131,20 @@ static lv_obj_t* find_preview_image_child(lv_obj_t* parent) {
   return nullptr;
 }
 
+static lv_obj_t* find_mdi_label_child(lv_obj_t* parent) {
+  if (!parent) return nullptr;
+  uint32_t count = lv_obj_get_child_count(parent);
+  for (uint32_t i = 0; i < count; ++i) {
+    lv_obj_t* child = lv_obj_get_child(parent, static_cast<int32_t>(i));
+    if (!child) continue;
+    const lv_font_t* font = lv_obj_get_style_text_font(child, LV_PART_MAIN);
+    if (font == FONT_MDI_ICONS) return child;
+    lv_obj_t* nested = find_mdi_label_child(child);
+    if (nested) return nested;
+  }
+  return nullptr;
+}
+
 static lv_obj_t* create_tiles_grid(lv_obj_t* parent);
 
 /* === Deferred image preview loading === */
@@ -139,6 +155,7 @@ static uint32_t g_preview_block_until_ms[3] = {0, 0, 0};
 
 static void tiles_refresh_all_image_previews(GridType grid_type, bool only_missing);
 static void hide_preview_images(GridType grid_type);
+static void tiles_refresh_icons_for_grid(GridType grid_type);
 
 static void preview_timer_cb(lv_timer_t* timer) {
   (void)timer;
@@ -538,6 +555,10 @@ void tiles_request_reload_all() {
   }
 }
 
+void tiles_request_icon_refresh() {
+  g_tiles_icon_refresh_requested = true;
+}
+
 void tiles_request_release(GridType grid_type) {
   uint8_t idx = (uint8_t)grid_type;
   if (idx >= 3) return;
@@ -578,6 +599,7 @@ void tiles_invalidate_folder(uint16_t folder_id) {
 }
 
 void tiles_process_reload_requests() {
+  bool did_reload = false;
   for (uint8_t i = 0; i < 3; ++i) {
     if (!g_tiles_release_requested[i]) continue;
     g_tiles_release_requested[i] = false;
@@ -602,7 +624,17 @@ void tiles_process_reload_requests() {
     if (g_tiles_grids[i]) {
       tiles_reload_layout(grid_type);
     }
+    did_reload = true;
     break;  // nur ein Reload pro Loop
+  }
+
+  if (g_tiles_icon_refresh_requested && !did_reload) {
+    g_tiles_icon_refresh_requested = false;
+    for (uint8_t i = 0; i < 3; ++i) {
+      GridType grid_type = static_cast<GridType>(i);
+      if (!g_tiles_grids[i] || !g_tiles_loaded[i]) continue;
+      tiles_refresh_icons_for_grid(grid_type);
+    }
   }
 }
 
@@ -699,6 +731,53 @@ static void hide_preview_images(GridType grid_type) {
     if (!img) continue;
     lv_obj_add_flag(img, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(img, LV_OBJ_FLAG_USER_2);
+  }
+}
+
+static void tiles_refresh_icons_for_grid(GridType grid_type) {
+  uint8_t idx = static_cast<uint8_t>(grid_type);
+  if (!g_tiles_grids[idx] || !g_tiles_loaded[idx]) return;
+
+  const TileGridConfig& config = getGridConfig(grid_type);
+  for (uint8_t i = 0; i < TILES_PER_GRID; ++i) {
+    const Tile& tile = config.tiles[i];
+    if (tile.type != TILE_SENSOR && tile.type != TILE_SWITCH && tile.type != TILE_SCENE) continue;
+    lv_obj_t* tile_obj = g_tiles_objs[idx][i];
+    if (!tile_obj) continue;
+
+    String icon_name = tile.icon_name;
+    bool icon_disabled = isMdiIconDisabled(icon_name);
+    icon_name = normalizeMdiIconName(icon_name);
+    if (!icon_disabled && !icon_name.length()) {
+      if (tile.type == TILE_SCENE) {
+        if (tile.scene_alias.length()) {
+          String scene_entity = haBridgeConfig.findSceneEntity(tile.scene_alias);
+          if (scene_entity.length()) {
+            icon_name = normalizeMdiIconName(haBridgeConfig.findEntityIcon(scene_entity));
+          }
+        }
+      } else if (tile.sensor_entity.length()) {
+        icon_name = normalizeMdiIconName(haBridgeConfig.findEntityIcon(tile.sensor_entity));
+      }
+    }
+
+    lv_obj_t* icon_lbl = find_mdi_label_child(tile_obj);
+    if (!icon_lbl) continue;
+
+    if (icon_disabled || !icon_name.length()) {
+      lv_obj_add_flag(icon_lbl, LV_OBJ_FLAG_HIDDEN);
+      continue;
+    }
+
+    String iconChar = getMdiChar(icon_name);
+    if (!iconChar.length()) {
+      lv_obj_add_flag(icon_lbl, LV_OBJ_FLAG_HIDDEN);
+      continue;
+    }
+
+    lv_label_set_text(icon_lbl, iconChar.c_str());
+    lv_obj_clear_flag(icon_lbl, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_invalidate(icon_lbl);
   }
 }
 

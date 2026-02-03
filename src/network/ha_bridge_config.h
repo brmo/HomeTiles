@@ -30,7 +30,7 @@ public:
 
   bool load();
   bool save(const HaBridgeConfigData& data);
-  bool applyJson(const char* json_payload, bool* out_reload = nullptr);
+  bool applyJson(const char* json_payload, bool* out_reload = nullptr, bool* out_icons_changed = nullptr);
 
   const HaBridgeConfigData& get() const { return data; }
   bool hasData() const;

@@ -287,9 +287,12 @@ static void parseObjectSection(const String& body, String& out) {
   out = result;
 }
 
-bool HaBridgeConfig::applyJson(const char* json_payload, bool* out_reload) {
+bool HaBridgeConfig::applyJson(const char* json_payload, bool* out_reload, bool* out_icons_changed) {
   if (out_reload) {
     *out_reload = false;
+  }
+  if (out_icons_changed) {
+    *out_icons_changed = false;
   }
   if (!json_payload || !*json_payload) {
     return false;
@@ -323,6 +326,10 @@ bool HaBridgeConfig::applyJson(const char* json_payload, bool* out_reload) {
   parseIconMetaSections(json, merged.entity_icons_map);
   if (!merged.entity_icons_map.length() && prev_icons.length()) {
     merged.entity_icons_map = prev_icons;
+  }
+  bool icon_map_changed = !mapEqualsIgnoringOrder(prev_icons, merged.entity_icons_map);
+  if (out_icons_changed) {
+    *out_icons_changed = icon_map_changed;
   }
 
   for (size_t i = 0; i < HA_SENSOR_SLOT_COUNT; ++i) {
