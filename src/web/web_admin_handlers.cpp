@@ -74,6 +74,40 @@ void appendJsonEscaped(String& out, const String& value) {
   }
 }
 
+void appendKeyValueMapJson(String& out, const String& map) {
+  out += "{";
+  bool first = true;
+  int start = 0;
+
+  while (start < map.length()) {
+    int eqPos = map.indexOf('=', start);
+    if (eqPos < 0) break;
+
+    int endPos = map.indexOf('\n', eqPos);
+    if (endPos < 0) endPos = map.length();
+
+    String key = map.substring(start, eqPos);
+    String value = map.substring(eqPos + 1, endPos);
+
+    key.trim();
+    value.trim();
+
+    if (key.length() > 0 && value.length() > 0) {
+      if (!first) out += ",";
+      out += "\"";
+      appendJsonEscaped(out, key);
+      out += "\":\"";
+      appendJsonEscaped(out, value);
+      out += "\"";
+      first = false;
+    }
+
+    start = endPos + 1;
+  }
+
+  out += "}";
+}
+
 struct TileRect {
   uint8_t col;
   uint8_t row;
@@ -768,47 +802,16 @@ void WebAdminServer::handleGetSensorValues() {
   Serial.print("[WebAdmin] sensor_values_map: ");
   Serial.println(ha.sensor_values_map);
 
-  // Build JSON response with sensor values
+  // Build JSON response with values + meta
   String json = "{";
-  bool first = true;
-
-  // Parse sensor_values_map (format: "entity1=value1\nentity2=value2\n...")
-  const String& valuesMap = ha.sensor_values_map;
-  int start = 0;
-
-  while (start < valuesMap.length()) {
-    int eqPos = valuesMap.indexOf('=', start);
-    if (eqPos < 0) break;
-
-    int endPos = valuesMap.indexOf('\n', eqPos);
-    if (endPos < 0) endPos = valuesMap.length();
-
-    String entity = valuesMap.substring(start, eqPos);
-    String value = valuesMap.substring(eqPos + 1, endPos);
-
-    entity.trim();
-    value.trim();
-
-    if (entity.length() > 0 && value.length() > 0) {
-      if (!first) json += ",";
-      json += "\"";
-      json += entity;
-      json += "\":\"";
-
-      // Escape quotes in value
-      for (int i = 0; i < value.length(); i++) {
-        char c = value.charAt(i);
-        if (c == '"' || c == '\\') json += '\\';
-        json += c;
-      }
-
-      json += "\"";
-      first = false;
-    }
-
-    start = endPos + 1;
-  }
-
+  json += "\"values\":";
+  appendKeyValueMapJson(json, ha.sensor_values_map);
+  json += ",\"units\":";
+  appendKeyValueMapJson(json, ha.sensor_units_map);
+  json += ",\"icons\":";
+  appendKeyValueMapJson(json, ha.entity_icons_map);
+  json += ",\"names\":";
+  appendKeyValueMapJson(json, ha.sensor_names_map);
   json += "}";
   Serial.print("[WebAdmin] Sending JSON: ");
   Serial.println(json);

@@ -16,6 +16,7 @@ struct HaBridgeConfigData {
   String sensor_units_map;
   String sensor_names_map;
   String sensor_values_map;
+  String entity_icons_map;
   String sensor_titles[HA_SENSOR_SLOT_COUNT];
   String sensor_custom_units[HA_SENSOR_SLOT_COUNT];
   String scene_titles[HA_SCENE_SLOT_COUNT];
@@ -36,6 +37,8 @@ public:
   String findSensorUnit(const String& entity_id) const;
   String findSensorName(const String& entity_id) const;
   String findSensorInitialValue(const String& entity_id) const;
+  String findEntityIcon(const String& entity_id) const;
+  String findSceneEntity(const String& alias) const;
 
   // Update live sensor value (for web interface)
   void updateSensorValue(const String& entity_id, const String& value);

@@ -25,6 +25,15 @@ struct SensorEventData {
   String unit;
 };
 
+static bool is_disabled_token(const String& value) {
+  if (!value.length()) return false;
+  String t = value;
+  t.trim();
+  if (!t.length()) return true;
+  t.toLowerCase();
+  return t == "-" || t == "none" || t == "null" || t == "no" || t == "off";
+}
+
 lv_obj_t* render_sensor_tile(lv_obj_t* parent, int col, int row, const Tile& tile, uint8_t index, GridType grid_type) {
   if (!parent) {
     Serial.println("[TileRenderer] ERROR: parent NULL bei Sensor-Tile");
@@ -67,8 +76,14 @@ lv_obj_t* render_sensor_tile(lv_obj_t* parent, int col, int row, const Tile& til
 
   // Icon Label (optional, falls icon_name vorhanden) - rechtsbündig
   lv_obj_t* icon_lbl = nullptr;
-  if (tile.icon_name.length() > 0 && FONT_MDI_ICONS != nullptr) {
-    String iconChar = getMdiChar(tile.icon_name);
+  String icon_name = tile.icon_name;
+  bool icon_disabled = isMdiIconDisabled(icon_name);
+  icon_name = normalizeMdiIconName(icon_name);
+  if (!icon_disabled && !icon_name.length() && tile.sensor_entity.length()) {
+    icon_name = normalizeMdiIconName(haBridgeConfig.findEntityIcon(tile.sensor_entity));
+  }
+  if (icon_name.length() > 0 && FONT_MDI_ICONS != nullptr) {
+    String iconChar = getMdiChar(icon_name);
     if (iconChar.length() > 0) {
       icon_lbl = lv_label_create(card);
       if (icon_lbl) {
@@ -229,7 +244,7 @@ lv_obj_t* render_sensor_tile(lv_obj_t* parent, int col, int row, const Tile& til
     SensorEventData* data = new SensorEventData{
       tile.sensor_entity,
       tile.title,
-      tile.icon_name,
+      icon_name,
       tile.sensor_unit
     };
 
@@ -250,7 +265,9 @@ lv_obj_t* render_sensor_tile(lv_obj_t* parent, int col, int row, const Tile& til
           }
           init.icon_name = data->icon_name;
           String unit = data->unit;
-          if (!unit.length()) {
+          if (is_disabled_token(unit)) {
+            unit = "";
+          } else if (!unit.length()) {
             unit = haBridgeConfig.findSensorUnit(data->entity_id);
           }
           init.unit = unit;

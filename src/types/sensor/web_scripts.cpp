@@ -32,7 +32,7 @@ void append_sensor_scripts(String& html) {
     if (!entity) {
       const valueElem = document.getElementById(tab + '-tile-' + currentTileIndex + '-value');
       if (valueElem) {
-        const unit = unitInput ? unitInput.value : '';
+        const unit = resolveUnitValue(unitInput ? unitInput.value : '', '', sensorMetaCache.units);
         valueElem.innerHTML = '--' + (unit ? '<span class="tile-unit">' + unit + '</span>' : '');
         applySensorValueFontClass(valueElem, valueFontSelect ? valueFontSelect.value : '0');
       }
@@ -40,12 +40,15 @@ void append_sensor_scripts(String& html) {
     }
     fetch('/api/sensor_values')
       .then(res => res.json())
-      .then(values => {
+      .then(raw => {
+        const meta = normalizeSensorMetaPayload(raw);
+        sensorMetaCache = meta;
+        const values = meta.values || {};
         const valueElem = document.getElementById(tab + '-tile-' + currentTileIndex + '-value');
         if (valueElem) {
           const decimals = decimalsInput ? decimalsInput.value : '';
           let value = formatSensorValue(values[entity] ?? '--', decimals);
-          const unit = unitInput ? unitInput.value : '';
+          const unit = resolveUnitValue(unitInput ? unitInput.value : '', entity, meta.units);
           valueElem.innerHTML = value + (unit ? '<span class="tile-unit">' + unit + '</span>' : '');
           applySensorValueFontClass(valueElem, valueFontSelect ? valueFontSelect.value : '0');
         }

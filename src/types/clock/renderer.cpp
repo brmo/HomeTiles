@@ -70,15 +70,17 @@ lv_obj_t* render_clock_tile(lv_obj_t* parent, int col, int row, const Tile& tile
   set_tile_grid_cell(card, col, row, tile.span_w, tile.span_h);
 
   // Icon Label (optional)
+  String iconChar;
   if (tile.icon_name.length() > 0 && FONT_MDI_ICONS != nullptr) {
-    String iconChar = getMdiChar(tile.icon_name);
-    if (iconChar.length() > 0) {
-      lv_obj_t* icon_lbl = lv_label_create(card);
-      if (icon_lbl) {
-        set_label_style(icon_lbl, lv_color_white(), FONT_MDI_ICONS);
-        lv_label_set_text(icon_lbl, iconChar.c_str());
-        lv_obj_align(icon_lbl, LV_ALIGN_TOP_RIGHT, 4, -8);
-      }
+    iconChar = getMdiChar(tile.icon_name);
+  }
+  const bool has_icon = iconChar.length() > 0;
+  if (has_icon) {
+    lv_obj_t* icon_lbl = lv_label_create(card);
+    if (icon_lbl) {
+      set_label_style(icon_lbl, lv_color_white(), FONT_MDI_ICONS);
+      lv_label_set_text(icon_lbl, iconChar.c_str());
+      lv_obj_align(icon_lbl, LV_ALIGN_TOP_RIGHT, 4, -8);
     }
   }
 
@@ -95,7 +97,7 @@ lv_obj_t* render_clock_tile(lv_obj_t* parent, int col, int row, const Tile& tile
   uint8_t flags = get_clock_flags(tile);
   const bool show_time = (flags & 1) != 0;
   const bool show_date = (flags & 2) != 0;
-  const bool has_header = tile.title.length() > 0 || tile.icon_name.length() > 0;
+  const bool has_header = tile.title.length() > 0 || has_icon;
 
   lv_obj_t* stack = lv_obj_create(card);
   lv_obj_remove_style_all(stack);

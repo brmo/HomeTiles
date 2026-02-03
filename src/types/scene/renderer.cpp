@@ -2,6 +2,7 @@
 #include "src/tiles/tile_renderer_shared.h"
 #include "src/tiles/tile_renderer_fonts.h"
 #include "src/tiles/mdi_icons.h"
+#include "src/network/ha_bridge_config.h"
 #include <Arduino.h>
 
 struct SceneEventData {
@@ -29,23 +30,33 @@ lv_obj_t* render_scene_tile(lv_obj_t* parent, int col, int row, const Tile& tile
 
   // Icon Label (optional, falls icon_name vorhanden)
   lv_obj_t* icon_lbl = nullptr;
-  bool has_icon = tile.icon_name.length() > 0;
+  String icon_name = tile.icon_name;
+  bool icon_disabled = isMdiIconDisabled(icon_name);
+  icon_name = normalizeMdiIconName(icon_name);
+  if (!icon_disabled && !icon_name.length() && tile.scene_alias.length()) {
+    String scene_entity = haBridgeConfig.findSceneEntity(tile.scene_alias);
+    if (scene_entity.length()) {
+      icon_name = normalizeMdiIconName(haBridgeConfig.findEntityIcon(scene_entity));
+    }
+  }
+  String iconChar;
+  if (icon_name.length() > 0 && FONT_MDI_ICONS != nullptr) {
+    iconChar = getMdiChar(icon_name);
+  }
+  bool has_icon = iconChar.length() > 0;
   bool has_title = tile.title.length() > 0;
 
-  if (has_icon && FONT_MDI_ICONS != nullptr) {
-    String iconChar = getMdiChar(tile.icon_name);
-    if (iconChar.length() > 0) {
-      icon_lbl = lv_label_create(btn);
-      if (icon_lbl) {
-        set_label_style(icon_lbl, lv_color_white(), FONT_MDI_ICONS);
-        lv_label_set_text(icon_lbl, iconChar.c_str());
+  if (has_icon) {
+    icon_lbl = lv_label_create(btn);
+    if (icon_lbl) {
+      set_label_style(icon_lbl, lv_color_white(), FONT_MDI_ICONS);
+      lv_label_set_text(icon_lbl, iconChar.c_str());
 
-        // Flexible Positionierung: Icon + Title = 2 Zeilen mittig, nur Icon = 1 Zeile mittig
-        if (has_title) {
-          lv_obj_align(icon_lbl, LV_ALIGN_CENTER, 0, -20);  // Icon oben (mit Title)
-        } else {
-          lv_obj_center(icon_lbl);  // Icon mittig (ohne Title)
-        }
+      // Flexible Positionierung: Icon + Title = 2 Zeilen mittig, nur Icon = 1 Zeile mittig
+      if (has_title) {
+        lv_obj_align(icon_lbl, LV_ALIGN_CENTER, 0, -20);  // Icon oben (mit Title)
+      } else {
+        lv_obj_center(icon_lbl);  // Icon mittig (ohne Title)
       }
     }
   }

@@ -37,10 +37,15 @@ static LightPopupInit build_light_popup_init(const SwitchEventData* data) {
   init.title = data->title;
   init.is_light = is_light_entity_id(data->entity_id);
 
-  // Get icon from tile config
+  // Get icon from tile config (fallback to HA icon when empty)
   const TileGridConfig& grid = tileConfig.getActiveGrid();
   if (data->index < TILES_PER_GRID) {
-    init.icon_name = grid.tiles[data->index].icon_name;
+    const Tile& tile = grid.tiles[data->index];
+    bool icon_disabled = isMdiIconDisabled(tile.icon_name);
+    init.icon_name = normalizeMdiIconName(tile.icon_name);
+    if (!icon_disabled && !init.icon_name.length() && data->entity_id.length()) {
+      init.icon_name = normalizeMdiIconName(haBridgeConfig.findEntityIcon(data->entity_id));
+    }
   }
 
   const SwitchState state = get_switch_state(data->grid_type, data->index);
@@ -112,26 +117,33 @@ lv_obj_t* render_switch_tile(lv_obj_t* parent, int col, int row, const Tile& til
   // Icon Label (optional, falls icon_name vorhanden)
   lv_obj_t* icon_lbl = nullptr;
   lv_obj_t* title_lbl = nullptr;
-  bool has_icon = tile.icon_name.length() > 0;
+  String icon_name = tile.icon_name;
+  bool icon_disabled = isMdiIconDisabled(icon_name);
+  icon_name = normalizeMdiIconName(icon_name);
+  if (!icon_disabled && !icon_name.length() && tile.sensor_entity.length()) {
+    icon_name = normalizeMdiIconName(haBridgeConfig.findEntityIcon(tile.sensor_entity));
+  }
+  String iconChar;
+  if (icon_name.length() > 0 && FONT_MDI_ICONS != nullptr) {
+    iconChar = getMdiChar(icon_name);
+  }
+  bool has_icon = iconChar.length() > 0;
   bool has_title = tile.title.length() > 0;
 
-  if (has_icon && FONT_MDI_ICONS != nullptr) {
-    String iconChar = getMdiChar(tile.icon_name);
-    if (iconChar.length() > 0) {
-      icon_lbl = lv_label_create(container);
-      if (icon_lbl) {
-        set_label_style(icon_lbl, lv_color_white(), FONT_MDI_ICONS);
-        lv_label_set_text(icon_lbl, iconChar.c_str());
+  if (has_icon) {
+    icon_lbl = lv_label_create(container);
+    if (icon_lbl) {
+      set_label_style(icon_lbl, lv_color_white(), FONT_MDI_ICONS);
+      lv_label_set_text(icon_lbl, iconChar.c_str());
 
-        if (use_switch_widget) {
-          lv_obj_align(icon_lbl, LV_ALIGN_TOP_RIGHT, 4, -8);
+      if (use_switch_widget) {
+        lv_obj_align(icon_lbl, LV_ALIGN_TOP_RIGHT, 4, -8);
+      } else {
+        // Flexible Positionierung: Icon + Title = 2 Zeilen mittig, nur Icon = 1 Zeile mittig
+        if (has_title) {
+          lv_obj_align(icon_lbl, LV_ALIGN_CENTER, 0, -20);
         } else {
-          // Flexible Positionierung: Icon + Title = 2 Zeilen mittig, nur Icon = 1 Zeile mittig
-          if (has_title) {
-            lv_obj_align(icon_lbl, LV_ALIGN_CENTER, 0, -20);
-          } else {
-            lv_obj_center(icon_lbl);
-          }
+          lv_obj_center(icon_lbl);
         }
       }
     }

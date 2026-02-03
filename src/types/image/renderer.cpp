@@ -129,7 +129,11 @@ lv_obj_t* render_image_tile(lv_obj_t* parent, int col, int row, const Tile& tile
   const bool wants_preview =
       (tile.sensor_display_mode != 0 && tile.image_path.length() > 0 && !is_slideshow_token(tile.image_path));
   bool has_preview = wants_preview;
-  const bool has_icon = tile.icon_name.length() > 0;
+  String iconChar;
+  if (tile.icon_name.length() > 0 && FONT_MDI_ICONS != nullptr) {
+    iconChar = getMdiChar(tile.icon_name);
+  }
+  const bool has_icon = iconChar.length() > 0;
   const bool has_title = tile.title.length() > 0;
   if (wants_preview) {
     lv_obj_set_style_pad_all(btn, 0, LV_PART_MAIN);
@@ -198,14 +202,11 @@ lv_obj_t* render_image_tile(lv_obj_t* parent, int col, int row, const Tile& tile
       }
     }
 
-    if (has_icon && FONT_MDI_ICONS != nullptr) {
-      String iconChar = getMdiChar(tile.icon_name);
-      if (iconChar.length() > 0) {
-        icon_lbl = lv_label_create(btn);
-        if (icon_lbl) {
-          set_label_style(icon_lbl, lv_color_white(), FONT_MDI_ICONS);
-          lv_label_set_text(icon_lbl, iconChar.c_str());
-        }
+    if (has_icon) {
+      icon_lbl = lv_label_create(btn);
+      if (icon_lbl) {
+        set_label_style(icon_lbl, lv_color_white(), FONT_MDI_ICONS);
+        lv_label_set_text(icon_lbl, iconChar.c_str());
       }
     }
 
@@ -329,19 +330,16 @@ lv_obj_t* render_image_tile(lv_obj_t* parent, int col, int row, const Tile& tile
     // Icon Label (optional)
     lv_obj_t* icon_lbl = nullptr;
 
-    if (has_icon && FONT_MDI_ICONS != nullptr) {
-      String iconChar = getMdiChar(tile.icon_name);
-      if (iconChar.length() > 0) {
-        icon_lbl = lv_label_create(btn);
-        if (icon_lbl) {
-          set_label_style(icon_lbl, lv_color_white(), FONT_MDI_ICONS);
-          lv_label_set_text(icon_lbl, iconChar.c_str());
+    if (has_icon) {
+      icon_lbl = lv_label_create(btn);
+      if (icon_lbl) {
+        set_label_style(icon_lbl, lv_color_white(), FONT_MDI_ICONS);
+        lv_label_set_text(icon_lbl, iconChar.c_str());
 
-          if (has_title) {
-            lv_obj_align(icon_lbl, LV_ALIGN_CENTER, 0, -20);  // Icon oben
-          } else {
-            lv_obj_center(icon_lbl);  // Icon mittig
-          }
+        if (has_title) {
+          lv_obj_align(icon_lbl, LV_ALIGN_CENTER, 0, -20);  // Icon oben
+        } else {
+          lv_obj_center(icon_lbl);  // Icon mittig
         }
       }
     }

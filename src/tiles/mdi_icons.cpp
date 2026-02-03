@@ -7492,6 +7492,34 @@ static int32_t findIconIndex(const char* name) {
   return -1; // Nicht gefunden
 }
 
+static bool is_disabled_icon_name(const String& iconName) {
+  if (!iconName.length()) return false;
+  String t = iconName;
+  t.trim();
+  if (!t.length()) return true;
+  t.toLowerCase();
+  return t == "-" || t == "none" || t == "null" || t == "no" || t == "off";
+}
+
+bool isMdiIconDisabled(const String& iconName) {
+  return is_disabled_icon_name(iconName);
+}
+
+String normalizeMdiIconName(const String& iconName) {
+  String name = iconName;
+  name.trim();
+  name.toLowerCase();
+  if (is_disabled_icon_name(name)) return "";
+  if (name.startsWith("mdi:")) {
+    name.remove(0, 4);
+  } else if (name.startsWith("mdi-")) {
+    name.remove(0, 4);
+  }
+  name.trim();
+  if (is_disabled_icon_name(name)) return "";
+  return name;
+}
+
 // Gibt den Codepoint für einen Icon-Namen zurück
 uint32_t getMdiCodepoint(const String& iconName) {
   if (iconName.length() == 0) {
@@ -7499,15 +7527,10 @@ uint32_t getMdiCodepoint(const String& iconName) {
     return 0;
   }
 
-  String searchName = iconName;
-  searchName.toLowerCase();
-  searchName.trim();
-
-  // Bereinigung von HA-Prefixen (mdi:flash -> flash)
-  if (searchName.startsWith("mdi:")) {
-    searchName.remove(0, 4);
-  } else if (searchName.startsWith("mdi-")) {
-    searchName.remove(0, 4);
+  String searchName = normalizeMdiIconName(iconName);
+  if (!searchName.length()) {
+    Serial.println("[MDI] Icon name disabled or empty");
+    return 0;
   }
 
   Serial.printf("[MDI] Looking up icon: '%s' (from '%s', count=%lu)\n",

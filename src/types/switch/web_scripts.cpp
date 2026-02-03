@@ -154,7 +154,10 @@ void append_switch_scripts(String& html) {
     if (!entity || !tileElem) return;
     fetch('/api/sensor_values')
       .then(res => res.json())
-      .then(values => {
+      .then(raw => {
+        const meta = normalizeSensorMetaPayload(raw);
+        sensorMetaCache = meta;
+        const values = meta.values || {};
         const state = parseSwitchPayload(values[entity] ?? '');
         applySwitchPreviewState(tileElem, state);
       })

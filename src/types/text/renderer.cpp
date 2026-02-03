@@ -30,15 +30,17 @@ lv_obj_t* render_text_tile(lv_obj_t* parent, int col, int row, const Tile& tile,
   set_tile_grid_cell(card, col, row, tile.span_w, tile.span_h);
 
   // Icon (optional)
+  String iconChar;
   if (tile.icon_name.length() > 0 && FONT_MDI_ICONS != nullptr) {
-    String iconChar = getMdiChar(tile.icon_name);
-    if (iconChar.length() > 0) {
-      lv_obj_t* icon_lbl = lv_label_create(card);
-      if (icon_lbl) {
-        set_label_style(icon_lbl, lv_color_white(), FONT_MDI_ICONS);
-        lv_label_set_text(icon_lbl, iconChar.c_str());
-        lv_obj_align(icon_lbl, LV_ALIGN_TOP_RIGHT, 4, -8);
-      }
+    iconChar = getMdiChar(tile.icon_name);
+  }
+  const bool has_icon = iconChar.length() > 0;
+  if (has_icon) {
+    lv_obj_t* icon_lbl = lv_label_create(card);
+    if (icon_lbl) {
+      set_label_style(icon_lbl, lv_color_white(), FONT_MDI_ICONS);
+      lv_label_set_text(icon_lbl, iconChar.c_str());
+      lv_obj_align(icon_lbl, LV_ALIGN_TOP_RIGHT, 4, -8);
     }
   }
 
@@ -74,7 +76,7 @@ lv_obj_t* render_text_tile(lv_obj_t* parent, int col, int row, const Tile& tile,
       lv_label_set_long_mode(text_lbl, LV_LABEL_LONG_WRAP);
       lv_obj_set_width(text_lbl, lv_pct(100));
       lv_obj_set_style_text_align(text_lbl, LV_TEXT_ALIGN_CENTER, 0);
-      int16_t y_offset = (tile.title.length() || tile.icon_name.length()) ? 12 : 0;
+      int16_t y_offset = (tile.title.length() || has_icon) ? 12 : 0;
       lv_obj_align(text_lbl, LV_ALIGN_CENTER, 0, y_offset);
     }
   }

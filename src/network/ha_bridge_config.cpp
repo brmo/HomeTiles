@@ -8,8 +8,13 @@ static void logList(const char* label, const String& text);
 static bool sensorExistsInList(const String& list, const String& candidate);
 static bool aliasExistsInList(const String& list, const String& alias);
 static void parseSensorMetaSection(const String& body, String& units, String& names, String& values);
+static void parseIconMetaSections(const String& body, String& icons);
 static bool extractStringField(const String& object, const char* key, String& out);
 static String lookupKeyValue(const String& text, const String& key);
+static String decodeJsonEscapes(const String& value);
+static void appendUtf8(String& out, uint32_t codepoint);
+static bool isHexDigit(char c);
+static uint8_t hexValue(char c);
 
 HaBridgeConfig haBridgeConfig;
 
@@ -28,6 +33,7 @@ bool HaBridgeConfig::load() {
   data.sensor_units_map = prefs.getString("ha_sens_units", "");
   data.sensor_names_map = prefs.getString("ha_sens_names", "");
   data.sensor_values_map = prefs.getString("ha_sens_vals", "");
+  data.entity_icons_map = "";
   for (size_t i = 0; i < HA_SENSOR_SLOT_COUNT; ++i) {
     char key[12];
     snprintf(key, sizeof(key), "slot_s%u", static_cast<unsigned>(i));
@@ -109,6 +115,14 @@ String HaBridgeConfig::findSensorName(const String& entity_id) const {
 
 String HaBridgeConfig::findSensorInitialValue(const String& entity_id) const {
   return lookupKeyValue(data.sensor_values_map, entity_id);
+}
+
+String HaBridgeConfig::findEntityIcon(const String& entity_id) const {
+  return lookupKeyValue(data.entity_icons_map, entity_id);
+}
+
+String HaBridgeConfig::findSceneEntity(const String& alias) const {
+  return lookupKeyValue(data.scene_alias_text, alias);
 }
 
 String HaBridgeConfig::buildJsonPayload(const char* device_id,
@@ -296,6 +310,7 @@ bool HaBridgeConfig::applyJson(const char* json_payload) {
   }
 
   parseSensorMetaSection(json, merged.sensor_units_map, merged.sensor_names_map, merged.sensor_values_map);
+  parseIconMetaSections(json, merged.entity_icons_map);
 
   for (size_t i = 0; i < HA_SENSOR_SLOT_COUNT; ++i) {
     if (merged.sensor_slots[i].length() &&
@@ -382,6 +397,102 @@ static bool aliasExistsInList(const String& list, const String& alias) {
   return false;
 }
 
+static bool isHexDigit(char c) {
+  return (c >= '0' && c <= '9') ||
+         (c >= 'a' && c <= 'f') ||
+         (c >= 'A' && c <= 'F');
+}
+
+static uint8_t hexValue(char c) {
+  if (c >= '0' && c <= '9') return static_cast<uint8_t>(c - '0');
+  if (c >= 'a' && c <= 'f') return static_cast<uint8_t>(10 + (c - 'a'));
+  if (c >= 'A' && c <= 'F') return static_cast<uint8_t>(10 + (c - 'A'));
+  return 0;
+}
+
+static void appendUtf8(String& out, uint32_t codepoint) {
+  if (codepoint <= 0x7F) {
+    out += static_cast<char>(codepoint);
+  } else if (codepoint <= 0x7FF) {
+    out += static_cast<char>(0xC0 | (codepoint >> 6));
+    out += static_cast<char>(0x80 | (codepoint & 0x3F));
+  } else if (codepoint <= 0xFFFF) {
+    out += static_cast<char>(0xE0 | (codepoint >> 12));
+    out += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+    out += static_cast<char>(0x80 | (codepoint & 0x3F));
+  } else {
+    out += static_cast<char>(0xF0 | (codepoint >> 18));
+    out += static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F));
+    out += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+    out += static_cast<char>(0x80 | (codepoint & 0x3F));
+  }
+}
+
+static String decodeJsonEscapes(const String& value) {
+  if (!value.length()) return value;
+  String out;
+  out.reserve(value.length());
+  const size_t len = value.length();
+
+  for (size_t i = 0; i < len; ++i) {
+    char c = value.charAt(i);
+    if (c != '\\' || i + 1 >= len) {
+      out += c;
+      continue;
+    }
+
+    char esc = value.charAt(i + 1);
+    if (esc == 'u' && (i + 5) < len) {
+      if (isHexDigit(value.charAt(i + 2)) &&
+          isHexDigit(value.charAt(i + 3)) &&
+          isHexDigit(value.charAt(i + 4)) &&
+          isHexDigit(value.charAt(i + 5))) {
+        uint16_t code = (hexValue(value.charAt(i + 2)) << 12) |
+                        (hexValue(value.charAt(i + 3)) << 8) |
+                        (hexValue(value.charAt(i + 4)) << 4) |
+                        (hexValue(value.charAt(i + 5)));
+
+        i += 5;
+
+        if (code >= 0xD800 && code <= 0xDBFF) {
+          if ((i + 6) < len && value.charAt(i + 1) == '\\' && value.charAt(i + 2) == 'u' &&
+              isHexDigit(value.charAt(i + 3)) && isHexDigit(value.charAt(i + 4)) &&
+              isHexDigit(value.charAt(i + 5)) && isHexDigit(value.charAt(i + 6))) {
+            uint16_t low = (hexValue(value.charAt(i + 3)) << 12) |
+                           (hexValue(value.charAt(i + 4)) << 8) |
+                           (hexValue(value.charAt(i + 5)) << 4) |
+                           (hexValue(value.charAt(i + 6)));
+            if (low >= 0xDC00 && low <= 0xDFFF) {
+              uint32_t codepoint = 0x10000 + (((code - 0xD800) << 10) | (low - 0xDC00));
+              appendUtf8(out, codepoint);
+              i += 6;
+              continue;
+            }
+          }
+        }
+
+        appendUtf8(out, code);
+        continue;
+      }
+    }
+
+    switch (esc) {
+      case '\"': out += '\"'; break;
+      case '\\': out += '\\'; break;
+      case '/': out += '/'; break;
+      case 'b': out += '\b'; break;
+      case 'f': out += '\f'; break;
+      case 'n': out += '\n'; break;
+      case 'r': out += '\r'; break;
+      case 't': out += '\t'; break;
+      default: out += esc; break;
+    }
+    i += 1;
+  }
+
+  return out;
+}
+
 static bool extractStringField(const String& object, const char* key, String& out) {
   if (!key || !*key) return false;
   String pattern = String("\"") + key + "\"";
@@ -394,6 +505,7 @@ static bool extractStringField(const String& object, const char* key, String& ou
   int q2 = object.indexOf('"', q1 + 1);
   if (q2 < 0) return false;
   out = object.substring(q1 + 1, q2);
+  out = decodeJsonEscapes(out);
   out.trim();
   return out.length() > 0;
 }
@@ -439,6 +551,46 @@ static void parseSensorMetaSection(const String& body, String& units, String& na
     }
     obj_start = segment.indexOf('{', obj_end + 1);
   }
+}
+
+static void parseEntityIconSection(const String& body, const char* key, String& icons) {
+  if (!key || !*key) return;
+  String pattern = String("\"") + key + "\"";
+  int meta_idx = body.indexOf(pattern);
+  if (meta_idx < 0) {
+    return;
+  }
+  int array_start = body.indexOf('[', meta_idx);
+  int array_end = body.indexOf(']', array_start);
+  if (array_start < 0 || array_end < array_start) {
+    return;
+  }
+  String segment = body.substring(array_start + 1, array_end);
+  int obj_start = segment.indexOf('{');
+  while (obj_start >= 0) {
+    int obj_end = segment.indexOf('}', obj_start);
+    if (obj_end < 0) break;
+    String object = segment.substring(obj_start, obj_end + 1);
+    String entity;
+    if (!extractStringField(object, "entity_id", entity)) {
+      obj_start = segment.indexOf('{', obj_end + 1);
+      continue;
+    }
+    String icon;
+    if (extractStringField(object, "icon", icon)) {
+      if (icons.length()) icons += '\n';
+      icons += entity + "=" + icon;
+    }
+    obj_start = segment.indexOf('{', obj_end + 1);
+  }
+}
+
+static void parseIconMetaSections(const String& body, String& icons) {
+  icons = "";
+  parseEntityIconSection(body, "sensor_meta", icons);
+  parseEntityIconSection(body, "light_meta", icons);
+  parseEntityIconSection(body, "switch_meta", icons);
+  parseEntityIconSection(body, "scene_meta", icons);
 }
 
 static String lookupKeyValue(const String& text, const String& key) {

@@ -31,6 +31,62 @@ void appendAdminScripts(String& html) {
   let drafts = {};
   let tilesData = {};
   let autoSaveTimers = {};
+  let sensorMetaCache = { values: {}, units: {}, icons: {}, names: {} };
+
+  function normalizeSensorMetaPayload(payload) {
+    if (!payload || typeof payload !== 'object') {
+      return { values: {}, units: {}, icons: {}, names: {} };
+    }
+    const hasMeta = Object.prototype.hasOwnProperty.call(payload, 'values') ||
+                    Object.prototype.hasOwnProperty.call(payload, 'units') ||
+                    Object.prototype.hasOwnProperty.call(payload, 'icons') ||
+                    Object.prototype.hasOwnProperty.call(payload, 'names');
+    if (!hasMeta) {
+      return { values: payload || {}, units: {}, icons: {}, names: {} };
+    }
+    return {
+      values: payload.values || {},
+      units: payload.units || {},
+      icons: payload.icons || {},
+      names: payload.names || {}
+    };
+  }
+
+  function isExplicitlyDisabledValue(raw) {
+    if (raw === undefined || raw === null) return false;
+    const text = String(raw);
+    if (!text.length) return false;
+    const trimmed = text.trim().toLowerCase();
+    if (!trimmed.length) return true;
+    return trimmed === '-' || trimmed === 'none' || trimmed === 'null' || trimmed === 'no' || trimmed === 'off';
+  }
+
+  function normalizeMdiIconName(raw) {
+    let iconName = String(raw || '').trim().toLowerCase();
+    if (iconName.startsWith('mdi:')) iconName = iconName.substring(4);
+    else if (iconName.startsWith('mdi-')) iconName = iconName.substring(4);
+    return iconName;
+  }
+
+  function resolveIconName(rawIcon, entityId, metaIcons) {
+    if (isExplicitlyDisabledValue(rawIcon)) return '';
+    const direct = normalizeMdiIconName(rawIcon);
+    if (direct) return direct;
+    if (entityId && metaIcons && metaIcons[entityId]) {
+      return normalizeMdiIconName(metaIcons[entityId]);
+    }
+    return '';
+  }
+
+  function resolveUnitValue(rawUnit, entityId, metaUnits) {
+    if (isExplicitlyDisabledValue(rawUnit)) return '';
+    const direct = String(rawUnit || '').trim();
+    if (direct.length) return rawUnit;
+    if (entityId && metaUnits && metaUnits[entityId]) {
+      return metaUnits[entityId];
+    }
+    return '';
+  }
 
   function getTileTypeMeta(typeValue) {
     const key = String(typeValue ?? '0');
@@ -568,10 +624,11 @@ void appendAdminScripts(String& html) {
     const switchStyle = document.getElementById(prefix + '_switch_style')?.value || '0';
     const sensorValueFont = document.getElementById(prefix + '_sensor_value_font')?.value || '0';
     const sensorValueClass = getSensorValueFontClass(sensorValueFont);
-    let iconName = iconInput ? iconInput.value.trim().toLowerCase() : '';
-
-    if (iconName.startsWith('mdi:')) iconName = iconName.substring(4);
-    else if (iconName.startsWith('mdi-')) iconName = iconName.substring(4);
+    const previewKind = meta.preview || 'none';
+    const sensorEntity = document.getElementById(prefix + '_sensor_entity')?.value || '';
+    const switchEntity = document.getElementById(prefix + '_switch_entity')?.value || '';
+    const iconEntity = (previewKind === 'sensor') ? sensorEntity : (previewKind === 'switch' ? switchEntity : '');
+    const iconName = resolveIconName(iconInput ? iconInput.value : '', iconEntity, sensorMetaCache.icons);
 
     tileElem.className = 'tile';
     if (meta.css) tileElem.classList.add(meta.css);
@@ -601,12 +658,11 @@ void appendAdminScripts(String& html) {
       html += '<div class="tile-title" id="' + tileId + '-title">' + title + '</div>';
     }
 
-    const previewKind = meta.preview || 'none';
     if (previewKind === 'sensor') {
       const entitySelect = document.getElementById(prefix + '_sensor_entity');
       const unitInput = document.getElementById(prefix + '_sensor_unit');
       const entity = entitySelect ? entitySelect.value : '';
-      const unit = unitInput ? unitInput.value : '';
+      const unit = resolveUnitValue(unitInput ? unitInput.value : '', entity, sensorMetaCache.units);
       html += '<div class="tile-value ' + sensorValueClass + '" id="' + tileId + '-value">--';
       if (unit) html += '<span class="tile-unit">' + unit + '</span>';
       html += '</div>';
@@ -1064,9 +1120,12 @@ void appendAdminScripts(String& html) {
   function rgbToHex(rgb) { return '#' + ('000000' + rgb.toString(16)).slice(-6); }
   function hexToRgb(hex) { return parseInt(hex.replace('#', ''), 16); }
 
-  function renderTileFromData(tab, index, tile, sensorValues) {
+  function renderTileFromData(tab, index, tile, sensorMeta) {
     const el = document.getElementById(tab + '-tile-' + index);
     if (!el) return;
+    const metaValues = sensorMeta?.values || {};
+    const metaUnits = sensorMeta?.units || {};
+    const metaIcons = sensorMeta?.icons || {};
     el.dataset.index = index.toString();
     const typeValue = String(tile?.type ?? '0');
     const meta = getTileTypeMeta(typeValue);
@@ -1084,9 +1143,9 @@ void appendAdminScripts(String& html) {
     const sensorValueClass = getSensorValueFontClass(tile.sensor_value_font);
     if (typeValue === '0') { el.innerHTML = ''; }
     else {
-      let iconName = (tile.icon_name || '').trim().toLowerCase();
-      if (iconName.startsWith('mdi:')) iconName = iconName.substring(4);
-      else if (iconName.startsWith('mdi-')) iconName = iconName.substring(4);
+      const previewKind = meta.preview || 'none';
+      const iconEntity = (previewKind === 'sensor' || previewKind === 'switch') ? (tile.sensor_entity || '') : '';
+      const iconName = resolveIconName(tile.icon_name || '', iconEntity, metaIcons);
 
       let html = '';
 
@@ -1098,11 +1157,10 @@ void appendAdminScripts(String& html) {
         html += '<div class="tile-title" id="' + tab + '-tile-' + index + '-title">' + tile.title + '</div>';
       }
 
-      const previewKind = meta.preview || 'none';
       if (previewKind === 'sensor') {
         let value = '--';
-        if (tile.sensor_entity) value = formatSensorValue(sensorValues[tile.sensor_entity] ?? '--', tile.sensor_decimals);
-        const unit = tile.sensor_unit || '';
+        if (tile.sensor_entity) value = formatSensorValue(metaValues[tile.sensor_entity] ?? '--', tile.sensor_decimals);
+        const unit = resolveUnitValue(tile.sensor_unit || '', tile.sensor_entity || '', metaUnits);
         html += '<div class="tile-value ' + sensorValueClass + '" id="' + tab + '-tile-' + index + '-value">' + value + (unit ? '<span class="tile-unit">' + unit + '</span>' : '') + '</div>';
       }
       if (previewKind === 'clock') {
@@ -1148,11 +1206,12 @@ void appendAdminScripts(String& html) {
       ...tileRequests
     ])
     .then(results => {
-      const sensorValues = results[0] || {};
+      const sensorMeta = normalizeSensorMetaPayload(results[0] || {});
+      sensorMetaCache = sensorMeta;
       tabs.forEach((tab, idx) => {
         const tiles = Array.isArray(results[idx + 1]) ? results[idx + 1] : [];
         tilesData[tab] = tiles;
-        tiles.forEach((tile, i) => renderTileFromData(tab, i, tile, sensorValues));
+        tiles.forEach((tile, i) => renderTileFromData(tab, i, tile, sensorMeta));
         layoutTiles(tab, tiles);
       });
       if (currentTileIndex !== -1 && currentTileTab) {

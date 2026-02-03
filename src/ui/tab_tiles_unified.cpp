@@ -98,6 +98,15 @@ static bool is_slideshow_token_local(const String& value) {
   return value.startsWith("__slideshow");
 }
 
+static bool is_disabled_token(const String& value) {
+  if (!value.length()) return false;
+  String t = value;
+  t.trim();
+  if (!t.length()) return true;
+  t.toLowerCase();
+  return t == "-" || t == "none" || t == "null" || t == "no" || t == "off";
+}
+
 static String normalize_preview_key_local(String raw) {
   raw.trim();
   if (raw.startsWith("S:")) raw = raw.substring(2);
@@ -324,8 +333,14 @@ static void apply_cached_states(GridType grid_type, const TileGridConfig& config
     if (!get_cached_entity_payload(tile.sensor_entity.c_str(), payload)) continue;
 
     if (tile.type == TILE_SENSOR) {
-      const char* unit = tile.sensor_unit.length() > 0 ? tile.sensor_unit.c_str() : nullptr;
-      queue_sensor_tile_update(grid_type, i, payload.c_str(), unit);
+      String unit = tile.sensor_unit;
+      if (is_disabled_token(unit)) {
+        unit = "";
+      } else if (!unit.length()) {
+        unit = haBridgeConfig.findSensorUnit(tile.sensor_entity);
+      }
+      const char* unit_cstr = unit.length() > 0 ? unit.c_str() : nullptr;
+      queue_sensor_tile_update(grid_type, i, payload.c_str(), unit_cstr);
     } else if (tile.type == TILE_SWITCH) {
       queue_switch_tile_update(grid_type, i, payload.c_str());
     }
@@ -712,15 +727,17 @@ void tiles_update_sensor_by_entity(GridType grid_type, const char* entity_id, co
   for (uint8_t i = 0; i < TILES_PER_GRID; i++) {
     const Tile& tile = config.tiles[i];
     if (tile.type == TILE_SENSOR && tile.sensor_entity.equalsIgnoreCase(entity_id)) {
-      const char* unit = tile.sensor_unit.length() > 0 ? tile.sensor_unit.c_str() : nullptr;
-      queue_sensor_tile_update(grid_type, i, value, unit);
-      Serial.printf("[%s] Sensor %s@%u queued: %s %s\n", getGridName(grid_type), entity_id, i, value, unit ? unit : "");
+      String unit = tile.sensor_unit;
+      if (is_disabled_token(unit)) {
+        unit = "";
+      } else if (!unit.length()) {
+        unit = haBridgeConfig.findSensorUnit(entity_id);
+      }
+      const char* unit_cstr = unit.length() > 0 ? unit.c_str() : nullptr;
+      queue_sensor_tile_update(grid_type, i, value, unit_cstr);
+      Serial.printf("[%s] Sensor %s@%u queued: %s %s\n", getGridName(grid_type), entity_id, i, value, unit_cstr ? unit_cstr : "");
       if (!popup_queued) {
-        String popup_unit = tile.sensor_unit;
-        if (!popup_unit.length()) {
-          popup_unit = haBridgeConfig.findSensorUnit(entity_id);
-        }
-        queue_sensor_popup_value(entity_id, value, popup_unit.length() ? popup_unit.c_str() : nullptr);
+        queue_sensor_popup_value(entity_id, value, unit.length() ? unit.c_str() : nullptr);
         popup_queued = true;
       }
     }
