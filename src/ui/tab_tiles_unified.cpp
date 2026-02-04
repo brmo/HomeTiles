@@ -50,7 +50,7 @@ struct EntityCacheEntry {
   bool valid = false;
 };
 
-static constexpr size_t kEntityCacheSize = TILES_PER_GRID * 3;
+static constexpr size_t kEntityCacheSize = TILES_PER_GRID * 8;
 static EntityCacheEntry g_entity_cache[kEntityCacheSize];
 static size_t g_entity_cache_cursor = 0;
 
@@ -90,6 +90,16 @@ static bool get_cached_entity_payload(const char* entity_id, String& out) {
     }
   }
   return false;
+}
+
+static bool get_cached_or_initial_payload(const Tile& tile, String& out) {
+  if (!tile.sensor_entity.length()) return false;
+  if (get_cached_entity_payload(tile.sensor_entity.c_str(), out)) return true;
+  String initial = haBridgeConfig.findSensorInitialValue(tile.sensor_entity);
+  if (!initial.length()) return false;
+  out = initial;
+  cache_entity_payload(tile.sensor_entity.c_str(), initial.c_str());
+  return true;
 }
 
 static bool is_url_path_local(const String& value) {
@@ -347,7 +357,7 @@ static void apply_cached_states(GridType grid_type, const TileGridConfig& config
     if (tile.sensor_entity.length() == 0) continue;
 
     String payload;
-    if (!get_cached_entity_payload(tile.sensor_entity.c_str(), payload)) continue;
+    if (!get_cached_or_initial_payload(tile, payload)) continue;
 
     if (tile.type == TILE_SENSOR) {
       String unit = tile.sensor_unit;
@@ -373,7 +383,7 @@ static void apply_cached_state_for_index(GridType grid_type, const TileGridConfi
   if (tile.sensor_entity.length() == 0) return;
 
   String payload;
-  if (!get_cached_entity_payload(tile.sensor_entity.c_str(), payload)) return;
+  if (!get_cached_or_initial_payload(tile, payload)) return;
 
   if (tile.type == TILE_SENSOR) {
     String unit = tile.sensor_unit;
@@ -501,6 +511,9 @@ void tiles_reload_layout(GridType grid_type) {
 
   g_tiles_loaded[idx] = true;
   apply_cached_states(grid_type, config);
+  process_sensor_update_queue();
+  process_switch_update_queue();
+  process_weather_update_queue();
   if (disp) {
     lv_display_enable_invalidation(disp, true);
     lv_obj_invalidate(g_tiles_grids[idx]);
