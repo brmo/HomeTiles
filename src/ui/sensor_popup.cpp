@@ -26,6 +26,7 @@ struct SensorPopupContext {
   String entity_id;
   String unit;
   uint8_t decimals = 0xFF;
+  uint32_t bg_color = 0;
   lv_obj_t* overlay = nullptr;
   lv_obj_t* card = nullptr;
   lv_obj_t* title_label = nullptr;
@@ -138,6 +139,11 @@ static void apply_init_to_context(SensorPopupContext* ctx, const SensorPopupInit
   if (!ctx) return;
   ctx->entity_id = init.entity_id;
   ctx->decimals = init.decimals;
+  ctx->bg_color = init.bg_color;
+  if (ctx->card) {
+    uint32_t color = ctx->bg_color ? ctx->bg_color : 0x2A2A2A;
+    lv_obj_set_style_bg_color(ctx->card, lv_color_hex(color), 0);
+  }
   if (ctx->title_label) {
     lv_label_set_text(ctx->title_label, init.title.c_str());
   }
@@ -305,7 +311,8 @@ static void build_popup_ui(SensorPopupContext* ctx, const SensorPopupInit& init)
   ctx->card = card;
   lv_obj_set_size(card, kCardWidth, kCardHeight);
   lv_obj_center(card);
-  lv_obj_set_style_bg_color(card, lv_color_hex(0x2A2A2A), 0);
+  uint32_t card_color = init.bg_color ? init.bg_color : 0x2A2A2A;
+  lv_obj_set_style_bg_color(card, lv_color_hex(card_color), 0);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
   lv_obj_set_style_radius(card, 22, 0);
   lv_obj_set_style_border_width(card, 0, 0);

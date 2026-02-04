@@ -10,6 +10,7 @@ struct SensorPopupInit {
   String value;
   String unit;
   uint8_t decimals = 0xFF;
+  uint32_t bg_color = 0;
 };
 
 void show_sensor_popup(const SensorPopupInit& init);
