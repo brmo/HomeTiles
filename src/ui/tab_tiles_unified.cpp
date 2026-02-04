@@ -364,6 +364,29 @@ static void apply_cached_states(GridType grid_type, const TileGridConfig& config
   }
 }
 
+static void apply_cached_state_for_index(GridType grid_type, const TileGridConfig& config, uint8_t index) {
+  if (index >= TILES_PER_GRID) return;
+  const Tile& tile = config.tiles[index];
+  if (tile.type != TILE_SENSOR && tile.type != TILE_SWITCH) return;
+  if (tile.sensor_entity.length() == 0) return;
+
+  String payload;
+  if (!get_cached_entity_payload(tile.sensor_entity.c_str(), payload)) return;
+
+  if (tile.type == TILE_SENSOR) {
+    String unit = tile.sensor_unit;
+    if (is_disabled_token(unit)) {
+      unit = "";
+    } else if (!unit.length()) {
+      unit = haBridgeConfig.findSensorUnit(tile.sensor_entity);
+    }
+    const char* unit_cstr = unit.length() > 0 ? unit.c_str() : nullptr;
+    queue_sensor_tile_update(grid_type, index, payload.c_str(), unit_cstr);
+  } else if (tile.type == TILE_SWITCH) {
+    queue_switch_tile_update(grid_type, index, payload.c_str());
+  }
+}
+
 /* === Aufbau Tiles-Tab (unified) === */
 void build_tiles_tab(lv_obj_t *parent, GridType grid_type, scene_publish_cb_t scene_cb) {
   uint8_t idx = (uint8_t)grid_type;
@@ -409,7 +432,7 @@ void tiles_reload_layout(GridType grid_type) {
   }
   if (!g_tiles_grids[idx]) return;
 
-  displayManager.debugFlushNext(40);
+  // displayManager.debugFlushNext(40);
 
   lv_display_t* disp = lv_obj_get_display(g_tiles_grids[idx]);
   if (disp) {
@@ -734,6 +757,38 @@ static void hide_preview_images(GridType grid_type) {
   }
 }
 
+static void rebuild_tile_at_index(GridType grid_type, uint8_t index) {
+  uint8_t idx = static_cast<uint8_t>(grid_type);
+  if (!g_tiles_grids[idx] || !g_tiles_loaded[idx]) return;
+  if (index >= TILES_PER_GRID) return;
+
+  const TileGridConfig& config = getGridConfig(grid_type);
+  const Tile& tile = config.tiles[index];
+  if (tile.type == TILE_EMPTY) return;
+
+  uint8_t col = 0;
+  uint8_t row = 0;
+  uint8_t span_w = 1;
+  uint8_t span_h = 1;
+  if (!get_tile_layout(tile, col, row, span_w, span_h)) return;
+
+  if (g_tiles_objs[idx][index]) {
+    lv_obj_del(g_tiles_objs[idx][index]);
+    g_tiles_objs[idx][index] = nullptr;
+  }
+  reset_sensor_widget(grid_type, index);
+  reset_switch_widget(grid_type, index);
+
+  Tile layout_tile = tile;
+  layout_tile.col = col;
+  layout_tile.row = row;
+  layout_tile.span_w = span_w;
+  layout_tile.span_h = span_h;
+  g_tiles_objs[idx][index] = render_tile(g_tiles_grids[idx], col, row, layout_tile, index, grid_type, g_tiles_scene_cbs[idx]);
+
+  apply_cached_state_for_index(grid_type, config, index);
+}
+
 static void tiles_refresh_icons_for_grid(GridType grid_type) {
   uint8_t idx = static_cast<uint8_t>(grid_type);
   if (!g_tiles_grids[idx] || !g_tiles_loaded[idx]) return;
@@ -761,15 +816,24 @@ static void tiles_refresh_icons_for_grid(GridType grid_type) {
       }
     }
 
+    String iconChar;
+    if (icon_name.length() > 0 && FONT_MDI_ICONS != nullptr) {
+      iconChar = getMdiChar(icon_name);
+    }
+
     lv_obj_t* icon_lbl = find_mdi_label_child(tile_obj);
-    if (!icon_lbl) continue;
+    if (!icon_lbl) {
+      if (!icon_disabled && iconChar.length()) {
+        rebuild_tile_at_index(grid_type, i);
+      }
+      continue;
+    }
 
     if (icon_disabled || !icon_name.length()) {
       lv_obj_add_flag(icon_lbl, LV_OBJ_FLAG_HIDDEN);
       continue;
     }
 
-    String iconChar = getMdiChar(icon_name);
     if (!iconChar.length()) {
       lv_obj_add_flag(icon_lbl, LV_OBJ_FLAG_HIDDEN);
       continue;

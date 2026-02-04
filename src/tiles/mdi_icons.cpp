@@ -7523,29 +7523,29 @@ String normalizeMdiIconName(const String& iconName) {
 // Gibt den Codepoint für einen Icon-Namen zurück
 uint32_t getMdiCodepoint(const String& iconName) {
   if (iconName.length() == 0) {
-    Serial.println("[MDI] Icon name is empty");
+    // Serial.println("[MDI] Icon name is empty");
     return 0;
   }
 
   String searchName = normalizeMdiIconName(iconName);
   if (!searchName.length()) {
-    Serial.println("[MDI] Icon name disabled or empty");
+    // Serial.println("[MDI] Icon name disabled or empty");
     return 0;
   }
 
-  Serial.printf("[MDI] Looking up icon: '%s' (from '%s', count=%lu)\n",
-                searchName.c_str(), iconName.c_str(), (unsigned long)ICON_COUNT);
+  // Serial.printf("[MDI] Looking up icon: '%s' (from '%s', count=%lu)\n",
+  //               searchName.c_str(), iconName.c_str(), (unsigned long)ICON_COUNT);
 
   int32_t index = findIconIndex(searchName.c_str());
 
   if (index >= 0) {
     uint32_t codepoint = pgm_read_dword(&iconMap[index].codepoint);
-    Serial.printf("[MDI] Found icon at index %d, codepoint=0x%X\n", index, codepoint);
+    // Serial.printf("[MDI] Found icon at index %d, codepoint=0x%X\n", index, codepoint);
     return codepoint;
   }
 
   // Fallback: Fragezeichen-Icon
-  Serial.printf("[MDI] Icon '%s' not found, using fallback\n", searchName.c_str());
+  // Serial.printf("[MDI] Icon '%s' not found, using fallback\n", searchName.c_str());
   return 0xF02D8;
 }
 
