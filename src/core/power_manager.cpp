@@ -113,7 +113,10 @@ void PowerManager::enterDisplaySleep() {
 #if LV_VERSION_MAJOR >= 9
     if (disp) {
         lv_timer_t * rt = lv_display_get_refr_timer(disp);
-        if(rt) lv_timer_pause(rt);
+        if(rt) {
+            lv_timer_resume(rt);
+            lv_timer_set_period(rt, 1000 / FPS_SLEEP);
+        }
     }
 #endif
   
