@@ -30,9 +30,9 @@ static constexpr float kImuHoldJerk = 0.006f;
 static constexpr float kImuHoldGravDelta = 0.015f;
 static constexpr uint8_t kImuHoldSamples = 2;
 static constexpr uint32_t kImuHoldMs = 20000;
-static constexpr float kImuAutoRotateAxisMin = 0.65f;
-static constexpr uint8_t kImuAutoRotateStableSamples = 3;
-static constexpr uint32_t kImuAutoRotateMinIntervalMs = 400;
+static constexpr float kImuAutoRotateAxisMin = 0.35f;
+static constexpr uint8_t kImuAutoRotateStableSamples = 1;
+static constexpr uint32_t kImuAutoRotateMinIntervalMs = 80;
 static constexpr float kImuWakeStrong = 0.07f;
 static constexpr float kImuWakeStrongJerk = 0.025f;
 static constexpr uint32_t kImuWakeCooldownMs = 100;
@@ -144,10 +144,13 @@ void PowerManager::serviceImuWake() {
         imu_auto_rotate_valid = true;
       }
       if (now_ms - imu_last_auto_rotate_ms >= kImuAutoRotateMinIntervalMs) {
-        float abs_x = std::fabs(imu_grav_x);
+        float abs_x = std::fabs(ax);
+        float abs_y = std::fabs(ay);
+        float axis = (abs_x >= abs_y) ? ax : ay;
+        float abs_axis = (abs_x >= abs_y) ? abs_x : abs_y;
         bool candidate = imu_auto_rotate_state;
-        if (abs_x >= kImuAutoRotateAxisMin) {
-          candidate = (imu_grav_x > 0.0f);
+        if (abs_axis >= kImuAutoRotateAxisMin) {
+          candidate = (axis > 0.0f);
           if (candidate != imu_auto_rotate_state) {
             imu_auto_rotate_hits++;
             if (imu_auto_rotate_hits >= kImuAutoRotateStableSamples) {
