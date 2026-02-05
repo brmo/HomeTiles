@@ -8,6 +8,7 @@
 #include "src/tiles/tile_config.h"
 #include "src/tiles/tile_renderer.h"
 #include "src/core/config_manager.h"
+#include "src/core/power_manager.h"
 #include <M5Unified.h>
 #include <PubSubClient.h>
 #include <algorithm>
@@ -208,6 +209,17 @@ static void handleDisplayRotateCommand(const char* payload, size_t) {
   mqttPublishDeviceSettings();
 }
 
+static void handleDisplaySleepCommand(const char* payload, size_t) {
+  bool sleep = false;
+  if (!parseBoolPayload(payload, &sleep)) return;
+  if (sleep) {
+    powerManager.enterDisplaySleep();
+  } else {
+    powerManager.wakeFromDisplaySleep();
+  }
+  mqttPublishDeviceSettings();
+}
+
 static void handleSleepMainsCommand(const char* payload, size_t) {
   bool enabled = false;
   uint16_t seconds = 0;
@@ -250,6 +262,7 @@ static const TopicRoute kRoutes[] = {
   {TopicKey::HA_WOHN_TEMP, handleHaWohnTemp, false},
   {TopicKey::DISPLAY_BRIGHTNESS_CMND, handleDisplayBrightnessCommand, false},
   {TopicKey::DISPLAY_ROTATE_CMND, handleDisplayRotateCommand, false},
+  {TopicKey::DISPLAY_SLEEP_CMND, handleDisplaySleepCommand, false},
   {TopicKey::SLEEP_MAINS_CMND, handleSleepMainsCommand, false},
   {TopicKey::SLEEP_BAT_CMND, handleSleepBatteryCommand, false},
 };
@@ -524,6 +537,7 @@ void mqttPublishDeviceSettings() {
   snprintf(buf, sizeof(buf), "%u", static_cast<unsigned>(cfg.display_brightness));
   publish_state(TopicKey::DISPLAY_BRIGHTNESS_STAT, buf);
   publish_state(TopicKey::DISPLAY_ROTATE_STAT, cfg.display_rotated_180 ? "ON" : "OFF");
+  publish_state(TopicKey::DISPLAY_SLEEP_STAT, powerManager.isInSleep() ? "ON" : "OFF");
 
   publish_state(TopicKey::SLEEP_MAINS_STAT,
                 sleepLabelFromConfig(cfg.auto_sleep_enabled, cfg.auto_sleep_seconds));

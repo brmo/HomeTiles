@@ -3,6 +3,7 @@
 #include "src/core/display_manager.h"
 #include "src/core/config_manager.h"
 #include "src/network/network_manager.h"
+#include "src/network/mqtt_handlers.h"
 
 PowerManager powerManager;
 
@@ -95,6 +96,7 @@ void PowerManager::enterDisplaySleep() {
   networkManager.setWifiPowerSaving(true);
   is_display_sleeping = true;
   is_high_performance = false;
+  mqttPublishDeviceSettings();
 }
 
 void PowerManager::wakeFromDisplaySleep() {
@@ -119,6 +121,7 @@ void PowerManager::wakeFromDisplaySleep() {
   if (isPoweredByMains()) networkManager.setWifiPowerSaving(false);
   displayManager.resetActivityTimer();
   displayManager.armWakeTouchGuard();
+  mqttPublishDeviceSettings();
 }
 
 void PowerManager::updatePowerMode() {

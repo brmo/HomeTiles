@@ -16,6 +16,8 @@ const MqttTopicRegistry::TopicDescriptor MqttTopicRegistry::kDescriptors[] = {
   {TopicKey::DISPLAY_BRIGHTNESS_STAT, TopicDomain::State, "display_brightness"},
   {TopicKey::DISPLAY_ROTATE_CMND, TopicDomain::Command, "display_rotate"},
   {TopicKey::DISPLAY_ROTATE_STAT, TopicDomain::State, "display_rotate"},
+  {TopicKey::DISPLAY_SLEEP_CMND, TopicDomain::Command, "display_sleep"},
+  {TopicKey::DISPLAY_SLEEP_STAT, TopicDomain::State, "display_sleep"},
   {TopicKey::SLEEP_MAINS_CMND, TopicDomain::Command, "sleep_mains"},
   {TopicKey::SLEEP_MAINS_STAT, TopicDomain::State, "sleep_mains"},
   {TopicKey::SLEEP_BAT_CMND, TopicDomain::Command, "sleep_battery"},
