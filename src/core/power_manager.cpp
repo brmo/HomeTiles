@@ -11,9 +11,10 @@
 
 PowerManager powerManager;
 
-static constexpr uint32_t kImuWakePollMs = 80;
-static constexpr float kImuWakeDelta = 0.18f;
-static constexpr float kImuWakeMagDelta = 0.12f;
+static constexpr uint32_t kImuWakePollMs = 40;
+static constexpr float kImuWakeDelta = 0.12f;
+static constexpr float kImuWakeMagDelta = 0.06f;
+static constexpr float kImuWakeMagJerk = 0.05f;
 static constexpr uint32_t kImuI2cSleepHz = 100000;
 static constexpr uint32_t kImuI2cWakeHz = 400000;
 
@@ -44,6 +45,7 @@ void PowerManager::serviceImuWake() {
     imu_last_ax = ax;
     imu_last_ay = ay;
     imu_last_az = az;
+    imu_last_mag = std::sqrt(ax * ax + ay * ay + az * az);
     imu_have_last = true;
     return;
   }
@@ -57,8 +59,12 @@ void PowerManager::serviceImuWake() {
 
   float mag = std::sqrt(ax * ax + ay * ay + az * az);
   float mag_delta = std::fabs(mag - 1.0f);
+  float mag_jerk = std::fabs(mag - imu_last_mag);
+  imu_last_mag = mag;
 
-  if (delta >= kImuWakeDelta || mag_delta >= kImuWakeMagDelta) {
+  if (delta >= kImuWakeDelta ||
+      mag_delta >= kImuWakeMagDelta ||
+      mag_jerk >= kImuWakeMagJerk) {
     wakeFromDisplaySleep();
   }
 }

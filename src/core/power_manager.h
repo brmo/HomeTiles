@@ -67,6 +67,7 @@ private:
   float imu_last_ax = 0.0f;
   float imu_last_ay = 0.0f;
   float imu_last_az = 0.0f;
+  float imu_last_mag = 1.0f;
 };
 
 // Globale Instanz
