@@ -4,13 +4,34 @@
 #include "src/core/config_manager.h"
 #include "src/network/network_manager.h"
 #include "src/network/mqtt_handlers.h"
+#if defined(ARDUINO_ARCH_ESP32)
+#include "esp32-hal-cpu.h"
+#endif
 
 PowerManager powerManager;
+
+void PowerManager::applyCpuFrequency(uint16_t mhz) {
+#if defined(ARDUINO_ARCH_ESP32)
+  if (mhz == 0) return;
+  if (last_cpu_mhz == 0) {
+    last_cpu_mhz = static_cast<uint16_t>(getCpuFrequencyMhz());
+  }
+  if (last_cpu_mhz == mhz) return;
+  setCpuFrequencyMhz(static_cast<uint32_t>(mhz));
+  last_cpu_mhz = static_cast<uint16_t>(getCpuFrequencyMhz());
+  Serial.printf("CPU Freq -> %u MHz\n", static_cast<unsigned>(last_cpu_mhz));
+#else
+  (void)mhz;
+#endif
+}
 
 void PowerManager::init() {
   Serial.println("⚡ Init Power Manager...");
   disp = displayManager.getDisplay();
   is_high_performance = true;
+#if defined(ARDUINO_ARCH_ESP32)
+  last_cpu_mhz = static_cast<uint16_t>(getCpuFrequencyMhz());
+#endif
 }
 
 void PowerManager::setHighPerformance(bool enable) {
@@ -18,6 +39,7 @@ void PowerManager::setHighPerformance(bool enable) {
   is_high_performance = enable;
 
   if (enable) {
+    applyCpuFrequency(CPU_FREQ_HIGH);
     if (isPoweredByMains()) networkManager.setWifiPowerSaving(false);
 
 #if LV_VERSION_MAJOR >= 9
@@ -27,6 +49,7 @@ void PowerManager::setHighPerformance(bool enable) {
     }
 #endif
   } else {
+    applyCpuFrequency(CPU_FREQ_LOW);
     networkManager.setWifiPowerSaving(true);
 
 #if LV_VERSION_MAJOR >= 9
@@ -85,6 +108,7 @@ void PowerManager::enterDisplaySleep() {
   M5.update();
   M5.Display.setBrightness(0);
   displayManager.setInputEnabled(false);
+  applyCpuFrequency(CPU_FREQ_SLEEP);
 
 #if LV_VERSION_MAJOR >= 9
     if (disp) {
@@ -104,6 +128,7 @@ void PowerManager::wakeFromDisplaySleep() {
 
   displayManager.setInputEnabled(true);
   M5.Display.setBrightness(saved_brightness);
+  applyCpuFrequency(CPU_FREQ_HIGH);
   
 #if LV_VERSION_MAJOR >= 9
     if (disp) {
