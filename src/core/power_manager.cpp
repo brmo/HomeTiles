@@ -16,6 +16,16 @@ static constexpr float kImuGravityAlpha = 0.90f;
 static constexpr float kImuWakeLinMag = 0.08f;
 static constexpr float kImuWakeLinJerk = 0.02f;
 static constexpr float kImuWakeGravDelta = 0.04f;
+static constexpr float kImuNoiseAlpha = 0.90f;
+static constexpr float kImuNoiseClamp = 0.05f;
+static constexpr float kImuTapNoiseMult = 3.0f;
+static constexpr float kImuTapNoiseOffset = 0.015f;
+static constexpr float kImuTapPeakMin = 0.05f;
+static constexpr float kImuTapJerk = 0.03f;
+static constexpr float kImuWakeStrong = 0.14f;
+static constexpr float kImuWakeStrongJerk = 0.06f;
+static constexpr uint32_t kImuTapWindowMs = 220;
+static constexpr uint32_t kImuWakeCooldownMs = 250;
 static constexpr uint32_t kImuI2cSleepHz = 100000;
 static constexpr uint32_t kImuI2cWakeHz = 400000;
 
@@ -47,6 +57,9 @@ void PowerManager::serviceImuWake() {
     imu_grav_y = ay;
     imu_grav_z = az;
     imu_last_lin_mag = 0.0f;
+    imu_noise_ema = 0.0f;
+    imu_last_peak_ms = 0;
+    imu_last_wake_ms = 0;
     imu_have_last = true;
     return;
   }
@@ -70,9 +83,39 @@ void PowerManager::serviceImuWake() {
                      std::fabs(imu_grav_y - prev_grav_y) +
                      std::fabs(imu_grav_z - prev_grav_z);
 
-  if (lin_mag >= kImuWakeLinMag ||
-      lin_jerk >= kImuWakeLinJerk ||
-      grav_delta >= kImuWakeGravDelta) {
+  if (lin_mag < kImuNoiseClamp) {
+    imu_noise_ema = kImuNoiseAlpha * imu_noise_ema + (1.0f - kImuNoiseAlpha) * lin_mag;
+  }
+
+  float tap_threshold = imu_noise_ema * kImuTapNoiseMult + kImuTapNoiseOffset;
+  if (tap_threshold < kImuTapPeakMin) tap_threshold = kImuTapPeakMin;
+
+  uint32_t now_ms = millis();
+  if (now_ms - imu_last_wake_ms < kImuWakeCooldownMs) {
+    return;
+  }
+
+  if (lin_mag >= kImuWakeStrong || lin_jerk >= kImuWakeStrongJerk) {
+    imu_last_wake_ms = now_ms;
+    imu_last_peak_ms = 0;
+    wakeFromDisplaySleep();
+    return;
+  }
+
+  bool peak = (lin_mag >= tap_threshold) || (lin_jerk >= kImuTapJerk);
+  if (peak) {
+    if (imu_last_peak_ms != 0 && (now_ms - imu_last_peak_ms) <= kImuTapWindowMs) {
+      imu_last_wake_ms = now_ms;
+      imu_last_peak_ms = 0;
+      wakeFromDisplaySleep();
+      return;
+    }
+    imu_last_peak_ms = now_ms;
+  }
+
+  if (grav_delta >= kImuWakeGravDelta) {
+    imu_last_wake_ms = now_ms;
+    imu_last_peak_ms = 0;
     wakeFromDisplaySleep();
   }
 }
@@ -178,6 +221,9 @@ void PowerManager::enterDisplaySleep() {
   M5.update();
   imu_have_last = false;
   imu_last_poll_ms = 0;
+  imu_noise_ema = 0.0f;
+  imu_last_peak_ms = 0;
+  imu_last_wake_ms = 0;
   if (ensureImuReady()) {
     M5.Imu.setClock(kImuI2cSleepHz);
   }
