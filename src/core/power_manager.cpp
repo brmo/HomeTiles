@@ -106,7 +106,7 @@ void PowerManager::enterDisplaySleep() {
   
   saved_brightness = M5.Display.getBrightness();
   M5.update();
-  M5.Display.setBrightness(0);
+  M5.Display.sleep();
   displayManager.setInputEnabled(false);
   applyCpuFrequency(CPU_FREQ_SLEEP);
 
@@ -127,6 +127,7 @@ void PowerManager::wakeFromDisplaySleep() {
   if (!is_display_sleeping) return;
 
   displayManager.setInputEnabled(true);
+  M5.Display.wakeup();
   M5.Display.setBrightness(saved_brightness);
   applyCpuFrequency(CPU_FREQ_HIGH);
   
