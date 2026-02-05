@@ -22,6 +22,7 @@ struct SensorEventData {
   String entity_id;
   String title;
   String icon_name;
+  bool icon_override = false;
   String unit;
   uint8_t decimals = 0xFF;
   uint32_t bg_color = 0;
@@ -243,10 +244,15 @@ lv_obj_t* render_sensor_tile(lv_obj_t* parent, int col, int row, const Tile& til
   }
 
   if (tile.sensor_entity.length()) {
+    bool icon_override = false;
+    if (tile.icon_name.length() && !isMdiIconDisabled(tile.icon_name)) {
+      icon_override = true;
+    }
     SensorEventData* data = new SensorEventData{
       tile.sensor_entity,
       tile.title,
       icon_name,
+      icon_override,
       tile.sensor_unit,
       tile.sensor_decimals,
       (tile.bg_color != 0) ? tile.bg_color : 0x2A2A2A
@@ -267,7 +273,14 @@ lv_obj_t* render_sensor_tile(lv_obj_t* parent, int col, int row, const Tile& til
           if (!init.title.length()) {
             init.title = data->entity_id;
           }
-          init.icon_name = data->icon_name;
+          String icon_name = data->icon_name;
+          if (!data->icon_override) {
+            String resolved = normalizeMdiIconName(haBridgeConfig.findEntityIcon(data->entity_id));
+            if (resolved.length()) {
+              icon_name = resolved;
+            }
+          }
+          init.icon_name = icon_name;
           String unit = data->unit;
           if (is_disabled_token(unit)) {
             unit = "";
