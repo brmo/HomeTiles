@@ -25,6 +25,8 @@ static constexpr float kImuTapJerk = 0.03f;
 static constexpr float kImuWakeStrong = 0.14f;
 static constexpr float kImuWakeStrongJerk = 0.06f;
 static constexpr uint32_t kImuWakeCooldownMs = 250;
+static constexpr bool kImuWakeDebug = true;
+static constexpr uint32_t kImuWakeLogMs = 200;
 static constexpr uint32_t kImuI2cSleepHz = 100000;
 static constexpr uint32_t kImuI2cWakeHz = 400000;
 
@@ -58,6 +60,7 @@ void PowerManager::serviceImuWake() {
     imu_last_lin_mag = 0.0f;
     imu_noise_ema = 0.0f;
     imu_last_wake_ms = 0;
+    imu_last_log_ms = 0;
     imu_have_last = true;
     return;
   }
@@ -95,6 +98,10 @@ void PowerManager::serviceImuWake() {
 
   if (lin_mag >= kImuWakeStrong || lin_jerk >= kImuWakeStrongJerk) {
     imu_last_wake_ms = now_ms;
+    if (kImuWakeDebug) {
+      Serial.printf("[IMU] WAKE strong lin=%.3f jerk=%.3f thr=%.3f\n",
+                    (double)lin_mag, (double)lin_jerk, (double)kImuWakeStrong);
+    }
     wakeFromDisplaySleep();
     return;
   }
@@ -102,13 +109,29 @@ void PowerManager::serviceImuWake() {
   bool peak = (lin_mag >= tap_threshold) || (lin_jerk >= kImuTapJerk);
   if (peak) {
     imu_last_wake_ms = now_ms;
+    if (kImuWakeDebug) {
+      Serial.printf("[IMU] WAKE peak lin=%.3f jerk=%.3f thr=%.3f noise=%.3f\n",
+                    (double)lin_mag, (double)lin_jerk, (double)tap_threshold, (double)imu_noise_ema);
+    }
     wakeFromDisplaySleep();
     return;
   }
 
   if (grav_delta >= kImuWakeGravDelta) {
     imu_last_wake_ms = now_ms;
+    if (kImuWakeDebug) {
+      Serial.printf("[IMU] WAKE tilt dG=%.3f\n", (double)grav_delta);
+    }
     wakeFromDisplaySleep();
+    return;
+  }
+
+  if (kImuWakeDebug && (now_ms - imu_last_log_ms) >= kImuWakeLogMs) {
+    imu_last_log_ms = now_ms;
+    Serial.printf("[IMU] ax=%.3f ay=%.3f az=%.3f lin=%.3f jerk=%.3f dG=%.3f thr=%.3f noise=%.3f\n",
+                  (double)ax, (double)ay, (double)az,
+                  (double)lin_mag, (double)lin_jerk, (double)grav_delta,
+                  (double)tap_threshold, (double)imu_noise_ema);
   }
 }
 
@@ -215,6 +238,7 @@ void PowerManager::enterDisplaySleep() {
   imu_last_poll_ms = 0;
   imu_noise_ema = 0.0f;
   imu_last_wake_ms = 0;
+  imu_last_log_ms = 0;
   if (ensureImuReady()) {
     M5.Imu.setClock(kImuI2cSleepHz);
   }
