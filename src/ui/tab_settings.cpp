@@ -13,6 +13,7 @@
 static lv_obj_t *brightness_label = nullptr;
 static lv_obj_t *display_rotate_btn = nullptr;
 static lv_obj_t *display_rotate_label = nullptr;
+static lv_obj_t *display_rotate_sub_label = nullptr;
 static bool display_rotated_180 = false;
 static uint8_t display_rotation_mode = kDisplayRotationNormal;
 static lv_obj_t *mains_wake_btn = nullptr;
@@ -118,19 +119,33 @@ static void format_sleep_label_for_index(char* buf, size_t len, int32_t index) {
   format_sleep_label(buf, len, sleep_seconds_from_index(index));
 }
 
+static const char* rotation_mode_text(uint8_t mode) {
+  if (mode == kDisplayRotationFlipped) return "180°";
+  if (mode == kDisplayRotationAuto) return "Auto";
+  return "Normal";
+}
+
 static void update_display_rotate_label() {
   if (!display_rotate_label) return;
-  const char* text = "Rotate 180";
-  if (display_rotation_mode == kDisplayRotationFlipped) {
-    text = "Auto";
-  } else if (display_rotation_mode == kDisplayRotationAuto) {
-    text = "Normal";
+  uint8_t next = (display_rotation_mode == kDisplayRotationNormal)
+                 ? kDisplayRotationFlipped
+                 : (display_rotation_mode == kDisplayRotationFlipped)
+                     ? kDisplayRotationAuto
+                     : kDisplayRotationNormal;
+  const char* next_text = rotation_mode_text(next);
+  const char* cur_text = rotation_mode_text(display_rotation_mode);
+  static char main_buf[24];
+  static char sub_buf[32];
+  snprintf(main_buf, sizeof(main_buf), "%s", next_text);
+  snprintf(sub_buf, sizeof(sub_buf), "Aktuell: %s", cur_text);
+  lv_label_set_text(display_rotate_label, main_buf);
+  if (display_rotate_sub_label) {
+    lv_label_set_text(display_rotate_sub_label, sub_buf);
   }
-  lv_label_set_text(display_rotate_label, text);
 }
 
 static const char* wake_mode_text(uint8_t mode) {
-  return (mode == kWakeModeTouch) ? "Touch" : "Bewegung";
+  return (mode == kWakeModeTouch) ? "Touch" : "Erschütterung";
 }
 
 static void update_wake_button(lv_obj_t *main_label, lv_obj_t *sub_label, uint8_t mode) {
@@ -140,7 +155,7 @@ static void update_wake_button(lv_obj_t *main_label, lv_obj_t *sub_label, uint8_
   const char* cur_text = wake_mode_text(mode);
   static char main_buf[24];
   static char sub_buf[32];
-  snprintf(main_buf, sizeof(main_buf), "Wechsel zu %s", next_text);
+  snprintf(main_buf, sizeof(main_buf), "%s", next_text);
   snprintf(sub_buf, sizeof(sub_buf), "Aktuell: %s", cur_text);
   lv_label_set_text(main_label, main_buf);
   if (sub_label) {
@@ -593,7 +608,12 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   display_rotate_label = lv_label_create(display_rotate_btn);
   lv_obj_set_style_text_font(display_rotate_label, &ui_font_24, 0);
   lv_obj_set_style_text_color(display_rotate_label, lv_color_white(), 0);
-  lv_obj_center(display_rotate_label);
+  lv_obj_align(display_rotate_label, LV_ALIGN_TOP_MID, 0, 8);
+
+  display_rotate_sub_label = lv_label_create(display_rotate_btn);
+  lv_obj_set_style_text_font(display_rotate_sub_label, &ui_font_20, 0);
+  lv_obj_set_style_text_color(display_rotate_sub_label, lv_color_hex(0xE0E0E0), 0);
+  lv_obj_align(display_rotate_sub_label, LV_ALIGN_BOTTOM_MID, 0, -8);
   update_display_rotate_label();
 
   lv_obj_t *display_col_right = create_settings_column(
