@@ -12,9 +12,9 @@
 PowerManager powerManager;
 
 static constexpr uint32_t kImuWakePollMs = 10;
-static constexpr float kImuWakeDelta = 0.05f;
-static constexpr float kImuWakeMagDelta = 0.02f;
-static constexpr float kImuWakeMagJerk = 0.02f;
+static constexpr float kImuGravityAlpha = 0.90f;
+static constexpr float kImuWakeLinMag = 0.08f;
+static constexpr float kImuWakeLinJerk = 0.02f;
 static constexpr uint32_t kImuI2cSleepHz = 100000;
 static constexpr uint32_t kImuI2cWakeHz = 400000;
 
@@ -42,29 +42,26 @@ void PowerManager::serviceImuWake() {
   if (!M5.Imu.getAccel(&ax, &ay, &az)) return;
 
   if (!imu_have_last) {
-    imu_last_ax = ax;
-    imu_last_ay = ay;
-    imu_last_az = az;
-    imu_last_mag = std::sqrt(ax * ax + ay * ay + az * az);
+    imu_grav_x = ax;
+    imu_grav_y = ay;
+    imu_grav_z = az;
+    imu_last_lin_mag = 0.0f;
     imu_have_last = true;
     return;
   }
 
-  float delta = std::fabs(ax - imu_last_ax) +
-                std::fabs(ay - imu_last_ay) +
-                std::fabs(az - imu_last_az);
-  imu_last_ax = ax;
-  imu_last_ay = ay;
-  imu_last_az = az;
+  imu_grav_x = kImuGravityAlpha * imu_grav_x + (1.0f - kImuGravityAlpha) * ax;
+  imu_grav_y = kImuGravityAlpha * imu_grav_y + (1.0f - kImuGravityAlpha) * ay;
+  imu_grav_z = kImuGravityAlpha * imu_grav_z + (1.0f - kImuGravityAlpha) * az;
 
-  float mag = std::sqrt(ax * ax + ay * ay + az * az);
-  float mag_delta = std::fabs(mag - 1.0f);
-  float mag_jerk = std::fabs(mag - imu_last_mag);
-  imu_last_mag = mag;
+  float lin_x = ax - imu_grav_x;
+  float lin_y = ay - imu_grav_y;
+  float lin_z = az - imu_grav_z;
+  float lin_mag = std::sqrt(lin_x * lin_x + lin_y * lin_y + lin_z * lin_z);
+  float lin_jerk = std::fabs(lin_mag - imu_last_lin_mag);
+  imu_last_lin_mag = lin_mag;
 
-  if (delta >= kImuWakeDelta ||
-      mag_delta >= kImuWakeMagDelta ||
-      mag_jerk >= kImuWakeMagJerk) {
+  if (lin_mag >= kImuWakeLinMag || lin_jerk >= kImuWakeLinJerk) {
     wakeFromDisplaySleep();
   }
 }

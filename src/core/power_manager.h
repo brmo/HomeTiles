@@ -64,10 +64,10 @@ private:
   bool imu_ready = false;
   bool imu_have_last = false;
   uint32_t imu_last_poll_ms = 0;
-  float imu_last_ax = 0.0f;
-  float imu_last_ay = 0.0f;
-  float imu_last_az = 0.0f;
-  float imu_last_mag = 1.0f;
+  float imu_grav_x = 0.0f;
+  float imu_grav_y = 0.0f;
+  float imu_grav_z = 0.0f;
+  float imu_last_lin_mag = 0.0f;
 };
 
 // Globale Instanz
