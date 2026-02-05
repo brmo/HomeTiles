@@ -12,6 +12,7 @@
 #include "src/web/web_admin_styles.h"
 #include "src/tiles/tile_config.h"
 #include "src/types/types_registry.h"
+#include "src/core/device_entities.h"
 #include <cstring>
 
 // Helper function to generate tile tab HTML (unified for all folders)
@@ -326,6 +327,9 @@ String WebAdminServer::getAdminPage() {
   for (const auto& opt : switchOptionsRaw) {
     addSwitchOption(opt);
   }
+  addSwitchOption(kEntityDisplayBrightness);
+  addSwitchOption(kEntityDisplayRotate);
+  addSwitchOption(kEntityDisplaySleep);
   auto formatSensorValue = [](const String& raw, uint8_t decimals) -> String {
     String v = raw;
     v.trim();

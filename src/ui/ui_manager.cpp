@@ -8,6 +8,7 @@
 #include "src/core/display_manager.h"
 #include "src/tiles/mdi_icons.h"
 #include "src/tiles/tile_config.h"
+#include "src/network/mqtt_handlers.h"
 #include "src/fonts/ui_fonts.h"
 #include "src/fonts/font_roboto_mono_digits_48.h"
 #include "src/fonts/font_roboto_mono_digits_24.h"
@@ -90,6 +91,8 @@ void UIManager::buildUI(scene_publish_cb_t scene_cb, hotspot_start_cb_t hotspot_
   // Warm settings buffer once to reduce the first-open hitch.
   switchToTab(3);
   switchToTab(0);
+
+  mqttPublishDeviceSettings();
 
   Serial.println("[UI] UI aufgebaut");
 }

@@ -856,6 +856,19 @@ void HaBridgeConfig::registerSensorMeta(const String& entity_id, const String& n
   upsertKeyValueMap(data.sensor_units_map, entity_id, unit);
 }
 
+void HaBridgeConfig::updateEntityMeta(const String& entity_id, const String& name, const String& unit, const String& icon) {
+  if (entity_id.length() == 0) return;
+  if (name.length()) {
+    upsertKeyValueMap(data.sensor_names_map, entity_id, name);
+  }
+  if (unit.length()) {
+    upsertKeyValueMap(data.sensor_units_map, entity_id, unit);
+  }
+  if (icon.length()) {
+    upsertKeyValueMap(data.entity_icons_map, entity_id, icon);
+  }
+}
+
 void HaBridgeConfig::updateSensorValue(const String& entity_id, const String& value) {
   if (entity_id.length() == 0) return;
 

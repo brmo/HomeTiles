@@ -8,6 +8,7 @@
 #include "src/tiles/tile_config.h"
 #include "src/tiles/tile_renderer.h"
 #include "src/core/config_manager.h"
+#include "src/core/device_entities.h"
 #include "src/core/power_manager.h"
 #include <M5Unified.h>
 #include <PubSubClient.h>
@@ -98,6 +99,36 @@ static bool parseBoolPayload(const char* payload, bool* out) {
     return true;
   }
   return false;
+}
+
+static constexpr uint8_t kDisplayBrightnessMin = 75;
+static constexpr uint8_t kDisplayBrightnessMax = 255;
+
+static bool entityEquals(const char* entity_id, const char* expected) {
+  if (!entity_id || !expected) return false;
+  String a(entity_id);
+  String b(expected);
+  a.trim();
+  b.trim();
+  return a.equalsIgnoreCase(b);
+}
+
+static int brightnessPctFromRaw(int raw) {
+  if (raw < kDisplayBrightnessMin) raw = kDisplayBrightnessMin;
+  if (raw > kDisplayBrightnessMax) raw = kDisplayBrightnessMax;
+  const int span = kDisplayBrightnessMax - kDisplayBrightnessMin;
+  if (span <= 0) return 100;
+  return static_cast<int>((static_cast<long>(raw - kDisplayBrightnessMin) * 100L + (span / 2)) / span);
+}
+
+static uint8_t brightnessRawFromPct(int pct) {
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  const int span = kDisplayBrightnessMax - kDisplayBrightnessMin;
+  int raw = kDisplayBrightnessMin + static_cast<int>((static_cast<long>(pct) * span + 50L) / 100L);
+  if (raw < kDisplayBrightnessMin) raw = kDisplayBrightnessMin;
+  if (raw > kDisplayBrightnessMax) raw = kDisplayBrightnessMax;
+  return static_cast<uint8_t>(raw);
 }
 
 static const char* sleepLabelFromConfig(bool enabled, uint16_t seconds) {
@@ -252,6 +283,86 @@ static void handleSleepBatteryCommand(const char* payload, size_t) {
       new_seconds,
       cfg.display_rotated_180);
   mqttPublishDeviceSettings();
+}
+
+static void sync_local_device_entities() {
+  const DeviceConfig& cfg = configManager.getConfig();
+
+  const int bright_pct = brightnessPctFromRaw(static_cast<int>(cfg.display_brightness));
+  char bright_payload[96];
+  snprintf(bright_payload, sizeof(bright_payload), "{\"state\":\"on\",\"brightness_pct\":%d}", bright_pct);
+
+  haBridgeConfig.updateSensorValue(kEntityDisplayBrightness, bright_payload);
+  haBridgeConfig.updateEntityMeta(kEntityDisplayBrightness, "Display Helligkeit", "%", "brightness-6");
+
+  const char* rotate_state = cfg.display_rotated_180 ? "ON" : "OFF";
+  haBridgeConfig.updateSensorValue(kEntityDisplayRotate, rotate_state);
+  haBridgeConfig.updateEntityMeta(kEntityDisplayRotate, "Display Rotation", "", "screen-rotation");
+
+  const char* sleep_state = powerManager.isInSleep() ? "ON" : "OFF";
+  haBridgeConfig.updateSensorValue(kEntityDisplaySleep, sleep_state);
+  haBridgeConfig.updateEntityMeta(kEntityDisplaySleep, "Display Sleep", "", "sleep");
+
+  auto update_all_grids = [](const char* entity_id, const char* payload) {
+    tiles_update_sensor_by_entity(GridType::TAB0, entity_id, payload);
+    tiles_update_sensor_by_entity(GridType::TAB1, entity_id, payload);
+    tiles_update_sensor_by_entity(GridType::TAB2, entity_id, payload);
+  };
+
+  update_all_grids(kEntityDisplayBrightness, bright_payload);
+  update_all_grids(kEntityDisplayRotate, rotate_state);
+  update_all_grids(kEntityDisplaySleep, sleep_state);
+}
+
+static bool resolve_toggle_action(const char* action, bool current, bool* desired) {
+  if (!desired) return false;
+  if (!action || !*action) {
+    *desired = !current;
+    return true;
+  }
+  String s(action);
+  s.trim();
+  s.toLowerCase();
+  if (s == "toggle") {
+    *desired = !current;
+    return true;
+  }
+  return parseBoolPayload(s.c_str(), desired);
+}
+
+static bool handle_local_switch_command(const char* entity_id, const char* action) {
+  if (entityEquals(entity_id, kEntityDisplayBrightness)) {
+    sync_local_device_entities();
+    return true;
+  }
+  if (entityEquals(entity_id, kEntityDisplayRotate)) {
+    bool desired = false;
+    const DeviceConfig& cfg = configManager.getConfig();
+    if (!resolve_toggle_action(action, cfg.display_rotated_180, &desired)) return true;
+    handleDisplayRotateCommand(desired ? "ON" : "OFF", 0);
+    return true;
+  }
+  if (entityEquals(entity_id, kEntityDisplaySleep)) {
+    bool desired = false;
+    if (!resolve_toggle_action(action, powerManager.isInSleep(), &desired)) return true;
+    handleDisplaySleepCommand(desired ? "ON" : "OFF", 0);
+    return true;
+  }
+  return false;
+}
+
+static bool handle_local_light_command(const char* entity_id, const char* state, int brightness_pct) {
+  if (!entityEquals(entity_id, kEntityDisplayBrightness)) return false;
+  if (brightness_pct >= 0) {
+    uint8_t raw = brightnessRawFromPct(brightness_pct);
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%u", static_cast<unsigned>(raw));
+    handleDisplayBrightnessCommand(buf, 0);
+  } else {
+    (void)state;
+    sync_local_device_entities();
+  }
+  return true;
 }
 
 static const TopicRoute kRoutes[] = {
@@ -434,6 +545,7 @@ void mqttCallback(char* topic, uint8_t* payload, unsigned int length) {
       if (icons_changed) {
         tiles_request_icon_refresh();
       }
+      sync_local_device_entities();
     } else {
       Serial.println("[Bridge] Ungueltige Bridge-Konfiguration empfangen");
     }
@@ -522,6 +634,7 @@ void mqttPublishHomeSnapshot() {
 
 // ========== Device Settings publizieren ==========
 void mqttPublishDeviceSettings() {
+  sync_local_device_entities();
   PubSubClient& mqtt = networkManager.getMqttClient();
   if (!mqtt.connected()) return;
 
@@ -562,6 +675,7 @@ void mqttPublishScene(const char* scene_name) {
 // ========== Light/Switch Command publizieren ==========
 void mqttPublishSwitchCommand(const char* entity_id, const char* state) {
   if (!entity_id || !*entity_id) return;
+  if (handle_local_switch_command(entity_id, state)) return;
 
   PubSubClient& mqtt = networkManager.getMqttClient();
   if (!mqtt.connected()) {
@@ -590,6 +704,7 @@ void mqttPublishSwitchCommand(const char* entity_id, const char* state) {
 
 void mqttPublishLightCommand(const char* entity_id, const char* state, int brightness_pct, bool has_color, uint32_t color) {
   if (!entity_id || !*entity_id) return;
+  if (handle_local_light_command(entity_id, state, brightness_pct)) return;
 
   PubSubClient& mqtt = networkManager.getMqttClient();
   if (!mqtt.connected()) {
