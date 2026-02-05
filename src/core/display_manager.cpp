@@ -14,6 +14,7 @@ lv_indev_t* DisplayManager::indev = nullptr;
 lv_color_t* DisplayManager::buf1 = nullptr;
 lv_color_t* DisplayManager::buf2 = nullptr;
 uint32_t DisplayManager::last_activity_time = 0;
+uint8_t DisplayManager::rotation = 1;
 static bool g_ignore_touch_until_release = false;
 static bool g_input_enabled = true;
 static volatile uint16_t g_flush_log_budget = 0;
@@ -26,6 +27,8 @@ static size_t g_reverse_buf_width = 0;
 static constexpr size_t kReverseStripeWidth = 16;
 static bool g_reverse_flush_once = false;
 static volatile uint32_t g_fullscreen_flush_seq = 0;
+static constexpr uint8_t kDisplayRotationDefault = 1;
+static constexpr uint8_t kDisplayRotationFlipped = 3;
 
 static bool ensure_reverse_buf() {
   if (g_reverse_buf && g_reverse_buf_width == kReverseStripeWidth) return true;
@@ -145,6 +148,29 @@ lv_display_render_mode_t DisplayManager::getRenderMode() const {
 
 uint32_t DisplayManager::getFullScreenFlushSeq() const {
   return g_fullscreen_flush_seq;
+}
+
+void DisplayManager::setRotation(uint8_t rotation_value) {
+  if (rotation == rotation_value) return;
+  rotation = rotation_value;
+  M5.Display.setRotation(rotation_value);
+  lv_display_t* disp_local = lv_display_get_default();
+  if (disp_local) {
+    lv_obj_invalidate(lv_scr_act());
+    lv_refr_now(disp_local);
+  }
+}
+
+void DisplayManager::setRotationFlipped(bool flipped) {
+  setRotation(flipped ? kDisplayRotationFlipped : kDisplayRotationDefault);
+}
+
+bool DisplayManager::isRotationFlipped() const {
+  return rotation == kDisplayRotationFlipped;
+}
+
+uint8_t DisplayManager::getRotation() const {
+  return rotation;
 }
 
 // ========== Display Flush Callback ==========

@@ -8,11 +8,13 @@
 #include "src/ui/ui_manager.h"
 #include "src/fonts/ui_fonts.h"
 #include "src/network/mqtt_handlers.h"
+#include "src/core/display_manager.h"
 
 static lv_obj_t *brightness_label = nullptr;
 static lv_obj_t *display_rotate_btn = nullptr;
 static lv_obj_t *display_rotate_label = nullptr;
 static bool display_rotated_180 = false;
+static uint8_t display_rotation_mode = kDisplayRotationNormal;
 static hotspot_callback_t g_hotspot_callback = nullptr;
 
 // WiFi Status Labels
@@ -41,9 +43,6 @@ static lv_obj_t *sleep_battery_label = nullptr;
 // Power Status Labels
 static lv_obj_t *power_status_label = nullptr;
 static lv_obj_t *power_level_label = nullptr;
-
-static const uint8_t kDisplayRotationDefault = 1;
-static const uint8_t kDisplayRotationFlipped = 3;
 
 static const int kSettingsColLeftPct = 12;
 static const int kSettingsColMidPct = 26;
@@ -113,11 +112,18 @@ static void format_sleep_label_for_index(char* buf, size_t len, int32_t index) {
 
 static void update_display_rotate_label() {
   if (!display_rotate_label) return;
-  lv_label_set_text(display_rotate_label, display_rotated_180 ? "Normal" : "Rotate 180");
+  const char* text = "Rotate 180";
+  if (display_rotation_mode == kDisplayRotationFlipped) {
+    text = "Auto";
+  } else if (display_rotation_mode == kDisplayRotationAuto) {
+    text = "Normal";
+  }
+  lv_label_set_text(display_rotate_label, text);
 }
 
 void settings_sync_display_rotation(bool rotated) {
   display_rotated_180 = rotated;
+  display_rotation_mode = rotated ? kDisplayRotationFlipped : kDisplayRotationNormal;
   update_display_rotate_label();
   lv_obj_invalidate(lv_scr_act());
   lv_display_t* disp = lv_display_get_default();
@@ -128,8 +134,18 @@ void settings_sync_display_rotation(bool rotated) {
 
 static void on_display_rotate_clicked(lv_event_t *e) {
   (void)e;
-  display_rotated_180 = !display_rotated_180;
-  M5.Display.setRotation(display_rotated_180 ? kDisplayRotationFlipped : kDisplayRotationDefault);
+  if (display_rotation_mode == kDisplayRotationNormal) {
+    display_rotation_mode = kDisplayRotationFlipped;
+    display_rotated_180 = true;
+    displayManager.setRotationFlipped(true);
+  } else if (display_rotation_mode == kDisplayRotationFlipped) {
+    display_rotation_mode = kDisplayRotationAuto;
+    display_rotated_180 = displayManager.isRotationFlipped();
+  } else {
+    display_rotation_mode = kDisplayRotationNormal;
+    display_rotated_180 = false;
+    displayManager.setRotationFlipped(false);
+  }
   const DeviceConfig& cfg = configManager.getConfig();
   configManager.saveDisplaySettings(
       cfg.display_brightness,
@@ -137,9 +153,15 @@ static void on_display_rotate_clicked(lv_event_t *e) {
       cfg.auto_sleep_seconds,
       cfg.auto_sleep_battery_enabled,
       cfg.auto_sleep_battery_seconds,
+      display_rotation_mode,
       display_rotated_180);
   mqttPublishDeviceSettings();
-  settings_sync_display_rotation(display_rotated_180);
+  update_display_rotate_label();
+  lv_obj_invalidate(lv_scr_act());
+  lv_display_t* disp = lv_display_get_default();
+  if (disp) {
+    lv_refr_now(disp);
+  }
 }
 
 static void on_brightness(lv_event_t *e) {
@@ -164,6 +186,7 @@ static void on_brightness(lv_event_t *e) {
         cfg.auto_sleep_seconds,
         cfg.auto_sleep_battery_enabled,
         cfg.auto_sleep_battery_seconds,
+        display_rotation_mode,
         display_rotated_180);
     mqttPublishDeviceSettings();
   }
@@ -252,6 +275,7 @@ static void on_sleep_slider(lv_event_t *e) {
         seconds,
         cfg.auto_sleep_battery_enabled,
         cfg.auto_sleep_battery_seconds,
+        display_rotation_mode,
         display_rotated_180);
     mqttPublishDeviceSettings();
   }
@@ -276,6 +300,7 @@ static void on_sleep_battery_slider(lv_event_t *e) {
         cfg.auto_sleep_seconds,
         enabled,
         seconds,
+        display_rotation_mode,
         display_rotated_180);
     mqttPublishDeviceSettings();
   }
@@ -468,6 +493,7 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
 
   const DeviceConfig& cfg = configManager.getConfig();
   display_rotated_180 = cfg.display_rotated_180;
+  display_rotation_mode = cfg.display_rotation_mode;
 
   // Display tile
   create_settings_back_button(tab);

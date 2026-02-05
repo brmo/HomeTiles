@@ -30,6 +30,9 @@ static constexpr float kImuHoldJerk = 0.006f;
 static constexpr float kImuHoldGravDelta = 0.015f;
 static constexpr uint8_t kImuHoldSamples = 2;
 static constexpr uint32_t kImuHoldMs = 20000;
+static constexpr float kImuAutoRotateAxisMin = 0.65f;
+static constexpr uint8_t kImuAutoRotateStableSamples = 3;
+static constexpr uint32_t kImuAutoRotateMinIntervalMs = 400;
 static constexpr float kImuWakeStrong = 0.07f;
 static constexpr float kImuWakeStrongJerk = 0.025f;
 static constexpr uint32_t kImuWakeCooldownMs = 100;
@@ -130,6 +133,41 @@ void PowerManager::serviceImuWake() {
     if (!is_display_sleeping) {
       displayManager.resetActivityTimer();
       setHighPerformance(true);
+    }
+  }
+
+  if (!is_display_sleeping) {
+    const DeviceConfig& cfg = configManager.getConfig();
+    if (cfg.display_rotation_mode == kDisplayRotationAuto) {
+      if (!imu_auto_rotate_valid) {
+        imu_auto_rotate_state = displayManager.isRotationFlipped();
+        imu_auto_rotate_valid = true;
+      }
+      if (now_ms - imu_last_auto_rotate_ms >= kImuAutoRotateMinIntervalMs) {
+        float abs_x = std::fabs(imu_grav_x);
+        bool candidate = imu_auto_rotate_state;
+        if (abs_x >= kImuAutoRotateAxisMin) {
+          candidate = (imu_grav_x > 0.0f);
+          if (candidate != imu_auto_rotate_state) {
+            imu_auto_rotate_hits++;
+            if (imu_auto_rotate_hits >= kImuAutoRotateStableSamples) {
+              imu_auto_rotate_state = candidate;
+              imu_auto_rotate_hits = 0;
+              imu_last_auto_rotate_ms = now_ms;
+              displayManager.setRotationFlipped(candidate);
+              configManager.setRuntimeDisplayRotation(candidate);
+              mqttPublishDeviceSettings();
+            }
+          } else {
+            imu_auto_rotate_hits = 0;
+          }
+        } else {
+          imu_auto_rotate_hits = 0;
+        }
+      }
+    } else {
+      imu_auto_rotate_valid = false;
+      imu_auto_rotate_hits = 0;
     }
   }
 
@@ -248,7 +286,12 @@ void PowerManager::update(uint32_t last_activity_time) {
   }
   uint32_t now = millis();
   uint32_t sleep_timeout = getSleepTimeout();
-  if (sleep_timeout != 0xFFFFFFFF) {
+  bool need_imu = (sleep_timeout != 0xFFFFFFFF);
+  if (!need_imu) {
+    const DeviceConfig& cfg = configManager.getConfig();
+    need_imu = (cfg.display_rotation_mode == kDisplayRotationAuto);
+  }
+  if (need_imu) {
     serviceImuWake();
   }
 
@@ -292,6 +335,8 @@ void PowerManager::enterDisplaySleep() {
   imu_last_log_ms = 0;
   imu_last_motion_ms = 0;
   imu_hold_hits = 0;
+  imu_auto_rotate_valid = false;
+  imu_auto_rotate_hits = 0;
   if (ensureImuReady()) {
     M5.Imu.setClock(kImuI2cSleepHz);
     imuSetAccelOnly(true);

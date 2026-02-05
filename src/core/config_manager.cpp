@@ -31,6 +31,7 @@ ConfigManager::ConfigManager() {
   // Display & Power Defaults
   config.display_brightness = 200;
   config.display_rotated_180 = false;
+  config.display_rotation_mode = kDisplayRotationNormal;
   config.auto_sleep_enabled = true;
   config.auto_sleep_seconds = 60;
   config.auto_sleep_battery_enabled = true;
@@ -66,7 +67,22 @@ bool ConfigManager::load() {
 
   // Display & Power Settings laden
   config.display_brightness = prefs.getUChar("disp_bright", 200);
-  config.display_rotated_180 = prefs.getBool("disp_rot180", false);
+  bool rot_180 = prefs.getBool("disp_rot180", false);
+  uint8_t rot_mode = rot_180 ? kDisplayRotationFlipped : kDisplayRotationNormal;
+  if (prefs.isKey("disp_rot_mode")) {
+    rot_mode = prefs.getUChar("disp_rot_mode", rot_mode);
+  }
+  if (rot_mode > kDisplayRotationAuto) {
+    rot_mode = rot_180 ? kDisplayRotationFlipped : kDisplayRotationNormal;
+  }
+  config.display_rotation_mode = rot_mode;
+  if (rot_mode == kDisplayRotationNormal) {
+    config.display_rotated_180 = false;
+  } else if (rot_mode == kDisplayRotationFlipped) {
+    config.display_rotated_180 = true;
+  } else {
+    config.display_rotated_180 = rot_180;
+  }
   config.auto_sleep_enabled = prefs.getBool("sleep_en", true);
   uint16_t sleep_seconds = 60;
   if (prefs.isKey("sleep_sec")) {
@@ -137,6 +153,7 @@ bool ConfigManager::save(const DeviceConfig& cfg) {
   // Display & Power Settings speichern
   prefs.putUChar("disp_bright", cfg.display_brightness);
   prefs.putBool("disp_rot180", cfg.display_rotated_180);
+  prefs.putUChar("disp_rot_mode", cfg.display_rotation_mode);
   prefs.putBool("sleep_en", cfg.auto_sleep_enabled);
   prefs.putUShort("sleep_sec", cfg.auto_sleep_seconds);
   prefs.putBool("sleep_bat_en", cfg.auto_sleep_battery_enabled);
@@ -174,6 +191,7 @@ bool ConfigManager::saveDisplaySettings(uint8_t brightness,
                                         uint16_t sleep_seconds,
                                         bool sleep_battery_enabled,
                                         uint16_t sleep_battery_seconds,
+                                        uint8_t rotation_mode,
                                         bool rotate_180) {
   Preferences prefs;
 
@@ -188,6 +206,7 @@ bool ConfigManager::saveDisplaySettings(uint8_t brightness,
 
   prefs.putUChar("disp_bright", brightness);
   prefs.putBool("disp_rot180", rotate_180);
+  prefs.putUChar("disp_rot_mode", rotation_mode);
   prefs.putBool("sleep_en", sleep_enabled);
   prefs.putUShort("sleep_sec", normalized_sleep_seconds);
   prefs.putBool("sleep_bat_en", sleep_battery_enabled);
@@ -210,6 +229,7 @@ bool ConfigManager::saveDisplaySettings(uint8_t brightness,
   // Update lokale Kopie
   config.display_brightness = brightness;
   config.display_rotated_180 = rotate_180;
+  config.display_rotation_mode = rotation_mode;
   config.auto_sleep_enabled = sleep_enabled;
   config.auto_sleep_seconds = normalized_sleep_seconds;
   config.auto_sleep_battery_enabled = sleep_battery_enabled;
@@ -236,6 +256,11 @@ void ConfigManager::clear() {
   strncpy(config.mqtt_base_topic, "tab5", CONFIG_MQTT_BASE_MAX - 1);
   strncpy(config.ha_prefix, "ha/statestream", CONFIG_HA_PREFIX_MAX - 1);
   config.display_rotated_180 = false;
+  config.display_rotation_mode = kDisplayRotationNormal;
 
   Serial.println("✓ ConfigManager: Konfiguration gelöscht");
+}
+
+void ConfigManager::setRuntimeDisplayRotation(bool rotate_180) {
+  config.display_rotated_180 = rotate_180;
 }

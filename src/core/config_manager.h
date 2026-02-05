@@ -17,6 +17,10 @@
 static constexpr uint16_t kSleepOptionsSec[] = {5, 15, 30, 60, 300, 900, 1800, 3600};
 static constexpr size_t kSleepOptionsSecCount = sizeof(kSleepOptionsSec) / sizeof(kSleepOptionsSec[0]);
 
+static constexpr uint8_t kDisplayRotationNormal = 0;
+static constexpr uint8_t kDisplayRotationFlipped = 1;
+static constexpr uint8_t kDisplayRotationAuto = 2;
+
 struct DeviceConfig {
   char wifi_ssid[CONFIG_WIFI_SSID_MAX];
   char wifi_pass[CONFIG_WIFI_PASS_MAX];
@@ -31,6 +35,7 @@ struct DeviceConfig {
   // Display & Power Settings
   uint8_t display_brightness;  // 75-255
   bool display_rotated_180;    // Display 180 deg gedreht?
+  uint8_t display_rotation_mode; // 0=Normal, 1=180, 2=Auto
   bool auto_sleep_enabled;     // Auto-Sleep aktiv?
   uint16_t auto_sleep_seconds; // Seconds until auto-sleep (5-3600)
   bool auto_sleep_battery_enabled;     // Auto-Sleep aktiv im Batteriebetrieb?
@@ -53,7 +58,10 @@ public:
                            uint16_t sleep_seconds,
                            bool sleep_battery_enabled,
                            uint16_t sleep_battery_seconds,
+                           uint8_t rotation_mode,
                            bool rotate_180);
+
+  void setRuntimeDisplayRotation(bool rotate_180);
 
   // Löscht gespeicherte Konfiguration
   void clear();

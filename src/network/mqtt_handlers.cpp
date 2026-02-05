@@ -8,6 +8,7 @@
 #include "src/tiles/tile_config.h"
 #include "src/tiles/tile_renderer.h"
 #include "src/core/config_manager.h"
+#include "src/core/display_manager.h"
 #include "src/core/device_entities.h"
 #include "src/core/power_manager.h"
 #include <M5Unified.h>
@@ -19,9 +20,6 @@
 static float g_outside_c = 21.7f;
 static float g_inside_c = 22.4f;
 static int g_soc_pct = 73;
-
-static const uint8_t kDisplayRotationDefault = 1;
-static const uint8_t kDisplayRotationFlipped = 3;
 
 static const char* kSleepOptionLabels[] = {
   "5 s",
@@ -219,6 +217,7 @@ static void handleDisplayBrightnessCommand(const char* payload, size_t) {
       cfg.auto_sleep_seconds,
       cfg.auto_sleep_battery_enabled,
       cfg.auto_sleep_battery_seconds,
+      cfg.display_rotation_mode,
       cfg.display_rotated_180);
   mqttPublishDeviceSettings();
 }
@@ -226,16 +225,18 @@ static void handleDisplayBrightnessCommand(const char* payload, size_t) {
 static void handleDisplayRotateCommand(const char* payload, size_t) {
   bool rotate = false;
   if (!parseBoolPayload(payload, &rotate)) return;
-  M5.Display.setRotation(rotate ? kDisplayRotationFlipped : kDisplayRotationDefault);
+  displayManager.setRotationFlipped(rotate);
   settings_sync_display_rotation(rotate);
 
   const DeviceConfig& cfg = configManager.getConfig();
+  uint8_t rotation_mode = rotate ? kDisplayRotationFlipped : kDisplayRotationNormal;
   configManager.saveDisplaySettings(
       cfg.display_brightness,
       cfg.auto_sleep_enabled,
       cfg.auto_sleep_seconds,
       cfg.auto_sleep_battery_enabled,
       cfg.auto_sleep_battery_seconds,
+      rotation_mode,
       rotate);
   mqttPublishDeviceSettings();
 }
@@ -264,6 +265,7 @@ static void handleSleepMainsCommand(const char* payload, size_t) {
       new_seconds,
       cfg.auto_sleep_battery_enabled,
       cfg.auto_sleep_battery_seconds,
+      cfg.display_rotation_mode,
       cfg.display_rotated_180);
   mqttPublishDeviceSettings();
 }
@@ -281,6 +283,7 @@ static void handleSleepBatteryCommand(const char* payload, size_t) {
       cfg.auto_sleep_seconds,
       enabled,
       new_seconds,
+      cfg.display_rotation_mode,
       cfg.display_rotated_180);
   mqttPublishDeviceSettings();
 }

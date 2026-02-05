@@ -10,6 +10,7 @@
 
 #include "src/core/display_manager.h"
 #include "src/core/power_manager.h"
+#include "src/core/config_manager.h"
 #include "src/ui/ui_manager.h"
 #include "src/ui/sensor_popup.h"
 #include "src/ui/image_popup.h"
@@ -169,7 +170,13 @@ void setup() {
   Serial.flush();
   {
     const DeviceConfig& dcfg = configManager.getConfig();
-    M5.Display.setRotation(dcfg.display_rotated_180 ? 3 : 1);
+    bool rotated = dcfg.display_rotated_180;
+    if (dcfg.display_rotation_mode == kDisplayRotationNormal) {
+      rotated = false;
+    } else if (dcfg.display_rotation_mode == kDisplayRotationFlipped) {
+      rotated = true;
+    }
+    displayManager.setRotationFlipped(rotated);
   }
   Serial.println("[Setup] Rotation OK");
   Serial.flush();

@@ -24,6 +24,10 @@ public:
   // Touch-Guard nach Wake
   void armWakeTouchGuard();
   void setInputEnabled(bool enable);
+  void setRotation(uint8_t rotation);
+  void setRotationFlipped(bool flipped);
+  bool isRotationFlipped() const;
+  uint8_t getRotation() const;
   void debugFlushNext(uint16_t count);
   void setReverseFlush(bool enable);
   void setReverseFlushOnce();
@@ -39,6 +43,7 @@ private:
   static lv_color_t *buf1;
   static lv_color_t *buf2;
   static uint32_t last_activity_time;
+  static uint8_t rotation;
 
   // LVGL Callbacks
   static void flush_cb(lv_display_t *lv_disp, const lv_area_t *area, uint8_t *px_map);
