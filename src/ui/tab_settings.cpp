@@ -145,7 +145,7 @@ static void update_display_rotate_label() {
 }
 
 static const char* wake_mode_text(uint8_t mode) {
-  return (mode == kWakeModeTouch) ? "Touch" : "Erschütterung";
+  return (mode == kWakeModeTouch) ? "Touch" : "Sensor";
 }
 
 static void update_wake_button(lv_obj_t *main_label, lv_obj_t *sub_label, uint8_t mode) {
