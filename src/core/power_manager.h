@@ -33,6 +33,9 @@ public:
   void enterDisplaySleep();
   void wakeFromDisplaySleep();
   bool isInSleep() const { return is_display_sleeping; }
+  bool isTouchWakeEnabled() const;
+  bool isImuWakeEnabled() const;
+  bool detectAutoRotation(bool* rotated_out);
 
   // Schlaf sperren/freigeben (z.B. Web-Admin aktiv)
   void blockSleep(uint32_t duration_ms = 0);  // 0 = unbegrenzt, sonst Timeout

@@ -175,6 +175,12 @@ void setup() {
       rotated = false;
     } else if (dcfg.display_rotation_mode == kDisplayRotationFlipped) {
       rotated = true;
+    } else if (dcfg.display_rotation_mode == kDisplayRotationAuto) {
+      bool detected = rotated;
+      if (powerManager.detectAutoRotation(&detected)) {
+        rotated = detected;
+        configManager.setRuntimeDisplayRotation(rotated);
+      }
     }
     displayManager.setRotationFlipped(rotated);
   }

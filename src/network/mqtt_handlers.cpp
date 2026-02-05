@@ -218,7 +218,9 @@ static void handleDisplayBrightnessCommand(const char* payload, size_t) {
       cfg.auto_sleep_battery_enabled,
       cfg.auto_sleep_battery_seconds,
       cfg.display_rotation_mode,
-      cfg.display_rotated_180);
+      cfg.display_rotated_180,
+      cfg.wake_mode_mains,
+      cfg.wake_mode_battery);
   mqttPublishDeviceSettings();
 }
 
@@ -237,7 +239,9 @@ static void handleDisplayRotateCommand(const char* payload, size_t) {
       cfg.auto_sleep_battery_enabled,
       cfg.auto_sleep_battery_seconds,
       rotation_mode,
-      rotate);
+      rotate,
+      cfg.wake_mode_mains,
+      cfg.wake_mode_battery);
   mqttPublishDeviceSettings();
 }
 
@@ -266,7 +270,9 @@ static void handleSleepMainsCommand(const char* payload, size_t) {
       cfg.auto_sleep_battery_enabled,
       cfg.auto_sleep_battery_seconds,
       cfg.display_rotation_mode,
-      cfg.display_rotated_180);
+      cfg.display_rotated_180,
+      cfg.wake_mode_mains,
+      cfg.wake_mode_battery);
   mqttPublishDeviceSettings();
 }
 
@@ -284,7 +290,9 @@ static void handleSleepBatteryCommand(const char* payload, size_t) {
       enabled,
       new_seconds,
       cfg.display_rotation_mode,
-      cfg.display_rotated_180);
+      cfg.display_rotated_180,
+      cfg.wake_mode_mains,
+      cfg.wake_mode_battery);
   mqttPublishDeviceSettings();
 }
 

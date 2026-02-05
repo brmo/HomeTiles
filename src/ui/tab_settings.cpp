@@ -15,6 +15,12 @@ static lv_obj_t *display_rotate_btn = nullptr;
 static lv_obj_t *display_rotate_label = nullptr;
 static bool display_rotated_180 = false;
 static uint8_t display_rotation_mode = kDisplayRotationNormal;
+static lv_obj_t *mains_wake_btn = nullptr;
+static lv_obj_t *mains_wake_label = nullptr;
+static lv_obj_t *battery_wake_btn = nullptr;
+static lv_obj_t *battery_wake_label = nullptr;
+static uint8_t wake_mode_mains = kWakeModeImu;
+static uint8_t wake_mode_battery = kWakeModeImu;
 static hotspot_callback_t g_hotspot_callback = nullptr;
 
 // WiFi Status Labels
@@ -121,6 +127,12 @@ static void update_display_rotate_label() {
   lv_label_set_text(display_rotate_label, text);
 }
 
+static void update_wake_label(lv_obj_t *label, uint8_t mode) {
+  if (!label) return;
+  const char* text = (mode == kWakeModeTouch) ? "Touch" : "IMU";
+  lv_label_set_text(label, text);
+}
+
 void settings_sync_display_rotation(bool rotated) {
   display_rotated_180 = rotated;
   display_rotation_mode = rotated ? kDisplayRotationFlipped : kDisplayRotationNormal;
@@ -154,7 +166,9 @@ static void on_display_rotate_clicked(lv_event_t *e) {
       cfg.auto_sleep_battery_enabled,
       cfg.auto_sleep_battery_seconds,
       display_rotation_mode,
-      display_rotated_180);
+      display_rotated_180,
+      wake_mode_mains,
+      wake_mode_battery);
   mqttPublishDeviceSettings();
   update_display_rotate_label();
   lv_obj_invalidate(lv_scr_act());
@@ -162,6 +176,42 @@ static void on_display_rotate_clicked(lv_event_t *e) {
   if (disp) {
     lv_refr_now(disp);
   }
+}
+
+static void on_mains_wake_clicked(lv_event_t *e) {
+  (void)e;
+  wake_mode_mains = (wake_mode_mains == kWakeModeTouch) ? kWakeModeImu : kWakeModeTouch;
+  update_wake_label(mains_wake_label, wake_mode_mains);
+  const DeviceConfig& cfg = configManager.getConfig();
+  configManager.saveDisplaySettings(
+      cfg.display_brightness,
+      cfg.auto_sleep_enabled,
+      cfg.auto_sleep_seconds,
+      cfg.auto_sleep_battery_enabled,
+      cfg.auto_sleep_battery_seconds,
+      display_rotation_mode,
+      display_rotated_180,
+      wake_mode_mains,
+      wake_mode_battery);
+  mqttPublishDeviceSettings();
+}
+
+static void on_battery_wake_clicked(lv_event_t *e) {
+  (void)e;
+  wake_mode_battery = (wake_mode_battery == kWakeModeTouch) ? kWakeModeImu : kWakeModeTouch;
+  update_wake_label(battery_wake_label, wake_mode_battery);
+  const DeviceConfig& cfg = configManager.getConfig();
+  configManager.saveDisplaySettings(
+      cfg.display_brightness,
+      cfg.auto_sleep_enabled,
+      cfg.auto_sleep_seconds,
+      cfg.auto_sleep_battery_enabled,
+      cfg.auto_sleep_battery_seconds,
+      display_rotation_mode,
+      display_rotated_180,
+      wake_mode_mains,
+      wake_mode_battery);
+  mqttPublishDeviceSettings();
 }
 
 static void on_brightness(lv_event_t *e) {
@@ -187,7 +237,9 @@ static void on_brightness(lv_event_t *e) {
         cfg.auto_sleep_battery_enabled,
         cfg.auto_sleep_battery_seconds,
         display_rotation_mode,
-        display_rotated_180);
+        display_rotated_180,
+        wake_mode_mains,
+        wake_mode_battery);
     mqttPublishDeviceSettings();
   }
 }
@@ -276,7 +328,9 @@ static void on_sleep_slider(lv_event_t *e) {
         cfg.auto_sleep_battery_enabled,
         cfg.auto_sleep_battery_seconds,
         display_rotation_mode,
-        display_rotated_180);
+        display_rotated_180,
+        wake_mode_mains,
+        wake_mode_battery);
     mqttPublishDeviceSettings();
   }
 }
@@ -301,7 +355,9 @@ static void on_sleep_battery_slider(lv_event_t *e) {
         enabled,
         seconds,
         display_rotation_mode,
-        display_rotated_180);
+        display_rotated_180,
+        wake_mode_mains,
+        wake_mode_battery);
     mqttPublishDeviceSettings();
   }
 }
@@ -494,6 +550,8 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   const DeviceConfig& cfg = configManager.getConfig();
   display_rotated_180 = cfg.display_rotated_180;
   display_rotation_mode = cfg.display_rotation_mode;
+  wake_mode_mains = cfg.wake_mode_mains;
+  wake_mode_battery = cfg.wake_mode_battery;
 
   // Display tile
   create_settings_back_button(tab);
@@ -656,6 +714,21 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
       card_mains, kSettingsColMidPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
   lv_obj_set_style_pad_left(mains_col_mid, 16, 0);
   lv_obj_set_style_pad_right(mains_col_mid, 8, 0);
+  mains_wake_btn = lv_button_create(mains_col_mid);
+  lv_obj_set_width(mains_wake_btn, LV_PCT(kSettingsButtonWidthPct));
+  lv_obj_set_height(mains_wake_btn, kSettingsBtnHeight);
+  lv_obj_set_style_bg_color(mains_wake_btn, lv_color_hex(0x3B82F6), 0);
+  lv_obj_set_style_border_opa(mains_wake_btn, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_outline_opa(mains_wake_btn, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_shadow_opa(mains_wake_btn, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_radius(mains_wake_btn, 18, 0);
+  lv_obj_add_event_cb(mains_wake_btn, on_mains_wake_clicked, LV_EVENT_CLICKED, nullptr);
+
+  mains_wake_label = lv_label_create(mains_wake_btn);
+  lv_obj_set_style_text_font(mains_wake_label, &ui_font_24, 0);
+  lv_obj_set_style_text_color(mains_wake_label, lv_color_white(), 0);
+  lv_obj_center(mains_wake_label);
+  update_wake_label(mains_wake_label, wake_mode_mains);
 
   lv_obj_t *mains_col_right = create_settings_column(
       card_mains, kSettingsColRightPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
@@ -700,6 +773,21 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
       card_battery, kSettingsColMidPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
   lv_obj_set_style_pad_left(battery_col_mid, 16, 0);
   lv_obj_set_style_pad_right(battery_col_mid, 8, 0);
+  battery_wake_btn = lv_button_create(battery_col_mid);
+  lv_obj_set_width(battery_wake_btn, LV_PCT(kSettingsButtonWidthPct));
+  lv_obj_set_height(battery_wake_btn, kSettingsBtnHeight);
+  lv_obj_set_style_bg_color(battery_wake_btn, lv_color_hex(0x3B82F6), 0);
+  lv_obj_set_style_border_opa(battery_wake_btn, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_outline_opa(battery_wake_btn, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_shadow_opa(battery_wake_btn, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_radius(battery_wake_btn, 18, 0);
+  lv_obj_add_event_cb(battery_wake_btn, on_battery_wake_clicked, LV_EVENT_CLICKED, nullptr);
+
+  battery_wake_label = lv_label_create(battery_wake_btn);
+  lv_obj_set_style_text_font(battery_wake_label, &ui_font_24, 0);
+  lv_obj_set_style_text_color(battery_wake_label, lv_color_white(), 0);
+  lv_obj_center(battery_wake_label);
+  update_wake_label(battery_wake_label, wake_mode_battery);
   power_status_label = lv_label_create(battery_col_mid);
   lv_label_set_text(power_status_label, "Status: ---");
   lv_obj_set_width(power_status_label, LV_PCT(100));
@@ -713,6 +801,8 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   lv_label_set_long_mode(power_level_label, LV_LABEL_LONG_CLIP);
   lv_obj_set_style_text_font(power_level_label, &ui_font_20, 0);
   lv_obj_set_style_text_color(power_level_label, lv_color_white(), 0);
+  lv_obj_add_flag(power_status_label, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(power_level_label, LV_OBJ_FLAG_HIDDEN);
 
   lv_obj_t *battery_col_right = create_settings_column(
       card_battery, kSettingsColRightPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);

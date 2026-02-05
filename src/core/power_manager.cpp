@@ -65,6 +65,22 @@ bool PowerManager::ensureImuReady() {
   return imu_ready;
 }
 
+bool PowerManager::detectAutoRotation(bool* rotated_out) {
+  if (!rotated_out) return false;
+  if (!ensureImuReady()) return false;
+  auto mask = M5.Imu.update();
+  if (!(mask & m5::IMU_Class::sensor_mask_accel)) return false;
+  float ax = 0.0f, ay = 0.0f, az = 0.0f;
+  if (!M5.Imu.getAccel(&ax, &ay, &az)) return false;
+  float abs_x = std::fabs(ax);
+  float abs_y = std::fabs(ay);
+  float abs_axis = (abs_x >= abs_y) ? abs_x : abs_y;
+  if (abs_axis < kImuAutoRotateAxisMin) return false;
+  float axis = (abs_x >= abs_y) ? ax : ay;
+  *rotated_out = (axis > 0.0f);
+  return true;
+}
+
 void PowerManager::serviceImuWake() {
   if (!ensureImuReady()) return;
   uint32_t now = millis();
@@ -282,9 +298,23 @@ bool PowerManager::isPoweredByMains() const {
   return (M5.Power.getBatteryCurrent() <= 50);
 }
 
+bool PowerManager::isTouchWakeEnabled() const {
+  const DeviceConfig& cfg = configManager.getConfig();
+  uint8_t mode = isPoweredByMains() ? cfg.wake_mode_mains : cfg.wake_mode_battery;
+  return mode == kWakeModeTouch;
+}
+
+bool PowerManager::isImuWakeEnabled() const {
+  const DeviceConfig& cfg = configManager.getConfig();
+  uint8_t mode = isPoweredByMains() ? cfg.wake_mode_mains : cfg.wake_mode_battery;
+  return mode == kWakeModeImu;
+}
+
 void PowerManager::update(uint32_t last_activity_time) {
   if (is_display_sleeping) {
-    serviceImuWake();
+    if (isImuWakeEnabled()) {
+      serviceImuWake();
+    }
     return;
   }
   uint32_t now = millis();
@@ -345,7 +375,7 @@ void PowerManager::enterDisplaySleep() {
     imuSetAccelOnly(true);
   }
   M5.Display.sleep();
-  displayManager.setInputEnabled(false);
+  displayManager.setInputEnabled(isTouchWakeEnabled());
   applyCpuFrequency(CPU_FREQ_SLEEP);
 
 #if LV_VERSION_MAJOR >= 9

@@ -225,8 +225,10 @@ void IRAM_ATTR DisplayManager::flush_cb(lv_display_t *lv_disp, const lv_area_t *
 void IRAM_ATTR DisplayManager::touch_cb(lv_indev_t* indev_drv, lv_indev_data_t *data) {
   // Wenn im Display-Sleep, erstmal aufwecken
   if (powerManager.isInSleep()) {
-    powerManager.wakeFromDisplaySleep();
-    g_ignore_touch_until_release = true;  // Erst loslassen, dann wieder reagieren
+    if (powerManager.isTouchWakeEnabled()) {
+      powerManager.wakeFromDisplaySleep();
+      g_ignore_touch_until_release = true;  // Erst loslassen, dann wieder reagieren
+    }
     data->state = LV_INDEV_STATE_RELEASED;
     return;
   }
