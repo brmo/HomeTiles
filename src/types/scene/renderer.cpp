@@ -16,6 +16,15 @@ struct IconDecodeCtx {
   uint16_t h;
 };
 
+static bool endsWithIgnoreCase(const String& value, const char* suffix) {
+  if (!suffix) return false;
+  String v = value;
+  v.toLowerCase();
+  String s = suffix;
+  s.toLowerCase();
+  return v.endsWith(s);
+}
+
 static size_t icon_jpeg_input(JDEC* jd, uint8_t* buff, size_t ndata) {
   IconDecodeCtx* ctx = static_cast<IconDecodeCtx*>(jd->device);
   if (!ctx || !ctx->file) return 0;
@@ -147,24 +156,111 @@ lv_obj_t* render_scene_tile(lv_obj_t* parent, int col, int row, const Tile& tile
   uint32_t pressed_color = btn_color + 0x101010;
   lv_obj_set_style_bg_color(btn, lv_color_hex(pressed_color), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+  lv_obj_set_style_opa(btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_set_style_shadow_width(btn, 0, 0);
+  lv_obj_set_style_transform_width(btn, 0, LV_STATE_PRESSED);
+  lv_obj_set_style_transform_height(btn, 0, LV_STATE_PRESSED);
   lv_obj_remove_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
 
   set_tile_grid_cell(btn, col, row, tile.span_w, tile.span_h);
 
-  // --- Try JPEG icon from image_path ---
+  String title_trim = tile.title;
+  title_trim.trim();
+  const bool has_title = title_trim.length() > 0;
+
+  // --- Try icon/image from image_path ---
   lv_obj_t* icon_img = nullptr;
-  if (tile.image_path.length() > 0) {
-    Serial.printf("[Scene] ICON '%s' path='%s'\n", tile.title.c_str(), tile.image_path.c_str());
-    lv_image_dsc_t* dsc = decode_jpeg_icon(tile.image_path);
-    if (!dsc) Serial.println("[Scene] ICON DECODE FAIL");
-    if (dsc) {
-      icon_img = lv_img_create(btn);
-      lv_image_set_src(icon_img, dsc);
-      lv_obj_set_style_radius(icon_img, 8, 0);
+  bool icon_full_bleed = false;
+  String image_path = tile.image_path;
+  image_path.trim();
+  if (image_path.length() > 0 &&
+      !image_path.startsWith("/") &&
+      !image_path.startsWith("http://") &&
+      !image_path.startsWith("https://")) {
+    image_path = "/" + image_path;
+  }
+  if (image_path.length() > 0) {
+    Serial.printf("[Scene] ICON '%s' path='%s'\n", tile.title.c_str(), image_path.c_str());
+    const bool is_png = endsWithIgnoreCase(image_path, ".png");
+
+    if (!has_title) {
+      icon_full_bleed = true;
+      lv_obj_set_style_pad_all(btn, 0, LV_PART_MAIN);
+      lv_obj_set_style_pad_all(btn, 0, LV_PART_MAIN | LV_STATE_PRESSED);
+      lv_obj_set_style_clip_corner(btn, false, 0);
+      lv_obj_set_style_clip_corner(btn, false, LV_STATE_PRESSED);
+      lv_obj_update_layout(btn);
+
+      // Full-size center crop with rounded corners (cover)
+      icon_img = lv_obj_create(btn);
+      lv_obj_set_size(icon_img, LV_PCT(100), LV_PCT(100));
+      lv_obj_align(icon_img, LV_ALIGN_TOP_LEFT, 0, 0);
+      lv_obj_set_style_bg_opa(icon_img, LV_OPA_TRANSP, 0);
+      lv_obj_set_style_border_width(icon_img, 0, 0);
+      lv_obj_set_style_pad_all(icon_img, 0, 0);
+      lv_obj_set_style_radius(icon_img, 22, 0);
       lv_obj_set_style_clip_corner(icon_img, true, 0);
-      // Free dsc+data when button is deleted
-      lv_obj_add_event_cb(btn, icon_dsc_delete_cb, LV_EVENT_DELETE, dsc);
+      lv_obj_clear_flag(icon_img, LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_clear_flag(icon_img, LV_OBJ_FLAG_CLICKABLE);
+      lv_obj_add_flag(icon_img, LV_OBJ_FLAG_EVENT_BUBBLE);
+      lv_obj_add_flag(icon_img, LV_OBJ_FLAG_IGNORE_LAYOUT);
+
+      lv_obj_t* img = lv_img_create(icon_img);
+      String src = "S:" + image_path;
+      lv_image_set_src(img, src.c_str());
+      lv_coord_t btn_w = lv_obj_get_width(btn);
+      lv_coord_t btn_h = lv_obj_get_height(btn);
+      const lv_coord_t bleed = 2;
+      if (btn_w > 0 && btn_h > 0) {
+        lv_obj_set_size(img, btn_w + bleed * 2, btn_h + bleed * 2);
+        lv_obj_set_pos(img, -bleed, -bleed);
+      } else {
+        lv_obj_set_size(img, LV_PCT(100), LV_PCT(100));
+        lv_obj_align(img, LV_ALIGN_TOP_LEFT, 0, 0);
+      }
+      lv_image_set_inner_align(img, LV_IMAGE_ALIGN_COVER);
+      lv_obj_clear_flag(img, LV_OBJ_FLAG_CLICKABLE);
+      lv_obj_add_flag(img, LV_OBJ_FLAG_EVENT_BUBBLE);
+      lv_obj_add_flag(img, LV_OBJ_FLAG_IGNORE_LAYOUT);
+    } else {
+      // Icon mode (64x64 for JPEG)
+      lv_image_dsc_t* dsc = nullptr;
+      if (!is_png) {
+        dsc = decode_jpeg_icon(image_path);
+        if (!dsc) Serial.println("[Scene] ICON DECODE FAIL");
+      }
+      if (is_png || dsc) {
+        icon_img = lv_obj_create(btn);
+        const lv_coord_t icon_box = 64;
+        lv_obj_set_size(icon_img, icon_box, icon_box);
+        lv_obj_set_style_bg_opa(icon_img, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(icon_img, 0, 0);
+        lv_obj_set_style_pad_all(icon_img, 0, 0);
+        lv_obj_set_style_radius(icon_img, 8, 0);
+        lv_obj_set_style_clip_corner(icon_img, true, 0);
+        lv_obj_clear_flag(icon_img, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(icon_img, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_flag(icon_img, LV_OBJ_FLAG_EVENT_BUBBLE);
+        lv_obj_add_flag(icon_img, LV_OBJ_FLAG_IGNORE_LAYOUT);
+
+        lv_obj_t* img = lv_img_create(icon_img);
+        if (is_png) {
+          String src = "S:" + image_path;
+          lv_image_set_src(img, src.c_str());
+        } else {
+          lv_image_set_src(img, dsc);
+        }
+        lv_obj_set_size(img, icon_box, icon_box);
+        lv_image_set_inner_align(img, LV_IMAGE_ALIGN_CONTAIN);
+        lv_obj_align(img, LV_ALIGN_CENTER, 0, 0);
+        lv_obj_clear_flag(img, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_flag(img, LV_OBJ_FLAG_EVENT_BUBBLE);
+        lv_obj_add_flag(img, LV_OBJ_FLAG_IGNORE_LAYOUT);
+
+        if (dsc) {
+          lv_obj_add_event_cb(btn, icon_dsc_delete_cb, LV_EVENT_DELETE, dsc);
+        }
+      }
     }
   }
 
@@ -194,14 +290,15 @@ lv_obj_t* render_scene_tile(lv_obj_t* parent, int col, int row, const Tile& tile
   }
 
   bool has_icon = (icon_img != nullptr) || (icon_lbl != nullptr);
-  bool has_title = tile.title.length() > 0;
 
   // Position icon
   if (icon_img) {
-    if (has_title) {
-      lv_obj_align(icon_img, LV_ALIGN_CENTER, 0, -20);
-    } else {
-      lv_obj_center(icon_img);
+    if (!icon_full_bleed) {
+      if (has_title) {
+        lv_obj_align(icon_img, LV_ALIGN_CENTER, 0, -20);
+      } else {
+        lv_obj_center(icon_img);
+      }
     }
   } else if (icon_lbl) {
     if (has_title) {

@@ -13,6 +13,9 @@
 #include <algorithm>
 #include <vector>
 #include <SD.h>
+#include <libs/tjpgd/tjpgd.h>
+#include <stdlib.h>
+#include <string.h>
 
 namespace {
 
@@ -31,7 +34,7 @@ String joinPath(const String& dir, const String& name) {
   return dir + "/" + name;
 }
 
-void collectImageFiles(const String& dir, std::vector<String>& out, size_t max_entries, uint8_t depth, bool allow_bin, bool allow_jpeg) {
+void collectImageFiles(const String& dir, std::vector<String>& out, size_t max_entries, uint8_t depth, bool allow_bin, bool allow_jpeg, bool allow_png) {
   if (out.size() >= max_entries) return;
   File root = SD.open(dir);
   if (!root) return;
@@ -43,12 +46,13 @@ void collectImageFiles(const String& dir, std::vector<String>& out, size_t max_e
     String name = name_c ? String(name_c) : String();
     if (file.isDirectory()) {
       if (depth > 0 && name.length()) {
-        collectImageFiles(joinPath(dir, name), out, max_entries, depth - 1, allow_bin, allow_jpeg);
+        collectImageFiles(joinPath(dir, name), out, max_entries, depth - 1, allow_bin, allow_jpeg, allow_png);
       }
     } else if (name.length()) {
       const bool is_bin = endsWithIgnoreCase(name, ".bin");
       const bool is_jpeg = endsWithIgnoreCase(name, ".jpg") || endsWithIgnoreCase(name, ".jpeg");
-      if ((allow_bin && is_bin) || (allow_jpeg && is_jpeg)) {
+      const bool is_png = endsWithIgnoreCase(name, ".png");
+      if ((allow_bin && is_bin) || (allow_jpeg && is_jpeg) || (allow_png && is_png)) {
         out.push_back(joinPath(dir, name));
       }
     }
@@ -106,6 +110,67 @@ void appendKeyValueMapJson(String& out, const String& map) {
   }
 
   out += "}";
+}
+
+struct IconFileInfo {
+  String path;
+  uint32_t size = 0;
+  uint16_t width = 0;
+  uint16_t height = 0;
+};
+
+struct JpegInfoCtx {
+  File* file = nullptr;
+};
+
+static size_t jpeg_info_input(JDEC* jd, uint8_t* buff, size_t ndata) {
+  JpegInfoCtx* ctx = static_cast<JpegInfoCtx*>(jd->device);
+  if (!ctx || !ctx->file) return 0;
+  if (buff) return ctx->file->read(buff, ndata);
+  ctx->file->seek(ctx->file->position() + ndata);
+  return ndata;
+}
+
+static bool read_jpeg_dimensions(const String& path, uint16_t& w, uint16_t& h) {
+  w = 0;
+  h = 0;
+  File f = SD.open(path, FILE_READ);
+  if (!f) return false;
+  uint8_t* work = static_cast<uint8_t*>(malloc(4096));
+  if (!work) {
+    f.close();
+    return false;
+  }
+  JDEC jd;
+  JpegInfoCtx ctx{};
+  ctx.file = &f;
+  JRESULT rc = jd_prepare(&jd, jpeg_info_input, work, 4096, &ctx);
+  if (rc == JDR_OK) {
+    w = jd.width;
+    h = jd.height;
+  }
+  free(work);
+  f.close();
+  return rc == JDR_OK;
+}
+
+static bool read_png_dimensions(const String& path, uint16_t& w, uint16_t& h) {
+  w = 0;
+  h = 0;
+  File f = SD.open(path, FILE_READ);
+  if (!f) return false;
+  uint8_t buf[24] = {0};
+  if (f.read(buf, sizeof(buf)) != sizeof(buf)) {
+    f.close();
+    return false;
+  }
+  f.close();
+  const uint8_t sig[8] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+  if (memcmp(buf, sig, sizeof(sig)) != 0) return false;
+  if (memcmp(buf + 12, "IHDR", 4) != 0) return false;
+  w = static_cast<uint16_t>((buf[16] << 24) | (buf[17] << 16) | (buf[18] << 8) | buf[19]);
+  h = static_cast<uint16_t>((buf[20] << 24) | (buf[21] << 16) | (buf[22] << 8) | buf[23]);
+  return (w > 0 && h > 0);
 }
 
 struct TileRect {
@@ -820,7 +885,7 @@ void WebAdminServer::handleGetSensorValues() {
 
 void WebAdminServer::handleGetSdImages() {
   std::vector<String> files;
-  collectImageFiles("/", files, 200, 3, true, true);
+  collectImageFiles("/", files, 200, 3, true, true, false);
 
   String json = "[";
   for (size_t i = 0; i < files.size(); ++i) {
@@ -835,15 +900,37 @@ void WebAdminServer::handleGetSdImages() {
 
 void WebAdminServer::handleGetSdIcons() {
   if (!SD.exists("/icons")) SD.mkdir("/icons");
-  std::vector<String> files;
-  collectImageFiles("/icons", files, 100, 1, false, true);
+  std::vector<IconFileInfo> files;
+  std::vector<String> paths;
+  collectImageFiles("/icons", paths, 100, 1, false, true, true);
+  for (const auto& path : paths) {
+    IconFileInfo info;
+    info.path = path;
+    File f = SD.open(path, FILE_READ);
+    if (f) {
+      info.size = static_cast<uint32_t>(f.size());
+      f.close();
+    }
+    if (endsWithIgnoreCase(path, ".png")) {
+      read_png_dimensions(path, info.width, info.height);
+    } else {
+      read_jpeg_dimensions(path, info.width, info.height);
+    }
+    files.push_back(info);
+  }
 
   String json = "[";
   for (size_t i = 0; i < files.size(); ++i) {
     if (i > 0) json += ",";
-    json += "\"";
-    appendJsonEscaped(json, files[i]);
-    json += "\"";
+    json += "{\"path\":\"";
+    appendJsonEscaped(json, files[i].path);
+    json += "\",\"size\":";
+    json += String(files[i].size);
+    json += ",\"w\":";
+    json += String(files[i].width);
+    json += ",\"h\":";
+    json += String(files[i].height);
+    json += "}";
   }
   json += "]";
   server.send(200, "application/json", json);

@@ -21,6 +21,33 @@ void append_scene_scripts(String& html) {
   let sceneIconListLoaded = false;
   let sceneIconList = [];
 
+  function normalizeSceneIconEntries(list) {
+    if (!Array.isArray(list)) return [];
+    return list.map(entry => {
+      if (typeof entry === 'string') return { path: entry };
+      return entry || {};
+    }).filter(entry => entry.path && String(entry.path).length);
+  }
+
+  function formatBytes(bytes) {
+    const b = Number(bytes || 0);
+    if (!b) return '';
+    if (b < 1024) return b + ' B';
+    const kb = b / 1024;
+    if (kb < 1024) return kb.toFixed(1) + ' KB';
+    const mb = kb / 1024;
+    return mb.toFixed(1) + ' MB';
+  }
+
+  function formatSceneIconLabel(entry) {
+    const parts = [];
+    if (entry.w && entry.h) parts.push(entry.w + 'x' + entry.h);
+    const sizeText = formatBytes(entry.size);
+    if (sizeText) parts.push(sizeText);
+    if (!parts.length) return entry.path;
+    return entry.path + ' (' + parts.join(', ') + ')';
+  }
+
   function refreshSceneIconSelect(tab, force) {
     if (!force && sceneIconListLoaded) {
       populateSceneIconSelect(tab, sceneIconList);
@@ -41,14 +68,15 @@ void append_scene_scripts(String& html) {
     if (!sel) return;
     const hidden = document.getElementById(tab + '_scene_image_path');
     const savedPath = hidden ? hidden.value : '';
+    const entries = normalizeSceneIconEntries(list);
     sel.innerHTML = '<option value="">Kein Bild</option>';
-    (list || []).forEach(p => {
+    entries.forEach(entry => {
       const opt = document.createElement('option');
-      opt.value = p;
-      opt.textContent = p;
+      opt.value = entry.path;
+      opt.textContent = formatSceneIconLabel(entry);
       sel.appendChild(opt);
     });
-    if (savedPath && list.includes(savedPath)) {
+    if (savedPath && entries.some(entry => entry.path === savedPath)) {
       sel.value = savedPath;
     }
   }
