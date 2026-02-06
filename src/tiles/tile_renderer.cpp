@@ -1160,7 +1160,7 @@ static void update_weather_tile_state(GridType grid_type, uint8_t grid_index, co
   }
 
   if (widgets.condition_sep_label) {
-    if (show_condition) {
+    if (show_condition && has_temp) {
       lv_label_set_text(widgets.condition_sep_label, "|");
       lv_obj_clear_flag(widgets.condition_sep_label, LV_OBJ_FLAG_HIDDEN);
     } else {
@@ -1236,13 +1236,10 @@ static void update_weather_tile_state(GridType grid_type, uint8_t grid_index, co
 
           WeatherForecastWidgets& fw = widgets.forecast[forecast_count];
           if (fw.day_label) {
-            if (f_day.length()) {
-              lv_label_set_text(fw.day_label, f_day.c_str());
-              lv_obj_clear_flag(fw.day_label, LV_OBJ_FLAG_HIDDEN);
-            } else {
-              lv_label_set_text(fw.day_label, "--");
-              lv_obj_clear_flag(fw.day_label, LV_OBJ_FLAG_HIDDEN);
-            }
+            String day_text = f_day.length() ? f_day : "--";
+            if (f_icon.length()) day_text += " |";
+            lv_label_set_text(fw.day_label, day_text.c_str());
+            lv_obj_clear_flag(fw.day_label, LV_OBJ_FLAG_HIDDEN);
           }
           if (fw.icon_label) {
             if (f_icon.length()) {
@@ -1279,12 +1276,15 @@ static void update_weather_tile_state(GridType grid_type, uint8_t grid_index, co
         lv_label_set_text(fw.day_label, "--");
         lv_obj_clear_flag(fw.day_label, LV_OBJ_FLAG_HIDDEN);
       }
+      if (fw.sep_label) {
+        lv_obj_add_flag(fw.sep_label, LV_OBJ_FLAG_HIDDEN);
+      }
       if (fw.icon_label) {
         lv_label_set_text(fw.icon_label, "");
         lv_obj_add_flag(fw.icon_label, LV_OBJ_FLAG_HIDDEN);
       }
       if (fw.temp_label) {
-        lv_label_set_text(fw.temp_label, "--");
+        lv_label_set_text(fw.temp_label, "--\n--");
         lv_obj_clear_flag(fw.temp_label, LV_OBJ_FLAG_HIDDEN);
       }
     }
@@ -1295,12 +1295,15 @@ static void update_weather_tile_state(GridType grid_type, uint8_t grid_index, co
         lv_label_set_text(fw.day_label, "--");
         lv_obj_clear_flag(fw.day_label, LV_OBJ_FLAG_HIDDEN);
       }
+      if (fw.sep_label) {
+        lv_obj_add_flag(fw.sep_label, LV_OBJ_FLAG_HIDDEN);
+      }
       if (fw.icon_label) {
         lv_label_set_text(fw.icon_label, "");
         lv_obj_add_flag(fw.icon_label, LV_OBJ_FLAG_HIDDEN);
       }
       if (fw.temp_label) {
-        lv_label_set_text(fw.temp_label, "--");
+        lv_label_set_text(fw.temp_label, "--\n--");
         lv_obj_clear_flag(fw.temp_label, LV_OBJ_FLAG_HIDDEN);
       }
     }

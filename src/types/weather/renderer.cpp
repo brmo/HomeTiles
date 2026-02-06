@@ -9,6 +9,7 @@
 struct WeatherEventData {
   String entity_id;
   String title;
+  lv_obj_t* location_label = nullptr;
   uint32_t bg_color = 0;
 };
 
@@ -134,7 +135,7 @@ lv_obj_t* render_weather_tile(lv_obj_t* parent, int col, int row, const Tile& ti
     enable_bubble(condition_label);
 
     sep_label = lv_label_create(value_row);
-    set_label_style(sep_label, lv_color_hex(0xB0B0B0), condition_font);
+    set_label_style(sep_label, lv_color_hex(0xB0B0B0), FONT_VALUE);
     lv_label_set_text(sep_label, "|");
     lv_obj_add_flag(sep_label, LV_OBJ_FLAG_HIDDEN);
     enable_bubble(sep_label);
@@ -189,19 +190,20 @@ lv_obj_t* render_weather_tile(lv_obj_t* parent, int col, int row, const Tile& ti
         lv_obj_remove_flag(col, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_pos(col, i * (GRID_CELL_W + GRID_GAP), 0);
 
+        // Header: day left, icon right — gleichmäßig nach innen gerückt
         lv_obj_t* day = lv_label_create(col);
         set_label_style(day, lv_color_white(), FONT_TITLE);
         lv_label_set_long_mode(day, LV_LABEL_LONG_DOT);
         lv_obj_set_width(day, LV_PCT(70));
         lv_label_set_text(day, "--");
-        lv_obj_align(day, LV_ALIGN_TOP_LEFT, 12, 4);
+        lv_obj_align(day, LV_ALIGN_TOP_LEFT, 24, 4);
         enable_bubble(day);
 
         lv_obj_t* icon = lv_label_create(col);
         set_label_style(icon, lv_color_white(), FONT_MDI_ICONS);
         lv_label_set_text(icon, "");
         lv_obj_add_flag(icon, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_align(icon, LV_ALIGN_TOP_RIGHT, -12, -8);
+        lv_obj_align(icon, LV_ALIGN_TOP_RIGHT, -24, -8);
         enable_bubble(icon);
 
         lv_obj_t* temp = lv_label_create(col);
@@ -210,7 +212,8 @@ lv_obj_t* render_weather_tile(lv_obj_t* parent, int col, int row, const Tile& ti
         lv_obj_set_width(temp, LV_PCT(100));
         lv_obj_set_style_text_align(temp, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_text_line_space(temp, 8, 0);
-        lv_label_set_text(temp, "--");
+        lv_label_set_text(temp, "--\n--");
+        // Position like sensor value: center with +28 offset.
         lv_obj_align(temp, LV_ALIGN_CENTER, 0, 28);
         enable_bubble(temp);
 
@@ -227,15 +230,25 @@ lv_obj_t* render_weather_tile(lv_obj_t* parent, int col, int row, const Tile& ti
     WeatherEventData* data = new WeatherEventData{
       tile.sensor_entity,
       location,
+      location_label,
       (tile.bg_color != 0) ? tile.bg_color : 0x2A2A2A
     };
 
     auto show_popup = [](lv_event_t* e) {
       WeatherEventData* data = static_cast<WeatherEventData*>(lv_event_get_user_data(e));
       if (!data || !data->entity_id.length()) return;
+      String title = data->title;
+      if (data->location_label) {
+        const char* label_text = lv_label_get_text(data->location_label);
+        if (label_text && *label_text) {
+          title = label_text;
+        }
+      }
+      title.trim();
+      if (title == "--") title = "";
       WeatherPopupInit init;
       init.entity_id = data->entity_id;
-      init.title = data->title;
+      init.title = title;
       init.bg_color = data->bg_color;
       show_weather_popup(init);
     };

@@ -317,7 +317,7 @@ static void clear_forecast(WeatherPopupContext* ctx) {
       lv_obj_add_flag(fw.icon_label, LV_OBJ_FLAG_HIDDEN);
     }
     if (fw.temp_label) {
-      lv_label_set_text(fw.temp_label, "--");
+      lv_label_set_text(fw.temp_label, "--\n--");
       lv_obj_clear_flag(fw.temp_label, LV_OBJ_FLAG_HIDDEN);
     }
   }
@@ -403,7 +403,7 @@ static void apply_weather_payload(WeatherPopupContext* ctx, const char* payload)
   if (ctx->location_label) {
     String name = ctx->title;
     name.trim();
-    if (!name.length()) {
+    if (!name.length() || name == "--") {
       String payload_name;
       if (extract_json_string_field(json, "name", payload_name)) {
         decode_basic_json_escapes(payload_name);
@@ -514,7 +514,7 @@ static void apply_weather_payload(WeatherPopupContext* ctx, const char* payload)
         lv_obj_add_flag(fw.icon_label, LV_OBJ_FLAG_HIDDEN);
       }
       if (fw.temp_label) {
-        lv_label_set_text(fw.temp_label, "--");
+        lv_label_set_text(fw.temp_label, "--\n--");
         lv_obj_clear_flag(fw.temp_label, LV_OBJ_FLAG_HIDDEN);
       }
     }
@@ -668,7 +668,7 @@ static void build_popup_ui(WeatherPopupContext* ctx, const WeatherPopupInit& ini
     lv_obj_set_width(temp, LV_PCT(100));
     lv_obj_set_style_text_align(temp, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_line_space(temp, 8, 0);
-    lv_label_set_text(temp, "--");
+    lv_label_set_text(temp, "--\n--");
     lv_obj_align(temp, LV_ALIGN_CENTER, 0, 28);
 
     ctx->forecast[i].day_label = day;
