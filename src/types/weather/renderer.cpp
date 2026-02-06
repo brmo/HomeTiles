@@ -197,20 +197,18 @@ lv_obj_t* render_weather_tile(lv_obj_t* parent, int col, int row, const Tile& ti
       (tile.bg_color != 0) ? tile.bg_color : 0x2A2A2A
     };
 
-    lv_obj_add_event_cb(
-        card,
-        [](lv_event_t* e) {
-          if (lv_event_get_code(e) != LV_EVENT_LONG_PRESSED) return;
-          WeatherEventData* data = static_cast<WeatherEventData*>(lv_event_get_user_data(e));
-          if (!data || !data->entity_id.length()) return;
-          WeatherPopupInit init;
-          init.entity_id = data->entity_id;
-          init.title = data->title;
-          init.bg_color = data->bg_color;
-          show_weather_popup(init);
-        },
-        LV_EVENT_LONG_PRESSED,
-        data);
+    auto show_popup = [](lv_event_t* e) {
+      WeatherEventData* data = static_cast<WeatherEventData*>(lv_event_get_user_data(e));
+      if (!data || !data->entity_id.length()) return;
+      WeatherPopupInit init;
+      init.entity_id = data->entity_id;
+      init.title = data->title;
+      init.bg_color = data->bg_color;
+      show_weather_popup(init);
+    };
+
+    lv_obj_add_event_cb(card, show_popup, LV_EVENT_CLICKED, data);
+    lv_obj_add_event_cb(card, show_popup, LV_EVENT_LONG_PRESSED, data);
 
     lv_obj_add_event_cb(
         card,
