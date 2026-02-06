@@ -134,7 +134,7 @@ lv_obj_t* render_weather_tile(lv_obj_t* parent, int col, int row, const Tile& ti
     enable_bubble(condition_label);
 
     sep_label = lv_label_create(value_row);
-    set_label_style(sep_label, lv_color_hex(0xB0B0B0), FONT_VALUE);
+    set_label_style(sep_label, lv_color_hex(0xB0B0B0), condition_font);
     lv_label_set_text(sep_label, "|");
     lv_obj_add_flag(sep_label, LV_OBJ_FLAG_HIDDEN);
     enable_bubble(sep_label);
@@ -189,32 +189,19 @@ lv_obj_t* render_weather_tile(lv_obj_t* parent, int col, int row, const Tile& ti
         lv_obj_remove_flag(col, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_pos(col, i * (GRID_CELL_W + GRID_GAP), 0);
 
-        lv_obj_t* header = lv_obj_create(col);
-        lv_obj_remove_style_all(header);
-        lv_obj_set_size(header, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-        lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
-        lv_obj_set_flex_align(header, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-        lv_obj_set_style_pad_gap(header, 6, 0);
-        lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, 0);
-        lv_obj_align(header, LV_ALIGN_TOP_LEFT, 8, 4);
-        enable_bubble(header);
-
-        lv_obj_t* day = lv_label_create(header);
+        lv_obj_t* day = lv_label_create(col);
         set_label_style(day, lv_color_white(), FONT_TITLE);
         lv_label_set_long_mode(day, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(day, LV_SIZE_CONTENT);
+        lv_obj_set_width(day, LV_PCT(70));
         lv_label_set_text(day, "--");
+        lv_obj_align(day, LV_ALIGN_TOP_LEFT, 12, 4);
         enable_bubble(day);
 
-        lv_obj_t* sep = lv_label_create(header);
-        set_label_style(sep, lv_color_hex(0xB0B0B0), FONT_TITLE);
-        lv_label_set_text(sep, "|");
-        enable_bubble(sep);
-
-        lv_obj_t* icon = lv_label_create(header);
+        lv_obj_t* icon = lv_label_create(col);
         set_label_style(icon, lv_color_white(), FONT_MDI_ICONS);
         lv_label_set_text(icon, "");
         lv_obj_add_flag(icon, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_align(icon, LV_ALIGN_TOP_RIGHT, -12, -8);
         enable_bubble(icon);
 
         lv_obj_t* temp = lv_label_create(col);
@@ -228,7 +215,6 @@ lv_obj_t* render_weather_tile(lv_obj_t* parent, int col, int row, const Tile& ti
         enable_bubble(temp);
 
         widgets.forecast[i].day_label = day;
-        widgets.forecast[i].sep_label = sep;
         widgets.forecast[i].icon_label = icon;
         widgets.forecast[i].temp_label = temp;
       }
