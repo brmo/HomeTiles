@@ -1244,6 +1244,13 @@ static void update_weather_tile_state(GridType grid_type, uint8_t grid_index, co
               lv_obj_clear_flag(fw.day_label, LV_OBJ_FLAG_HIDDEN);
             }
           }
+          if (fw.sep_label) {
+            if (f_icon.length()) {
+              lv_obj_clear_flag(fw.sep_label, LV_OBJ_FLAG_HIDDEN);
+            } else {
+              lv_obj_add_flag(fw.sep_label, LV_OBJ_FLAG_HIDDEN);
+            }
+          }
           if (fw.icon_label) {
             if (f_icon.length()) {
               String iconChar = getMdiChar(f_icon);
@@ -1279,6 +1286,9 @@ static void update_weather_tile_state(GridType grid_type, uint8_t grid_index, co
         lv_label_set_text(fw.day_label, "--");
         lv_obj_clear_flag(fw.day_label, LV_OBJ_FLAG_HIDDEN);
       }
+      if (fw.sep_label) {
+        lv_obj_add_flag(fw.sep_label, LV_OBJ_FLAG_HIDDEN);
+      }
       if (fw.icon_label) {
         lv_label_set_text(fw.icon_label, "");
         lv_obj_add_flag(fw.icon_label, LV_OBJ_FLAG_HIDDEN);
@@ -1294,6 +1304,9 @@ static void update_weather_tile_state(GridType grid_type, uint8_t grid_index, co
       if (fw.day_label) {
         lv_label_set_text(fw.day_label, "--");
         lv_obj_clear_flag(fw.day_label, LV_OBJ_FLAG_HIDDEN);
+      }
+      if (fw.sep_label) {
+        lv_obj_add_flag(fw.sep_label, LV_OBJ_FLAG_HIDDEN);
       }
       if (fw.icon_label) {
         lv_label_set_text(fw.icon_label, "");

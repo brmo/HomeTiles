@@ -31,6 +31,7 @@ struct SwitchTileWidgets {
 
 struct WeatherForecastWidgets {
   lv_obj_t* day_label = nullptr;
+  lv_obj_t* sep_label = nullptr;
   lv_obj_t* icon_label = nullptr;
   lv_obj_t* temp_label = nullptr;
 };
