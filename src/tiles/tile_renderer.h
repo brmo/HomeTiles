@@ -44,6 +44,7 @@ struct WeatherTileWidgets {
   lv_obj_t* condition_sep_label = nullptr;
   lv_obj_t* location_label = nullptr;
   WeatherForecastWidgets forecast[WEATHER_FORECAST_MAX];
+  uint32_t last_payload_hash = 0;
 };
 
 struct SwitchState {

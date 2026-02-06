@@ -184,6 +184,17 @@ static uint8_t get_sensor_decimals(GridType grid_type, uint8_t grid_index) {
   return grid.tiles[grid_index].sensor_decimals;
 }
 
+static uint32_t fnv1a_hash(const char* data) {
+  if (!data) return 0;
+  uint32_t hash = 2166136261u;
+  const unsigned char* ptr = reinterpret_cast<const unsigned char*>(data);
+  while (*ptr) {
+    hash ^= static_cast<uint32_t>(*ptr++);
+    hash *= 16777619u;
+  }
+  return hash;
+}
+
 static const lv_font_t* get_sensor_value_font(const Tile& tile) {
   switch (tile.sensor_value_font) {
     case 1:
@@ -1065,6 +1076,12 @@ static void update_weather_tile_state(GridType grid_type, uint8_t grid_index, co
     return;
   }
 
+  uint32_t payload_hash = fnv1a_hash(payload);
+  if (widgets.last_payload_hash == payload_hash) {
+    return;
+  }
+  widgets.last_payload_hash = payload_hash;
+
   String json = payload;
   json.trim();
   if (!json.length()) return;
@@ -1112,6 +1129,8 @@ static void update_weather_tile_state(GridType grid_type, uint8_t grid_index, co
   const Tile& tile = grid.tiles[grid_index];
   const bool has_condition_text = condition_text.length() && condition_text != "--";
   const bool show_condition = (tile.span_w > 1) && has_condition_text;
+  const uint8_t forecast_limit =
+      (tile.span_h >= 2) ? static_cast<uint8_t>(min<uint8_t>(tile.span_w, WEATHER_FORECAST_MAX)) : 0;
 
   if (widgets.temp_label) {
     String temp_text = has_temp ? format_weather_temp(temperature, unit) : String("--");
@@ -1174,11 +1193,11 @@ static void update_weather_tile_state(GridType grid_type, uint8_t grid_index, co
       has_forecast = true;
     }
   }
-  if (has_forecast) {
+  if (has_forecast && forecast_limit > 0) {
     bool in_string = false;
     int depth = 0;
     int start = -1;
-    for (int i = 0; i < forecast_raw.length() && forecast_count < WEATHER_FORECAST_MAX; ++i) {
+    for (int i = 0; i < forecast_raw.length() && forecast_count < forecast_limit; ++i) {
       char c = forecast_raw.charAt(i);
       if (c == '"' && (i == 0 || forecast_raw.charAt(i - 1) != '\\')) {
         in_string = !in_string;
@@ -1253,8 +1272,8 @@ static void update_weather_tile_state(GridType grid_type, uint8_t grid_index, co
     }
   }
 
-  if (has_forecast) {
-    for (uint8_t i = forecast_count; i < WEATHER_FORECAST_MAX; ++i) {
+  if (has_forecast && forecast_limit > 0) {
+    for (uint8_t i = forecast_count; i < forecast_limit; ++i) {
       WeatherForecastWidgets& fw = widgets.forecast[i];
       if (fw.day_label) {
         lv_label_set_text(fw.day_label, "--");
@@ -1269,8 +1288,8 @@ static void update_weather_tile_state(GridType grid_type, uint8_t grid_index, co
         lv_obj_clear_flag(fw.temp_label, LV_OBJ_FLAG_HIDDEN);
       }
     }
-  } else {
-    for (uint8_t i = 0; i < WEATHER_FORECAST_MAX; ++i) {
+  } else if (forecast_limit > 0) {
+    for (uint8_t i = 0; i < forecast_limit; ++i) {
       WeatherForecastWidgets& fw = widgets.forecast[i];
       if (fw.day_label) {
         lv_label_set_text(fw.day_label, "--");
