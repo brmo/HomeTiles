@@ -833,6 +833,54 @@ void WebAdminServer::handleGetSdImages() {
   server.send(200, "application/json", json);
 }
 
+void WebAdminServer::handleGetSdIcons() {
+  if (!SD.exists("/icons")) SD.mkdir("/icons");
+  std::vector<String> files;
+  collectImageFiles("/icons", files, 100, 1, false, true);
+
+  String json = "[";
+  for (size_t i = 0; i < files.size(); ++i) {
+    if (i > 0) json += ",";
+    json += "\"";
+    appendJsonEscaped(json, files[i]);
+    json += "\"";
+  }
+  json += "]";
+  server.send(200, "application/json", json);
+}
+
+void WebAdminServer::handleUploadIcon() {
+  HTTPUpload& upload = server.upload();
+  static File uploadFile;
+
+  if (upload.status == UPLOAD_FILE_START) {
+    if (!SD.exists("/icons")) SD.mkdir("/icons");
+    String filename = upload.filename;
+    if (filename.indexOf('/') < 0) filename = "/icons/" + filename;
+    if (SD.exists(filename)) SD.remove(filename);
+    uploadFile = SD.open(filename, FILE_WRITE);
+    if (!uploadFile) {
+      Serial.println("[Icons] Upload open failed");
+    }
+  } else if (upload.status == UPLOAD_FILE_WRITE) {
+    if (uploadFile) uploadFile.write(upload.buf, upload.currentSize);
+  } else if (upload.status == UPLOAD_FILE_END) {
+    if (uploadFile) {
+      uploadFile.close();
+      Serial.printf("[Icons] Uploaded %s (%u bytes)\n", upload.filename.c_str(), upload.totalSize);
+    }
+  }
+}
+
+void WebAdminServer::handleUploadIconDone() {
+  HTTPUpload& upload = server.upload();
+  String path = "/icons/" + upload.filename;
+  String json = "{\"ok\":true,\"path\":\"";
+  appendJsonEscaped(json, path);
+  json += "\"}";
+  server.send(200, "application/json", json);
+}
+
 // ========== Folder API ==========
 
 void WebAdminServer::handleGetFolders() {

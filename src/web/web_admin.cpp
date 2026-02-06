@@ -29,6 +29,10 @@ bool WebAdminServer::start() {
   server.on("/api/folders", HTTP_GET, [this]() { this->handleGetFolders(); });
   server.on("/api/sensor_values", HTTP_GET, [this]() { this->handleGetSensorValues(); });
   server.on("/api/sd_images", HTTP_GET, [this]() { this->handleGetSdImages(); });
+  server.on("/api/sd_icons", HTTP_GET, [this]() { this->handleGetSdIcons(); });
+  server.on("/api/upload_icon", HTTP_POST,
+    [this]() { this->handleUploadIconDone(); },
+    [this]() { this->handleUploadIcon(); });
 
   server.begin();
   running = true;

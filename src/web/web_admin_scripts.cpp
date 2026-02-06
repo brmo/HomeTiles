@@ -507,7 +507,8 @@ void appendAdminScripts(String& html) {
         '_sensor_decimals','_sensor_value_font','_sensor_display_mode','_sensor_gauge_min','_sensor_gauge_max',
         '_sensor_gauge_arc','_sensor_gauge_size','_sensor_gauge_y_offset','_sensor_value_y_offset','_sensor_graph_height',
         '_weather_entity',
-        '_scene_alias','_key_macro','_text_value','_text_value_font','_navigate_target','_switch_entity','_switch_style',
+        '_scene_alias','_scene_image_path','_scene_icon_image',
+        '_key_macro','_text_value','_text_value_font','_navigate_target','_switch_entity','_switch_style',
         '_image_path','_image_select','_image_slideshow_sec','_image_url','_image_preview',
         '_clock_show_time','_clock_show_date',
         '_counter_value'
@@ -1091,6 +1092,7 @@ void appendAdminScripts(String& html) {
       }
     } else if (safeType === 2) {
       fd.append('scene_alias', tile.scene_alias || '');
+      fd.append('image_path', tile.image_path || '');
     } else if (safeType === 3) {
       fd.append('key_macro', tile.key_macro || '');
     } else if (safeType === 4) {

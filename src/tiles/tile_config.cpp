@@ -257,6 +257,12 @@ static bool ensureTileGridDir() {
   return SD.mkdir(kTileGridDir);
 }
 
+static bool ensureIconDir() {
+  if (!sdReady()) return false;
+  if (SD.exists("/icons")) return true;
+  return SD.mkdir("/icons");
+}
+
 static String imagePathFile(uint16_t folder_id, size_t index) {
   char buf[64];
   snprintf(buf, sizeof(buf), "%s/f%u_%02u.url", kImagePathDir, static_cast<unsigned>(folder_id), static_cast<unsigned>(index));
@@ -439,10 +445,12 @@ static void applyImagePathsFromSd(uint16_t folder_id, TileGridConfig& grid) {
   const bool have_sd = sdReady();
   for (size_t i = 0; i < TILES_PER_GRID; ++i) {
     Tile& tile = grid.tiles[i];
-    if (tile.type != TILE_IMAGE) continue;
+    if (tile.type != TILE_IMAGE && tile.type != TILE_SCENE) continue;
     String sd_path;
     if (have_sd && readImagePathSd(folder_id, i, sd_path)) {
       tile.image_path = sd_path;
+      Serial.printf("[TileConfig] applyImagePaths folder=%u idx=%u type=%d -> '%s'\n",
+        folder_id, (unsigned)i, tile.type, sd_path.c_str());
       continue;
     }
     if (have_sd && tile.image_path.length() > 0) {
@@ -1422,7 +1430,7 @@ bool TileConfig::saveGrid(const char* prefix, const TileGridConfig& grid) {
     packed[q].quarter_index = static_cast<uint8_t>(q);
     for (size_t i = 0; i < TILES_PER_QUARTER; ++i) {
       size_t grid_idx = q * TILES_PER_QUARTER + i;
-      if (grid.tiles[grid_idx].type == TILE_IMAGE) {
+      if (grid.tiles[grid_idx].type == TILE_IMAGE || grid.tiles[grid_idx].type == TILE_SCENE) {
         if (!sdReady()) {
           Serial.println("[TileConfig] WARN: SD fehlt, image_path wird nicht gespeichert");
         } else if (!writeImagePathSd(prefix, grid_idx, grid.tiles[grid_idx].image_path)) {
@@ -1855,7 +1863,7 @@ bool TileConfig::saveGrid(uint16_t folder_id, const TileGridConfig& grid) {
     packed[q].quarter_index = static_cast<uint8_t>(q);
     for (size_t i = 0; i < TILES_PER_QUARTER; ++i) {
       size_t grid_idx = q * TILES_PER_QUARTER + i;
-      if (working.tiles[grid_idx].type == TILE_IMAGE) {
+      if (working.tiles[grid_idx].type == TILE_IMAGE || working.tiles[grid_idx].type == TILE_SCENE) {
         if (!sdReady()) {
           Serial.println("[TileConfig] WARN: SD fehlt, image_path wird nicht gespeichert");
         } else if (!writeImagePathSd(folder_id, grid_idx, working.tiles[grid_idx].image_path)) {

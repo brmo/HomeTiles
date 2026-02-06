@@ -45,6 +45,9 @@ public:
   void handleGetFolders();
   void handleGetSensorValues();
   void handleGetSdImages();
+  void handleGetSdIcons();
+  void handleUploadIcon();
+  void handleUploadIconDone();
 
   // HTML-Seiten (implemented in web_admin_html.cpp)
   String getAdminPage();
