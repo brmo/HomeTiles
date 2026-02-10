@@ -136,6 +136,7 @@ void Tab5NetworkManager::connectMqtt() {
   }
   mqttPublishDiscovery();
   mqttPublishDeviceSettings();
+  mqttPublishHomeSnapshot();
   publishBridgeConfig();
   publishBridgeRequest();
 }
@@ -167,6 +168,7 @@ void Tab5NetworkManager::publishTelemetry() {
     if (tele_topic && *tele_topic) {
       mqtt_client.publish(tele_topic, buf, true);
     }
+    mqttPublishHomeSnapshot();
   }
 }
 

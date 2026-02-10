@@ -53,6 +53,7 @@ static lv_obj_t *sleep_battery_label = nullptr;
 static lv_obj_t *power_status_label = nullptr;
 static lv_obj_t *power_level_label = nullptr;
 static lv_obj_t *battery_icon_label = nullptr;
+static lv_obj_t *battery_percent_label = nullptr;
 
 static const int kSettingsColLeftPct = 12;
 static const int kSettingsColMidPct = 26;
@@ -67,6 +68,12 @@ static const int kSettingsSliderHeight = 18;
 static const int kSettingsSliderKnobSize = 40;
 static const int kSettingsSliderClickPad = 22;
 static const uint8_t kSettingsCardColStart = 1;
+static const uint32_t kPowerStateDebounceMs = 2000;
+static const uint32_t kBatteryMissingDebounceMs = 3000;
+static const uint32_t kBatteryFreezeAfterPlugMs = 10000;
+static const uint32_t kBatteryDropStepMs = 120000;     // on battery: max -1% every 2min
+static const uint32_t kBatteryRiseOnBatteryStepMs = 300000; // on battery: max +1% every 5min
+static const uint32_t kBatteryRiseOnMainsStepMs = 20000;    // on mains while charging: max +1% every 20s
 
 // Forward declarations
 void settings_update_ap_mode(bool running);
@@ -182,6 +189,30 @@ static const char* battery_icon_name(bool charging, int percent) {
     case 2: return charging ? "battery-charging-20" : "battery-20";
     default: return charging ? "battery-charging-10" : "battery-10";
   }
+}
+
+static int32_t clamp_i32(int32_t v, int32_t lo, int32_t hi) {
+  if (v < lo) return lo;
+  if (v > hi) return hi;
+  return v;
+}
+
+static int32_t abs_i32(int32_t v) {
+  return (v < 0) ? -v : v;
+}
+
+static bool is_battery_missing_raw(bool on_mains, int32_t level_pct, int32_t voltage_mv, int32_t current_ma) {
+  // Tab5 can report undefined values when no NP-F battery is attached.
+  // Treat "plugged + ~0% + almost no battery current" as battery missing.
+  if (!on_mains) return false;
+  if (level_pct > 1) return false;
+  if (abs_i32(current_ma) > 120) return false;
+  (void)voltage_mv;
+  return true;
+}
+
+static bool detect_powered_by_mains() {
+  return (M5.Power.getBatteryCurrent() <= 50);
 }
 
 void settings_sync_display_rotation(bool rotated) {
@@ -417,38 +448,137 @@ static void on_sleep_battery_slider(lv_event_t *e) {
 void settings_update_power_status() {
   if (!power_status_label || !power_level_label) return;
 
-  int32_t batLevel = M5.Power.getBatteryLevel();
-  int32_t batCurrent = M5.Power.getBatteryCurrent();
-
   static char status_buf[40];
   static char level_buf[32];
 
+  static bool powerStateInitialized = false;
   static bool lastPoweredState = false;
-  static uint32_t lastStateChange = 0;
+  static bool powerStateCandidate = false;
+  static uint32_t powerStateCandidateSinceMs = 0;
+  static bool batteryMissingInitialized = false;
+  static bool batteryMissingStable = false;
+  static bool batteryMissingCandidate = false;
+  static uint32_t batteryMissingCandidateSinceMs = 0;
+  static bool displayPctInitialized = false;
+  static int32_t displayPct = 0;
+  static uint32_t lastPctAdjustMs = 0;
+  static uint32_t freezePctUntilMs = 0;
   uint32_t now = millis();
 
-  bool currentPowered = (batCurrent <= 50);
-  if (currentPowered != lastPoweredState) {
-    if (now - lastStateChange > 2000) {
-      lastPoweredState = currentPowered;
-      lastStateChange = now;
-    }
+  bool currentPowered = detect_powered_by_mains();
+  if (!powerStateInitialized) {
+    lastPoweredState = currentPowered;
+    powerStateCandidate = currentPowered;
+    powerStateCandidateSinceMs = now;
+    freezePctUntilMs = now + kBatteryFreezeAfterPlugMs;
+    powerStateInitialized = true;
   } else {
-    lastStateChange = now;
+    if (currentPowered != lastPoweredState) {
+      if (currentPowered != powerStateCandidate) {
+        powerStateCandidate = currentPowered;
+        powerStateCandidateSinceMs = now;
+      } else if ((now - powerStateCandidateSinceMs) >= kPowerStateDebounceMs) {
+        lastPoweredState = powerStateCandidate;
+        freezePctUntilMs = now + kBatteryFreezeAfterPlugMs;
+      }
+    } else {
+      powerStateCandidate = currentPowered;
+      powerStateCandidateSinceMs = now;
+    }
   }
 
-  int displayLevel = (batLevel >= 0 && batLevel <= 100) ? batLevel : 0;
+  int32_t rawLevel = M5.Power.getBatteryLevel();
+  bool rawLevelValid = (rawLevel >= 0 && rawLevel <= 100);
+  rawLevel = clamp_i32(rawLevel, 0, 100);
+
+  int32_t rawVoltage = M5.Power.getBatteryVoltage();
+  int32_t rawCurrent = M5.Power.getBatteryCurrent();
+  bool batteryMissingRaw = is_battery_missing_raw(lastPoweredState, rawLevel, rawVoltage, rawCurrent);
+
+  if (!lastPoweredState) {
+    batteryMissingRaw = false;
+  }
+
+  if (!batteryMissingInitialized) {
+    batteryMissingStable = batteryMissingRaw;
+    batteryMissingCandidate = batteryMissingRaw;
+    batteryMissingCandidateSinceMs = now;
+    batteryMissingInitialized = true;
+  } else if (batteryMissingRaw != batteryMissingCandidate) {
+    batteryMissingCandidate = batteryMissingRaw;
+    batteryMissingCandidateSinceMs = now;
+  } else if (batteryMissingCandidate != batteryMissingStable &&
+             (now - batteryMissingCandidateSinceMs) >= kBatteryMissingDebounceMs) {
+    batteryMissingStable = batteryMissingCandidate;
+  }
+
+  if (!displayPctInitialized && rawLevelValid) {
+    displayPct = rawLevel;
+    displayPctInitialized = true;
+    lastPctAdjustMs = now;
+  } else if (displayPctInitialized && rawLevelValid && !batteryMissingStable) {
+    bool frozen = ((int32_t)(now - freezePctUntilMs) < 0);
+    if (!frozen) {
+      int32_t diff = rawLevel - displayPct;
+      if (diff < 0) {
+        if (!lastPoweredState && (now - lastPctAdjustMs) >= kBatteryDropStepMs) {
+          displayPct -= 1;
+          if (displayPct < rawLevel) displayPct = rawLevel;
+          lastPctAdjustMs = now;
+        }
+      } else if (diff > 0) {
+        uint32_t step = lastPoweredState ? kBatteryRiseOnMainsStepMs : kBatteryRiseOnBatteryStepMs;
+        if ((now - lastPctAdjustMs) >= step) {
+          displayPct += 1;
+          if (displayPct > rawLevel) displayPct = rawLevel;
+          lastPctAdjustMs = now;
+        }
+      }
+    }
+  }
+
+  if (displayPctInitialized) {
+    displayPct = clamp_i32(displayPct, 0, 100);
+  }
+
+  bool haveDisplayLevel = displayPctInitialized && !batteryMissingStable;
+  int32_t displayLevel = haveDisplayLevel ? displayPct : rawLevel;
+
+  if (battery_percent_label) {
+    static char percent_buf[12];
+    if (batteryMissingStable) {
+      snprintf(percent_buf, sizeof(percent_buf), "Batterie");
+    } else if (haveDisplayLevel) {
+      snprintf(percent_buf, sizeof(percent_buf), "%d%%", displayLevel);
+    } else {
+      snprintf(percent_buf, sizeof(percent_buf), "--%%");
+    }
+    lv_label_set_text(battery_percent_label, percent_buf);
+  }
   const char* statusText = lastPoweredState ? "Netzteil" : "Akku";
 
   snprintf(status_buf, sizeof(status_buf), "Status: %s", statusText);
-  snprintf(level_buf, sizeof(level_buf), "Level: %d%%", displayLevel);
+  if (haveDisplayLevel) {
+    snprintf(level_buf, sizeof(level_buf), "Level: %d%%", displayLevel);
+  } else {
+    snprintf(level_buf, sizeof(level_buf), "Level: --%%");
+  }
 
   lv_label_set_text(power_status_label, status_buf);
   lv_label_set_text(power_level_label, level_buf);
+  lv_obj_add_flag(power_status_label, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(power_level_label, LV_OBJ_FLAG_HIDDEN);
 
   if (battery_icon_label) {
-    bool charging = lastPoweredState; // am Netzteil -> Lade-Icons
-    const char* icon_name = battery_icon_name(charging, displayLevel);
+    const char* icon_name = nullptr;
+    bool icon_charging = lastPoweredState;
+    if (batteryMissingStable) {
+      icon_name = "battery-charging-outline";
+    } else if (!haveDisplayLevel && !rawLevelValid) {
+      icon_name = "battery-unknown";
+    } else {
+      icon_name = battery_icon_name(icon_charging, displayLevel);
+    }
     String icon_char = getMdiChar(String(icon_name));
     lv_label_set_text(battery_icon_label, icon_char.c_str());
   }
@@ -843,11 +973,11 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   }
   lv_obj_set_style_text_color(battery_icon_label, lv_color_white(), 0);
 
-  lv_obj_t *battery_label = lv_label_create(battery_col_left);
-  lv_label_set_text(battery_label, "Batterie");
-  lv_obj_set_style_text_font(battery_label, &ui_font_24, 0);
-  lv_obj_set_style_text_color(battery_label, lv_color_white(), 0);
-  lv_obj_set_style_margin_top(battery_label, 8, 0);
+  battery_percent_label = lv_label_create(battery_col_left);
+  lv_label_set_text(battery_percent_label, "--%");
+  lv_obj_set_style_text_font(battery_percent_label, &ui_font_24, 0);
+  lv_obj_set_style_text_color(battery_percent_label, lv_color_white(), 0);
+  lv_obj_set_style_margin_top(battery_percent_label, 8, 0);
 
   lv_obj_t *battery_col_mid = create_settings_column(
       card_battery, kSettingsColMidPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);

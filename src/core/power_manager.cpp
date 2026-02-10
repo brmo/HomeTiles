@@ -44,6 +44,10 @@ static constexpr uint8_t kBmi270RegPwrCtrl = 0x7D;
 static constexpr uint8_t kBmi270PwrCtrlAccelOnly = 0x04;
 static constexpr uint8_t kBmi270PwrCtrlAllOn = 0x0F;
 
+static bool detect_powered_by_mains_hw() {
+  return (M5.Power.getBatteryCurrent() <= 50);
+}
+
 static void imuSetAccelOnly(bool enable) {
   auto imu = M5.Imu.getImuInstancePtr(0);
   if (!imu) return;
@@ -295,7 +299,7 @@ uint32_t PowerManager::getSleepTimeout() const {
 }
 
 bool PowerManager::isPoweredByMains() const {
-  return (M5.Power.getBatteryCurrent() <= 50);
+  return detect_powered_by_mains_hw();
 }
 
 bool PowerManager::isTouchWakeEnabled() const {

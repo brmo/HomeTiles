@@ -21,6 +21,17 @@ static float g_outside_c = 21.7f;
 static float g_inside_c = 22.4f;
 static int g_soc_pct = 73;
 
+static int readBatterySocPercent() {
+  int soc = M5.Power.getBatteryLevel();
+  if (soc >= 0 && soc <= 100) {
+    g_soc_pct = soc;
+    return soc;
+  }
+  if (g_soc_pct < 0) return 0;
+  if (g_soc_pct > 100) return 100;
+  return g_soc_pct;
+}
+
 static const char* kSleepOptionLabels[] = {
   "5 s",
   "15 s",
@@ -639,7 +650,7 @@ void mqttPublishHomeSnapshot() {
   dtostrf(g_inside_c, 0, 1, buf);
   mqtt.publish(mqttTopics.topic(TopicKey::SENSOR_IN), buf, true);
 
-  snprintf(buf, sizeof(buf), "%d", g_soc_pct);
+  snprintf(buf, sizeof(buf), "%d", readBatterySocPercent());
   mqtt.publish(mqttTopics.topic(TopicKey::SENSOR_SOC), buf, true);
 }
 
