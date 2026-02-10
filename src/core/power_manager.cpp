@@ -2,6 +2,7 @@
 #include <M5Unified.h>
 #include "src/core/display_manager.h"
 #include "src/core/config_manager.h"
+#include "src/core/battery_state.h"
 #include "src/network/network_manager.h"
 #include "src/network/mqtt_handlers.h"
 #include <cmath>
@@ -45,7 +46,8 @@ static constexpr uint8_t kBmi270PwrCtrlAccelOnly = 0x04;
 static constexpr uint8_t kBmi270PwrCtrlAllOn = 0x0F;
 
 static bool detect_powered_by_mains_hw() {
-  return (M5.Power.getBatteryCurrent() <= 50);
+  batteryStateUpdate();
+  return batteryStateIsOnMains();
 }
 
 static void imuSetAccelOnly(bool enable) {

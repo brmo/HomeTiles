@@ -11,6 +11,7 @@
 #include "src/core/display_manager.h"
 #include "src/core/device_entities.h"
 #include "src/core/power_manager.h"
+#include "src/core/battery_state.h"
 #include <M5Unified.h>
 #include <PubSubClient.h>
 #include <algorithm>
@@ -22,11 +23,17 @@ static float g_inside_c = 22.4f;
 static int g_soc_pct = 73;
 
 static int readBatterySocPercent() {
-  int soc = M5.Power.getBatteryLevel();
-  if (soc >= 0 && soc <= 100) {
-    g_soc_pct = soc;
-    return soc;
+  batteryStateUpdate();
+  const BatteryTelemetry& batt = batteryStateGet();
+
+  if (batt.level_valid && batt.level_pct >= 0 && batt.level_pct <= 100) {
+    g_soc_pct = batt.level_pct;
+  } else if (!batt.battery_missing &&
+             batt.raw_level_pct >= 0 &&
+             batt.raw_level_pct <= 100) {
+    g_soc_pct = batt.raw_level_pct;
   }
+
   if (g_soc_pct < 0) return 0;
   if (g_soc_pct > 100) return 100;
   return g_soc_pct;

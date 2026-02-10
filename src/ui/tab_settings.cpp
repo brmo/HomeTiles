@@ -3,6 +3,7 @@
 #include <WiFi.h>
 #include "src/ui/tab_settings.h"
 #include "src/core/config_manager.h"
+#include "src/core/battery_state.h"
 #include "src/tiles/mdi_icons.h"
 #include "src/tiles/tile_config.h"
 #include "src/ui/ui_manager.h"
@@ -68,12 +69,6 @@ static const int kSettingsSliderHeight = 18;
 static const int kSettingsSliderKnobSize = 40;
 static const int kSettingsSliderClickPad = 22;
 static const uint8_t kSettingsCardColStart = 1;
-static const uint32_t kPowerStateDebounceMs = 2000;
-static const uint32_t kBatteryMissingDebounceMs = 3000;
-static const uint32_t kBatteryFreezeAfterPlugMs = 10000;
-static const uint32_t kBatteryDropStepMs = 120000;     // on battery: max -1% every 2min
-static const uint32_t kBatteryRiseOnBatteryStepMs = 300000; // on battery: max +1% every 5min
-static const uint32_t kBatteryRiseOnMainsStepMs = 20000;    // on mains while charging: max +1% every 20s
 
 // Forward declarations
 void settings_update_ap_mode(bool running);
@@ -189,30 +184,6 @@ static const char* battery_icon_name(bool charging, int percent) {
     case 2: return charging ? "battery-charging-20" : "battery-20";
     default: return charging ? "battery-charging-10" : "battery-10";
   }
-}
-
-static int32_t clamp_i32(int32_t v, int32_t lo, int32_t hi) {
-  if (v < lo) return lo;
-  if (v > hi) return hi;
-  return v;
-}
-
-static int32_t abs_i32(int32_t v) {
-  return (v < 0) ? -v : v;
-}
-
-static bool is_battery_missing_raw(bool on_mains, int32_t level_pct, int32_t voltage_mv, int32_t current_ma) {
-  // Tab5 can report undefined values when no NP-F battery is attached.
-  // Treat "plugged + ~0% + almost no battery current" as battery missing.
-  if (!on_mains) return false;
-  if (level_pct > 1) return false;
-  if (abs_i32(current_ma) > 120) return false;
-  (void)voltage_mv;
-  return true;
-}
-
-static bool detect_powered_by_mains() {
-  return (M5.Power.getBatteryCurrent() <= 50);
 }
 
 void settings_sync_display_rotation(bool rotated) {
@@ -448,118 +419,34 @@ static void on_sleep_battery_slider(lv_event_t *e) {
 void settings_update_power_status() {
   if (!power_status_label || !power_level_label) return;
 
-  static char status_buf[40];
-  static char level_buf[32];
+  batteryStateUpdate();
+  const BatteryTelemetry& batt = batteryStateGet();
 
-  static bool powerStateInitialized = false;
-  static bool lastPoweredState = false;
-  static bool powerStateCandidate = false;
-  static uint32_t powerStateCandidateSinceMs = 0;
-  static bool batteryMissingInitialized = false;
-  static bool batteryMissingStable = false;
-  static bool batteryMissingCandidate = false;
-  static uint32_t batteryMissingCandidateSinceMs = 0;
-  static bool displayPctInitialized = false;
-  static int32_t displayPct = 0;
-  static uint32_t lastPctAdjustMs = 0;
-  static uint32_t freezePctUntilMs = 0;
-  uint32_t now = millis();
-
-  bool currentPowered = detect_powered_by_mains();
-  if (!powerStateInitialized) {
-    lastPoweredState = currentPowered;
-    powerStateCandidate = currentPowered;
-    powerStateCandidateSinceMs = now;
-    freezePctUntilMs = now + kBatteryFreezeAfterPlugMs;
-    powerStateInitialized = true;
-  } else {
-    if (currentPowered != lastPoweredState) {
-      if (currentPowered != powerStateCandidate) {
-        powerStateCandidate = currentPowered;
-        powerStateCandidateSinceMs = now;
-      } else if ((now - powerStateCandidateSinceMs) >= kPowerStateDebounceMs) {
-        lastPoweredState = powerStateCandidate;
-        freezePctUntilMs = now + kBatteryFreezeAfterPlugMs;
-      }
-    } else {
-      powerStateCandidate = currentPowered;
-      powerStateCandidateSinceMs = now;
-    }
-  }
-
-  int32_t rawLevel = M5.Power.getBatteryLevel();
-  bool rawLevelValid = (rawLevel >= 0 && rawLevel <= 100);
-  rawLevel = clamp_i32(rawLevel, 0, 100);
-
-  int32_t rawVoltage = M5.Power.getBatteryVoltage();
-  int32_t rawCurrent = M5.Power.getBatteryCurrent();
-  bool batteryMissingRaw = is_battery_missing_raw(lastPoweredState, rawLevel, rawVoltage, rawCurrent);
-
-  if (!lastPoweredState) {
-    batteryMissingRaw = false;
-  }
-
-  if (!batteryMissingInitialized) {
-    batteryMissingStable = batteryMissingRaw;
-    batteryMissingCandidate = batteryMissingRaw;
-    batteryMissingCandidateSinceMs = now;
-    batteryMissingInitialized = true;
-  } else if (batteryMissingRaw != batteryMissingCandidate) {
-    batteryMissingCandidate = batteryMissingRaw;
-    batteryMissingCandidateSinceMs = now;
-  } else if (batteryMissingCandidate != batteryMissingStable &&
-             (now - batteryMissingCandidateSinceMs) >= kBatteryMissingDebounceMs) {
-    batteryMissingStable = batteryMissingCandidate;
-  }
-
-  if (!displayPctInitialized && rawLevelValid) {
-    displayPct = rawLevel;
-    displayPctInitialized = true;
-    lastPctAdjustMs = now;
-  } else if (displayPctInitialized && rawLevelValid && !batteryMissingStable) {
-    bool frozen = ((int32_t)(now - freezePctUntilMs) < 0);
-    if (!frozen) {
-      int32_t diff = rawLevel - displayPct;
-      if (diff < 0) {
-        if (!lastPoweredState && (now - lastPctAdjustMs) >= kBatteryDropStepMs) {
-          displayPct -= 1;
-          if (displayPct < rawLevel) displayPct = rawLevel;
-          lastPctAdjustMs = now;
-        }
-      } else if (diff > 0) {
-        uint32_t step = lastPoweredState ? kBatteryRiseOnMainsStepMs : kBatteryRiseOnBatteryStepMs;
-        if ((now - lastPctAdjustMs) >= step) {
-          displayPct += 1;
-          if (displayPct > rawLevel) displayPct = rawLevel;
-          lastPctAdjustMs = now;
-        }
-      }
-    }
-  }
-
-  if (displayPctInitialized) {
-    displayPct = clamp_i32(displayPct, 0, 100);
-  }
-
-  bool haveDisplayLevel = displayPctInitialized && !batteryMissingStable;
-  int32_t displayLevel = haveDisplayLevel ? displayPct : rawLevel;
+  bool on_mains = batt.on_mains;
+  bool battery_missing = batt.battery_missing;
+  bool have_display_level = batt.level_valid;
+  int32_t display_level = have_display_level ? batt.level_pct : batt.raw_level_pct;
+  bool raw_level_valid = (batt.raw_level_pct >= 0 && batt.raw_level_pct <= 100);
 
   if (battery_percent_label) {
     static char percent_buf[12];
-    if (batteryMissingStable) {
+    if (battery_missing) {
       snprintf(percent_buf, sizeof(percent_buf), "Batterie");
-    } else if (haveDisplayLevel) {
-      snprintf(percent_buf, sizeof(percent_buf), "%d%%", displayLevel);
+    } else if (have_display_level) {
+      snprintf(percent_buf, sizeof(percent_buf), "%d%%", display_level);
     } else {
       snprintf(percent_buf, sizeof(percent_buf), "--%%");
     }
     lv_label_set_text(battery_percent_label, percent_buf);
   }
-  const char* statusText = lastPoweredState ? "Netzteil" : "Akku";
+
+  static char status_buf[40];
+  static char level_buf[32];
+  const char* statusText = on_mains ? "Netzteil" : "Akku";
 
   snprintf(status_buf, sizeof(status_buf), "Status: %s", statusText);
-  if (haveDisplayLevel) {
-    snprintf(level_buf, sizeof(level_buf), "Level: %d%%", displayLevel);
+  if (have_display_level) {
+    snprintf(level_buf, sizeof(level_buf), "Level: %d%%", display_level);
   } else {
     snprintf(level_buf, sizeof(level_buf), "Level: --%%");
   }
@@ -571,13 +458,13 @@ void settings_update_power_status() {
 
   if (battery_icon_label) {
     const char* icon_name = nullptr;
-    bool icon_charging = lastPoweredState;
-    if (batteryMissingStable) {
+    bool icon_charging = on_mains;
+    if (battery_missing) {
       icon_name = "battery-charging-outline";
-    } else if (!haveDisplayLevel && !rawLevelValid) {
+    } else if (!have_display_level && !raw_level_valid) {
       icon_name = "battery-unknown";
     } else {
-      icon_name = battery_icon_name(icon_charging, displayLevel);
+      icon_name = battery_icon_name(icon_charging, display_level);
     }
     String icon_char = getMdiChar(String(icon_name));
     lv_label_set_text(battery_icon_label, icon_char.c_str());
