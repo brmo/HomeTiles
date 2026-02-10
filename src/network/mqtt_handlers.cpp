@@ -15,12 +15,415 @@
 #include <M5Unified.h>
 #include <PubSubClient.h>
 #include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <time.h>
 #include <vector>
+
+#ifndef TAB5_HAS_ONEWIRE_DS18X20
+#define TAB5_HAS_ONEWIRE_DS18X20 0
+#endif
+
+#if defined(__has_include)
+#if __has_include(<OneWire.h>) && __has_include(<DallasTemperature.h>)
+#undef TAB5_HAS_ONEWIRE_DS18X20
+#define TAB5_HAS_ONEWIRE_DS18X20 1
+#include <OneWire.h>
+#include <DallasTemperature.h>
+#endif
+#endif
 
 // Cached values for outgoing snapshots
 static float g_outside_c = 21.7f;
 static float g_inside_c = 22.4f;
 static int g_soc_pct = 73;
+static float g_external_temp_c = NAN;
+static bool g_external_temp_valid = false;
+static constexpr uint32_t kExternalTempGridRefreshMs = 5000;
+static String g_external_last_grid_payload;
+static uint32_t g_external_last_grid_ms = 0;
+static constexpr uint16_t kExternalTempHistoryPoints = 288;
+static constexpr uint32_t kExternalTempHistorySampleMs = 5UL * 60UL * 1000UL;
+static float g_external_history_values[kExternalTempHistoryPoints] = {};
+static bool g_external_history_valid[kExternalTempHistoryPoints] = {};
+static uint16_t g_external_history_head = 0;
+static uint16_t g_external_history_count = 0;
+static uint32_t g_external_history_last_store_ms = 0;
+
+static String buildHaStatestreamTopic(const String& entity_id, const char* suffix);
+
+static void update_all_grids(const char* entity_id, const char* payload) {
+  if (!entity_id || !payload) return;
+  tiles_update_sensor_by_entity(GridType::TAB0, entity_id, payload);
+  tiles_update_sensor_by_entity(GridType::TAB1, entity_id, payload);
+  tiles_update_sensor_by_entity(GridType::TAB2, entity_id, payload);
+}
+
+static bool is_external_temp_entity(const char* entity_id) {
+  if (!entity_id || !*entity_id) return false;
+  String normalized(entity_id);
+  normalized.trim();
+  return normalized.equalsIgnoreCase(kEntityExternalTemperature);
+}
+
+static bool is_internal_tab5_entity(const char* entity_id) {
+  if (!entity_id || !*entity_id) return false;
+  String normalized(entity_id);
+  normalized.trim();
+  normalized.toLowerCase();
+
+  if (normalized.equalsIgnoreCase(kEntityDisplayBrightness)) return true;
+  if (normalized.equalsIgnoreCase(kEntityDisplayRotate)) return true;
+  if (normalized.equalsIgnoreCase(kEntityDisplaySleep)) return true;
+  if (normalized.equalsIgnoreCase(kEntityExternalTemperature)) return true;
+
+  return normalized.startsWith("sensor.tab5_") ||
+         normalized.startsWith("switch.tab5_") ||
+         normalized.startsWith("light.tab5_");
+}
+
+static bool has_valid_local_time_for_history() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo, 0)) return false;
+
+  const int year = timeinfo.tm_year + 1900;
+  const int month = timeinfo.tm_mon + 1;
+  const int day = timeinfo.tm_mday;
+  const int hour = timeinfo.tm_hour;
+  const int minute = timeinfo.tm_min;
+
+  return (year >= 2024 && year <= 2100) &&
+         (month >= 1 && month <= 12) &&
+         (day >= 1 && day <= 31) &&
+         (hour >= 0 && hour < 24) &&
+         (minute >= 0 && minute < 60);
+}
+
+static void push_external_temp_history(float value, bool valid) {
+  g_external_history_values[g_external_history_head] = value;
+  g_external_history_valid[g_external_history_head] = valid;
+  g_external_history_head = static_cast<uint16_t>((g_external_history_head + 1) % kExternalTempHistoryPoints);
+  if (g_external_history_count < kExternalTempHistoryPoints) {
+    ++g_external_history_count;
+  }
+}
+
+static void store_external_temp_history(uint32_t now_ms) {
+  if (!has_valid_local_time_for_history()) {
+    // Erst mit valider Uhrzeit starten, damit die 24h-Graphen nicht
+    // mit pre-NTP Bootdaten gefuellt werden.
+    g_external_history_last_store_ms = 0;
+    return;
+  }
+
+  if (g_external_history_last_store_ms == 0) {
+    if (!g_external_temp_valid || std::isnan(g_external_temp_c) || std::isinf(g_external_temp_c)) {
+      return;
+    }
+    g_external_history_last_store_ms = now_ms - kExternalTempHistorySampleMs;
+  }
+
+  if ((int32_t)(now_ms - g_external_history_last_store_ms) < static_cast<int32_t>(kExternalTempHistorySampleMs)) {
+    return;
+  }
+  g_external_history_last_store_ms = now_ms;
+
+  if (g_external_temp_valid && !std::isnan(g_external_temp_c) && !std::isinf(g_external_temp_c)) {
+    push_external_temp_history(g_external_temp_c, true);
+  } else if (g_external_history_count > 0) {
+    push_external_temp_history(0.0f, false);
+  }
+}
+
+static String build_external_temp_history_payload(const char* entity_id) {
+  String payload;
+  payload.reserve(8192);
+  payload = "{\"entity_id\":\"";
+  payload += entity_id ? entity_id : kEntityExternalTemperature;
+  payload += "\",\"unit\":\"C\",\"current\":\"";
+
+  char current_buf[24];
+  const bool has_current_value = g_external_temp_valid && !std::isnan(g_external_temp_c) && !std::isinf(g_external_temp_c);
+  if (has_current_value) {
+    dtostrf(g_external_temp_c, 0, 1, current_buf);
+    payload += current_buf;
+  } else {
+    payload += "unavailable";
+  }
+  payload += "\",\"hours\":24,\"period_minutes\":5,\"stat\":\"mean\",\"values\":[";
+
+  const uint16_t clamped_count =
+    (g_external_history_count > kExternalTempHistoryPoints) ? kExternalTempHistoryPoints : g_external_history_count;
+  if (clamped_count == 0) {
+    payload += "]}";
+    return payload;
+  }
+
+  const uint16_t missing_prefix = static_cast<uint16_t>(kExternalTempHistoryPoints - clamped_count);
+  bool first = true;
+
+  // Voller 24h-Raster: fehlende historische Fenster bleiben explizit null.
+  for (uint16_t i = 0; i < missing_prefix; ++i) {
+    if (!first) payload += ",";
+    payload += "null";
+    first = false;
+  }
+
+  if (clamped_count > 0) {
+    const uint16_t start = static_cast<uint16_t>(
+      (g_external_history_head + kExternalTempHistoryPoints - clamped_count) % kExternalTempHistoryPoints);
+    for (uint16_t i = 0; i < clamped_count; ++i) {
+      const uint16_t idx = static_cast<uint16_t>((start + i) % kExternalTempHistoryPoints);
+      if (!first) payload += ",";
+      if (!g_external_history_valid[idx] || std::isnan(g_external_history_values[idx]) || std::isinf(g_external_history_values[idx])) {
+        payload += "null";
+      } else {
+        dtostrf(g_external_history_values[idx], 0, 1, current_buf);
+        payload += current_buf;
+      }
+      first = false;
+    }
+  }
+
+  payload += "]}";
+  return payload;
+}
+
+static String build_empty_history_payload(const char* entity_id) {
+  String payload;
+  payload.reserve(96);
+  payload = "{\"entity_id\":\"";
+  payload += entity_id ? entity_id : "";
+  payload += "\",\"values\":[]}";
+  return payload;
+}
+
+#if TAB5_HAS_ONEWIRE_DS18X20
+static constexpr uint32_t kExternalTempSampleMs = 3000;
+static constexpr uint32_t kExternalTempConvertMs = 800;
+static constexpr uint32_t kExternalTempDiscoveryRetryMs = 2000;
+static constexpr uint8_t kExternalTempMaxFailures = 1;
+static constexpr uint32_t kExternalTempMqttRepublishMs = 60000;
+static constexpr uint32_t kExternalTempProbeLogMs = 10000;
+
+static OneWire g_onewire_1(1);
+static OneWire g_onewire_50(50);
+static DallasTemperature g_dallas_1(&g_onewire_1);
+static DallasTemperature g_dallas_50(&g_onewire_50);
+
+struct ExternalTempCandidate {
+  uint8_t pin;
+  OneWire* bus;
+  DallasTemperature* sensor;
+};
+
+static const ExternalTempCandidate kExternalTempCandidates[] = {
+  {50, &g_onewire_50, &g_dallas_50},
+  {1, &g_onewire_1, &g_dallas_1},
+};
+
+static DallasTemperature* g_external_dallas = nullptr;
+static uint8_t g_external_pin = 0xFF;
+static DeviceAddress g_external_addr = {0};
+static uint8_t g_external_failures = 0;
+static bool g_external_pending = false;
+static uint32_t g_external_request_ms = 0;
+static uint32_t g_external_last_sample_ms = 0;
+static uint32_t g_external_last_discovery_ms = 0;
+static uint32_t g_external_last_mqtt_ms = 0;
+static uint32_t g_external_last_probe_log_ms = 0;
+static String g_external_last_payload;
+
+static bool is_supported_ds18x20_family(uint8_t family) {
+  return family == 0x28 || family == 0x10 || family == 0x22;
+}
+
+static bool init_external_temp_on_bus(const ExternalTempCandidate& candidate,
+                                      DeviceAddress out_addr,
+                                      bool verbose_log) {
+  if (!candidate.bus || !candidate.sensor) return false;
+
+  pinMode(candidate.pin, INPUT_PULLUP);
+  delay(2);
+
+  uint8_t addr[8] = {0};
+  candidate.bus->reset_search();
+  if (!candidate.bus->search(addr)) {
+    if (verbose_log) {
+      Serial.printf("[OneWire] GPIO %u: kein 1-Wire Geraet gefunden\n",
+                    static_cast<unsigned>(candidate.pin));
+    }
+    return false;
+  }
+
+  if (OneWire::crc8(addr, 7) != addr[7]) {
+    if (verbose_log) {
+      Serial.printf("[OneWire] GPIO %u: CRC Fehler auf dem Bus\n",
+                    static_cast<unsigned>(candidate.pin));
+    }
+    return false;
+  }
+
+  if (!is_supported_ds18x20_family(addr[0])) {
+    if (verbose_log) {
+      Serial.printf("[OneWire] GPIO %u: unbekannte Family 0x%02X\n",
+                    static_cast<unsigned>(candidate.pin),
+                    static_cast<unsigned>(addr[0]));
+    }
+    return false;
+  }
+
+  candidate.sensor->begin();
+  candidate.sensor->setWaitForConversion(false);
+  memcpy(out_addr, addr, sizeof(DeviceAddress));
+  candidate.sensor->setResolution(out_addr, 12);
+  Serial.printf("[OneWire] DS18x20 gefunden auf GPIO %u (Family 0x%02X)\n",
+                static_cast<unsigned>(candidate.pin),
+                static_cast<unsigned>(addr[0]));
+  return true;
+}
+
+static void discover_external_temp_sensor(uint32_t now_ms) {
+  if (g_external_dallas) return;
+  if (g_external_last_discovery_ms != 0 &&
+      (int32_t)(now_ms - g_external_last_discovery_ms) < static_cast<int32_t>(kExternalTempDiscoveryRetryMs)) {
+    return;
+  }
+  g_external_last_discovery_ms = now_ms;
+  const bool verbose_log =
+    (g_external_last_probe_log_ms == 0) ||
+    ((int32_t)(now_ms - g_external_last_probe_log_ms) >= static_cast<int32_t>(kExternalTempProbeLogMs));
+  if (verbose_log) {
+    g_external_last_probe_log_ms = now_ms;
+  }
+
+  DeviceAddress addr = {0};
+  for (const auto& candidate : kExternalTempCandidates) {
+    if (!candidate.sensor || !candidate.bus) continue;
+    if (init_external_temp_on_bus(candidate, addr, verbose_log)) {
+      g_external_dallas = candidate.sensor;
+      g_external_pin = candidate.pin;
+      memcpy(g_external_addr, addr, sizeof(DeviceAddress));
+      g_external_failures = 0;
+      g_external_pending = false;
+      return;
+    }
+  }
+
+  if (verbose_log) {
+    Serial.println("[OneWire] Kein DS18x20 auf GPIO 1/50 gefunden (DATA + 4.7k Pull-up zu 3V3 pruefen).");
+  }
+}
+
+static void service_external_temp_sensor() {
+  const uint32_t now_ms = millis();
+  discover_external_temp_sensor(now_ms);
+  if (!g_external_dallas) {
+    g_external_temp_valid = false;
+    return;
+  }
+
+  if (!g_external_pending) {
+    if (g_external_last_sample_ms != 0 &&
+        (int32_t)(now_ms - g_external_last_sample_ms) < static_cast<int32_t>(kExternalTempSampleMs)) {
+      return;
+    }
+    g_external_dallas->requestTemperaturesByAddress(g_external_addr);
+    g_external_request_ms = now_ms;
+    g_external_pending = true;
+    return;
+  }
+
+  if ((int32_t)(now_ms - g_external_request_ms) < static_cast<int32_t>(kExternalTempConvertMs)) {
+    return;
+  }
+
+  g_external_pending = false;
+  g_external_last_sample_ms = now_ms;
+
+  const float value_c = g_external_dallas->getTempC(g_external_addr);
+  if (value_c == DEVICE_DISCONNECTED_C || value_c < -55.0f || value_c > 125.0f) {
+    g_external_temp_valid = false;
+    if (g_external_failures < 255) ++g_external_failures;
+    if (g_external_failures >= kExternalTempMaxFailures) {
+      Serial.println("[OneWire] Sensor getrennt, starte Neusuche...");
+      g_external_dallas = nullptr;
+      g_external_pin = 0xFF;
+      g_external_failures = 0;
+      g_external_last_discovery_ms = now_ms - kExternalTempDiscoveryRetryMs;
+    }
+    return;
+  }
+
+  g_external_failures = 0;
+  g_external_temp_valid = true;
+  g_external_temp_c = value_c;
+}
+#else
+static constexpr uint32_t kExternalTempMqttRepublishMs = 60000;
+static uint32_t g_external_last_mqtt_ms = 0;
+static String g_external_last_payload;
+
+static void service_external_temp_sensor() {
+  static uint32_t last_warn_ms = 0;
+  const uint32_t now_ms = millis();
+  if (last_warn_ms == 0 ||
+      (int32_t)(now_ms - last_warn_ms) >= 10000) {
+    Serial.println("[OneWire] OneWire/DallasTemperature nicht gefunden, externer DS18x20 Sensor deaktiviert.");
+    last_warn_ms = now_ms;
+  }
+  g_external_temp_valid = false;
+}
+#endif
+
+static void sync_external_temp_entity(bool publish_mqtt) {
+  service_external_temp_sensor();
+  const uint32_t now_ms = millis();
+  store_external_temp_history(now_ms);
+
+  haBridgeConfig.registerSensorMeta(kEntityExternalTemperature, "Tab5 Extern Temperatur", "C");
+  haBridgeConfig.updateEntityMeta(kEntityExternalTemperature, "Tab5 Extern Temperatur", "C", "thermometer");
+
+  char temp_payload[24];
+  const char* payload = "unavailable";
+  if (g_external_temp_valid && !std::isnan(g_external_temp_c) && !std::isinf(g_external_temp_c)) {
+    dtostrf(g_external_temp_c, 0, 1, temp_payload);
+    payload = temp_payload;
+  }
+
+  haBridgeConfig.updateSensorValue(kEntityExternalTemperature, payload);
+  if (g_external_last_grid_payload != payload ||
+      g_external_last_grid_ms == 0 ||
+      (int32_t)(now_ms - g_external_last_grid_ms) >= static_cast<int32_t>(kExternalTempGridRefreshMs)) {
+    update_all_grids(kEntityExternalTemperature, payload);
+    g_external_last_grid_payload = payload;
+    g_external_last_grid_ms = now_ms;
+  }
+
+  if (!publish_mqtt) return;
+  PubSubClient& mqtt = networkManager.getMqttClient();
+  if (!mqtt.connected()) return;
+
+  if (g_external_last_payload == payload &&
+      (int32_t)(now_ms - g_external_last_mqtt_ms) < static_cast<int32_t>(kExternalTempMqttRepublishMs)) {
+    return;
+  }
+
+  String topic = buildHaStatestreamTopic(kEntityExternalTemperature, "state");
+  mqtt.publish(topic.c_str(), payload, true);
+  g_external_last_payload = payload;
+  g_external_last_mqtt_ms = now_ms;
+
+#if TAB5_HAS_ONEWIRE_DS18X20
+  static bool reported_pin = false;
+  if (!reported_pin && g_external_pin != 0xFF) {
+    Serial.printf("[OneWire] MQTT Publish auf %s (GPIO %u)\n",
+                  topic.c_str(),
+                  static_cast<unsigned>(g_external_pin));
+    reported_pin = true;
+  }
+#endif
+}
 
 static int readBatterySocPercent() {
   batteryStateUpdate();
@@ -314,7 +717,7 @@ static void handleSleepBatteryCommand(const char* payload, size_t) {
   mqttPublishDeviceSettings();
 }
 
-static void sync_local_device_entities() {
+static void sync_local_device_entities(bool publish_mqtt) {
   const DeviceConfig& cfg = configManager.getConfig();
 
   const int bright_pct = brightnessPctFromRaw(static_cast<int>(cfg.display_brightness));
@@ -332,15 +735,10 @@ static void sync_local_device_entities() {
   haBridgeConfig.updateSensorValue(kEntityDisplaySleep, sleep_state);
   haBridgeConfig.updateEntityMeta(kEntityDisplaySleep, "Display Sleep", "", "sleep");
 
-  auto update_all_grids = [](const char* entity_id, const char* payload) {
-    tiles_update_sensor_by_entity(GridType::TAB0, entity_id, payload);
-    tiles_update_sensor_by_entity(GridType::TAB1, entity_id, payload);
-    tiles_update_sensor_by_entity(GridType::TAB2, entity_id, payload);
-  };
-
   update_all_grids(kEntityDisplayBrightness, bright_payload);
   update_all_grids(kEntityDisplayRotate, rotate_state);
   update_all_grids(kEntityDisplaySleep, sleep_state);
+  sync_external_temp_entity(publish_mqtt);
 }
 
 static bool resolve_toggle_action(const char* action, bool current, bool* desired) {
@@ -361,7 +759,7 @@ static bool resolve_toggle_action(const char* action, bool current, bool* desire
 
 static bool handle_local_switch_command(const char* entity_id, const char* action) {
   if (entityEquals(entity_id, kEntityDisplayBrightness)) {
-    sync_local_device_entities();
+    sync_local_device_entities(false);
     return true;
   }
   if (entityEquals(entity_id, kEntityDisplayRotate)) {
@@ -389,7 +787,7 @@ static bool handle_local_light_command(const char* entity_id, const char* state,
     handleDisplayBrightnessCommand(buf, 0);
   } else {
     (void)state;
-    sync_local_device_entities();
+    sync_local_device_entities(false);
   }
   return true;
 }
@@ -574,7 +972,7 @@ void mqttCallback(char* topic, uint8_t* payload, unsigned int length) {
       if (icons_changed) {
         tiles_request_icon_refresh();
       }
-      sync_local_device_entities();
+      sync_local_device_entities(false);
     } else {
       Serial.println("[Bridge] Ungueltige Bridge-Konfiguration empfangen");
     }
@@ -663,7 +1061,7 @@ void mqttPublishHomeSnapshot() {
 
 // ========== Device Settings publizieren ==========
 void mqttPublishDeviceSettings() {
-  sync_local_device_entities();
+  sync_local_device_entities(false);
   PubSubClient& mqtt = networkManager.getMqttClient();
   if (!mqtt.connected()) return;
 
@@ -685,6 +1083,16 @@ void mqttPublishDeviceSettings() {
                 sleepLabelFromConfig(cfg.auto_sleep_enabled, cfg.auto_sleep_seconds));
   publish_state(TopicKey::SLEEP_BAT_STAT,
                 sleepLabelFromConfig(cfg.auto_sleep_battery_enabled, cfg.auto_sleep_battery_seconds));
+}
+
+void mqttServiceLocalSensors() {
+  static uint32_t last_run_ms = 0;
+  const uint32_t now_ms = millis();
+  if (last_run_ms != 0 && (int32_t)(now_ms - last_run_ms) < 500) {
+    return;
+  }
+  last_run_ms = now_ms;
+  sync_external_temp_entity(true);
 }
 
 // ========== Scene Command publizieren ==========
@@ -786,22 +1194,62 @@ void mqttPublishHistoryRequest(const char* entity_id) {
   if (!entity_id || !*entity_id) return;
 
   PubSubClient& mqtt = networkManager.getMqttClient();
-  if (!mqtt.connected()) {
+  const bool mqtt_online = mqtt.connected();
+  const char* history_topic = networkManager.getHistoryRequestTopic();
+  const bool can_request_ha = mqtt_online && history_topic && *history_topic;
+  const bool time_valid = has_valid_local_time_for_history();
+
+  // HA hat Prioritaet: wenn erreichbar, immer dort Historie holen.
+  if (can_request_ha) {
+    if (!time_valid && is_internal_tab5_entity(entity_id)) {
+      Serial.printf("[History] Zeit lokal ungueltig, fordere HA-Historie fuer %s an\n", entity_id);
+    }
+
+    String payload = "{\"entity_id\":\"";
+    payload += entity_id;
+    payload += "\",\"hours\":24,\"period_minutes\":5,\"points\":288,\"stat\":\"mean\"}";
+    bool ok = mqtt.publish(history_topic, payload.c_str(), false);
+    Serial.printf("History request -> MQTT '%s' (%s)\n", history_topic, ok ? "ok" : "fail");
+    if (ok) {
+      return;
+    }
+    Serial.printf("[History] HA request publish fehlgeschlagen, nutze lokalen Fallback fuer %s\n", entity_id);
+  }
+
+  // Fallback ohne HA-History: nur lokale externe Historie kann direkt geliefert werden.
+  if (is_external_temp_entity(entity_id)) {
+    if (time_valid) {
+      store_external_temp_history(millis());
+      String local_payload = build_external_temp_history_payload(entity_id);
+      if (local_payload.length()) {
+        queue_sensor_popup_history(entity_id, local_payload.c_str(), local_payload.length());
+        queue_tile_graph_history(entity_id, local_payload.c_str(), local_payload.length());
+        const unsigned points = g_external_history_count;
+        Serial.printf("[History] Lokale Historie fuer %s bereitgestellt (%u Punkte)\n", entity_id, points);
+      }
+    } else {
+      String empty_payload = build_empty_history_payload(entity_id);
+      queue_sensor_popup_history(entity_id, empty_payload.c_str(), empty_payload.length());
+      queue_tile_graph_history(entity_id, empty_payload.c_str(), empty_payload.length());
+      Serial.printf("[History] Zeit ungueltig und HA offline, leere Historie fuer %s\n", entity_id);
+    }
+    return;
+  }
+
+  // Keine lokale Historie verfuegbar -> leer liefern statt alte Kurve stehen lassen.
+  if (is_internal_tab5_entity(entity_id)) {
+    String empty_payload = build_empty_history_payload(entity_id);
+    queue_sensor_popup_history(entity_id, empty_payload.c_str(), empty_payload.length());
+    queue_tile_graph_history(entity_id, empty_payload.c_str(), empty_payload.length());
+    Serial.printf("[History] HA nicht verfuegbar, interne Historie fuer %s leer\n", entity_id);
+    return;
+  }
+
+  if (!mqtt_online) {
     Serial.printf("History request skipped (MQTT offline): %s\n", entity_id);
-    return;
-  }
-
-  const char* topic = networkManager.getHistoryRequestTopic();
-  if (!topic || !*topic) {
+  } else if (!history_topic || !*history_topic) {
     Serial.printf("History request skipped (no topic): %s\n", entity_id);
-    return;
   }
-
-  String payload = "{\"entity_id\":\"";
-  payload += entity_id;
-  payload += "\",\"hours\":24,\"period_minutes\":5,\"points\":288,\"stat\":\"mean\"}";
-  bool ok = mqtt.publish(topic, payload.c_str(), false);
-  Serial.printf("History request -> MQTT '%s' (%s)\n", topic, ok ? "ok" : "fail");
 }
 
 // ========== Home Assistant MQTT Discovery ==========
@@ -817,6 +1265,7 @@ void mqttPublishDiscovery() {
 
   char tpc[128];
   char js[1024];
+  String external_state_topic = buildHaStatestreamTopic(kEntityExternalTemperature, "state");
 
   const char* stat_topic = mqttTopics.topic(TopicKey::STAT_CONN);
 
@@ -830,6 +1279,12 @@ void mqttPublishDiscovery() {
   snprintf(js, sizeof(js),
     "{\"name\":\"Tab5 Inside\",\"stat_t\":\"%s\",\"unit_of_meas\":\"°C\",\"dev_cla\":\"temperature\",\"stat_cla\":\"measurement\",\"uniq_id\":\"%s_in\",\"avty_t\":\"%s\",\"pl_avail\":\"1\",\"pl_not_avail\":\"0\",\"dev\":{\"ids\":[\"%s\"],\"name\":\"Tab5 LVGL\",\"mf\":\"M5Stack\",\"mdl\":\"Tab5\"}}",
     mqttTopics.topic(TopicKey::SENSOR_IN), did, stat_topic, did);
+  mqtt.publish(tpc, js, true);
+
+  snprintf(tpc, sizeof(tpc), "homeassistant/sensor/%s_external_c/config", did);
+  snprintf(js, sizeof(js),
+    "{\"name\":\"Tab5 Extern Temperatur\",\"stat_t\":\"%s\",\"unit_of_meas\":\"C\",\"dev_cla\":\"temperature\",\"stat_cla\":\"measurement\",\"uniq_id\":\"%s_ext_c\",\"avty_t\":\"%s\",\"pl_avail\":\"1\",\"pl_not_avail\":\"0\",\"icon\":\"mdi:thermometer\",\"dev\":{\"ids\":[\"%s\"],\"name\":\"Tab5 LVGL\",\"mf\":\"M5Stack\",\"mdl\":\"Tab5\"}}",
+    external_state_topic.c_str(), did, stat_topic, did);
   mqtt.publish(tpc, js, true);
 
   snprintf(tpc, sizeof(tpc), "homeassistant/sensor/%s_soc_pct/config", did);

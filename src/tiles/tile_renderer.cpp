@@ -1440,7 +1440,13 @@ static void apply_tile_graph_history(const char* target_entity, const char* payl
       }
     }
 
-    if (values.empty()) continue;
+    if (values.empty()) {
+      lv_chart_set_point_count(w.chart, 1);
+      lv_chart_set_value_by_id(w.chart, w.series, 0, LV_CHART_POINT_NONE);
+      lv_chart_refresh(w.chart);
+      Serial.printf("[TileGraph] History cleared for %s (0 points)\n", entity_id.c_str());
+      continue;
+    }
 
     // Use all points (same as popup - no downsampling)
     // Calculate min/max for range

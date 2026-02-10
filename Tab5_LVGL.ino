@@ -3,6 +3,8 @@
 #include <Wire.h> // Wichtig
 #include <SPI.h>  // Wichtig für M5GFX
 #include <SD.h>   // SD Card Support
+#include <OneWire.h>           // Erzwingt Arduino-Library-Discovery fuer DS18x20 Support
+#include <DallasTemperature.h> // Erzwingt Arduino-Library-Discovery fuer DS18x20 Support
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <nvs_flash.h>
@@ -297,6 +299,9 @@ void loop() {
   // --- ACTIVE ---
   if (first_run) Serial.println("[Loop] M5.update()...");
   M5.update();
+
+  // Lokale Sensoren (z. B. externer OneWire-Temperatursensor)
+  mqttServiceLocalSensors();
 
   if (first_run) Serial.println("[Loop] process_sensor_update_queue()...");
   process_sensor_update_queue();  // WICHTIG: VOR lv_timer_handler()!

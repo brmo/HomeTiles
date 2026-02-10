@@ -192,6 +192,12 @@ static lv_coord_t measure_label_text_width(lv_obj_t* label) {
 static int get_local_hour() {
   struct tm timeinfo;
   if (getLocalTime(&timeinfo, 0)) {
+    const int year = timeinfo.tm_year + 1900;
+    const int month = timeinfo.tm_mon + 1;
+    const int day = timeinfo.tm_mday;
+    if (year < 2024 || year > 2100) return -1;
+    if (month < 1 || month > 12) return -1;
+    if (day < 1 || day > 31) return -1;
     return timeinfo.tm_hour;
   }
   return -1;
@@ -360,6 +366,7 @@ static void apply_history_payload(SensorPopupContext* ctx, const char* payload) 
   bool has_range = false;
   float min_v = 0.0f;
   float max_v = 0.0f;
+  size_t numeric_count = 0;
 
   for (size_t i = 0; i < count; ++i) {
     JsonVariant v = values[i];
@@ -367,6 +374,7 @@ static void apply_history_payload(SensorPopupContext* ctx, const char* payload) 
     if (!extract_numeric(v, val)) {
       continue;
     }
+    ++numeric_count;
     if (!has_range) {
       min_v = max_v = val;
       has_range = true;
@@ -403,6 +411,13 @@ static void apply_history_payload(SensorPopupContext* ctx, const char* payload) 
       static_cast<uint16_t>(i),
       static_cast<lv_coord_t>(lroundf(val * scale))
     );
+  }
+
+  // Bei genau einem Messpunkt gibt es noch keine Linie; deshalb Punkt sichtbar machen.
+  if (numeric_count <= 1) {
+    lv_obj_set_style_size(ctx->chart, 8, 8, LV_PART_INDICATOR);
+  } else {
+    lv_obj_set_style_size(ctx->chart, 0, 0, LV_PART_INDICATOR);
   }
 
   if (has_range && ctx->chart) {
@@ -694,10 +709,39 @@ void queue_sensor_popup_value(const char* entity_id, const char* value, const ch
   g_pending_value.valid = true;
 }
 
+static String extract_history_entity_id(const String& payload) {
+  int key = payload.indexOf("\"entity_id\"");
+  if (key < 0) return "";
+  int colon = payload.indexOf(':', key);
+  if (colon < 0) return "";
+  int q1 = payload.indexOf('"', colon + 1);
+  if (q1 < 0) return "";
+  int q2 = payload.indexOf('"', q1 + 1);
+  if (q2 < 0) return "";
+  String entity = payload.substring(q1 + 1, q2);
+  entity.trim();
+  return entity;
+}
+
 void queue_sensor_popup_history(const char* entity_id, const char* payload, size_t len) {
   if (!payload || len == 0) return;
-  g_pending_history.entity_id = entity_id ? entity_id : "";
-  g_pending_history.payload = String(payload).substring(0, len);
+  if (!g_sensor_popup_ctx || !is_popup_visible(g_sensor_popup_ctx)) return;
+
+  String payload_text = String(payload).substring(0, len);
+  String incoming_entity = entity_id ? entity_id : "";
+  incoming_entity.trim();
+  if (!incoming_entity.length()) {
+    incoming_entity = extract_history_entity_id(payload_text);
+  }
+
+  // Ignore history updates for other entities while this popup is open.
+  if (incoming_entity.length() &&
+      !g_sensor_popup_ctx->entity_id.equalsIgnoreCase(incoming_entity)) {
+    return;
+  }
+
+  g_pending_history.entity_id = incoming_entity;
+  g_pending_history.payload = payload_text;
   g_pending_history.valid = true;
 }
 
@@ -718,7 +762,11 @@ void process_sensor_popup_queue() {
   }
 
   if (g_pending_history.valid) {
-    if (is_popup_visible(g_sensor_popup_ctx)) {
+    bool same_entity = true;
+    if (g_pending_history.entity_id.length()) {
+      same_entity = g_sensor_popup_ctx->entity_id.equalsIgnoreCase(g_pending_history.entity_id);
+    }
+    if (same_entity && is_popup_visible(g_sensor_popup_ctx)) {
       apply_history_payload(g_sensor_popup_ctx, g_pending_history.payload.c_str());
     }
     g_pending_history.valid = false;

@@ -153,9 +153,11 @@ void PowerManager::serviceImuWake() {
   }
   if (imu_hold_hits >= kImuHoldSamples) {
     imu_last_motion_ms = now_ms;
-    if (!is_display_sleeping && isPoweredByMains()) {
+    if (!is_display_sleeping) {
       displayManager.resetActivityTimer();
-      setHighPerformance(true);
+      if (isPoweredByMains()) {
+        setHighPerformance(true);
+      }
     }
   }
 

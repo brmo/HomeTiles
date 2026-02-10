@@ -13,6 +13,7 @@ void mqttPublishLightCommand(const char* entity_id, const char* state, int brigh
 void mqttPublishHistoryRequest(const char* entity_id);
 void mqttPublishHomeSnapshot();
 void mqttPublishDeviceSettings();
+void mqttServiceLocalSensors();
 void mqttReloadDynamicSlots();
 
 #endif // MQTT_HANDLERS_H
