@@ -585,6 +585,18 @@ static int readBatterySocPercent() {
   return g_soc_pct;
 }
 
+static void sync_internal_battery_entity() {
+  const int soc = readBatterySocPercent();
+  char soc_payload[8];
+  snprintf(soc_payload, sizeof(soc_payload), "%d", soc);
+
+  const char* sensor_name = "Tab5 Intern Batterie SoC (M5.Power)";
+  haBridgeConfig.registerSensorMeta(kEntityInternalBatterySoc, sensor_name, "%");
+  haBridgeConfig.updateEntityMeta(kEntityInternalBatterySoc, sensor_name, "%", "battery");
+  haBridgeConfig.updateSensorValue(kEntityInternalBatterySoc, soc_payload);
+  update_all_grids(kEntityInternalBatterySoc, soc_payload);
+}
+
 static const char* kSleepOptionLabels[] = {
   "5 s",
   "15 s",
@@ -881,6 +893,7 @@ static void sync_local_device_entities(bool publish_mqtt) {
   update_all_grids(kEntityDisplayBrightness, bright_payload);
   update_all_grids(kEntityDisplayRotate, rotate_state);
   update_all_grids(kEntityDisplaySleep, sleep_state);
+  sync_internal_battery_entity();
   sync_external_temp_entity(publish_mqtt);
 }
 
@@ -1241,6 +1254,7 @@ void mqttServiceLocalSensors() {
     return;
   }
   last_run_ms = now_ms;
+  sync_internal_battery_entity();
   sync_external_temp_entity(true);
 }
 
