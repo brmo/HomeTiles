@@ -3,9 +3,7 @@
 
 namespace {
 
-static constexpr int32_t kCurrentToMainsMinMa = 40;
-static constexpr int32_t kCurrentToBatteryMaxMa = -40;
-static constexpr int16_t kVbusPresentMinMv = 4300;
+static constexpr int32_t kCurrentMainsThresholdMa = 50;
 
 static constexpr uint32_t kPowerStateDebounceMs = 1200;
 static constexpr uint32_t kBatteryMissingDebounceMs = 3000;
@@ -52,30 +50,12 @@ bool detect_mains_raw(const BatteryStateInternal& state,
                       int32_t current_ma,
                       int16_t vbus_mv,
                       m5::Power_Class::is_charging_t charge_state) {
-  if (vbus_mv >= 0) {
-    if (vbus_mv >= kVbusPresentMinMv) return true;
-    if (vbus_mv <= 1000) return false;
-  }
-
-  if (current_ma <= kCurrentToBatteryMaxMa) {
-    return false;
-  }
-  if (current_ma >= kCurrentToMainsMinMa) {
-    return true;
-  }
-
-  if (charge_state == m5::Power_Class::is_charging_t::is_discharging) {
-    return false;
-  }
-  if (charge_state == m5::Power_Class::is_charging_t::is_charging) {
-    return true;
-  }
-
-  if (state.initialized) {
-    return state.out.on_mains;
-  }
-
-  return current_ma >= 0;
+  (void)state;
+  (void)vbus_mv;
+  (void)charge_state;
+  // Keep the original behavior that worked on this hardware:
+  // <= 50mA means mains/charging path, otherwise battery mode.
+  return current_ma <= kCurrentMainsThresholdMa;
 }
 
 } // namespace
