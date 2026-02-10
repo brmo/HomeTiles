@@ -223,6 +223,8 @@ void Tab5NetworkManager::update() {
 
   // WiFi-Verbindung verwalten
   if (!is_connected) {
+    wifi_ps_state_known = false;
+
     // Nicht verbunden - Retry
     if ((int32_t)(now_ms - wifi_retry_at) >= 0) {
       connectWifi();
@@ -264,7 +266,14 @@ void Tab5NetworkManager::update() {
 
 // ========== WiFi Power Management ==========
 void Tab5NetworkManager::setWifiPowerSaving(bool enable) {
-  if (!isWifiConnected()) return;
+  if (!isWifiConnected()) {
+    wifi_ps_state_known = false;
+    return;
+  }
+
+  if (wifi_ps_state_known && wifi_ps_enabled == enable) {
+    return;
+  }
 
   if (enable) {
     // Batteriemodus: Stromsparen aktivieren
@@ -277,5 +286,8 @@ void Tab5NetworkManager::setWifiPowerSaving(bool enable) {
     WiFi.setTxPower(WIFI_POWER_19_5dBm); // Maximale Reichweite
     Serial.println("🔌 WiFi Full Power: No Sleep + 19.5dBm");
   }
+
+  wifi_ps_state_known = true;
+  wifi_ps_enabled = enable;
 }
 
