@@ -1234,6 +1234,10 @@ void appendAdminScripts(String& html) {
   }
 
   function loadSensorValues(refreshTiles = false) {
+    if (dragSource) {
+      queueDeferredSensorRefresh(refreshTiles);
+      return;
+    }
     const tabs = tileTabs.slice();
     const tileRequests = refreshTiles
       ? tabs.map(tab => {
@@ -1272,6 +1276,25 @@ void appendAdminScripts(String& html) {
   let dragSource = null;
   let dragPreview = null;
   let dragPlaceholder = null;
+  let deferredSensorRefresh = false;
+  let deferredSensorRefreshTiles = false;
+
+  function queueDeferredSensorRefresh(refreshTiles = false) {
+    deferredSensorRefresh = true;
+    deferredSensorRefreshTiles = deferredSensorRefreshTiles || refreshTiles;
+  }
+
+  function clearDeferredSensorRefresh() {
+    deferredSensorRefresh = false;
+    deferredSensorRefreshTiles = false;
+  }
+
+  function flushDeferredSensorRefresh() {
+    if (!deferredSensorRefresh || dragSource) return;
+    const refreshTiles = deferredSensorRefreshTiles;
+    clearDeferredSensorRefresh();
+    loadSensorValues(refreshTiles);
+  }
 
   function createDragPreview(tile) {
     const clone = tile.cloneNode(true);
@@ -1320,7 +1343,7 @@ void appendAdminScripts(String& html) {
     return { rect, gapX, gapY, padLeft, padTop, cellW, cellH };
   }
 
-  function getGridCellFromPointer(tab, clientX, clientY) {
+  function getRawGridCellFromPointer(tab, clientX, clientY) {
     const metrics = getTileGridMetrics(tab);
     if (!metrics) return null;
     const stepX = metrics.cellW + metrics.gapX;
@@ -1341,6 +1364,18 @@ void appendAdminScripts(String& html) {
     return { col, row };
   }
 
+  function getGridCellFromPointer(tab, clientX, clientY) {
+    const rawCell = getRawGridCellFromPointer(tab, clientX, clientY);
+    if (!rawCell) return null;
+    if (!dragSource || dragSource.tab !== tab) return rawCell;
+    const anchorCol = clampInt(dragSource.grabCellCol, 0, GRID_COLS - 1, 0);
+    const anchorRow = clampInt(dragSource.grabCellRow, 0, GRID_ROWS - 1, 0);
+    return {
+      col: rawCell.col - anchorCol,
+      row: rawCell.row - anchorRow
+    };
+  }
+
   function getTileLayoutFromData(tab, index) {
     const tiles = getTilesData(tab);
     if (!Array.isArray(tiles) || index < 0 || index >= tiles.length) return null;
@@ -1352,6 +1387,33 @@ void appendAdminScripts(String& html) {
     return dragSource.layout ||
       getTileElementLayout(dragSource.tab, dragSource.index) ||
       getTileLayoutFromData(dragSource.tab, dragSource.index);
+  }
+
+  function getDragAnchorCell(tab, layout, clientX, clientY) {
+    const rawCell = getRawGridCellFromPointer(tab, clientX, clientY);
+    if (!layout || !rawCell) return { col: 0, row: 0 };
+    const col = clampInt(rawCell.col - layout.col, 0, Math.max(0, layout.span_w - 1), 0);
+    const row = clampInt(rawCell.row - layout.row, 0, Math.max(0, layout.span_h - 1), 0);
+    return { col, row };
+  }
+
+  function getDragAnchorOffset(tab, layout, grabCellCol, grabCellRow, tileRect) {
+    const metrics = getTileGridMetrics(tab);
+    const rect = tileRect || { width: 0, height: 0 };
+    if (!layout || !metrics) {
+      return {
+        x: Math.max(0, (rect.width / 2) || 0),
+        y: Math.max(0, (rect.height / 2) || 0)
+      };
+    }
+    const x = (grabCellCol * (metrics.cellW + metrics.gapX)) + (metrics.cellW / 2);
+    const y = (grabCellRow * (metrics.cellH + metrics.gapY)) + (metrics.cellH / 2);
+    const maxX = Math.max(0, rect.width - 1);
+    const maxY = Math.max(0, rect.height - 1);
+    return {
+      x: Math.max(0, Math.min(maxX, x)),
+      y: Math.max(0, Math.min(maxY, y))
+    };
   }
 
   function cloneLayout(layout) {
@@ -1388,6 +1450,7 @@ void appendAdminScripts(String& html) {
     }
     const tiles = getTilesData(tab);
     dragSource.previewResult = null;
+    dragSource.appliedPreviewResult = null;
     dragSource.previewKey = '';
     for (let i = 0; i < dragSource.baseLayouts.length; i++) {
       const tile = Array.isArray(tiles) ? tiles[i] : null;
@@ -1412,7 +1475,11 @@ void appendAdminScripts(String& html) {
       const baseLayout = dragSource.baseLayouts && dragSource.baseLayouts[i] ? dragSource.baseLayouts[i] : null;
       const previewLayout = previewResult.layouts[i] || baseLayout;
       if (i === dragSource.index) {
-        if (baseLayout) setTileGridPosition(el, baseLayout.col, baseLayout.row, baseLayout.span_w, baseLayout.span_h);
+        if (previewLayout) {
+          setTileGridPosition(el, previewLayout.col, previewLayout.row, previewLayout.span_w, previewLayout.span_h);
+        } else if (baseLayout) {
+          setTileGridPosition(el, baseLayout.col, baseLayout.row, baseLayout.span_w, baseLayout.span_h);
+        }
         el.classList.remove('reflow-preview');
         continue;
       }
@@ -1423,6 +1490,7 @@ void appendAdminScripts(String& html) {
         (baseLayout.col !== previewLayout.col || baseLayout.row !== previewLayout.row));
       el.classList.toggle('reflow-preview', changed);
     }
+    dragSource.appliedPreviewResult = previewResult;
   }
 
   function rectsOverlap(a, b) {
@@ -1595,6 +1663,8 @@ void appendAdminScripts(String& html) {
     updateDragPlaceholder(tab, targetCol, targetRow);
 
     if (targetCol === sourceLayout.col && targetRow === sourceLayout.row) {
+      dragSource.previewKey = targetCol + ':' + targetRow;
+      dragSource.previewResult = null;
       restoreDragPreview(tab);
       return;
     }
@@ -1604,13 +1674,14 @@ void appendAdminScripts(String& html) {
 
     const previewResult = simulateSmartReorderLayouts(tab, dragSource.index, targetCol, targetRow);
     dragSource.previewKey = previewKey;
-    dragSource.previewResult = previewResult;
     if (!previewResult) {
+      dragSource.previewResult = null;
       const placeholder = ensureDragPlaceholder(tab);
       if (placeholder) placeholder.classList.add('invalid');
-      restoreDragPreview(tab);
+      if (!dragSource.appliedPreviewResult) restoreDragPreview(tab);
       return;
     }
+    dragSource.previewResult = previewResult;
     applyDragPreviewLayouts(tab, previewResult);
   }
 
@@ -1715,13 +1786,19 @@ void appendAdminScripts(String& html) {
     tiles.forEach(tile => {
       tile.addEventListener('dragstart', (e) => {
         const tileIndex = parseInt(tile.dataset.index, 10);
+        const layout = getTileElementLayout(tab, tileIndex) ||
+                       getTileLayoutFromData(tab, tileIndex);
+        const anchorCell = getDragAnchorCell(tab, layout, e.clientX, e.clientY);
+        const grabOffset = getDragAnchorOffset(tab, layout, anchorCell.col, anchorCell.row, tile.getBoundingClientRect());
         dragSource = {
           tab,
           index: tileIndex,
-          layout: getTileElementLayout(tab, tileIndex) ||
-                  getTileLayoutFromData(tab, tileIndex),
+          layout,
           baseLayouts: captureLayoutSnapshot(tab),
+          grabCellCol: anchorCell.col,
+          grabCellRow: anchorCell.row,
           previewResult: null,
+          appliedPreviewResult: null,
           previewKey: '',
           dropCommitted: false
         };
@@ -1729,10 +1806,11 @@ void appendAdminScripts(String& html) {
         tile.classList.add('dragging');
         if (e.dataTransfer.setDragImage) {
           dragPreview = createDragPreview(tile);
-          e.dataTransfer.setDragImage(dragPreview, tile.clientWidth / 2, tile.clientHeight / 2);
+          e.dataTransfer.setDragImage(dragPreview, grabOffset.x, grabOffset.y);
         }
       });
       tile.addEventListener('dragend', () => {
+        const committedDrop = !!(dragSource && dragSource.tab === tab && dragSource.dropCommitted);
         tile.classList.remove('dragging');
         tiles.forEach(t => t.classList.remove('drop-target'));
         if (dragSource && dragSource.tab === tab && !dragSource.dropCommitted) {
@@ -1743,6 +1821,8 @@ void appendAdminScripts(String& html) {
         if (dragPreview && dragPreview.parentNode) dragPreview.parentNode.removeChild(dragPreview);
         dragPreview = null;
         dragSource = null;
+        if (committedDrop) clearDeferredSensorRefresh();
+        else flushDeferredSensorRefresh();
       });
       tile.addEventListener('dragenter', (e) => {
         handleGridDragMove(tab, e);
@@ -1799,13 +1879,18 @@ void appendAdminScripts(String& html) {
     .then(data => {
       if (data.success) {
         showNotification('Kacheln verschoben & gespeichert!');
+        clearDeferredSensorRefresh();
         loadSensorValues(true);
       } else {
+        if (dragSource && dragSource.tab === tab) dragSource.dropCommitted = false;
+        clearDeferredSensorRefresh();
         restoreDragPreviewFromSnapshot(tab, localSnapshot);
         showNotification('Fehler beim Verschieben', false);
       }
     })
     .catch(() => {
+      if (dragSource && dragSource.tab === tab) dragSource.dropCommitted = false;
+      clearDeferredSensorRefresh();
       restoreDragPreviewFromSnapshot(tab, localSnapshot);
       showNotification('Netzwerkfehler beim Verschieben', false);
     });
