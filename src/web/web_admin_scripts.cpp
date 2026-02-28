@@ -31,6 +31,10 @@ void appendAdminScripts(String& html) {
   let drafts = {};
   let tilesData = {};
   let autoSaveTimers = {};
+  let saveRequestSeq = 0;
+  let latestSaveRequestByTab = {};
+  let saveInFlightByTile = {};
+  let queuedSaveByTile = {};
   let sensorMetaCache = { values: {}, units: {}, icons: {}, names: {}, loaded: false };
 
   function normalizeSensorMetaPayload(payload) {
@@ -128,6 +132,119 @@ void appendAdminScripts(String& html) {
       out[key] = value;
     }
     return out;
+  }
+
+  function normalizeSnapshotLayout(snapshot, index) {
+    const fallbackCol = (index >= 0) ? ((index % GRID_COLS) + 1) : 1;
+    const fallbackRow = (index >= 0) ? (Math.floor(index / GRID_COLS) + 1) : 1;
+    let col = clampInt(snapshot?.col, 1, GRID_COLS, fallbackCol);
+    let row = clampInt(snapshot?.row, 1, GRID_ROWS, fallbackRow);
+    let spanW = clampInt(snapshot?.span_w, 1, GRID_COLS, 1);
+    let spanH = clampInt(snapshot?.span_h, 1, GRID_ROWS, 1);
+    const maxSpanW = GRID_COLS - (col - 1);
+    const maxSpanH = GRID_ROWS - (row - 1);
+    if (spanW > maxSpanW) spanW = maxSpanW;
+    if (spanH > maxSpanH) spanH = maxSpanH;
+    return { col: col - 1, row: row - 1, span_w: spanW, span_h: spanH };
+  }
+
+  function buildTileSnapshotFromInputs(tab) {
+    const prefix = tab;
+    const snapshot = {
+      type: document.getElementById(prefix + '_tile_type')?.value || '0',
+      title: document.getElementById(prefix + '_tile_title')?.value || '',
+      icon: document.getElementById(prefix + '_tile_icon')?.value || '',
+      color: document.getElementById(prefix + '_tile_color')?.value || '#2A2A2A',
+      col: document.getElementById(prefix + '_tile_col')?.value || '1',
+      row: document.getElementById(prefix + '_tile_row')?.value || '1',
+      span_w: document.getElementById(prefix + '_tile_span_w')?.value || '1',
+      span_h: document.getElementById(prefix + '_tile_span_h')?.value || '1'
+    };
+    Object.assign(snapshot, collectTypeFieldValues(tab));
+    return snapshot;
+  }
+
+  function getTileSnapshotForSave(tab, index) {
+    const draft = drafts[tab] && drafts[tab][index];
+    if (draft && draft._dirty) return Object.assign({}, draft);
+    if (currentTileTab === tab && currentTileIndex === index) return buildTileSnapshotFromInputs(tab);
+    return null;
+  }
+
+  function applySnapshotToTileData(tab, index, snapshot) {
+    const tiles = getTilesData(tab);
+    if (!Array.isArray(tiles) || index < 0) return;
+
+    const prev = tiles[index] || {};
+    const tile = Object.assign({}, prev);
+    const layout = normalizeSnapshotLayout(snapshot, index);
+    const numericFields = ['type', 'sensor_decimals', 'sensor_value_font', 'sensor_display_mode', 'switch_style', 'navigate_target', 'image_preview'];
+
+    tile.type = clampInt(snapshot?.type, 0, 255, Number(prev.type) || 0);
+    tile.title = snapshot?.title || '';
+    tile.icon_name = snapshot?.icon || '';
+    tile.bg_color = hexToRgb(snapshot?.color || '#2A2A2A');
+    tile.col = layout.col;
+    tile.row = layout.row;
+    tile.span_w = layout.span_w;
+    tile.span_h = layout.span_h;
+
+    for (const [key, value] of Object.entries(snapshot || {})) {
+      if (key === '_dirty' || key === '_rev' || key === 'icon' || key === 'color' || key === 'col' || key === 'row' || key === 'span_w' || key === 'span_h' || key === 'type' || key === 'title') continue;
+      if (numericFields.includes(key)) {
+        const num = Number(value);
+        tile[key] = Number.isFinite(num) ? num : value;
+      } else {
+        tile[key] = value;
+      }
+    }
+
+    if (snapshot && Object.prototype.hasOwnProperty.call(snapshot, 'switch_entity')) {
+      tile.sensor_entity = snapshot.switch_entity || '';
+    }
+    if (snapshot && Object.prototype.hasOwnProperty.call(snapshot, 'weather_entity')) {
+      tile.sensor_entity = snapshot.weather_entity || '';
+    }
+    if (snapshot && (Object.prototype.hasOwnProperty.call(snapshot, 'clock_show_time') || Object.prototype.hasOwnProperty.call(snapshot, 'clock_show_date'))) {
+      let flags = 0;
+      if (String(snapshot.clock_show_time || '0') === '1') flags |= 1;
+      if (String(snapshot.clock_show_date || '0') === '1') flags |= 2;
+      if (flags === 0) flags = 1;
+      tile.sensor_decimals = flags;
+    }
+
+    tiles[index] = tile;
+    tilesData[tab] = tiles;
+  }
+
+  function markLatestSaveRequest(tab, index, requestId) {
+    if (!latestSaveRequestByTab[tab]) latestSaveRequestByTab[tab] = {};
+    latestSaveRequestByTab[tab][index] = requestId;
+  }
+
+  function isLatestSaveRequest(tab, index, requestId) {
+    return !!(latestSaveRequestByTab[tab] && latestSaveRequestByTab[tab][index] === requestId);
+  }
+
+  function getTileSaveKey(tab, index) {
+    return tab + ':' + index;
+  }
+
+  function queueSaveAfterFlight(tab, index, silent = true) {
+    const saveKey = getTileSaveKey(tab, index);
+    const existing = queuedSaveByTile[saveKey];
+    queuedSaveByTile[saveKey] = {
+      silent: existing ? (existing.silent && silent) : silent
+    };
+  }
+
+  function flushQueuedSave(tab, index) {
+    const saveKey = getTileSaveKey(tab, index);
+    if (saveInFlightByTile[saveKey]) return;
+    const queued = queuedSaveByTile[saveKey];
+    if (!queued) return;
+    delete queuedSaveByTile[saveKey];
+    saveTile(tab, queued.silent, index);
   }
 
   function getTileResizeHandlesHtml(typeValue) {
@@ -366,6 +483,7 @@ void appendAdminScripts(String& html) {
     if (currentTileIndex === -1) return;
     if (!drafts[tab]) drafts[tab] = {};
     const prefix = tab;
+    const prevDraft = drafts[tab][currentTileIndex];
     const d = {
       type: document.getElementById(prefix + '_tile_type')?.value || '0',
       title: document.getElementById(prefix + '_tile_title')?.value || '',
@@ -378,7 +496,9 @@ void appendAdminScripts(String& html) {
     };
     Object.assign(d, collectTypeFieldValues(tab));
     d._dirty = true;
+    d._rev = (prevDraft && prevDraft._rev) ? (prevDraft._rev + 1) : 1;
     drafts[tab][currentTileIndex] = d;
+    applySnapshotToTileData(tab, currentTileIndex, d);
     persistDrafts();
   }
 
@@ -762,6 +882,11 @@ void appendAdminScripts(String& html) {
       .then(data => {
         if (!tilesData[tab]) tilesData[tab] = [];
         tilesData[tab][index] = data;
+        const draftForTile = drafts[tab] && drafts[tab][index];
+        if (draftForTile && draftForTile._dirty) {
+          applySnapshotToTileData(tab, index, draftForTile);
+        }
+        if (currentTileTab !== tab || currentTileIndex !== index) return;
         const prefix = tab;
         document.getElementById(prefix + '_tile_type').value = data.type || 0;
         resetAllTypeFields(tab);
@@ -799,7 +924,7 @@ void appendAdminScripts(String& html) {
         const tileElem = document.getElementById(tab + '-tile-' + index);
         if (tileElem) tileElem.classList.add('active');
         const draft = (drafts[tab] || {})[index];
-        if (draft && String(draft.type) === String(data.type)) {
+        if (draft && draft._dirty) {
           applyDraft(tab, index);
         } else {
           if (draft && data.type === 0 && draft.type !== data.type) clearDraft(tab, index);
@@ -864,9 +989,15 @@ void appendAdminScripts(String& html) {
     setTimeout(() => { notification.classList.remove('show'); }, 3000);
   }
 
-  function scheduleAutoSave(tab) {
-    if (autoSaveTimers[tab]) clearTimeout(autoSaveTimers[tab]);
-    autoSaveTimers[tab] = setTimeout(() => saveTile(tab, true), 250);
+  function scheduleAutoSave(tab, tileIndexOverride = null) {
+    const tileIndex = tileIndexOverride !== null ? tileIndexOverride : currentTileIndex;
+    if (tileIndex === -1) return;
+    const timerKey = tab + ':' + tileIndex;
+    if (autoSaveTimers[timerKey]) clearTimeout(autoSaveTimers[timerKey]);
+    autoSaveTimers[timerKey] = setTimeout(() => {
+      delete autoSaveTimers[timerKey];
+      saveTile(tab, true, tileIndex);
+    }, 250);
   }
 
   function resetAllTypeFields(tab) {
@@ -894,46 +1025,66 @@ void appendAdminScripts(String& html) {
     scheduleAutoSave(tab);
   }
 
-  function saveTile(tab, silent = false) {
-    if (currentTileIndex === -1) return;
-    const prefix = tab;
+  function saveTile(tab, silent = false, tileIndexOverride = null) {
+    const tileIndex = tileIndexOverride !== null ? tileIndexOverride : currentTileIndex;
+    if (tileIndex === -1) return;
+    const saveKey = getTileSaveKey(tab, tileIndex);
+    if (saveInFlightByTile[saveKey]) {
+      queueSaveAfterFlight(tab, tileIndex, silent);
+      return;
+    }
     const tiles = getTilesData(tab);
-    const previousTile = Array.isArray(tiles) ? tiles[currentTileIndex] : null;
+    const previousTile = Array.isArray(tiles) ? tiles[tileIndex] : null;
     const previousType = previousTile ? Number(previousTile.type) : NaN;
+    const snapshot = getTileSnapshotForSave(tab, tileIndex);
+    if (!snapshot) return;
     const formData = new FormData();
-    const layout = normalizeLayoutInputs(tab);
+    const layout = normalizeSnapshotLayout(snapshot, tileIndex);
     const folderId = getFolderIdForTab(tab);
     if (folderId === undefined) {
       showNotification('Ordner nicht gefunden', false);
       return;
     }
     formData.append('folder', folderId);
-    formData.append('index', currentTileIndex);
+    formData.append('index', tileIndex);
     formData.append('col', layout.col);
     formData.append('row', layout.row);
     formData.append('span_w', layout.span_w);
     formData.append('span_h', layout.span_h);
-    formData.append('type', document.getElementById(prefix + '_tile_type').value);
-    formData.append('title', document.getElementById(prefix + '_tile_title').value);
-    formData.append('icon_name', document.getElementById(prefix + '_tile_icon').value);
-    formData.append('bg_color', hexToRgb(document.getElementById(prefix + '_tile_color').value));
-    const typeValue = document.getElementById(prefix + '_tile_type').value;
-    const meta = getTileTypeMeta(typeValue);
-    callTypeHandler(meta, 'save', prefix, formData);
+    formData.append('type', snapshot.type || '0');
+    formData.append('title', snapshot.title || '');
+    formData.append('icon_name', snapshot.icon || '');
+    formData.append('bg_color', hexToRgb(snapshot.color || '#2A2A2A'));
+    const typeValue = String(snapshot.type || '0');
+    for (const [key, value] of Object.entries(snapshot)) {
+      if (key === '_dirty' || key === '_rev' || key === 'type' || key === 'title' || key === 'icon' || key === 'color' || key === 'col' || key === 'row' || key === 'span_w' || key === 'span_h') continue;
+      formData.append(key, value);
+    }
+    applySnapshotToTileData(tab, tileIndex, snapshot);
+    const requestId = ++saveRequestSeq;
+    const draftRev = Number(snapshot._rev || 0);
+    markLatestSaveRequest(tab, tileIndex, requestId);
+    saveInFlightByTile[saveKey] = true;
     fetch('/api/tiles', { method:'POST', body:formData })
       .then(res => res.json())
       .then(data => {
+        if (!isLatestSaveRequest(tab, tileIndex, requestId)) return;
         if (data.success) {
           if (!silent) showNotification('Kachel gespeichert & Display aktualisiert!');
-          clearDraft(tab, currentTileIndex);
+          const currentDraft = drafts[tab] && drafts[tab][tileIndex];
+          if (currentDraft && currentDraft._dirty && Number(currentDraft._rev || 0) !== draftRev) {
+            queueSaveAfterFlight(tab, tileIndex, true);
+            return;
+          }
+          clearDraft(tab, tileIndex);
           if (!silent) loadSensorValues(true);
           if (typeValue === '4') {
-            const navTarget = document.getElementById(prefix + '_navigate_target')?.value || '';
+            const navTarget = snapshot.navigate_target || '0';
             if (String(navTarget) === '0') {
               setTimeout(() => location.reload(), 400);
             } else {
-              const titleVal = document.getElementById(prefix + '_tile_title')?.value || '';
-              const iconVal = document.getElementById(prefix + '_tile_icon')?.value || '';
+              const titleVal = snapshot.title || '';
+              const iconVal = snapshot.icon || '';
               updateFolderTabUi(navTarget, titleVal, iconVal);
             }
           }
@@ -944,7 +1095,14 @@ void appendAdminScripts(String& html) {
           showNotification('Fehler: ' + (data.error || 'Unbekannt'), false);
         }
       })
-      .catch(() => showNotification('Netzwerkfehler beim Speichern', false));
+      .catch(() => {
+        if (!isLatestSaveRequest(tab, tileIndex, requestId)) return;
+        showNotification('Netzwerkfehler beim Speichern', false);
+      })
+      .finally(() => {
+        delete saveInFlightByTile[saveKey];
+        flushQueuedSave(tab, tileIndex);
+      });
   }
 
   function downloadJsonFile(filename, content) {
