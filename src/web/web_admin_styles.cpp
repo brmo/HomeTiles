@@ -134,6 +134,23 @@ void appendAdminStyles(String& html) {
        border:3px dashed #4A9EFF;
        background:rgba(74,158,255,0.08);
     }
+    .tile-drop-placeholder {
+      display:none;
+      border:3px dashed #4A9EFF;
+      background:rgba(74,158,255,0.18);
+      box-shadow:0 0 0 2px rgba(74,158,255,0.2) inset;
+      border-radius:11px;
+      box-sizing:border-box;
+      pointer-events:none;
+      z-index:20;
+      clip-path: inset(0 round 11px);
+    }
+    .tile-drop-placeholder.show { display:block; }
+    .tile-drop-placeholder.invalid {
+      border-color:#ef4444;
+      background:rgba(239,68,68,0.16);
+      box-shadow:0 0 0 2px rgba(239,68,68,0.18) inset;
+    }
     .tile.active:hover { opacity:1; filter:none; }
     .tile.empty { background:transparent !important; border:3px solid transparent; }
     .tile.empty.active { border:3px solid #4A9EFF; box-shadow:0 0 12px rgba(74,158,255,0.6); }

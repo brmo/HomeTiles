@@ -1271,6 +1271,7 @@ void appendAdminScripts(String& html) {
 
   let dragSource = null;
   let dragPreview = null;
+  let dragPlaceholder = null;
 
   function createDragPreview(tile) {
     const clone = tile.cloneNode(true);
@@ -1290,13 +1291,131 @@ void appendAdminScripts(String& html) {
     return clone;
   }
 
+  function getTileGrid(tab) {
+    return document.querySelector('#tab-tiles-' + tab + ' .tile-grid');
+  }
+
+  function getTileLayoutFromData(tab, index) {
+    const tiles = getTilesData(tab);
+    if (!Array.isArray(tiles) || index < 0 || index >= tiles.length) return null;
+    return normalizeTileLayout(tiles[index], index);
+  }
+
+  function getDragSourceLayout() {
+    if (!dragSource) return null;
+    return dragSource.layout ||
+      getTileElementLayout(dragSource.tab, dragSource.index) ||
+      getTileLayoutFromData(dragSource.tab, dragSource.index);
+  }
+
+  function clearDragPlaceholder() {
+    if (dragPlaceholder && dragPlaceholder.parentNode) {
+      dragPlaceholder.parentNode.removeChild(dragPlaceholder);
+    }
+    if (dragPlaceholder) {
+      dragPlaceholder.classList.remove('show', 'invalid');
+    }
+    dragPlaceholder = null;
+  }
+
+  function ensureDragPlaceholder(tab) {
+    const grid = getTileGrid(tab);
+    if (!grid) return null;
+    if (!dragPlaceholder) {
+      dragPlaceholder = document.createElement('div');
+      dragPlaceholder.className = 'tile-drop-placeholder';
+    }
+    if (dragPlaceholder.parentNode !== grid) grid.appendChild(dragPlaceholder);
+    return dragPlaceholder;
+  }
+
+  function updateDragPlaceholder(tab, col, row) {
+    if (!dragSource || dragSource.tab !== tab) return;
+    const sourceLayout = getDragSourceLayout();
+    const placeholder = ensureDragPlaceholder(tab);
+    if (!sourceLayout || !placeholder) return;
+
+    const targetCol = clampInt(col, 0, GRID_COLS - 1, sourceLayout.col);
+    const targetRow = clampInt(row, 0, GRID_ROWS - 1, sourceLayout.row);
+    const fits = (targetCol + sourceLayout.span_w <= GRID_COLS) &&
+                 (targetRow + sourceLayout.span_h <= GRID_ROWS);
+    const spanW = Math.max(1, Math.min(sourceLayout.span_w, GRID_COLS - targetCol));
+    const spanH = Math.max(1, Math.min(sourceLayout.span_h, GRID_ROWS - targetRow));
+
+    placeholder.classList.toggle('invalid', !fits);
+    placeholder.classList.add('show');
+    setTileGridPosition(placeholder, targetCol, targetRow, spanW, spanH);
+  }
+
+  function syncSelectedLayoutInputsFromGrid(tab, indexA, indexB) {
+    if (currentTileTab !== tab || currentTileIndex === -1) return;
+    if (currentTileIndex !== indexA && currentTileIndex !== indexB) return;
+    const layout = getTileElementLayout(tab, currentTileIndex) ||
+                   getTileLayoutFromData(tab, currentTileIndex);
+    applyLayoutInputsFromLayout(tab, layout);
+  }
+
+  function applyLocalTileReorder(tab, fromIdx, toIdx, targetCol, targetRow) {
+    const tiles = getTilesData(tab);
+    if (!Array.isArray(tiles) || fromIdx < 0 || fromIdx >= tiles.length) return null;
+
+    const sourceLayout = getTileElementLayout(tab, fromIdx) || getTileLayoutFromData(tab, fromIdx);
+    const targetLayout = getTileElementLayout(tab, toIdx) || getTileLayoutFromData(tab, toIdx);
+    if (!sourceLayout) return null;
+
+    let col = parseInt(targetCol, 10);
+    let row = parseInt(targetRow, 10);
+    if (isNaN(col)) col = targetLayout ? targetLayout.col : sourceLayout.col;
+    if (isNaN(row)) row = targetLayout ? targetLayout.row : sourceLayout.row;
+
+    const snapshot = {
+      from: tiles[fromIdx] ? { col: tiles[fromIdx].col, row: tiles[fromIdx].row } : null,
+      to: tiles[toIdx] ? { col: tiles[toIdx].col, row: tiles[toIdx].row } : null
+    };
+
+    if (tiles[fromIdx]) {
+      tiles[fromIdx].col = col;
+      tiles[fromIdx].row = row;
+    }
+    if (toIdx !== fromIdx && tiles[toIdx] && sourceLayout) {
+      tiles[toIdx].col = sourceLayout.col;
+      tiles[toIdx].row = sourceLayout.row;
+    }
+
+    tilesData[tab] = tiles;
+    layoutTiles(tab, tiles);
+    syncSelectedLayoutInputsFromGrid(tab, fromIdx, toIdx);
+    return snapshot;
+  }
+
+  function restoreLocalTileReorder(tab, fromIdx, toIdx, snapshot) {
+    const tiles = getTilesData(tab);
+    if (!Array.isArray(tiles) || !snapshot) return;
+    if (tiles[fromIdx] && snapshot.from) {
+      tiles[fromIdx].col = snapshot.from.col;
+      tiles[fromIdx].row = snapshot.from.row;
+    }
+    if (toIdx !== fromIdx && tiles[toIdx] && snapshot.to) {
+      tiles[toIdx].col = snapshot.to.col;
+      tiles[toIdx].row = snapshot.to.row;
+    }
+    tilesData[tab] = tiles;
+    layoutTiles(tab, tiles);
+    syncSelectedLayoutInputsFromGrid(tab, fromIdx, toIdx);
+  }
+
   function enableTileDrag(tab) {
     const tiles = document.querySelectorAll('#tab-tiles-' + tab + ' .tile');
     tiles.forEach(tile => {
       tile.addEventListener('dragstart', (e) => {
-        dragSource = { tab, index: parseInt(tile.dataset.index) };
+        const tileIndex = parseInt(tile.dataset.index, 10);
+        dragSource = {
+          tab,
+          index: tileIndex,
+          layout: getTileElementLayout(tab, tileIndex) ||
+                  getTileLayoutFromData(tab, tileIndex)
+        };
         e.dataTransfer.effectAllowed = 'move';
-        if (!isNaN(dragSource.index)) selectTile(dragSource.index, tab);
         tile.classList.add('dragging');
         if (e.dataTransfer.setDragImage) {
           dragPreview = createDragPreview(tile);
@@ -1306,18 +1425,25 @@ void appendAdminScripts(String& html) {
       tile.addEventListener('dragend', () => {
         tile.classList.remove('dragging');
         tiles.forEach(t => t.classList.remove('drop-target'));
+        clearDragPlaceholder();
         if (dragPreview && dragPreview.parentNode) dragPreview.parentNode.removeChild(dragPreview);
         dragPreview = null;
         dragSource = null;
       });
-      tile.addEventListener('dragenter', (e) => { e.preventDefault(); tile.classList.add('drop-target'); });
-      tile.addEventListener('dragover', (e) => { e.preventDefault(); tile.classList.add('drop-target'); });
-      tile.addEventListener('dragleave', () => { tile.classList.remove('drop-target'); });
+      tile.addEventListener('dragenter', (e) => {
+        e.preventDefault();
+        updateDragPlaceholder(tab, tile.dataset.col, tile.dataset.row);
+      });
+      tile.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        updateDragPlaceholder(tab, tile.dataset.col, tile.dataset.row);
+      });
+      tile.addEventListener('dragleave', () => {});
       tile.addEventListener('drop', (e) => {
         e.preventDefault();
-        tile.classList.remove('drop-target');
         if (!dragSource) return;
-        const targetIndex = parseInt(tile.dataset.index);
+        const targetIndex = parseInt(tile.dataset.index, 10);
         if (isNaN(targetIndex)) return;
         if (dragSource.index === targetIndex) return;
         reorderTiles(dragSource.tab, dragSource.index, targetIndex, tile.dataset.col, tile.dataset.row);
@@ -1326,8 +1452,6 @@ void appendAdminScripts(String& html) {
   }
 
   function reorderTiles(tab, fromIdx, toIdx, targetCol, targetRow) {
-    const sourceLayout = getTileElementLayout(tab, fromIdx);
-    const targetLayout = getTileElementLayout(tab, toIdx);
     let col = parseInt(targetCol, 10);
     let row = parseInt(targetRow, 10);
     if (isNaN(col)) col = -1;
@@ -1337,6 +1461,8 @@ void appendAdminScripts(String& html) {
       showNotification('Ordner nicht gefunden', false);
       return;
     }
+    const localSnapshot = applyLocalTileReorder(tab, fromIdx, toIdx, col, row);
+    clearDragPlaceholder();
     fetch('/api/tiles/reorder', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -1350,26 +1476,15 @@ void appendAdminScripts(String& html) {
     .then(data => {
         if (data.success) {
           showNotification('Kacheln verschoben & gespeichert!');
-          const tiles = getTilesData(tab);
-          if (tiles[fromIdx]) {
-            tiles[fromIdx].col = (col >= 0) ? col : (targetLayout ? targetLayout.col : tiles[fromIdx].col);
-            tiles[fromIdx].row = (row >= 0) ? row : (targetLayout ? targetLayout.row : tiles[fromIdx].row);
-          }
-          if (toIdx !== fromIdx && tiles[toIdx] && sourceLayout) {
-            tiles[toIdx].col = sourceLayout.col;
-            tiles[toIdx].row = sourceLayout.row;
-          }
-          tilesData[tab] = tiles;
-          if (currentTileTab === tab && currentTileIndex !== -1) {
-            if (currentTileIndex === fromIdx) applyLayoutInputsFromLayout(tab, targetLayout);
-            else if (currentTileIndex === toIdx) applyLayoutInputsFromLayout(tab, sourceLayout);
-          }
-          loadSensorValues(false);
-      } else {
+        } else {
+          restoreLocalTileReorder(tab, fromIdx, toIdx, localSnapshot);
         showNotification('Fehler beim Verschieben', false);
       }
     })
-    .catch(() => showNotification('Netzwerkfehler beim Verschieben', false));
+    .catch(() => {
+      restoreLocalTileReorder(tab, fromIdx, toIdx, localSnapshot);
+      showNotification('Netzwerkfehler beim Verschieben', false);
+    });
   }
 
   function loadTileDataAndSelect(tab, index) { selectTile(index, tab); }
