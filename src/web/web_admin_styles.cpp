@@ -116,11 +116,15 @@ void appendAdminStyles(String& html) {
       clip-path: inset(0 round 11px);
     }
     .tile.dragging {
-      opacity:0.6;
+      opacity:0.08;
       border:3px dashed #4A9EFF;
       border-radius:11px;
       background-clip:padding-box;
       clip-path: inset(0 round 11px);
+    }
+    .tile.reflow-preview {
+      box-shadow:0 0 0 2px rgba(125,211,252,0.45) inset;
+      filter:brightness(1.04);
     }
     .tile.drop-target {
        border:3px dashed #4A9EFF;

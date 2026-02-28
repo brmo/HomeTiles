@@ -240,10 +240,44 @@ struct TilePosSnapshot {
   uint8_t row;
 };
 
-static uint16_t tileArea(const Tile& tile) {
-  const uint8_t span_w = tile.span_w < 1 ? 1 : tile.span_w;
-  const uint8_t span_h = tile.span_h < 1 ? 1 : tile.span_h;
-  return static_cast<uint16_t>(span_w) * static_cast<uint16_t>(span_h);
+struct PlacementCandidate {
+  uint8_t col;
+  uint8_t row;
+  uint16_t distance;
+};
+
+static uint16_t manhattanDistance(uint8_t col_a, uint8_t row_a, uint8_t col_b, uint8_t row_b) {
+  const int dx = static_cast<int>(col_a) - static_cast<int>(col_b);
+  const int dy = static_cast<int>(row_a) - static_cast<int>(row_b);
+  return static_cast<uint16_t>(abs(dx) + abs(dy));
+}
+
+static std::vector<PlacementCandidate> buildPlacementCandidates(
+    uint8_t span_w,
+    uint8_t span_h,
+    int preferred_col,
+    int preferred_row) {
+  std::vector<PlacementCandidate> out;
+  for (uint8_t row = 0; row < GRID_ROWS; ++row) {
+    for (uint8_t col = 0; col < GRID_COLS; ++col) {
+      TileRect rect{};
+      if (!buildTileRect(col, row, span_w, span_h, rect)) continue;
+      uint16_t distance = static_cast<uint16_t>(row * GRID_COLS + col);
+      if (preferred_col >= 0 && preferred_row >= 0) {
+        distance = manhattanDistance(col, row,
+                                     static_cast<uint8_t>(preferred_col),
+                                     static_cast<uint8_t>(preferred_row));
+      }
+      out.push_back(PlacementCandidate{col, row, distance});
+    }
+  }
+
+  std::sort(out.begin(), out.end(), [](const PlacementCandidate& a, const PlacementCandidate& b) {
+    if (a.distance != b.distance) return a.distance < b.distance;
+    if (a.row != b.row) return a.row < b.row;
+    return a.col < b.col;
+  });
+  return out;
 }
 
 static bool findPlacementForTile(
@@ -263,21 +297,13 @@ static bool findPlacementForTile(
     return !placementOverlapsAny(grid, tile_index, rect, floating_indices);
   };
 
-  if (preferred_col >= 0 && preferred_row >= 0) {
-    if (can_place(static_cast<uint8_t>(preferred_col), static_cast<uint8_t>(preferred_row))) {
-      tile.col = static_cast<uint8_t>(preferred_col);
-      tile.row = static_cast<uint8_t>(preferred_row);
-      return true;
-    }
-  }
-
-  for (uint8_t row = 0; row < GRID_ROWS; ++row) {
-    for (uint8_t col = 0; col < GRID_COLS; ++col) {
-      if (!can_place(col, row)) continue;
-      tile.col = col;
-      tile.row = row;
-      return true;
-    }
+  const std::vector<PlacementCandidate> candidates =
+      buildPlacementCandidates(span_w, span_h, preferred_col, preferred_row);
+  for (const PlacementCandidate& candidate : candidates) {
+    if (!can_place(candidate.col, candidate.row)) continue;
+    tile.col = candidate.col;
+    tile.row = candidate.row;
+    return true;
   }
 
   return false;
@@ -319,9 +345,8 @@ static bool applySmartReorder(
   moving_tile.row = target_row;
 
   std::sort(displaced_indices.begin(), displaced_indices.end(), [&](size_t a, size_t b) {
-    const uint16_t area_a = tileArea(grid.tiles[a]);
-    const uint16_t area_b = tileArea(grid.tiles[b]);
-    if (area_a != area_b) return area_a > area_b;
+    if (grid.tiles[a].row != grid.tiles[b].row) return grid.tiles[a].row < grid.tiles[b].row;
+    if (grid.tiles[a].col != grid.tiles[b].col) return grid.tiles[a].col < grid.tiles[b].col;
     return a < b;
   });
 
