@@ -37,6 +37,7 @@ public:
 
   // WiFi Power Management
   void setWifiPowerSaving(bool enable);
+  void setSleepWifiProfile(bool enable);
 
 private:
   WiFiClient net_client;
@@ -50,6 +51,7 @@ private:
   // Build-compat: used by older/newer network_manager.cpp variants.
   bool wifi_ps_state_known = false;
   bool wifi_ps_enabled = false;
+  bool wifi_sleep_profile = false;
   String bridge_apply_topic_;
   String bridge_request_topic_;
   String history_request_topic_;

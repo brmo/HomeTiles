@@ -1,5 +1,6 @@
 #include "src/ui/tab_tiles_unified.h"
 #include "src/core/display_manager.h"
+#include "src/core/power_manager.h"
 #include "src/tiles/tile_config.h"
 #include "src/tiles/tile_renderer.h"
 #include "src/ui/sensor_popup.h"
@@ -941,6 +942,8 @@ void tiles_update_sensor_by_entity(GridType grid_type, const char* entity_id, co
   if (!entity_id || !value) return;
 
   cache_entity_payload(entity_id, value);
+  // Im Sleep nur den letzten Zustand cachen; UI-Queues bleiben leer.
+  if (powerManager.isInSleep()) return;
   if (!tiles_is_loaded(grid_type)) return;
 
   const TileGridConfig& config = getGridConfig(grid_type);
@@ -975,6 +978,8 @@ void tiles_update_weather_by_entity(GridType grid_type, const char* entity_id, c
   if (!entity_id || !payload) return;
 
   cache_entity_payload(entity_id, payload);
+  // Im Sleep nur den letzten Zustand cachen; UI-Queues bleiben leer.
+  if (powerManager.isInSleep()) return;
   if (!tiles_is_loaded(grid_type)) return;
 
   const TileGridConfig& config = getGridConfig(grid_type);

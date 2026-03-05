@@ -441,6 +441,7 @@ void PowerManager::enterDisplaySleep() {
   }
   displayManager.setInputEnabled(touch_wake);
 
+  networkManager.setSleepWifiProfile(true);
   networkManager.setWifiPowerSaving(true);
   is_display_sleeping = true;
   is_high_performance = false;
@@ -491,8 +492,10 @@ void PowerManager::wakeFromDisplaySleep() {
   
   is_display_sleeping = false;
   is_high_performance = true;
-  
+
+  networkManager.setSleepWifiProfile(false);
   if (isPoweredByMains()) networkManager.setWifiPowerSaving(false);
+  else networkManager.setWifiPowerSaving(true);
   displayManager.resetActivityTimer();
   displayManager.armWakeTouchGuard();
   mqttPublishDeviceSettings();

@@ -276,10 +276,17 @@ void Tab5NetworkManager::setWifiPowerSaving(bool enable) {
   }
 
   if (enable) {
-    // Batteriemodus: Stromsparen aktivieren
-    WiFi.setSleep(WIFI_PS_MIN_MODEM);  // Light Sleep (spart ~40mA)
-    WiFi.setTxPower(WIFI_POWER_11dBm); // TX Power reduzieren (spart ~20mA)
-    Serial.println("🔋 WiFi Power Saving: Light Sleep + 11dBm");
+    if (wifi_sleep_profile) {
+      // Sleep-Profil: Verbindung minimal halten, maximale Ersparnis.
+      WiFi.setSleep(WIFI_PS_MAX_MODEM);
+      WiFi.setTxPower(WIFI_POWER_5dBm);
+      Serial.println("🔋 WiFi Sleep Profile: Max Modem Sleep + 5dBm");
+    } else {
+      // Normaler Stromsparmodus im Idle.
+      WiFi.setSleep(WIFI_PS_MIN_MODEM);
+      WiFi.setTxPower(WIFI_POWER_11dBm);
+      Serial.println("🔋 WiFi Power Saving: Light Sleep + 11dBm");
+    }
   } else {
     // Netzteilmodus: Volle Performance
     WiFi.setSleep(WIFI_PS_NONE);       // Kein Sleep
@@ -289,5 +296,12 @@ void Tab5NetworkManager::setWifiPowerSaving(bool enable) {
 
   wifi_ps_state_known = true;
   wifi_ps_enabled = enable;
+}
+
+void Tab5NetworkManager::setSleepWifiProfile(bool enable) {
+  if (wifi_sleep_profile == enable) return;
+  wifi_sleep_profile = enable;
+  // Profilwechsel soll beim naechsten setWifiPowerSaving() sicher angewendet werden.
+  wifi_ps_state_known = false;
 }
 
