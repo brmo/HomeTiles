@@ -17,9 +17,11 @@
 #include <WiFiClient.h>
 #include <WiFiClientSecure.h>
 #include "esp_heap_caps.h"
+#include "esp_cache.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/queue.h>
+#include <cstdint>
 
 // Globaler Context fuer das Image Popup
 static lv_obj_t* g_image_popup_overlay = nullptr;
@@ -66,6 +68,7 @@ static constexpr uint32_t kThumbCleanupIntervalMs = 3600000UL;
 static uint32_t g_thumb_cleanup_next_ms = 0;
 static uint32_t g_background_pause_until_ms = 0;
 static std::vector<String> g_thumb_refresh_list;
+static constexpr uintptr_t kCacheLineSize = 64;
 
 struct UrlCacheEntry {
   String url;
@@ -293,11 +296,23 @@ static bool ensure_sd_ready() {
 
 static void* alloc_image_buf(size_t size, bool prefer_psram) {
   int caps = prefer_psram ? (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) : (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  void* ptr = heap_caps_malloc(size, caps);
+  void* ptr = heap_caps_aligned_alloc(64, size, caps);
   if (!ptr && prefer_psram) {
-    ptr = heap_caps_malloc(size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    ptr = heap_caps_aligned_alloc(64, size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   }
   return ptr;
+}
+
+static void flush_cache_for_ppa(const void* ptr, size_t size) {
+  if (!ptr || size == 0) return;
+  const uintptr_t start = reinterpret_cast<uintptr_t>(ptr);
+  const uintptr_t aligned_start = start & ~(kCacheLineSize - 1);
+  const uintptr_t end = start + size;
+  const uintptr_t aligned_end = (end + kCacheLineSize - 1) & ~(kCacheLineSize - 1);
+  if (aligned_end <= aligned_start) return;
+  esp_cache_msync(reinterpret_cast<void*>(aligned_start),
+                  aligned_end - aligned_start,
+                  ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
 }
 
 static void url_cache_yield() {
@@ -1125,7 +1140,7 @@ static int tjpgd_output(JDEC* jd, void* bitmap, JRECT* rect) {
 
 static void free_image_ram() {
   if (g_image_ram_buf) {
-    lv_free(g_image_ram_buf);
+    heap_caps_free(g_image_ram_buf);
     g_image_ram_buf = nullptr;
   }
   g_image_ram_buf_size = 0;
@@ -1157,7 +1172,7 @@ static bool decode_jpeg_to_ram(const String& fullPath, lv_image_header_t& header
     return false;
   }
 
-  uint8_t* work = static_cast<uint8_t*>(lv_malloc(kJpegWorkbufSize));
+  uint8_t* work = static_cast<uint8_t*>(alloc_image_buf(kJpegWorkbufSize, false));
   if (!work) {
     f.close();
     error = "Kein RAM fuer JPEG";
@@ -1173,7 +1188,7 @@ static bool decode_jpeg_to_ram(const String& fullPath, lv_image_header_t& header
 
   JRESULT rc = jd_prepare(&jd, tjpgd_input, work, kJpegWorkbufSize, &ctx);
   if (rc != JDR_OK) {
-    lv_free(work);
+    heap_caps_free(work);
     f.close();
     error = "JPEG Header Fehler";
     return false;
@@ -1182,7 +1197,7 @@ static bool decode_jpeg_to_ram(const String& fullPath, lv_image_header_t& header
   ctx.src_w = jd.width;
   ctx.src_h = jd.height;
   if (!calc_contain_size(ctx.src_w, ctx.src_h, ctx.dst_w, ctx.dst_h)) {
-    lv_free(work);
+    heap_caps_free(work);
     f.close();
     error = "JPEG Groesse ungueltig";
     return false;
@@ -1190,9 +1205,9 @@ static bool decode_jpeg_to_ram(const String& fullPath, lv_image_header_t& header
 
   size_t dst_pixels = static_cast<size_t>(ctx.dst_w) * ctx.dst_h;
   g_image_ram_buf_size = dst_pixels * 2U;
-  g_image_ram_buf = static_cast<uint8_t*>(lv_malloc(g_image_ram_buf_size));
+  g_image_ram_buf = static_cast<uint8_t*>(alloc_image_buf(g_image_ram_buf_size, true));
   if (!g_image_ram_buf) {
-    lv_free(work);
+    heap_caps_free(work);
     f.close();
     error = "Kein RAM fuer Zielbild";
     return false;
@@ -1200,16 +1215,16 @@ static bool decode_jpeg_to_ram(const String& fullPath, lv_image_header_t& header
   memset(g_image_ram_buf, 0, g_image_ram_buf_size);
   ctx.dst_buf = reinterpret_cast<uint16_t*>(g_image_ram_buf);
 
-  ctx.x_start = static_cast<uint16_t*>(lv_malloc(sizeof(uint16_t) * ctx.src_w));
-  ctx.x_end = static_cast<uint16_t*>(lv_malloc(sizeof(uint16_t) * ctx.src_w));
-  ctx.y_start = static_cast<uint16_t*>(lv_malloc(sizeof(uint16_t) * ctx.src_h));
-  ctx.y_end = static_cast<uint16_t*>(lv_malloc(sizeof(uint16_t) * ctx.src_h));
+  ctx.x_start = static_cast<uint16_t*>(alloc_image_buf(sizeof(uint16_t) * ctx.src_w, false));
+  ctx.x_end = static_cast<uint16_t*>(alloc_image_buf(sizeof(uint16_t) * ctx.src_w, false));
+  ctx.y_start = static_cast<uint16_t*>(alloc_image_buf(sizeof(uint16_t) * ctx.src_h, false));
+  ctx.y_end = static_cast<uint16_t*>(alloc_image_buf(sizeof(uint16_t) * ctx.src_h, false));
   if (!ctx.x_start || !ctx.x_end || !ctx.y_start || !ctx.y_end) {
-    if (ctx.x_start) lv_free(ctx.x_start);
-    if (ctx.x_end) lv_free(ctx.x_end);
-    if (ctx.y_start) lv_free(ctx.y_start);
-    if (ctx.y_end) lv_free(ctx.y_end);
-    lv_free(work);
+    if (ctx.x_start) heap_caps_free(ctx.x_start);
+    if (ctx.x_end) heap_caps_free(ctx.x_end);
+    if (ctx.y_start) heap_caps_free(ctx.y_start);
+    if (ctx.y_end) heap_caps_free(ctx.y_end);
+    heap_caps_free(work);
     f.close();
     free_image_ram();
     error = "Kein RAM fuer Skalierung";
@@ -1243,11 +1258,11 @@ static bool decode_jpeg_to_ram(const String& fullPath, lv_image_header_t& header
 
   rc = jd_decomp(&jd, tjpgd_output, 0);
 
-  lv_free(ctx.x_start);
-  lv_free(ctx.x_end);
-  lv_free(ctx.y_start);
-  lv_free(ctx.y_end);
-  lv_free(work);
+  heap_caps_free(ctx.x_start);
+  heap_caps_free(ctx.x_end);
+  heap_caps_free(ctx.y_start);
+  heap_caps_free(ctx.y_end);
+  heap_caps_free(work);
   f.close();
 
   if (rc != JDR_OK) {
@@ -1255,6 +1270,9 @@ static bool decode_jpeg_to_ram(const String& fullPath, lv_image_header_t& header
     error = "JPEG Decode Fehler";
     return false;
   }
+
+  // PPA image path reads this buffer via DMA. Ensure cache is written back.
+  flush_cache_for_ppa(g_image_ram_buf, g_image_ram_buf_size);
 
   memset(&g_image_ram_dsc, 0, sizeof(g_image_ram_dsc));
   g_image_ram_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;

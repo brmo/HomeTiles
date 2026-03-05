@@ -129,12 +129,13 @@
 #define LV_DRAW_BUF_STRIDE_ALIGN                1
 
 /** Align start address of draw_buf addresses to this bytes*/
-#define LV_DRAW_BUF_ALIGN                       4
+#define LV_DRAW_BUF_ALIGN                       64
 
-/* Optional cache-alignment macros (not needed when PPA disabled) */
-#undef CONFIG_CACHE_L1_CACHE_LINE_SIZE
-#undef CONFIG_LV_ATTRIBUTE_MEM_ALIGN_SIZE
-#undef CONFIG_LV_DRAW_BUF_ALIGN
+/* Cache-alignment macros required by PPA */
+#define CONFIG_CACHE_L2_CACHE_LINE_SIZE          64
+#define CONFIG_CACHE_L1_CACHE_LINE_SIZE          64
+#define CONFIG_LV_ATTRIBUTE_MEM_ALIGN_SIZE       64
+#define CONFIG_LV_DRAW_BUF_ALIGN                 64
 
 /** Using matrix for transformations.
  * Requirements:
@@ -389,9 +390,10 @@
 #endif
 
 /** Draw using espressif PPA accelerator */
-#define LV_USE_PPA  0
+#define LV_USE_PPA  1
 #if LV_USE_PPA
-    #define LV_USE_PPA_IMG 0
+    #define LV_USE_PPA_IMG 1
+    #define LV_PPA_BURST_LENGTH 64
 #endif
 
 /* Use EVE FT81X GPU. */
@@ -506,7 +508,7 @@
 
 /** Default number of image header cache entries. The cache is used to store the headers of images
  *  The main logic is like `LV_CACHE_DEF_SIZE` but for image headers. */
-#define LV_IMAGE_HEADER_CACHE_DEF_CNT 0
+#define LV_IMAGE_HEADER_CACHE_DEF_CNT 32
 
 /** Number of stops allowed per gradient. Increase this to allow more stops.
  *  This adds (sizeof(lv_color_t) + 1) bytes per additional stop. */
@@ -521,7 +523,7 @@
 #define LV_COLOR_MIX_ROUND_OFS  0
 
 /** Add 2 x 32-bit variables to each `lv_obj_t` to speed up getting style properties */
-#define LV_OBJ_STYLE_CACHE      0
+#define LV_OBJ_STYLE_CACHE      1
 
 /** Add `id` field to `lv_obj_t` */
 #define LV_USE_OBJ_ID           0
@@ -568,7 +570,7 @@
 
 /** Align VG_LITE buffers on this number of bytes.
  *  @note  vglite_src_buf_aligned() uses this value to validate alignment of passed buffer pointers. */
-#define LV_ATTRIBUTE_MEM_ALIGN_SIZE 1
+#define LV_ATTRIBUTE_MEM_ALIGN_SIZE 64
 
 /** Will be added where memory needs to be aligned (with -Os data might not be aligned to boundary by default).
  *  E.g. __attribute__((aligned(4)))*/
@@ -581,7 +583,7 @@
 #define LV_ATTRIBUTE_LARGE_RAM_ARRAY
 
 /** Place performance critical functions into a faster memory (e.g RAM) */
-#define LV_ATTRIBUTE_FAST_MEM
+#define LV_ATTRIBUTE_FAST_MEM IRAM_ATTR
 
 /** Export integer constant to binding. This macro is used with constants in the form of LV_<CONST> that
  *  should also appear on LVGL binding API such as MicroPython. */
