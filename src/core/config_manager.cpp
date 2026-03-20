@@ -64,6 +64,7 @@ bool ConfigManager::load() {
   config.mqtt_port = prefs.getUShort("mqtt_port", 1883);
   prefs.getString("mqtt_user", config.mqtt_user, CONFIG_MQTT_USER_MAX);
   prefs.getString("mqtt_pass", config.mqtt_pass, CONFIG_MQTT_PASS_MAX);
+  prefs.getString("mqtt_client_id", config.mqtt_client_id, CONFIG_MQTT_CLIENT_ID_MAX);
   prefs.getString("mqtt_base", config.mqtt_base_topic, CONFIG_MQTT_BASE_MAX);
   prefs.getString("ha_prefix", config.ha_prefix, CONFIG_HA_PREFIX_MAX);
 
@@ -161,6 +162,7 @@ bool ConfigManager::save(const DeviceConfig& cfg) {
   prefs.putUShort("mqtt_port", cfg.mqtt_port);
   prefs.putString("mqtt_user", cfg.mqtt_user);
   prefs.putString("mqtt_pass", cfg.mqtt_pass);
+  prefs.putString("mqtt_client_id", cfg.mqtt_client_id);
   prefs.putString("mqtt_base", cfg.mqtt_base_topic);
   prefs.putString("ha_prefix", cfg.ha_prefix);
 

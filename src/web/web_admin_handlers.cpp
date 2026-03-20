@@ -414,6 +414,11 @@ void WebAdminServer::handleSaveMQTT() {
   if (server.hasArg("mqtt_pass")) {
     copyToBuffer(cfg.mqtt_pass, sizeof(cfg.mqtt_pass), server.arg("mqtt_pass"));
   }
+  if (server.hasArg("mqtt_client_id")) {
+    String client_id = server.arg("mqtt_client_id");
+    client_id.trim();
+    copyToBuffer(cfg.mqtt_client_id, sizeof(cfg.mqtt_client_id), client_id);
+  }
   if (server.hasArg("mqtt_base")) {
     String base = server.arg("mqtt_base");
     base.trim();

@@ -487,6 +487,13 @@ String WebAdminServer::getAdminPage() {
   html += R"html(">
           </div>
           <div>
+            <label for="mqtt_client_id">MQTT Client ID</label>
+            <input type="text" id="mqtt_client_id" name="mqtt_client_id" placeholder="leer = automatisch" value=")html";
+  html += cfg.mqtt_client_id;
+  html += R"html(">
+            <div style="font-size:11px;color:#64748b;margin-top:4px;">Leer lassen = automatisch aus der MAC-Adresse erzeugen.</div>
+          </div>
+          <div>
             <label for="mqtt_base">Ger&auml;te-Topic Basis</label>
             <input type="text" id="mqtt_base" name="mqtt_base" value=")html";
   html += cfg.mqtt_base_topic;
@@ -591,6 +598,7 @@ String WebAdminServer::getStatusJSON() {
   json += ",\"wifi_ip\":\"" + WiFi.localIP().toString() + "\"";
   json += ",\"mqtt_host\":\"" + String(cfg.mqtt_host) + "\"";
   json += ",\"mqtt_port\":" + String(cfg.mqtt_port);
+  json += ",\"mqtt_client_id\":\"" + String(cfg.mqtt_client_id) + "\"";
   json += ",\"mqtt_base\":\"" + String(cfg.mqtt_base_topic) + "\"";
   json += ",\"ha_prefix\":\"" + String(cfg.ha_prefix) + "\"";
   json += ",\"bridge_configured\":" + String(haBridgeConfig.hasData() ? "true" : "false");

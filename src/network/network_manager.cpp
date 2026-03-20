@@ -77,10 +77,13 @@ void Tab5NetworkManager::connectMqtt() {
 
   const DeviceConfig& cfg = configManager.getConfig();
 
-  char client_id[48];
-  uint64_t mac = ESP.getEfuseMac();
-  uint16_t short_id = (uint16_t)(mac & 0xFFFF);
-  snprintf(client_id, sizeof(client_id), "Tab5_LVGL-%04X", short_id);
+  char client_id[CONFIG_MQTT_CLIENT_ID_MAX];
+  if (cfg.mqtt_client_id[0]) {
+    snprintf(client_id, sizeof(client_id), "%s", cfg.mqtt_client_id);
+  } else {
+    const unsigned long long mac = static_cast<unsigned long long>(ESP.getEfuseMac() & 0xFFFFFFFFFFFFULL);
+    snprintf(client_id, sizeof(client_id), "Tab5_LVGL-%012llX", mac);
+  }
 
   char did[24];
   buildDeviceId(did, sizeof(did));

@@ -11,6 +11,7 @@
 #define CONFIG_MQTT_HOST_MAX     64
 #define CONFIG_MQTT_USER_MAX     32
 #define CONFIG_MQTT_PASS_MAX     64
+#define CONFIG_MQTT_CLIENT_ID_MAX 64
 #define CONFIG_MQTT_BASE_MAX     32
 #define CONFIG_HA_PREFIX_MAX     48
 
@@ -30,6 +31,7 @@ struct DeviceConfig {
   uint16_t mqtt_port;
   char mqtt_user[CONFIG_MQTT_USER_MAX];
   char mqtt_pass[CONFIG_MQTT_PASS_MAX];
+  char mqtt_client_id[CONFIG_MQTT_CLIENT_ID_MAX];
   char mqtt_base_topic[CONFIG_MQTT_BASE_MAX];
   char ha_prefix[CONFIG_HA_PREFIX_MAX];
   bool configured;  // Flag ob Konfiguration vorhanden ist
