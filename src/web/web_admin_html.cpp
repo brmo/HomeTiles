@@ -229,10 +229,10 @@ static void appendTileTabHTML(
 
             <div class="tile-layout">
               <div class="layout-field">
-                <label>Spalte (1-6)</label>
+                <label>Spalte (1-4)</label>
                 <input type="number" id=")html";
   html += tab_id;
-  html += R"html(_tile_col" min="1" max="6" step="1" value="1">
+  html += R"html(_tile_col" min="1" max="4" step="1" value="1">
               </div>
               <div class="layout-field">
                 <label>Zeile (1-4)</label>
@@ -244,7 +244,7 @@ static void appendTileTabHTML(
                 <label>Breite (Zellen)</label>
                 <input type="number" id=")html";
   html += tab_id;
-  html += R"html(_tile_span_w" min="1" max="6" step="1" value="1">
+  html += R"html(_tile_span_w" min="1" max="4" step="1" value="1">
               </div>
               <div class="layout-field">
                 <label>Hoehe (Zellen)</label>
@@ -373,7 +373,7 @@ String WebAdminServer::getAdminPage() {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Tab5 Admin</title>
+  <title>Waveshare Admin</title>
 )html";
 
   appendAdminStyles(html);
@@ -384,7 +384,7 @@ String WebAdminServer::getAdminPage() {
 <body>
   <div class="wrapper">
     <div class="card">
-      <h1>Tab5 Admin-Panel</h1>
+      <h1>Waveshare Admin-Panel</h1>
       <p class="subtitle">Konfiguration &amp; Uebersicht</p>
 
       <!-- Tab Navigation -->

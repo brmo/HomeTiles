@@ -1,6 +1,6 @@
 #include "src/core/display_manager.h"
 #include "src/core/power_manager.h"
-#include <M5Unified.h>
+#include "src/core/board_hal.h"
 #include "esp_heap_caps.h"
 #include "esp_cache.h"
 #include <Arduino.h>
@@ -178,9 +178,10 @@ uint32_t DisplayManager::getFullScreenFlushSeq() const {
 }
 
 void DisplayManager::setRotation(uint8_t rotation_value) {
+  // Waveshare 720×720: square display, rotation is a no-op.
+  // Keep the variable for API compatibility.
   if (rotation == rotation_value) return;
   rotation = rotation_value;
-  M5.Display.setRotation(rotation_value);
   lv_display_t* disp_local = lv_display_get_default();
   if (disp_local) {
     lv_obj_invalidate(lv_scr_act());
@@ -235,7 +236,7 @@ void IRAM_ATTR DisplayManager::flush_cb(lv_display_t *lv_disp, const lv_area_t *
             reinterpret_cast<const uint8_t*>(src) + row * stride_bytes) + start;
         std::memcpy(dst + row * cur_w, src_row, cur_w * sizeof(uint16_t));
       }
-      M5.Display.pushImageDMA(area->x1 + (int32_t)start, area->y1, cur_w, h, dst);
+      BoardHAL::displayPushPixelsDMA(area->x1 + (int32_t)start, area->y1, cur_w, h, dst);
       x += cur_w;
     }
     if (g_reverse_flush_once) {
@@ -255,17 +256,17 @@ void IRAM_ATTR DisplayManager::flush_cb(lv_display_t *lv_disp, const lv_area_t *
   const bool use_dma = packed_rows && (area_px >= kMinPixelsForDma);
   if (use_dma) {
     flush_cache_for_dma(px_map, row_bytes * h);
-    M5.Display.pushImageDMA(area->x1, area->y1, w, h, (uint16_t*)px_map);
-    M5.Display.waitDMA();
+    BoardHAL::displayPushPixelsDMA(area->x1, area->y1, w, h, (uint16_t*)px_map);
+    BoardHAL::displayWaitDMA();
   } else {
     if (packed_rows) {
-      M5.Display.pushImage(area->x1, area->y1, w, h, (uint16_t*)px_map);
+      BoardHAL::displayPushPixels(area->x1, area->y1, w, h, (uint16_t*)px_map);
     } else {
       // LVGL can align each line in px_map; push line-by-line when rows are padded.
       for (uint32_t row = 0; row < h; ++row) {
         const uint16_t* src_row = reinterpret_cast<const uint16_t*>(
             reinterpret_cast<const uint8_t*>(px_map) + row * stride_bytes);
-        M5.Display.pushImage(area->x1, area->y1 + (int32_t)row, w, 1, (uint16_t*)src_row);
+        BoardHAL::displayPushPixels(area->x1, area->y1 + (int32_t)row, w, 1, (uint16_t*)src_row);
       }
     }
   }
@@ -298,16 +299,16 @@ void IRAM_ATTR DisplayManager::touch_cb(lv_indev_t* indev_drv, lv_indev_data_t *
 
   // Nach Sleep: Erst Touch loslassen, bevor Aktionen erlaubt sind
   if (g_ignore_touch_until_release) {
-    lgfx::touch_point_t tmp;
-    if (M5.Display.getTouch(&tmp)) {
+    BoardHAL::TouchPoint tmp;
+    if (BoardHAL::getTouch(&tmp)) {
       data->state = LV_INDEV_STATE_RELEASED;
       return;
     }
     g_ignore_touch_until_release = false;
   }
 
-  lgfx::touch_point_t tp;
-  if (M5.Display.getTouch(&tp)) {
+  BoardHAL::TouchPoint tp;
+  if (BoardHAL::getTouch(&tp)) {
     data->state = LV_INDEV_STATE_PRESSED;
     data->point.x = tp.x;
     data->point.y = tp.y;
@@ -324,11 +325,10 @@ void IRAM_ATTR DisplayManager::touch_cb(lv_indev_t* indev_drv, lv_indev_data_t *
 bool DisplayManager::init() {
   Serial.println("[Display] Initialisiere Display Manager...");
 
-  // M5Stack Display-Setup
-  // 180° Rotation (Landscape inverted)
-  M5.Display.setRotation(1);
-  M5.Display.fillScreen(TFT_BLACK);
-  M5.Display.setBrightness(150);  // Wird spaeter vom Power Manager gesteuert
+  // Waveshare: Display is already initialised by BoardHAL::init().
+  // 720×720 square display – no rotation needed by default.
+  BoardHAL::displayFillScreen(0x0000);  // black
+  BoardHAL::setBrightness(150);  // Wird spaeter vom Power Manager gesteuert
 
   last_activity_time = millis();
 
@@ -345,7 +345,7 @@ bool DisplayManager::init() {
   lv_display_set_flush_cb(disp, flush_cb);
 
   // Farbformat + Anti-Aliasing aus (Performance)
-  lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565_SWAPPED);
+  lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565);
   lv_display_set_antialiasing(disp, false);
   g_bytes_per_pixel = lv_color_format_get_size(lv_display_get_color_format(disp));
   if (g_bytes_per_pixel == 0) {

@@ -5,6 +5,7 @@
 #include "src/fonts/ui_fonts.h"
 #include "src/network/mqtt_handlers.h"
 #include "src/tiles/mdi_icons.h"
+#include "src/tiles/tile_config.h"
 #include <ArduinoJson.h>
 #include <math.h>
 #include <stdlib.h>
@@ -13,7 +14,8 @@
 
 namespace {
 
-constexpr int kCardWidth = 760;
+// Match the popup width to the full tile grid so left/right margins align.
+constexpr int kCardWidth = (GRID_CELL_W * GRID_COLS) + (GRID_GAP * (GRID_COLS - 1));
 constexpr int kCardHeight = 420;
 constexpr int kCardPad = 20;
 constexpr int kHeaderPadTop = 4;
@@ -250,7 +252,7 @@ static void update_y_axis_layout(SensorPopupContext* ctx) {
   int label_w = text_w + 2;  // text width + small safety margin
   int axis_w = label_w + kLabelGap;  // label + visible gap before lines
 
-  // Reposition labels — width must fit full text
+  // Reposition labels â€” width must fit full text
   if (ctx->y_max_label) {
     lv_obj_set_width(ctx->y_max_label, label_w);
   }
@@ -493,7 +495,7 @@ static void apply_history_payload(SensorPopupContext* ctx, const char* payload) 
     if (ctx->y_min_label) lv_label_set_text(ctx->y_min_label, "");
     if (ctx->y_max_line) lv_obj_add_flag(ctx->y_max_line, LV_OBJ_FLAG_HIDDEN);
     if (ctx->y_min_line) lv_obj_add_flag(ctx->y_min_line, LV_OBJ_FLAG_HIDDEN);
-    // No valid range → hide time axis too
+    // No valid range â†’ hide time axis too
     for (int i = 0; i < kTimeAxisMarkerCount; ++i) {
       if (ctx->time_lines[i]) lv_obj_add_flag(ctx->time_lines[i], LV_OBJ_FLAG_HIDDEN);
       if (ctx->time_labels[i]) lv_obj_add_flag(ctx->time_labels[i], LV_OBJ_FLAG_HIDDEN);
@@ -606,7 +608,7 @@ static void build_popup_ui(SensorPopupContext* ctx, const SensorPopupInit& init)
   lv_label_set_text(y_min, "");
   lv_obj_set_pos(y_min, 0, kChartHeight);  // font center ~kChartHeight+kLabelOverhang = on bottom guide line
 
-  // Horizontal guide lines at max/min — extend 6px left of Y-axis for label alignment
+  // Horizontal guide lines at max/min â€” extend 6px left of Y-axis for label alignment
   constexpr int kLineOverlap = 6;
   const int kLineStart = kYAxisWidth - kLineOverlap;
   const int kLineWidth = kCardWidth - (kCardPad * 2) - kLineStart;
@@ -800,3 +802,6 @@ void process_sensor_popup_queue() {
     g_pending_history.valid = false;
   }
 }
+
+
+

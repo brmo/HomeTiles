@@ -74,7 +74,7 @@ void GameWSServer::init(uint16_t port) {
   running = true;
 
   Serial.printf("[GameWS] WebSocket Server läuft auf Port %u (Keepalive aktiv)\n", port);
-  Serial.println("[GameWS] Clients können sich verbinden: ws://<tab5-ip>:8081");
+  Serial.println("[GameWS] Clients koennen sich verbinden: ws://<panel-ip>:8081");
 }
 
 void GameWSServer::handle() {
@@ -122,7 +122,7 @@ void GameWSServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* payload
       // Willkommensnachricht senden
       JsonDocument doc;
       doc["type"] = "connected";
-      doc["message"] = "Tab5 Game Controls WebSocket";
+      doc["message"] = "Waveshare P4 Game Controls WebSocket";
       doc["version"] = "1.0";
 
       String json;

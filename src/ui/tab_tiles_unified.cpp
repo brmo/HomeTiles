@@ -368,13 +368,14 @@ static lv_obj_t* create_tiles_grid(lv_obj_t* parent) {
   lv_obj_set_style_pad_row(grid, GAP, 0);
 
   static lv_coord_t col_dsc[] = {
-    GRID_CELL_W, GRID_CELL_W, GRID_CELL_W, GRID_CELL_W, GRID_CELL_W, GRID_CELL_W,
+    GRID_CELL_W, GRID_CELL_W, GRID_CELL_W, GRID_CELL_W,
     LV_GRID_TEMPLATE_LAST
   };
   static lv_coord_t row_dsc[] = {
     GRID_CELL_H, GRID_CELL_H, GRID_CELL_H, GRID_CELL_H,
     LV_GRID_TEMPLATE_LAST
   };
+  lv_obj_set_layout(grid, LV_LAYOUT_GRID);
   lv_obj_set_grid_dsc_array(grid, col_dsc, row_dsc);
   return grid;
 }

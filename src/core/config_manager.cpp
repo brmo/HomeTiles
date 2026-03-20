@@ -32,13 +32,11 @@ ConfigManager::ConfigManager() {
   config.display_brightness = 200;
   config.display_rotated_180 = false;
   config.display_rotation_mode = kDisplayRotationNormal;
-  config.wake_mode_mains = kWakeModeImu;
-  config.wake_mode_battery = kWakeModeImu;
-  config.wake_mode_mains = kWakeModeImu;
-  config.wake_mode_battery = kWakeModeImu;
+  config.wake_mode_mains = kWakeModeTouch;
+  config.wake_mode_battery = kWakeModeTouch;
   config.auto_sleep_enabled = true;
   config.auto_sleep_seconds = 60;
-  config.auto_sleep_battery_enabled = true;
+  config.auto_sleep_battery_enabled = config.auto_sleep_enabled;
   config.auto_sleep_battery_seconds = config.auto_sleep_seconds;
 }
 
@@ -119,6 +117,12 @@ bool ConfigManager::load() {
     sleep_bat_seconds = sleep_bat_minutes * 60;
   }
   config.auto_sleep_battery_seconds = normalize_sleep_seconds(sleep_bat_seconds);
+
+  // Waveshare 4B has no IMU and no battery profile. Keep both settings fixed.
+  config.wake_mode_mains = kWakeModeTouch;
+  config.wake_mode_battery = kWakeModeTouch;
+  config.auto_sleep_battery_enabled = config.auto_sleep_enabled;
+  config.auto_sleep_battery_seconds = config.auto_sleep_seconds;
 
   if (config.display_brightness < 75 || config.display_brightness > 255) {
     config.display_brightness = 200;
@@ -216,9 +220,11 @@ bool ConfigManager::saveDisplaySettings(uint8_t brightness,
 
   // Speichere nur Display-Settings
   uint16_t normalized_sleep_seconds = normalize_sleep_seconds(sleep_seconds);
-  uint16_t normalized_bat_seconds = normalize_sleep_seconds(sleep_battery_seconds);
-  if (wake_mode_mains > kWakeModeImu) wake_mode_mains = kWakeModeImu;
-  if (wake_mode_battery > kWakeModeImu) wake_mode_battery = kWakeModeImu;
+  uint16_t normalized_bat_seconds = normalized_sleep_seconds;
+  wake_mode_mains = kWakeModeTouch;
+  wake_mode_battery = kWakeModeTouch;
+  sleep_battery_enabled = sleep_enabled;
+  sleep_battery_seconds = normalized_sleep_seconds;
 
   prefs.putUChar("disp_bright", brightness);
   prefs.putBool("disp_rot180", rotate_180);

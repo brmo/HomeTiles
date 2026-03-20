@@ -3,8 +3,8 @@
 
 #include <lvgl.h>
 
-// Display-Konstanten
-#define SCREEN_WIDTH  1280
+// Display-Konstanten (Waveshare ESP32-P4-WIFI6-Touch-LCD-4B: 720×720)
+#define SCREEN_WIDTH  720
 #define SCREEN_HEIGHT 720
 
 // Display Manager - Verwaltet Display-Hardware und LVGL-Integration

@@ -4,16 +4,17 @@
 #include <Arduino.h>
 #include <vector>
 
-// Grid Layout: 6 columns x 4 rows = 24 tiles max
-static constexpr uint8_t GRID_COLS = 6;
+// Grid Layout: 4 columns x 4 rows = 16 tiles max (Waveshare 720×720)
+static constexpr uint8_t GRID_COLS = 4;
 static constexpr uint8_t GRID_ROWS = 4;
 static constexpr size_t TILES_PER_GRID = GRID_COLS * GRID_ROWS;
 
-// Grid Dimensions (pixels)
-static constexpr int GRID_GAP = 24;       // Gap between tiles
-static constexpr int GRID_PAD = 16;       // Edge padding
-static constexpr int GRID_CELL_W = 188;   // Single cell width
-static constexpr int GRID_CELL_H = 154;   // Single cell height
+// Grid Dimensions (pixels) – 720×720 square display
+// (720 - 2*12 - 3*16) / 4 = 162px per cell
+static constexpr int GRID_GAP = 16;       // Gap between tiles
+static constexpr int GRID_PAD = 12;       // Edge padding
+static constexpr int GRID_CELL_W = 162;   // Single cell width
+static constexpr int GRID_CELL_H = 162;   // Single cell height (square)
 
 enum TileType : uint8_t {
   TILE_EMPTY = 0,
@@ -38,9 +39,9 @@ struct Tile {
   uint32_t bg_color;         // Hintergrundfarbe (0 = Standard)
 
   // Grid Position & Size
-  uint8_t col;               // Column (0-5)
+  uint8_t col;               // Column (0-3)
   uint8_t row;               // Row (0-3)
-  uint8_t span_w;            // Width in cells (1-6)
+  uint8_t span_w;            // Width in cells (1-4)
   uint8_t span_h;            // Height in cells (1-4)
 
   // Sensor-spezifisch

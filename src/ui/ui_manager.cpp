@@ -17,7 +17,7 @@
 
 #include <time.h>
 
-#include <M5Unified.h>
+#include "src/core/board_hal.h"
 
 
 
@@ -67,7 +67,7 @@ void UIManager::buildUI(scene_publish_cb_t scene_cb, hotspot_start_cb_t hotspot_
   lv_obj_set_style_border_width(tab_content_container, 0, 0);
   lv_obj_set_style_pad_all(tab_content_container, 0, 0);
   lv_obj_clear_flag(tab_content_container, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_size(tab_content_container, 1280, 720);
+  lv_obj_set_size(tab_content_container, 720, 720);
   lv_obj_set_pos(tab_content_container, 0, 0);
 
   tab_panels[0] = createTabPanel(tab_content_container);
@@ -342,35 +342,10 @@ void UIManager::updateStatusbar() {
     month = timeinfo.tm_mon + 1;
     year = timeinfo.tm_year + 1900;
     have_time = is_valid_datetime(year, month, day, hour, minute);
-  } else if (M5.Rtc.isEnabled()) {
-    m5::rtc_datetime_t dt;
-    if (M5.Rtc.getDateTime(&dt)) {
-      hour = dt.time.hours;
-      minute = dt.time.minutes;
-      day = dt.date.date;
-      month = dt.date.month;
-      year = dt.date.year;
-      // Vermeide kurz falsche RTC-Zeit bevor NTP greift
-      have_time = is_valid_datetime(year, month, day, hour, minute);
-    }
   }
 
-  // Wenn Zeit aus NTP/System verfuegbar, RTC gelegentlich nachziehen
-  if (have_time && M5.Rtc.isEnabled()) {
-    uint32_t now_ms = millis();
-    if (last_rtc_sync_ms == 0 || (int32_t)(now_ms - last_rtc_sync_ms) > 60000) {
-      m5::rtc_datetime_t dt;
-      dt.date.year = year;
-      dt.date.month = month;
-      dt.date.date = day;
-      dt.time.hours = hour;
-      dt.time.minutes = minute;
-      dt.time.seconds = 0;
-      M5.Rtc.setDateTime(&dt);
-      last_rtc_sync_ms = now_ms;
-      Serial.printf("[RTC] NTP->RTC %04d-%02d-%02d %02d:%02d\n", year, month, day, hour, minute);
-    }
-  }
+  // Waveshare P4 has no RTC — time comes from NTP only.
+  (void)last_rtc_sync_ms;
 
 
 

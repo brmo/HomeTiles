@@ -1,7 +1,8 @@
 #include "src/tiles/tile_config.h"
+#include "src/core/board_hal.h"
 #include <Preferences.h>
 #include <string.h>
-#include <SD.h>
+#include "src/core/waveshare_sdmmc.h"
 #include <vector>
 #include <algorithm>
 
@@ -144,9 +145,9 @@ struct PackedTileV6 {
   uint8_t key_code;
   uint8_t key_modifier;
   uint32_t bg_color;
-  uint8_t col;                       // Grid column (0-5)
+  uint8_t col;                       // Grid column (0-3)
   uint8_t row;                       // Grid row (0-3)
-  uint8_t span_w;                    // Width in cells (1-6)
+  uint8_t span_w;                    // Width in cells (1-4)
   uint8_t span_h;                    // Height in cells (1-4)
   char title[TITLE_MAX];
   char icon_name[ICON_MAX];
@@ -162,8 +163,8 @@ struct PackedTileV6 {
 };
 
 // Split grid into 4 quarters to fit NVS size limit (~2KB per entry)
-// Each quarter holds 6 tiles = ~1.4KB (well under limit)
-static constexpr size_t TILES_PER_QUARTER = 6;
+// Each quarter holds 4 tiles for the 4x4 layout.
+static constexpr size_t TILES_PER_QUARTER = 4;
 static constexpr size_t QUARTERS_PER_GRID = TILES_PER_GRID / TILES_PER_QUARTER;
 static_assert(QUARTERS_PER_GRID * TILES_PER_QUARTER == TILES_PER_GRID,
               "TILES_PER_GRID must be divisible by TILES_PER_QUARTER");
@@ -242,25 +243,28 @@ static constexpr uint32_t kFolderIndexMagic = 0x54464C44;  // 'TFLD'
 static constexpr uint16_t kFolderIndexVersion = 1;
 
 static bool sdReady() {
-  return SD.cardType() != CARD_NONE;
+  if (SD_MMC.cardType() == CARD_NONE) {
+    BoardHAL::initSDCard();
+  }
+  return SD_MMC.cardType() != CARD_NONE;
 }
 
 static bool ensureImagePathDir() {
   if (!sdReady()) return false;
-  if (SD.exists(kImagePathDir)) return true;
-  return SD.mkdir(kImagePathDir);
+  if (SD_MMC.exists(kImagePathDir)) return true;
+  return SD_MMC.mkdir(kImagePathDir);
 }
 
 static bool ensureTileGridDir() {
   if (!sdReady()) return false;
-  if (SD.exists(kTileGridDir)) return true;
-  return SD.mkdir(kTileGridDir);
+  if (SD_MMC.exists(kTileGridDir)) return true;
+  return SD_MMC.mkdir(kTileGridDir);
 }
 
 static bool ensureIconDir() {
   if (!sdReady()) return false;
-  if (SD.exists("/icons")) return true;
-  return SD.mkdir("/icons");
+  if (SD_MMC.exists("/icons")) return true;
+  return SD_MMC.mkdir("/icons");
 }
 
 static String imagePathFile(uint16_t folder_id, size_t index) {
@@ -290,19 +294,42 @@ static String tileGridFileLegacy(const char* prefix) {
 static bool writeGridSd(uint16_t folder_id, const PackedQuarterGridV6* packed, size_t count) {
   if (!sdReady()) return false;
   if (!ensureTileGridDir()) return false;
+
   String filePath = tileGridFile(folder_id);
-  if (SD.exists(filePath)) SD.remove(filePath);
-  File f = SD.open(filePath, FILE_WRITE);
-  if (!f) return false;
+  if (SD_MMC.exists(filePath) && !SD_MMC.remove(filePath)) {
+    Serial.printf("[TileConfig] WARN: Konnte alte Grid-Datei nicht entfernen: %s\n", filePath.c_str());
+  }
+
+  File f = SD_MMC.open(filePath, FILE_WRITE);
+  if (!f) {
+    Serial.printf("[TileConfig] SD open fehlgeschlagen: %s\n", filePath.c_str());
+    return false;
+  }
+
   const size_t expected = count * sizeof(PackedQuarterGridV6);
-  size_t written = f.write(reinterpret_cast<const uint8_t*>(packed), expected);
+  const size_t written = f.write(reinterpret_cast<const uint8_t*>(packed), expected);
+  f.flush();
   f.close();
-  return written == expected;
+
+  if (written != expected) {
+    Serial.printf("[TileConfig] SD short write: %s, geschrieben=%u erwartet=%u\n",
+                  filePath.c_str(),
+                  static_cast<unsigned>(written),
+                  static_cast<unsigned>(expected));
+    return false;
+  }
+
+  if (!SD_MMC.exists(filePath)) {
+    Serial.printf("[TileConfig] SD write ok, Datei fehlt danach: %s\n", filePath.c_str());
+    return false;
+  }
+
+  return true;
 }
 
 static bool readPackedGridFile(const String& filePath, PackedQuarterGridV6* packed, size_t count) {
-  if (!SD.exists(filePath)) return false;
-  File f = SD.open(filePath, FILE_READ);
+  if (!SD_MMC.exists(filePath)) return false;
+  File f = SD_MMC.open(filePath, FILE_READ);
   if (!f) return false;
   const size_t expected = count * sizeof(PackedQuarterGridV6);
   if (static_cast<size_t>(f.size()) < expected) {
@@ -330,11 +357,11 @@ static bool writeImagePathSd(uint16_t folder_id, size_t index, const String& pat
   if (!ensureImagePathDir()) return false;
   String filePath = imagePathFile(folder_id, index);
   if (path.length() == 0) {
-    if (SD.exists(filePath)) SD.remove(filePath);
+    if (SD_MMC.exists(filePath)) SD_MMC.remove(filePath);
     return true;
   }
-  if (SD.exists(filePath)) SD.remove(filePath);
-  File f = SD.open(filePath, FILE_WRITE);
+  if (SD_MMC.exists(filePath)) SD_MMC.remove(filePath);
+  File f = SD_MMC.open(filePath, FILE_WRITE);
   if (!f) return false;
   f.print(path);
   f.close();
@@ -345,11 +372,11 @@ static bool readImagePathSd(uint16_t folder_id, size_t index, String& out) {
   out = "";
   if (!sdReady()) return false;
   String filePath = imagePathFile(folder_id, index);
-  if (!SD.exists(filePath) && folder_id == 0) {
+  if (!SD_MMC.exists(filePath) && folder_id == 0) {
     filePath = imagePathFileLegacy("tab0", index);
   }
-  if (!SD.exists(filePath)) return false;
-  File f = SD.open(filePath, FILE_READ);
+  if (!SD_MMC.exists(filePath)) return false;
+  File f = SD_MMC.open(filePath, FILE_READ);
   if (!f) return false;
   out = f.readString();
   f.close();
@@ -553,7 +580,7 @@ static void unpackTileV5(const PackedTileV5& in, Tile& out, uint8_t index) {
     out.type = TILE_SETTINGS;
   }
   out.bg_color = in.bg_color;
-  // V5 had no position - migrate to grid position based on index (3x4 grid -> 6x4)
+  // V5 had no position - migrate to grid position based on index (3x4 grid -> 4x4)
   uint8_t old_col = index % 3;
   uint8_t old_row = index / 3;
   out.col = old_col;
@@ -1648,10 +1675,10 @@ bool TileConfig::loadFolders() {
     Serial.println("[TileConfig] WARN: SD fehlt, Ordner-Liste kann nicht geladen werden");
     return false;
   }
-  if (!SD.exists(kFolderIndexFile)) {
+  if (!SD_MMC.exists(kFolderIndexFile)) {
     return false;
   }
-  File f = SD.open(kFolderIndexFile, FILE_READ);
+  File f = SD_MMC.open(kFolderIndexFile, FILE_READ);
   if (!f) return false;
 
   FolderIndexHeader header{};
@@ -1690,8 +1717,8 @@ bool TileConfig::saveFolders() const {
     return false;
   }
   if (!ensureTileGridDir()) return false;
-  if (SD.exists(kFolderIndexFile)) SD.remove(kFolderIndexFile);
-  File f = SD.open(kFolderIndexFile, FILE_WRITE);
+  if (SD_MMC.exists(kFolderIndexFile)) SD_MMC.remove(kFolderIndexFile);
+  File f = SD_MMC.open(kFolderIndexFile, FILE_WRITE);
   if (!f) return false;
 
   FolderIndexHeader header{};
@@ -1786,10 +1813,10 @@ bool TileConfig::deleteFolder(uint16_t folder_id) {
 
   for (uint16_t id : to_delete) {
     String grid_path = tileGridFile(id);
-    if (SD.exists(grid_path)) SD.remove(grid_path);
+    if (SD_MMC.exists(grid_path)) SD_MMC.remove(grid_path);
     for (size_t i = 0; i < TILES_PER_GRID; ++i) {
       String link_path = imagePathFile(id, i);
-      if (SD.exists(link_path)) SD.remove(link_path);
+      if (SD_MMC.exists(link_path)) SD_MMC.remove(link_path);
     }
   }
 

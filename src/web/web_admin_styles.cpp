@@ -72,14 +72,14 @@ void appendAdminStyles(String& html) {
       max-width:600px;
     }
 
-    /* Tile Editor - Tab5: 1280x720 (scaled preview) */
-    /* Original: Tile 188x154px, Gap 24px, Pad 16px */
+    /* Tile Editor - Waveshare: 720x720 (scaled preview) */
+    /* Original: Tile 162x162px, Gap 16px, Pad 12px */
     .tile-editor { display:grid; grid-template-columns:auto 350px; gap:24px; align-items:start; }
     .tile-grid {
       display:grid;
-      grid-template-columns:repeat(6, 96px);
-      grid-template-rows:repeat(4, 80px);
-      gap:12px;
+      grid-template-columns:repeat(4, 96px);
+      grid-template-rows:repeat(4, 96px);
+      gap:10px;
       padding:12px;
       background:#000;
       border-radius:8px;

@@ -5,11 +5,13 @@
 #include "src/fonts/ui_fonts.h"
 #include "src/network/mqtt_handlers.h"
 #include "src/tiles/mdi_icons.h"
+#include "src/tiles/tile_config.h"
 #include "src/tiles/tile_renderer_shared.h"
 
 namespace {
 
-constexpr int kCardWidth = 760;
+// Match the popup width to the full tile grid so left/right margins align.
+constexpr int kCardWidth = (GRID_CELL_W * GRID_COLS) + (GRID_GAP * (GRID_COLS - 1));
 constexpr int kCardHeight = 420;
 constexpr int kCardPad = 20;
 constexpr int kHeaderPadTop = 4;
@@ -20,7 +22,8 @@ constexpr int kPowerStatusGap = 20;
 constexpr int kPowerStatusMarginBottom = 35;
 
 constexpr int kLabelWidth = 140;
-constexpr int kSliderWidth = 420;
+constexpr int kValueWidth = 52;
+constexpr int kSliderWidth = kCardWidth - (kCardPad * 2) - kLabelWidth - 56 - kValueWidth;
 constexpr int kSliderHeight = 18;
 constexpr int kSliderKnobSize = 40;
 constexpr int kSliderClickPad = 22;
@@ -348,7 +351,7 @@ static void apply_init_to_context(LightPopupContext* ctx, const LightPopupInit& 
 static lv_obj_t* create_centered_power_status(lv_obj_t* parent,
                                                lv_obj_t** switch_out,
                                                lv_obj_t** label_out) {
-  // Container für Switch (zentriert)
+  // Container fÃ¼r Switch (zentriert)
   lv_obj_t* container = lv_obj_create(parent);
   lv_obj_set_width(container, LV_PCT(100));
   lv_obj_set_style_bg_opa(container, LV_OPA_TRANSP, 0);
@@ -363,7 +366,7 @@ static lv_obj_t* create_centered_power_status(lv_obj_t* parent,
   // Switch mit grauem Knob (Farbe wird in update_preview gesetzt)
   lv_obj_t* sw = lv_switch_create(container);
   lv_obj_set_size(sw, kSwitchWidth, kSwitchHeight);
-  // Knob in hellgrau für bessere Sichtbarkeit
+  // Knob in hellgrau fÃ¼r bessere Sichtbarkeit
   lv_obj_set_style_bg_color(sw, lv_color_hex(0x2A2A2A), LV_PART_KNOB);
   lv_obj_set_style_bg_color(sw, lv_color_hex(0xFFFFFF), LV_PART_INDICATOR | LV_STATE_DEFAULT);
   lv_obj_set_style_bg_color(sw, lv_color_hex(kSwitchOnColor), LV_PART_INDICATOR | LV_STATE_CHECKED);
@@ -412,6 +415,8 @@ static lv_obj_t* create_slider_row(lv_obj_t* parent,
 
   lv_obj_t* value = lv_label_create(row);
   set_label_style(value, lv_color_white());
+  lv_obj_set_width(value, kValueWidth);
+  lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_RIGHT, 0);
 
   if (slider_out) *slider_out = slider;
   if (value_out) *value_out = value;
@@ -523,11 +528,11 @@ static void on_val_changed(lv_event_t* e) {
   // Sync switch with brightness
   if (ctx->power_switch) {
     if (value == 0 && ctx->is_on) {
-      // Brightness to 0 → turn off switch
+      // Brightness to 0 â†’ turn off switch
       ctx->is_on = false;
       lv_obj_remove_state(ctx->power_switch, LV_STATE_CHECKED);
     } else if (value > 0 && !ctx->is_on) {
-      // Brightness > 0 → turn on switch
+      // Brightness > 0 â†’ turn on switch
       ctx->is_on = true;
       lv_obj_add_state(ctx->power_switch, LV_STATE_CHECKED);
       ctx->last_brightness = value;
@@ -640,7 +645,7 @@ void show_light_popup(const LightPopupInit& init) {
   ctx->power_row = create_centered_power_status(content, &ctx->power_switch, &ctx->power_status_label);
   ctx->val_row = create_slider_row(content, "Helligkeit", 0, 100, &ctx->val_slider, &ctx->val_value);
   ctx->hue_row = create_slider_row(content, "Farbton", 0, 360, &ctx->hue_slider, &ctx->hue_value);
-  ctx->sat_row = create_slider_row(content, "Sättigung", 0, 100, &ctx->sat_slider, &ctx->sat_value);
+  ctx->sat_row = create_slider_row(content, "SÃ¤ttigung", 0, 100, &ctx->sat_slider, &ctx->sat_value);
 
   apply_init_to_context(ctx, init);
 
@@ -703,3 +708,6 @@ void hide_light_popup() {
   lv_obj_add_flag(g_light_popup_ctx->card, LV_OBJ_FLAG_HIDDEN);
   lv_obj_clear_flag(g_light_popup_ctx->overlay, LV_OBJ_FLAG_CLICKABLE);
 }
+
+
+

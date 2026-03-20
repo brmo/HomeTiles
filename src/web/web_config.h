@@ -7,7 +7,7 @@
 #include "src/core/config_manager.h"
 
 // Webinterface für WiFi/MQTT-Konfiguration im Hotspot-Modus
-// Erstellt einen Access Point "Tab5_Config" und bietet ein Webinterface zur Konfiguration
+// Erstellt einen Access Point "WS_P4_Config" und bietet ein Webinterface zur Konfiguration
 
 class WebConfigServer {
 public:

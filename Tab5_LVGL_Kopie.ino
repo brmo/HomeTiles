@@ -1,8 +1,6 @@
-#include <M5Unified.h>
 #include <WiFi.h>
-#include <Wire.h> // Wichtig
-#include <SPI.h>  // Wichtig für M5GFX
-#include <SD.h>   // SD Card Support
+#include <Wire.h>
+#include "src/core/waveshare_sdmmc.h"
 #include <OneWire.h>           // Erzwingt Arduino-Library-Discovery fuer DS18x20 Support
 #include <DallasTemperature.h> // Erzwingt Arduino-Library-Discovery fuer DS18x20 Support
 #include <freertos/FreeRTOS.h>
@@ -10,6 +8,7 @@
 #include <nvs_flash.h>
 #include <esp_err.h>
 
+#include "src/core/board_hal.h"
 #include "src/core/display_manager.h"
 #include "src/core/power_manager.h"
 #include "src/core/config_manager.h"
@@ -113,31 +112,23 @@ static bool init_nvs() {
 void setup() {
   Serial.begin(115200);
   delay(2000);
-  Serial.println("\n\n=== TAB5 STARTUP ===");
+  Serial.println("\n\n=== WAVESHARE P4 STARTUP ===");
   Serial.flush();
 
-  Serial.println("[Setup] M5.begin()...");
+  // Board-HAL initialisiert I2C, Display (MIPI-DSI HX8394), GT911 Touch, Backlight
+  Serial.println("[Setup] BoardHAL::init()...");
   Serial.flush();
-  auto cfg = M5.config();
-  M5.begin(cfg);
-  Serial.println("[Setup] M5.begin() OK");
-  Serial.flush();
-
-  Serial.println("[Setup] Wire.setClock(400000)...");
-  Serial.flush();
-  Wire.setClock(400000);
-  Serial.println("[Setup] Wire OK");
-  Serial.flush();
-
-  // SD Card Initialization
-  Serial.println("[Setup] SD Card init...");
-  Serial.flush();
-  SPI.begin(43, 39, 44, 42);  // SCK, MISO, MOSI, CS
-  if (!SD.begin(42, SPI, 25000000)) {
-    Serial.println("[Setup] SD Card nicht gefunden (optional)");
-  } else {
-    Serial.println("[Setup] SD Card OK");
+  if (!BoardHAL::init()) {
+    Serial.println("[Setup] BoardHAL init FAILED!");
+    while(1) delay(1000);
   }
+  Serial.println("[Setup] BoardHAL OK");
+  Serial.flush();
+
+  // SD Card (SDMMC 4-bit)
+  Serial.println("[Setup] SD Card init (SDMMC)...");
+  Serial.flush();
+  BoardHAL::initSDCard();
   Serial.flush();
 
   Serial.println("[Setup] displayManager.init()...");
@@ -169,32 +160,16 @@ void setup() {
   Serial.println("[Setup] Configs OK");
   Serial.flush();
 
-  Serial.println("[Setup] Applying display rotation...");
-  Serial.flush();
-  {
-    const DeviceConfig& dcfg = configManager.getConfig();
-    bool rotated = dcfg.display_rotated_180;
-    if (dcfg.display_rotation_mode == kDisplayRotationNormal) {
-      rotated = false;
-    } else if (dcfg.display_rotation_mode == kDisplayRotationFlipped) {
-      rotated = true;
-    } else if (dcfg.display_rotation_mode == kDisplayRotationAuto) {
-      bool detected = rotated;
-      if (powerManager.detectAutoRotation(&detected)) {
-        rotated = detected;
-        configManager.setRuntimeDisplayRotation(rotated);
-      }
-    }
-    displayManager.setRotationFlipped(rotated);
-  }
-  Serial.println("[Setup] Rotation OK");
+  // Waveshare 720×720: Square display, no rotation needed.
+  // Skip auto-rotation detection (no IMU).
+  Serial.println("[Setup] Display rotation: fixed (square display)");
   Serial.flush();
 
   Serial.println("[Setup] Setting brightness...");
   Serial.flush();
   {
     const DeviceConfig& dcfg = configManager.getConfig();
-    M5.Display.setBrightness(dcfg.display_brightness);
+    BoardHAL::setBrightness(dcfg.display_brightness);
   }
   Serial.println("[Setup] Brightness OK");
   Serial.flush();
@@ -236,10 +211,9 @@ void setup() {
     Serial.println("[Setup] Network OK");
     Serial.flush();
 
-    // WebSocket Server für Game Controls nur starten, wenn Konfiguration vorhanden ist
     Serial.println("[Setup] Game WebSocket Server...");
     Serial.flush();
-    gameWSServer.init(8081);  // Port 8081
+    gameWSServer.init(8081);
     Serial.println("[Setup] Game WebSocket OK");
     Serial.flush();
   } else {
@@ -278,25 +252,20 @@ void loop() {
       was_asleep = true;
     }
     if (configManager.isConfigured()) networkManager.update();
-    // UI-Queues im Sleep NICHT verarbeiten: spart CPU-Zyklen + LVGL-Rendering
-    // MQTT-Daten werden weiter empfangen und gecacht (cache_entity_payload)
-    // Beim Wake werden gecachte Werte ueber apply_cached_states() angewendet
-    lgfx::touch_point_t tp;
-    if (M5.Display.getTouch(&tp)) {
+    // Touch-Wake: abfragen ob Touch aktiv
+    BoardHAL::TouchPoint tp;
+    if (BoardHAL::getTouch(&tp)) {
       powerManager.wakeFromDisplaySleep();
       was_asleep = false;
-      return; 
+      return;
     }
-    delay(150); 
+    delay(150);
     return;
   }
   // Zurück im aktiven Modus
   was_asleep = false;
 
   // --- ACTIVE ---
-  if (first_run) Serial.println("[Loop] M5.update()...");
-  M5.update();
-
   // Lokale Sensoren (z. B. externer OneWire-Temperatursensor)
   mqttServiceLocalSensors();
 
@@ -329,7 +298,7 @@ void loop() {
     Serial.flush();
   }
 
-  // Nur 1ms Pause fÃ¼r maximale FPS
+  // Nur 1ms Pause für maximale FPS
   delay(1);
 
   if (first_run) Serial.println("[Loop] webConfigServer check...");
@@ -337,7 +306,7 @@ void loop() {
     if (webAdminServer.isRunning()) webAdminServer.stop();
     webConfigServer.handle();
     settings_update_ap_mode(true);
-    settings_update_wifi_status_ap("Tab5_Config", "12345678");
+    settings_update_wifi_status_ap("WS_P4_Config", "12345678");
     settings_update_power_status();
 
     if (webConfigServer.hasNewConfig()) { delay(1000); ESP.restart(); }
@@ -355,7 +324,6 @@ void loop() {
   if (webAdminServer.isRunning()) webAdminServer.handle();
 
   if (first_run) Serial.println("[Loop] gameWSServer.handle()...");
-  // WebSocket Server fÃ¼r Game Controls
   gameWSServer.handle();
 
   if (first_run) Serial.println("[Loop] Network check...");
@@ -387,7 +355,6 @@ void loop() {
   if (first_run) {
     Serial.println("[Loop] === ERSTE ITERATION KOMPLETT ===");
     Serial.flush();
-    first_run = false;  // Erst ganz am Ende!
+    first_run = false;
   }
 }
-

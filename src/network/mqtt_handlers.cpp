@@ -12,7 +12,7 @@
 #include "src/core/device_entities.h"
 #include "src/core/power_manager.h"
 #include "src/core/battery_state.h"
-#include <M5Unified.h>
+#include "src/core/board_hal.h"
 #include <PubSubClient.h>
 #include <algorithm>
 #include <cmath>
@@ -516,10 +516,10 @@ static void sync_external_temp_entity(bool publish_mqtt) {
   const uint32_t now_ms = millis();
   store_external_temp_history(now_ms);
 
-  String sensor_name = "Tab5 Intern DS18x20 Temperatur (GPIO 1/50)";
+  String sensor_name = "Waveshare Intern DS18x20 Temperatur (GPIO 1/50)";
 #if TAB5_HAS_ONEWIRE_DS18X20
   if (g_external_pin != 0xFF) {
-    sensor_name = "Tab5 Intern DS18x20 Temperatur (GPIO ";
+    sensor_name = "Waveshare Intern DS18x20 Temperatur (GPIO ";
     sensor_name += String(static_cast<unsigned>(g_external_pin));
     sensor_name += ")";
   }
@@ -589,11 +589,14 @@ static int readBatterySocPercent() {
 }
 
 static void sync_internal_battery_entity() {
+  if (batteryStateIsBatteryMissing()) {
+    return;
+  }
   const int soc = readBatterySocPercent();
   char soc_payload[8];
   snprintf(soc_payload, sizeof(soc_payload), "%d", soc);
 
-  const char* sensor_name = "Tab5 Intern Batterie SoC (M5.Power)";
+  const char* sensor_name = "WS_P4 Intern Batterie SoC";
   haBridgeConfig.registerSensorMeta(kEntityInternalBatterySoc, sensor_name, "%");
   haBridgeConfig.updateEntityMeta(kEntityInternalBatterySoc, sensor_name, "%", "battery");
   haBridgeConfig.updateSensorValue(kEntityInternalBatterySoc, soc_payload);
@@ -787,7 +790,7 @@ static void handleDisplayBrightnessCommand(const char* payload, size_t) {
   if (value < 75) value = 75;
   if (value > 255) value = 255;
 
-  M5.Display.setBrightness(value);
+  BoardHAL::setBrightness(value);
 
   const DeviceConfig& cfg = configManager.getConfig();
   configManager.saveDisplaySettings(
@@ -1416,13 +1419,13 @@ void mqttPublishDiscovery() {
 
   snprintf(tpc, sizeof(tpc), "homeassistant/sensor/%s_outside_c/config", did);
   snprintf(js, sizeof(js),
-    "{\"name\":\"Tab5 Outside\",\"stat_t\":\"%s\",\"unit_of_meas\":\"°C\",\"dev_cla\":\"temperature\",\"stat_cla\":\"measurement\",\"uniq_id\":\"%s_out\",\"avty_t\":\"%s\",\"pl_avail\":\"1\",\"pl_not_avail\":\"0\",\"dev\":{\"ids\":[\"%s\"],\"name\":\"Tab5 LVGL\",\"mf\":\"M5Stack\",\"mdl\":\"Tab5\"}}",
+    "{\"name\":\"Waveshare Outside\",\"stat_t\":\"%s\",\"unit_of_meas\":\"°C\",\"dev_cla\":\"temperature\",\"stat_cla\":\"measurement\",\"uniq_id\":\"%s_out\",\"avty_t\":\"%s\",\"pl_avail\":\"1\",\"pl_not_avail\":\"0\",\"dev\":{\"ids\":[\"%s\"],\"name\":\"Waveshare P4 Panel\",\"mf\":\"Waveshare\",\"mdl\":\"ESP32-P4-WIFI6-Touch-LCD-4B\"}}",
     mqttTopics.topic(TopicKey::SENSOR_OUT), did, stat_topic, did);
   mqtt.publish(tpc, js, true);
 
   snprintf(tpc, sizeof(tpc), "homeassistant/sensor/%s_inside_c/config", did);
   snprintf(js, sizeof(js),
-    "{\"name\":\"Tab5 Inside\",\"stat_t\":\"%s\",\"unit_of_meas\":\"°C\",\"dev_cla\":\"temperature\",\"stat_cla\":\"measurement\",\"uniq_id\":\"%s_in\",\"avty_t\":\"%s\",\"pl_avail\":\"1\",\"pl_not_avail\":\"0\",\"dev\":{\"ids\":[\"%s\"],\"name\":\"Tab5 LVGL\",\"mf\":\"M5Stack\",\"mdl\":\"Tab5\"}}",
+    "{\"name\":\"Waveshare Inside\",\"stat_t\":\"%s\",\"unit_of_meas\":\"°C\",\"dev_cla\":\"temperature\",\"stat_cla\":\"measurement\",\"uniq_id\":\"%s_in\",\"avty_t\":\"%s\",\"pl_avail\":\"1\",\"pl_not_avail\":\"0\",\"dev\":{\"ids\":[\"%s\"],\"name\":\"Waveshare P4 Panel\",\"mf\":\"Waveshare\",\"mdl\":\"ESP32-P4-WIFI6-Touch-LCD-4B\"}}",
     mqttTopics.topic(TopicKey::SENSOR_IN), did, stat_topic, did);
   mqtt.publish(tpc, js, true);
 
@@ -1435,25 +1438,25 @@ void mqttPublishDiscovery() {
 
   snprintf(tpc, sizeof(tpc), "homeassistant/sensor/%s_uptime/config", did);
   snprintf(js, sizeof(js),
-    "{\"name\":\"Tab5 Uptime\",\"stat_t\":\"%s\",\"unit_of_meas\":\"s\",\"uniq_id\":\"%s_up\",\"avty_t\":\"%s\",\"pl_avail\":\"1\",\"pl_not_avail\":\"0\",\"dev\":{\"ids\":[\"%s\"]}}",
+    "{\"name\":\"Waveshare Uptime\",\"stat_t\":\"%s\",\"unit_of_meas\":\"s\",\"uniq_id\":\"%s_up\",\"avty_t\":\"%s\",\"pl_avail\":\"1\",\"pl_not_avail\":\"0\",\"dev\":{\"ids\":[\"%s\"]}}",
     mqttTopics.topic(TopicKey::TELE_UP), did, stat_topic, did);
   mqtt.publish(tpc, js, true);
 
   snprintf(tpc, sizeof(tpc), "homeassistant/button/%s_scene_abend/config", did);
   snprintf(js, sizeof(js),
-    "{\"name\":\"Tab5 Scene Abend\",\"cmd_t\":\"%s\",\"pl_prs\":\"Abend\",\"uniq_id\":\"%s_btn_abend\",\"avty_t\":\"%s\",\"pl_avail\":\"1\",\"pl_not_avail\":\"0\",\"dev\":{\"ids\":[\"%s\"]}}",
+    "{\"name\":\"Waveshare Scene Abend\",\"cmd_t\":\"%s\",\"pl_prs\":\"Abend\",\"uniq_id\":\"%s_btn_abend\",\"avty_t\":\"%s\",\"pl_avail\":\"1\",\"pl_not_avail\":\"0\",\"dev\":{\"ids\":[\"%s\"]}}",
     mqttTopics.topic(TopicKey::SCENE_CMND), did, stat_topic, did);
   mqtt.publish(tpc, js, true);
 
   snprintf(tpc, sizeof(tpc), "homeassistant/button/%s_scene_lesen/config", did);
   snprintf(js, sizeof(js),
-    "{\"name\":\"Tab5 Scene Lesen\",\"cmd_t\":\"%s\",\"pl_prs\":\"Lesen\",\"uniq_id\":\"%s_btn_lesen\",\"avty_t\":\"%s\",\"pl_avail\":\"1\",\"pl_not_avail\":\"0\",\"dev\":{\"ids\":[\"%s\"]}}",
+    "{\"name\":\"Waveshare Scene Lesen\",\"cmd_t\":\"%s\",\"pl_prs\":\"Lesen\",\"uniq_id\":\"%s_btn_lesen\",\"avty_t\":\"%s\",\"pl_avail\":\"1\",\"pl_not_avail\":\"0\",\"dev\":{\"ids\":[\"%s\"]}}",
     mqttTopics.topic(TopicKey::SCENE_CMND), did, stat_topic, did);
   mqtt.publish(tpc, js, true);
 
   snprintf(tpc, sizeof(tpc), "homeassistant/button/%s_scene_allesaus/config", did);
   snprintf(js, sizeof(js),
-    "{\"name\":\"Tab5 Scene Alles Aus\",\"cmd_t\":\"%s\",\"pl_prs\":\"AllesAus\",\"uniq_id\":\"%s_btn_allesaus\",\"avty_t\":\"%s\",\"pl_avail\":\"1\",\"pl_not_avail\":\"0\",\"dev\":{\"ids\":[\"%s\"]}}",
+    "{\"name\":\"Waveshare Scene Alles Aus\",\"cmd_t\":\"%s\",\"pl_prs\":\"AllesAus\",\"uniq_id\":\"%s_btn_allesaus\",\"avty_t\":\"%s\",\"pl_avail\":\"1\",\"pl_not_avail\":\"0\",\"dev\":{\"ids\":[\"%s\"]}}",
     mqttTopics.topic(TopicKey::SCENE_CMND), did, stat_topic, did);
   mqtt.publish(tpc, js, true);
 

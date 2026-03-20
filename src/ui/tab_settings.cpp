@@ -1,9 +1,8 @@
-#include <M5Unified.h>
 #include <lvgl.h>
 #include <WiFi.h>
 #include "src/ui/tab_settings.h"
 #include "src/core/config_manager.h"
-#include "src/core/battery_state.h"
+#include "src/core/board_hal.h"
 #include "src/tiles/mdi_icons.h"
 #include "src/tiles/tile_config.h"
 #include "src/ui/ui_manager.h"
@@ -20,11 +19,12 @@ static uint8_t display_rotation_mode = kDisplayRotationNormal;
 static lv_obj_t *mains_wake_btn = nullptr;
 static lv_obj_t *mains_wake_label = nullptr;
 static lv_obj_t *mains_wake_sub_label = nullptr;
+// Battery wake removed (no battery on Waveshare)
 static lv_obj_t *battery_wake_btn = nullptr;
 static lv_obj_t *battery_wake_label = nullptr;
 static lv_obj_t *battery_wake_sub_label = nullptr;
-static uint8_t wake_mode_mains = kWakeModeImu;
-static uint8_t wake_mode_battery = kWakeModeImu;
+static uint8_t wake_mode_mains = kWakeModeTouch;
+static uint8_t wake_mode_battery = kWakeModeTouch;
 static hotspot_callback_t g_hotspot_callback = nullptr;
 
 // WiFi Status Labels
@@ -46,28 +46,25 @@ static uint32_t ap_mode_click_block_until = 0;
 static lv_obj_t *sleep_slider = nullptr;
 static lv_obj_t *sleep_time_label = nullptr;
 static lv_obj_t *sleep_label = nullptr;
-static lv_obj_t *sleep_battery_slider = nullptr;
-static lv_obj_t *sleep_battery_time_label = nullptr;
-static lv_obj_t *sleep_battery_label = nullptr;
 
-// Power Status Labels
+// Power Status Labels (stubs – no battery display)
 static lv_obj_t *power_status_label = nullptr;
 static lv_obj_t *power_level_label = nullptr;
 static lv_obj_t *battery_icon_label = nullptr;
 static lv_obj_t *battery_percent_label = nullptr;
 
-static const int kSettingsColLeftPct = 12;
-static const int kSettingsColMidPct = 26;
-static const int kSettingsColRightPct = 62;
-static const int kSettingsColGap = 12;
-static const int kSettingsColRowGap = 6;
-static const int kSettingsBtnHeight = 88;
+// Layout constants – kompakter fuer 720×720, 4×4 Grid
+static const int kSettingsColLeftPct = 15;
+static const int kSettingsColRightPct = 85;
+static const int kSettingsColGap = 8;
+static const int kSettingsColRowGap = 4;
+static const int kSettingsBtnHeight = 72;
 static const int kSettingsButtonWidthPct = 90;
-static const int kSettingsSliderLabelWidth = 220;
-static const int kSettingsSliderValueWidth = 100;
-static const int kSettingsSliderHeight = 18;
-static const int kSettingsSliderKnobSize = 40;
-static const int kSettingsSliderClickPad = 22;
+static const int kSettingsSliderLabelWidth = 160;
+static const int kSettingsSliderValueWidth = 70;
+static const int kSettingsSliderHeight = 16;
+static const int kSettingsSliderKnobSize = 36;
+static const int kSettingsSliderClickPad = 20;
 static const uint8_t kSettingsCardColStart = 1;
 
 // Forward declarations
@@ -123,7 +120,7 @@ static void format_sleep_label_for_index(char* buf, size_t len, int32_t index) {
 }
 
 static const char* rotation_mode_text(uint8_t mode) {
-  if (mode == kDisplayRotationFlipped) return "180°";
+  if (mode == kDisplayRotationFlipped) return "180\xC2\xB0";
   if (mode == kDisplayRotationAuto) return "Auto";
   return "Normal";
 }
@@ -148,41 +145,18 @@ static void update_display_rotate_label() {
 }
 
 static const char* wake_mode_text(uint8_t mode) {
-  return (mode == kWakeModeTouch) ? "Touch" : "Sensor";
+  (void)mode;
+  return "Touch";
 }
 
 static void update_wake_button(lv_obj_t *main_label, lv_obj_t *sub_label, uint8_t mode) {
+  (void)mode;
   if (!main_label) return;
-  uint8_t next = (mode == kWakeModeTouch) ? kWakeModeImu : kWakeModeTouch;
-  const char* next_text = wake_mode_text(next);
-  const char* cur_text = wake_mode_text(mode);
-  static char main_buf[24];
-  static char sub_buf[32];
-  snprintf(main_buf, sizeof(main_buf), "%s", next_text);
-  snprintf(sub_buf, sizeof(sub_buf), "Aktuell: %s", cur_text);
-  lv_label_set_text(main_label, main_buf);
+  wake_mode_mains = kWakeModeTouch;
+  wake_mode_battery = kWakeModeTouch;
+  lv_label_set_text(main_label, wake_mode_text(kWakeModeTouch));
   if (sub_label) {
-    lv_label_set_text(sub_label, sub_buf);
-  }
-}
-
-static const char* battery_icon_name(bool charging, int percent) {
-  if (percent < 0) percent = 0;
-  if (percent > 100) percent = 100;
-  int bracket = (percent + 9) / 10;
-  if (bracket < 1) bracket = 1;
-  if (bracket > 10) bracket = 10;
-  switch (bracket) {
-    case 10: return charging ? "battery-charging-100" : "battery";
-    case 9: return charging ? "battery-charging-90" : "battery-90";
-    case 8: return charging ? "battery-charging-80" : "battery-80";
-    case 7: return charging ? "battery-charging-70" : "battery-70";
-    case 6: return charging ? "battery-charging-60" : "battery-60";
-    case 5: return charging ? "battery-charging-50" : "battery-50";
-    case 4: return charging ? "battery-charging-40" : "battery-40";
-    case 3: return charging ? "battery-charging-30" : "battery-30";
-    case 2: return charging ? "battery-charging-20" : "battery-20";
-    default: return charging ? "battery-charging-10" : "battery-10";
+    lv_label_set_text(sub_label, "GT911 / kein IMU");
   }
 }
 
@@ -233,38 +207,7 @@ static void on_display_rotate_clicked(lv_event_t *e) {
 
 static void on_mains_wake_clicked(lv_event_t *e) {
   (void)e;
-  wake_mode_mains = (wake_mode_mains == kWakeModeTouch) ? kWakeModeImu : kWakeModeTouch;
-  update_wake_button(mains_wake_label, mains_wake_sub_label, wake_mode_mains);
-  const DeviceConfig& cfg = configManager.getConfig();
-  configManager.saveDisplaySettings(
-      cfg.display_brightness,
-      cfg.auto_sleep_enabled,
-      cfg.auto_sleep_seconds,
-      cfg.auto_sleep_battery_enabled,
-      cfg.auto_sleep_battery_seconds,
-      display_rotation_mode,
-      display_rotated_180,
-      wake_mode_mains,
-      wake_mode_battery);
-  mqttPublishDeviceSettings();
-}
-
-static void on_battery_wake_clicked(lv_event_t *e) {
-  (void)e;
-  wake_mode_battery = (wake_mode_battery == kWakeModeTouch) ? kWakeModeImu : kWakeModeTouch;
-  update_wake_button(battery_wake_label, battery_wake_sub_label, wake_mode_battery);
-  const DeviceConfig& cfg = configManager.getConfig();
-  configManager.saveDisplaySettings(
-      cfg.display_brightness,
-      cfg.auto_sleep_enabled,
-      cfg.auto_sleep_seconds,
-      cfg.auto_sleep_battery_enabled,
-      cfg.auto_sleep_battery_seconds,
-      display_rotation_mode,
-      display_rotated_180,
-      wake_mode_mains,
-      wake_mode_battery);
-  mqttPublishDeviceSettings();
+  update_wake_button(mains_wake_label, mains_wake_sub_label, kWakeModeTouch);
 }
 
 static void on_brightness(lv_event_t *e) {
@@ -272,15 +215,12 @@ static void on_brightness(lv_event_t *e) {
   lv_event_code_t code = lv_event_get_code(e);
   int32_t value = lv_slider_get_value(slider);
 
-  // Helligkeit sofort ändern
-  M5.Display.setBrightness(value);
+  BoardHAL::setBrightness(value);
 
-  // Label sofort updaten
   static char buf[16];
   snprintf(buf, sizeof(buf), "%d", (int)value);
   if (brightness_label) lv_label_set_text(brightness_label, buf);
 
-  // Config NUR beim Loslassen speichern (nicht bei jeder Bewegung!)
   if (code == LV_EVENT_RELEASED) {
     const DeviceConfig& cfg = configManager.getConfig();
     configManager.saveDisplaySettings(
@@ -322,9 +262,9 @@ static void create_icon_block(lv_obj_t *parent, const char *icon_name, const cha
 
   lv_obj_t *label = lv_label_create(parent);
   lv_label_set_text(label, label_text);
-  lv_obj_set_style_text_font(label, &ui_font_24, 0);
+  lv_obj_set_style_text_font(label, &ui_font_20, 0);
   lv_obj_set_style_text_color(label, lv_color_white(), 0);
-  lv_obj_set_style_margin_top(label, 8, 0);
+  lv_obj_set_style_margin_top(label, 4, 0);
 }
 
 static void on_settings_back_clicked(lv_event_t *e) {
@@ -334,7 +274,7 @@ static void on_settings_back_clicked(lv_event_t *e) {
 
 static void create_settings_back_button(lv_obj_t *parent) {
   lv_obj_t *btn = lv_button_create(parent);
-  lv_obj_set_style_radius(btn, 22, 0);
+  lv_obj_set_style_radius(btn, 18, 0);
   lv_obj_set_style_border_width(btn, 0, 0);
   lv_obj_set_style_shadow_width(btn, 0, 0);
   lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
@@ -364,12 +304,10 @@ static void on_sleep_slider(lv_event_t *e) {
   lv_event_code_t code = lv_event_get_code(e);
   int32_t index = lv_slider_get_value(slider);
 
-  // Label sofort updaten
   static char buf[16];
   format_sleep_label_for_index(buf, sizeof(buf), index);
   if (sleep_time_label) lv_label_set_text(sleep_time_label, buf);
 
-  // Config NUR beim Loslassen speichern (nicht bei jeder Bewegung!)
   if (code == LV_EVENT_RELEASED) {
     const DeviceConfig& cfg = configManager.getConfig();
     bool enabled = !sleep_index_is_never(index);
@@ -388,87 +326,9 @@ static void on_sleep_slider(lv_event_t *e) {
   }
 }
 
-static void on_sleep_battery_slider(lv_event_t *e) {
-  lv_obj_t *slider = (lv_obj_t*)lv_event_get_target(e);
-  lv_event_code_t code = lv_event_get_code(e);
-  int32_t index = lv_slider_get_value(slider);
-
-  static char buf[16];
-  format_sleep_label_for_index(buf, sizeof(buf), index);
-  if (sleep_battery_time_label) lv_label_set_text(sleep_battery_time_label, buf);
-
-  if (code == LV_EVENT_RELEASED) {
-    const DeviceConfig& cfg = configManager.getConfig();
-    bool enabled = !sleep_index_is_never(index);
-    uint16_t seconds = enabled ? sleep_seconds_from_index(index) : cfg.auto_sleep_battery_seconds;
-    configManager.saveDisplaySettings(
-        cfg.display_brightness,
-        cfg.auto_sleep_enabled,
-        cfg.auto_sleep_seconds,
-        enabled,
-        seconds,
-        display_rotation_mode,
-        display_rotated_180,
-        wake_mode_mains,
-        wake_mode_battery);
-    mqttPublishDeviceSettings();
-  }
-}
-
-// Power Status Update (public, wird von main loop aufgerufen)
+// Power Status Update (stub – no battery on Waveshare)
 void settings_update_power_status() {
-  if (!power_status_label || !power_level_label) return;
-
-  batteryStateUpdate();
-  const BatteryTelemetry& batt = batteryStateGet();
-
-  bool on_mains = batt.on_mains;
-  bool battery_missing = batt.battery_missing;
-  bool have_display_level = batt.level_valid;
-  int32_t display_level = have_display_level ? batt.level_pct : batt.raw_level_pct;
-  bool raw_level_valid = (batt.raw_level_pct >= 0 && batt.raw_level_pct <= 100);
-
-  if (battery_percent_label) {
-    static char percent_buf[12];
-    if (battery_missing) {
-      snprintf(percent_buf, sizeof(percent_buf), "Batterie");
-    } else if (have_display_level) {
-      snprintf(percent_buf, sizeof(percent_buf), "%d%%", display_level);
-    } else {
-      snprintf(percent_buf, sizeof(percent_buf), "--%%");
-    }
-    lv_label_set_text(battery_percent_label, percent_buf);
-  }
-
-  static char status_buf[40];
-  static char level_buf[32];
-  const char* statusText = on_mains ? "Netzteil" : "Akku";
-
-  snprintf(status_buf, sizeof(status_buf), "Status: %s", statusText);
-  if (have_display_level) {
-    snprintf(level_buf, sizeof(level_buf), "Level: %d%%", display_level);
-  } else {
-    snprintf(level_buf, sizeof(level_buf), "Level: --%%");
-  }
-
-  lv_label_set_text(power_status_label, status_buf);
-  lv_label_set_text(power_level_label, level_buf);
-  lv_obj_add_flag(power_status_label, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(power_level_label, LV_OBJ_FLAG_HIDDEN);
-
-  if (battery_icon_label) {
-    const char* icon_name = nullptr;
-    bool icon_charging = on_mains;
-    if (battery_missing) {
-      icon_name = "battery-charging-outline";
-    } else if (!have_display_level && !raw_level_valid) {
-      icon_name = "battery-unknown";
-    } else {
-      icon_name = battery_icon_name(icon_charging, display_level);
-    }
-    String icon_char = getMdiChar(String(icon_name));
-    lv_label_set_text(battery_icon_label, icon_char.c_str());
-  }
+  // No battery to monitor – nothing to update
 }
 
 static void clear_ap_confirm_timer() {
@@ -550,10 +410,10 @@ static lv_obj_t *create_settings_card(lv_obj_t *parent, uint8_t col, uint8_t row
   lv_obj_set_style_border_opa(card, LV_OPA_TRANSP, 0);
   lv_obj_set_style_outline_opa(card, LV_OPA_TRANSP, 0);
   lv_obj_set_style_shadow_opa(card, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_radius(card, 22, 0);
-  lv_obj_set_style_pad_hor(card, 20, 0);
-  lv_obj_set_style_pad_ver(card, 18, 0);
-  lv_obj_set_style_pad_row(card, 8, 0);
+  lv_obj_set_style_radius(card, 18, 0);
+  lv_obj_set_style_pad_hor(card, 12, 0);
+  lv_obj_set_style_pad_ver(card, 10, 0);
+  lv_obj_set_style_pad_row(card, 4, 0);
   lv_obj_set_style_pad_column(card, kSettingsColGap, 0);
   lv_obj_set_flex_flow(card, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -581,8 +441,8 @@ static lv_obj_t *create_slider_row(lv_obj_t *parent) {
   lv_obj_set_style_border_opa(row, LV_OPA_TRANSP, 0);
   lv_obj_set_style_pad_all(row, 0, 0);
   lv_obj_set_style_pad_bottom(row, 2, 0);
-  lv_obj_set_style_pad_right(row, 28, 0);
-  lv_obj_set_style_pad_column(row, 12, 0);
+  lv_obj_set_style_pad_right(row, 12, 0);
+  lv_obj_set_style_pad_column(row, 8, 0);
   lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   return row;
@@ -607,17 +467,16 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   lv_obj_set_style_border_opa(tab, LV_OPA_TRANSP, 0);
   lv_obj_set_style_pad_all(tab, GRID_PAD, 0);
 
+  // 4×4 Grid
   static int32_t col_dsc[] = {
-    GRID_CELL_W, GRID_CELL_W, GRID_CELL_W, GRID_CELL_W, GRID_CELL_W, GRID_CELL_W,
+    GRID_CELL_W, GRID_CELL_W, GRID_CELL_W, GRID_CELL_W,
     LV_GRID_TEMPLATE_LAST
   };
   static int32_t row_dsc[] = {
-    GRID_CELL_H,
-    GRID_CELL_H,
-    GRID_CELL_H,
-    GRID_CELL_H,
+    GRID_CELL_H, GRID_CELL_H, GRID_CELL_H, GRID_CELL_H,
     LV_GRID_TEMPLATE_LAST
   };
+  lv_obj_set_layout(tab, LV_LAYOUT_GRID);
   lv_obj_set_grid_dsc_array(tab, col_dsc, row_dsc);
   lv_obj_set_style_pad_column(tab, GRID_GAP, 0);
   lv_obj_set_style_pad_row(tab, GRID_GAP, 0);
@@ -625,10 +484,10 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   const DeviceConfig& cfg = configManager.getConfig();
   display_rotated_180 = cfg.display_rotated_180;
   display_rotation_mode = cfg.display_rotation_mode;
-  wake_mode_mains = cfg.wake_mode_mains;
-  wake_mode_battery = cfg.wake_mode_battery;
+  wake_mode_mains = kWakeModeTouch;
+  wake_mode_battery = kWakeModeTouch;
 
-  // Display tile
+  // ===== Row 0: Back + Display (Helligkeit + Rotation) =====
   create_settings_back_button(tab);
 
   lv_obj_t *card_display = create_settings_card(tab, kSettingsCardColStart, 0);
@@ -636,47 +495,23 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
       card_display, kSettingsColLeftPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   create_icon_block(display_col_left, "monitor", "Display");
 
-  lv_obj_t *display_col_mid = create_settings_column(
-      card_display, kSettingsColMidPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
-  lv_obj_set_style_pad_left(display_col_mid, 16, 0);
-  lv_obj_set_style_pad_right(display_col_mid, 8, 0);
-  display_rotate_btn = lv_button_create(display_col_mid);
-  lv_obj_set_width(display_rotate_btn, LV_PCT(kSettingsButtonWidthPct));
-  lv_obj_set_height(display_rotate_btn, kSettingsBtnHeight);
-  lv_obj_set_style_bg_color(display_rotate_btn, lv_color_hex(0x3B82F6), 0);
-  lv_obj_set_style_border_opa(display_rotate_btn, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_outline_opa(display_rotate_btn, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_shadow_opa(display_rotate_btn, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_radius(display_rotate_btn, 18, 0);
-  lv_obj_add_event_cb(display_rotate_btn, on_display_rotate_clicked, LV_EVENT_CLICKED, nullptr);
-
-  display_rotate_label = lv_label_create(display_rotate_btn);
-  lv_obj_set_style_text_font(display_rotate_label, &ui_font_24, 0);
-  lv_obj_set_style_text_color(display_rotate_label, lv_color_white(), 0);
-  lv_obj_align(display_rotate_label, LV_ALIGN_TOP_MID, 0, 8);
-
-  display_rotate_sub_label = lv_label_create(display_rotate_btn);
-  lv_obj_set_style_text_font(display_rotate_sub_label, &ui_font_20, 0);
-  lv_obj_set_style_text_color(display_rotate_sub_label, lv_color_hex(0xE0E0E0), 0);
-  lv_obj_align(display_rotate_sub_label, LV_ALIGN_BOTTOM_MID, 0, -8);
-  update_display_rotate_label();
-
   lv_obj_t *display_col_right = create_settings_column(
       card_display, kSettingsColRightPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
   lv_obj_set_style_pad_left(display_col_right, 8, 0);
-  lv_obj_set_style_pad_right(display_col_right, 8, 0);
+
+  // Brightness slider row
   lv_obj_t *brightness_row = create_slider_row(display_col_right);
   lv_obj_t *brightness_row_label = lv_label_create(brightness_row);
   lv_label_set_text(brightness_row_label, "Helligkeit");
   lv_obj_set_width(brightness_row_label, kSettingsSliderLabelWidth);
   lv_label_set_long_mode(brightness_row_label, LV_LABEL_LONG_CLIP);
-  lv_obj_set_style_text_font(brightness_row_label, &ui_font_24, 0);
+  lv_obj_set_style_text_font(brightness_row_label, &ui_font_20, 0);
   lv_obj_set_style_text_color(brightness_row_label, lv_color_white(), 0);
   lv_obj_t *brightness_slider = lv_slider_create(brightness_row);
   style_settings_slider(brightness_slider);
   lv_obj_set_flex_grow(brightness_slider, 1);
   lv_slider_set_range(brightness_slider, 75, 255);
-  int current_brightness = M5.Display.getBrightness();
+  int current_brightness = BoardHAL::getBrightness();
   lv_slider_set_value(brightness_slider, current_brightness, LV_ANIM_OFF);
   lv_obj_add_event_cb(brightness_slider, on_brightness, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(brightness_slider, on_brightness, LV_EVENT_RELEASED, nullptr);
@@ -684,7 +519,7 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   brightness_label = lv_label_create(brightness_row);
   lv_obj_set_width(brightness_label, kSettingsSliderValueWidth);
   lv_label_set_long_mode(brightness_label, LV_LABEL_LONG_CLIP);
-  lv_obj_set_style_text_font(brightness_label, &ui_font_24, 0);
+  lv_obj_set_style_text_font(brightness_label, &ui_font_20, 0);
   lv_obj_set_style_text_color(brightness_label, lv_color_white(), 0);
   lv_obj_set_style_text_align(brightness_label, LV_TEXT_ALIGN_RIGHT, 0);
 
@@ -692,18 +527,46 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   snprintf(bright_buf, sizeof(bright_buf), "%d", current_brightness);
   lv_label_set_text(brightness_label, bright_buf);
 
-  // WiFi tile
-  lv_obj_t *card_wifi = create_settings_card(tab, kSettingsCardColStart, 1);
+  // Rotation button row
+  lv_obj_t *rotate_row = create_slider_row(display_col_right);
+  lv_obj_t *rotate_row_label = lv_label_create(rotate_row);
+  lv_label_set_text(rotate_row_label, "Rotation");
+  lv_obj_set_width(rotate_row_label, kSettingsSliderLabelWidth);
+  lv_label_set_long_mode(rotate_row_label, LV_LABEL_LONG_CLIP);
+  lv_obj_set_style_text_font(rotate_row_label, &ui_font_20, 0);
+  lv_obj_set_style_text_color(rotate_row_label, lv_color_white(), 0);
+
+  display_rotate_btn = lv_button_create(rotate_row);
+  lv_obj_set_height(display_rotate_btn, 40);
+  lv_obj_set_flex_grow(display_rotate_btn, 1);
+  lv_obj_set_style_bg_color(display_rotate_btn, lv_color_hex(0x3B82F6), 0);
+  lv_obj_set_style_border_opa(display_rotate_btn, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_outline_opa(display_rotate_btn, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_shadow_opa(display_rotate_btn, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_radius(display_rotate_btn, 12, 0);
+  lv_obj_add_event_cb(display_rotate_btn, on_display_rotate_clicked, LV_EVENT_CLICKED, nullptr);
+
+  display_rotate_label = lv_label_create(display_rotate_btn);
+  lv_obj_set_style_text_font(display_rotate_label, &ui_font_20, 0);
+  lv_obj_set_style_text_color(display_rotate_label, lv_color_white(), 0);
+  lv_obj_center(display_rotate_label);
+  display_rotate_sub_label = nullptr;  // kein Sub-Label im kompakten Layout
+  update_display_rotate_label();
+
+  // ===== Row 1: WiFi =====
+  lv_obj_t *card_wifi = create_settings_card(tab, 0, 1);
+  // WiFi spans all 4 cols
+  lv_obj_set_grid_cell(card_wifi, LV_GRID_ALIGN_STRETCH, 0, GRID_COLS, LV_GRID_ALIGN_STRETCH, 1, 1);
+
   lv_obj_t *wifi_col_left = create_settings_column(
       card_wifi, kSettingsColLeftPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   create_icon_block(wifi_col_left, "wifi", "WLAN");
 
   lv_obj_t *wifi_col_mid = create_settings_column(
-      card_wifi, kSettingsColMidPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
-  lv_obj_set_style_pad_left(wifi_col_mid, 16, 0);
-  lv_obj_set_style_pad_right(wifi_col_mid, 8, 0);
+      card_wifi, 50, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_left(wifi_col_mid, 8, 0);
   wifi_status_label = lv_label_create(wifi_col_mid);
-  lv_label_set_text(wifi_status_label, "Status: " LV_SYMBOL_CLOSE " Nicht verbunden");
+  lv_label_set_text(wifi_status_label, "Status: " LV_SYMBOL_CLOSE " Offline");
   lv_obj_set_width(wifi_status_label, LV_PCT(100));
   lv_label_set_long_mode(wifi_status_label, LV_LABEL_LONG_CLIP);
   lv_obj_set_style_text_font(wifi_status_label, &ui_font_20, 0);
@@ -732,9 +595,7 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   lv_obj_add_flag(mqtt_notice_label, LV_OBJ_FLAG_HIDDEN);
 
   lv_obj_t *wifi_col_right = create_settings_column(
-      card_wifi, kSettingsColRightPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_left(wifi_col_right, 8, 0);
-  lv_obj_set_style_pad_right(wifi_col_right, 8, 0);
+      card_wifi, 35, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   ap_mode_btn = lv_button_create(wifi_col_right);
   lv_obj_set_width(ap_mode_btn, LV_PCT(kSettingsButtonWidthPct));
   lv_obj_set_height(ap_mode_btn, kSettingsBtnHeight);
@@ -742,18 +603,18 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   lv_obj_set_style_border_opa(ap_mode_btn, LV_OPA_TRANSP, 0);
   lv_obj_set_style_outline_opa(ap_mode_btn, LV_OPA_TRANSP, 0);
   lv_obj_set_style_shadow_opa(ap_mode_btn, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_radius(ap_mode_btn, 18, 0);
+  lv_obj_set_style_radius(ap_mode_btn, 14, 0);
   lv_obj_add_event_cb(ap_mode_btn, on_ap_mode_clicked, LV_EVENT_CLICKED, nullptr);
 
   ap_mode_btn_label = lv_label_create(ap_mode_btn);
   lv_label_set_text(ap_mode_btn_label, "AP aktivieren");
-  lv_obj_set_style_text_font(ap_mode_btn_label, &ui_font_24, 0);
+  lv_obj_set_style_text_font(ap_mode_btn_label, &ui_font_20, 0);
   lv_obj_center(ap_mode_btn_label);
 
   ap_confirm_row = create_card_row(wifi_col_right);
   lv_obj_set_width(ap_confirm_row, LV_PCT(kSettingsButtonWidthPct));
   lv_obj_set_height(ap_confirm_row, kSettingsBtnHeight);
-  lv_obj_set_style_pad_column(ap_confirm_row, 12, 0);
+  lv_obj_set_style_pad_column(ap_confirm_row, 8, 0);
   lv_obj_add_flag(ap_confirm_row, LV_OBJ_FLAG_HIDDEN);
 
   ap_confirm_yes_btn = lv_button_create(ap_confirm_row);
@@ -763,11 +624,11 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   lv_obj_set_style_border_opa(ap_confirm_yes_btn, LV_OPA_TRANSP, 0);
   lv_obj_set_style_outline_opa(ap_confirm_yes_btn, LV_OPA_TRANSP, 0);
   lv_obj_set_style_shadow_opa(ap_confirm_yes_btn, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_radius(ap_confirm_yes_btn, 18, 0);
+  lv_obj_set_style_radius(ap_confirm_yes_btn, 14, 0);
   lv_obj_add_event_cb(ap_confirm_yes_btn, on_confirm_yes_clicked, LV_EVENT_CLICKED, nullptr);
   lv_obj_t *ap_yes_label = lv_label_create(ap_confirm_yes_btn);
-  lv_label_set_text(ap_yes_label, "Best\u00e4tigen");
-  lv_obj_set_style_text_font(ap_yes_label, &ui_font_24, 0);
+  lv_label_set_text(ap_yes_label, "Ja");
+  lv_obj_set_style_text_font(ap_yes_label, &ui_font_20, 0);
   lv_obj_center(ap_yes_label);
 
   ap_confirm_no_btn = lv_button_create(ap_confirm_row);
@@ -777,54 +638,30 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   lv_obj_set_style_border_opa(ap_confirm_no_btn, LV_OPA_TRANSP, 0);
   lv_obj_set_style_outline_opa(ap_confirm_no_btn, LV_OPA_TRANSP, 0);
   lv_obj_set_style_shadow_opa(ap_confirm_no_btn, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_radius(ap_confirm_no_btn, 18, 0);
+  lv_obj_set_style_radius(ap_confirm_no_btn, 14, 0);
   lv_obj_add_event_cb(ap_confirm_no_btn, on_confirm_no_clicked, LV_EVENT_CLICKED, nullptr);
   lv_obj_t *ap_no_label = lv_label_create(ap_confirm_no_btn);
-  lv_label_set_text(ap_no_label, "Abbrechen");
-  lv_obj_set_style_text_font(ap_no_label, &ui_font_24, 0);
+  lv_label_set_text(ap_no_label, "Nein");
+  lv_obj_set_style_text_font(ap_no_label, &ui_font_20, 0);
   lv_obj_center(ap_no_label);
 
-  // Sleep mains tile
-  lv_obj_t *card_mains = create_settings_card(tab, kSettingsCardColStart, 2);
-  lv_obj_t *mains_col_left = create_settings_column(
-      card_mains, kSettingsColLeftPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  create_icon_block(mains_col_left, "power-plug", "Netzteil");
+  // ===== Row 2: Auto-Sleep =====
+  lv_obj_t *card_sleep = create_settings_card(tab, 0, 2);
+  lv_obj_set_grid_cell(card_sleep, LV_GRID_ALIGN_STRETCH, 0, GRID_COLS, LV_GRID_ALIGN_STRETCH, 2, 1);
 
-  lv_obj_t *mains_col_mid = create_settings_column(
-      card_mains, kSettingsColMidPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
-  lv_obj_set_style_pad_left(mains_col_mid, 16, 0);
-  lv_obj_set_style_pad_right(mains_col_mid, 8, 0);
-  mains_wake_btn = lv_button_create(mains_col_mid);
-  lv_obj_set_width(mains_wake_btn, LV_PCT(kSettingsButtonWidthPct));
-  lv_obj_set_height(mains_wake_btn, kSettingsBtnHeight);
-  lv_obj_set_style_bg_color(mains_wake_btn, lv_color_hex(0x3B82F6), 0);
-  lv_obj_set_style_border_opa(mains_wake_btn, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_outline_opa(mains_wake_btn, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_shadow_opa(mains_wake_btn, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_radius(mains_wake_btn, 18, 0);
-  lv_obj_add_event_cb(mains_wake_btn, on_mains_wake_clicked, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *sleep_col_left = create_settings_column(
+      card_sleep, kSettingsColLeftPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  create_icon_block(sleep_col_left, "power-plug", "Sleep");
 
-  mains_wake_label = lv_label_create(mains_wake_btn);
-  lv_obj_set_style_text_font(mains_wake_label, &ui_font_24, 0);
-  lv_obj_set_style_text_color(mains_wake_label, lv_color_white(), 0);
-  lv_obj_align(mains_wake_label, LV_ALIGN_TOP_MID, 0, 8);
-
-  mains_wake_sub_label = lv_label_create(mains_wake_btn);
-  lv_obj_set_style_text_font(mains_wake_sub_label, &ui_font_20, 0);
-  lv_obj_set_style_text_color(mains_wake_sub_label, lv_color_hex(0xE0E0E0), 0);
-  lv_obj_align(mains_wake_sub_label, LV_ALIGN_BOTTOM_MID, 0, -8);
-  update_wake_button(mains_wake_label, mains_wake_sub_label, wake_mode_mains);
-
-  lv_obj_t *mains_col_right = create_settings_column(
-      card_mains, kSettingsColRightPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
-  lv_obj_set_style_pad_left(mains_col_right, 8, 0);
-  lv_obj_set_style_pad_right(mains_col_right, 8, 0);
-  lv_obj_t *sleep_row = create_slider_row(mains_col_right);
+  lv_obj_t *sleep_col_right = create_settings_column(
+      card_sleep, kSettingsColRightPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_left(sleep_col_right, 8, 0);
+  lv_obj_t *sleep_row = create_slider_row(sleep_col_right);
   sleep_label = lv_label_create(sleep_row);
   lv_label_set_text(sleep_label, "Auto-Sleep nach");
   lv_obj_set_width(sleep_label, kSettingsSliderLabelWidth);
   lv_label_set_long_mode(sleep_label, LV_LABEL_LONG_CLIP);
-  lv_obj_set_style_text_font(sleep_label, &ui_font_24, 0);
+  lv_obj_set_style_text_font(sleep_label, &ui_font_20, 0);
   lv_obj_set_style_text_color(sleep_label, lv_color_white(), 0);
   sleep_slider = lv_slider_create(sleep_row);
   style_settings_slider(sleep_slider);
@@ -840,7 +677,7 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   sleep_time_label = lv_label_create(sleep_row);
   lv_obj_set_width(sleep_time_label, kSettingsSliderValueWidth);
   lv_label_set_long_mode(sleep_time_label, LV_LABEL_LONG_CLIP);
-  lv_obj_set_style_text_font(sleep_time_label, &ui_font_24, 0);
+  lv_obj_set_style_text_font(sleep_time_label, &ui_font_20, 0);
   lv_obj_set_style_text_color(sleep_time_label, lv_color_white(), 0);
   lv_obj_set_style_text_align(sleep_time_label, LV_TEXT_ALIGN_RIGHT, 0);
 
@@ -848,99 +685,47 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   format_sleep_label_for_index(sleep_buf, sizeof(sleep_buf), sleep_index);
   lv_label_set_text(sleep_time_label, sleep_buf);
 
-  // Sleep battery tile
-  lv_obj_t *card_battery = create_settings_card(tab, kSettingsCardColStart, 3);
-  lv_obj_t *battery_col_left = create_settings_column(
-      card_battery, kSettingsColLeftPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  battery_icon_label = lv_label_create(battery_col_left);
-  String battery_icon = getMdiChar(String("battery"));
-  lv_label_set_text(battery_icon_label, battery_icon.c_str());
-  if (FONT_MDI_ICONS) {
-    lv_obj_set_style_text_font(battery_icon_label, FONT_MDI_ICONS, 0);
-  }
-  lv_obj_set_style_text_color(battery_icon_label, lv_color_white(), 0);
+  // ===== Row 3: Wake Mode =====
+  lv_obj_t *card_wake = create_settings_card(tab, 0, 3);
+  lv_obj_set_grid_cell(card_wake, LV_GRID_ALIGN_STRETCH, 0, GRID_COLS, LV_GRID_ALIGN_STRETCH, 3, 1);
 
-  battery_percent_label = lv_label_create(battery_col_left);
-  lv_label_set_text(battery_percent_label, "--%");
-  lv_obj_set_style_text_font(battery_percent_label, &ui_font_24, 0);
-  lv_obj_set_style_text_color(battery_percent_label, lv_color_white(), 0);
-  lv_obj_set_style_margin_top(battery_percent_label, 8, 0);
+  lv_obj_t *wake_col_left = create_settings_column(
+      card_wake, kSettingsColLeftPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  create_icon_block(wake_col_left, "gesture-tap", "Wake");
 
-  lv_obj_t *battery_col_mid = create_settings_column(
-      card_battery, kSettingsColMidPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
-  lv_obj_set_style_pad_left(battery_col_mid, 16, 0);
-  lv_obj_set_style_pad_right(battery_col_mid, 8, 0);
-  battery_wake_btn = lv_button_create(battery_col_mid);
-  lv_obj_set_width(battery_wake_btn, LV_PCT(kSettingsButtonWidthPct));
-  lv_obj_set_height(battery_wake_btn, kSettingsBtnHeight);
-  lv_obj_set_style_bg_color(battery_wake_btn, lv_color_hex(0x3B82F6), 0);
-  lv_obj_set_style_border_opa(battery_wake_btn, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_outline_opa(battery_wake_btn, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_shadow_opa(battery_wake_btn, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_radius(battery_wake_btn, 18, 0);
-  lv_obj_add_event_cb(battery_wake_btn, on_battery_wake_clicked, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *wake_col_right = create_settings_column(
+      card_wake, kSettingsColRightPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_left(wake_col_right, 8, 0);
 
-  battery_wake_label = lv_label_create(battery_wake_btn);
-  lv_obj_set_style_text_font(battery_wake_label, &ui_font_24, 0);
-  lv_obj_set_style_text_color(battery_wake_label, lv_color_white(), 0);
-  lv_obj_align(battery_wake_label, LV_ALIGN_TOP_MID, 0, 8);
+  mains_wake_btn = lv_button_create(wake_col_right);
+  lv_obj_set_width(mains_wake_btn, LV_PCT(60));
+  lv_obj_set_height(mains_wake_btn, kSettingsBtnHeight);
+  lv_obj_set_style_bg_color(mains_wake_btn, lv_color_hex(0x3B82F6), 0);
+  lv_obj_set_style_border_opa(mains_wake_btn, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_outline_opa(mains_wake_btn, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_shadow_opa(mains_wake_btn, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_radius(mains_wake_btn, 14, 0);
+  lv_obj_remove_flag(mains_wake_btn, LV_OBJ_FLAG_CLICKABLE);
 
-  battery_wake_sub_label = lv_label_create(battery_wake_btn);
-  lv_obj_set_style_text_font(battery_wake_sub_label, &ui_font_20, 0);
-  lv_obj_set_style_text_color(battery_wake_sub_label, lv_color_hex(0xE0E0E0), 0);
-  lv_obj_align(battery_wake_sub_label, LV_ALIGN_BOTTOM_MID, 0, -8);
-  update_wake_button(battery_wake_label, battery_wake_sub_label, wake_mode_battery);
-  power_status_label = lv_label_create(battery_col_mid);
-  lv_label_set_text(power_status_label, "Status: ---");
-  lv_obj_set_width(power_status_label, LV_PCT(100));
-  lv_label_set_long_mode(power_status_label, LV_LABEL_LONG_CLIP);
-  lv_obj_set_style_text_font(power_status_label, &ui_font_20, 0);
-  lv_obj_set_style_text_color(power_status_label, lv_color_white(), 0);
+  mains_wake_label = lv_label_create(mains_wake_btn);
+  lv_obj_set_style_text_font(mains_wake_label, &ui_font_20, 0);
+  lv_obj_set_style_text_color(mains_wake_label, lv_color_white(), 0);
+  lv_obj_align(mains_wake_label, LV_ALIGN_TOP_MID, 0, 6);
 
-  power_level_label = lv_label_create(battery_col_mid);
-  lv_label_set_text(power_level_label, "Level: --%");
-  lv_obj_set_width(power_level_label, LV_PCT(100));
-  lv_label_set_long_mode(power_level_label, LV_LABEL_LONG_CLIP);
-  lv_obj_set_style_text_font(power_level_label, &ui_font_20, 0);
-  lv_obj_set_style_text_color(power_level_label, lv_color_white(), 0);
-  lv_obj_add_flag(power_status_label, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(power_level_label, LV_OBJ_FLAG_HIDDEN);
+  mains_wake_sub_label = lv_label_create(mains_wake_btn);
+  lv_obj_set_style_text_font(mains_wake_sub_label, &ui_font_20, 0);
+  lv_obj_set_style_text_color(mains_wake_sub_label, lv_color_hex(0xE0E0E0), 0);
+  lv_obj_align(mains_wake_sub_label, LV_ALIGN_BOTTOM_MID, 0, -6);
+  update_wake_button(mains_wake_label, mains_wake_sub_label, wake_mode_mains);
 
-  lv_obj_t *battery_col_right = create_settings_column(
-      card_battery, kSettingsColRightPct, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
-  lv_obj_set_style_pad_left(battery_col_right, 8, 0);
-  lv_obj_set_style_pad_right(battery_col_right, 8, 0);
-
-  lv_obj_t *sleep_battery_row = create_slider_row(battery_col_right);
-  sleep_battery_label = lv_label_create(sleep_battery_row);
-  lv_label_set_text(sleep_battery_label, "Auto-Sleep nach");
-  lv_obj_set_width(sleep_battery_label, kSettingsSliderLabelWidth);
-  lv_label_set_long_mode(sleep_battery_label, LV_LABEL_LONG_CLIP);
-  lv_obj_set_style_text_font(sleep_battery_label, &ui_font_24, 0);
-  lv_obj_set_style_text_color(sleep_battery_label, lv_color_white(), 0);
-  sleep_battery_slider = lv_slider_create(sleep_battery_row);
-  style_settings_slider(sleep_battery_slider);
-  lv_obj_set_flex_grow(sleep_battery_slider, 1);
-  lv_slider_set_range(sleep_battery_slider, 0, sleep_slider_max_index());
-  int32_t sleep_battery_index = cfg.auto_sleep_battery_enabled
-                                ? sleep_index_from_seconds(cfg.auto_sleep_battery_seconds)
-                                : sleep_slider_max_index();
-  lv_slider_set_value(sleep_battery_slider, sleep_battery_index, LV_ANIM_OFF);
-  lv_obj_add_event_cb(sleep_battery_slider, on_sleep_battery_slider, LV_EVENT_VALUE_CHANGED, nullptr);
-  lv_obj_add_event_cb(sleep_battery_slider, on_sleep_battery_slider, LV_EVENT_RELEASED, nullptr);
-
-  sleep_battery_time_label = lv_label_create(sleep_battery_row);
-  lv_obj_set_width(sleep_battery_time_label, kSettingsSliderValueWidth);
-  lv_label_set_long_mode(sleep_battery_time_label, LV_LABEL_LONG_CLIP);
-  lv_obj_set_style_text_font(sleep_battery_time_label, &ui_font_24, 0);
-  lv_obj_set_style_text_color(sleep_battery_time_label, lv_color_white(), 0);
-  lv_obj_set_style_text_align(sleep_battery_time_label, LV_TEXT_ALIGN_RIGHT, 0);
-
-  static char sleep_battery_buf[16];
-  format_sleep_label_for_index(sleep_battery_buf, sizeof(sleep_battery_buf), sleep_battery_index);
-  lv_label_set_text(sleep_battery_time_label, sleep_battery_buf);
-
-  settings_update_power_status();
+  // Stubs for battery wake (hidden, no battery on Waveshare)
+  battery_wake_btn = nullptr;
+  battery_wake_label = nullptr;
+  battery_wake_sub_label = nullptr;
+  power_status_label = nullptr;
+  power_level_label = nullptr;
+  battery_icon_label = nullptr;
+  battery_percent_label = nullptr;
 
   settings_update_ap_mode(ap_mode_active);
 }
@@ -976,16 +761,16 @@ void settings_update_wifi_status_ap(const char* ssid, const char* password) {
   lv_obj_clear_flag(wifi_ip_label, LV_OBJ_FLAG_HIDDEN);
 
   static char status_buf[96];
-  snprintf(status_buf, sizeof(status_buf), "Status: AP Mode (PW: %s)", password ? password : "12345678");
+  snprintf(status_buf, sizeof(status_buf), "Status: AP (PW: %s)", password ? password : "12345678");
   lv_label_set_text(wifi_status_label, status_buf);
   lv_obj_set_style_text_color(wifi_status_label, lv_color_hex(0xFFC04D), 0);
 
   static char buf[128];
-  snprintf(buf, sizeof(buf), "SSID: %s", ssid ? ssid : "Tab5_Config");
+  snprintf(buf, sizeof(buf), "SSID: %s", ssid ? ssid : "WS_P4_Config");
   lv_label_set_text(wifi_ssid_label, buf);
 
-  String ip = WiFi.softAPIP().toString();
-  snprintf(buf, sizeof(buf), "IP: %s", ip.length() ? ip.c_str() : "192.168.4.1");
+  String ip_str = WiFi.softAPIP().toString();
+  snprintf(buf, sizeof(buf), "IP: %s", ip_str.length() ? ip_str.c_str() : "192.168.4.1");
   lv_label_set_text(wifi_ip_label, buf);
 }
 

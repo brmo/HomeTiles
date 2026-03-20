@@ -4,6 +4,7 @@
 #include "src/ui/image_popup.h"
 #include "src/ui/tab_tiles_unified.h"
 #include "src/tiles/mdi_icons.h"
+#include "src/tiles/tile_config.h"
 #include "src/tiles/tile_renderer_fonts.h"
 #include "src/tiles/tile_renderer.h"
 #include <math.h>
@@ -11,14 +12,15 @@
 
 namespace {
 
-constexpr int kCardWidth = 760;
+// Match the popup width to the full tile grid so left/right margins align.
+constexpr int kCardWidth = (GRID_CELL_W * GRID_COLS) + (GRID_GAP * (GRID_COLS - 1));
 constexpr int kCardHeight = 420;
 constexpr int kCardPad = 20;
-constexpr int kGridGap = 16;
+constexpr int kForecastGap = 16;
 constexpr int kCols = 4;
 constexpr int kRows = 2;
-constexpr int kCellW = (kCardWidth - (kCardPad * 2) - (kGridGap * (kCols - 1))) / kCols;
-constexpr int kCellH = (kCardHeight - (kCardPad * 2) - (kGridGap * (kRows - 1))) / kRows;
+constexpr int kCellW = (kCardWidth - (kCardPad * 2) - (kForecastGap * (kCols - 1))) / kCols;
+constexpr int kCellH = (kCardHeight - (kCardPad * 2) - (kForecastGap * (kRows - 1))) / kRows;
 constexpr int kHeaderPadTop = 4;
 constexpr int kHeaderIconOffsetX = 4;
 constexpr int kHeaderIconOffsetY = -8;
@@ -249,20 +251,20 @@ static String weather_condition_to_german(const String& condition) {
   key.toLowerCase();
   if (!key.length()) return "--";
   if (key == "clear-night") return "Klare Nacht";
-  if (key == "cloudy") return "Bewölkt";
+  if (key == "cloudy") return "BewÃ¶lkt";
   if (key == "exceptional") return "Ausnahme";
   if (key == "fog") return "Nebel";
   if (key == "hail") return "Hagel";
   if (key == "lightning") return "Gewitter";
   if (key == "lightning-rainy") return "Gewitterregen";
-  if (key == "partlycloudy") return "Teilw. bewölkt";
+  if (key == "partlycloudy") return "Teilw. bewÃ¶lkt";
   if (key == "pouring") return "Starkregen";
   if (key == "rainy") return "Regen";
   if (key == "snowy") return "Schnee";
   if (key == "snowy-rainy") return "Schneeregen";
   if (key == "sunny") return "Sonnig";
   if (key == "windy") return "Windig";
-  if (key == "windy-variant") return "Böig";
+  if (key == "windy-variant") return "BÃ¶ig";
   String text = condition;
   text.replace("-", " ");
   text.replace("_", " ");
@@ -640,7 +642,7 @@ static void build_popup_ui(WeatherPopupContext* ctx, const WeatherPopupInit& ini
   lv_obj_set_style_bg_opa(forecast_row, LV_OPA_TRANSP, 0);
   lv_obj_set_style_pad_all(forecast_row, 0, 0);
   lv_obj_remove_flag(forecast_row, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_pos(forecast_row, 0, kCellH + kGridGap);
+  lv_obj_set_pos(forecast_row, 0, kCellH + kForecastGap);
 
   for (int i = 0; i < kCols; ++i) {
     lv_obj_t* col = lv_obj_create(forecast_row);
@@ -752,3 +754,6 @@ void process_weather_popup_queue() {
     g_pending_weather.valid = false;
   }
 }
+
+
+

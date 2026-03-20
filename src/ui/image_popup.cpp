@@ -2,11 +2,11 @@
 #include "sensor_popup.h"
 #include "light_popup.h"
 #include "weather_popup.h"
+#include "src/core/board_hal.h"
 #include "src/core/display_manager.h"
 #include "src/tiles/tile_config.h"
 #include "src/ui/tab_tiles_unified.h"
-#include <SD.h>
-#include <M5Unified.h>
+#include "src/core/waveshare_sdmmc.h"
 #include <vector>
 #include <draw/lv_image_decoder.h>
 #include <misc/cache/instance/lv_image_cache.h>
@@ -280,18 +280,14 @@ static uint32_t hash_url(const String& url) {
 }
 
 static bool ensure_sd_ready() {
-  if (SD.cardType() != CARD_NONE) return true;
+  if (SD_MMC.cardType() != CARD_NONE) return true;
   static uint32_t last_attempt_ms = 0;
   uint32_t now = millis();
   if (last_attempt_ms != 0 && (now - last_attempt_ms) < 5000U) {
     return false;
   }
   last_attempt_ms = now;
-  SPI.begin(43, 39, 44, 42);
-  if (!SD.begin(42, SPI, 25000000)) {
-    return false;
-  }
-  return SD.cardType() != CARD_NONE;
+  return BoardHAL::initSDCard();
 }
 
 static void* alloc_image_buf(size_t size, bool prefer_psram) {
@@ -323,8 +319,8 @@ static void url_cache_yield() {
 
 static bool ensure_url_cache_dir() {
   if (!ensure_sd_ready()) return false;
-  if (SD.exists(kUrlCacheDir)) return true;
-  return SD.mkdir(kUrlCacheDir);
+  if (SD_MMC.exists(kUrlCacheDir)) return true;
+  return SD_MMC.mkdir(kUrlCacheDir);
 }
 
 static String make_url_cache_base(const String& url) {
@@ -340,8 +336,8 @@ static String make_url_cache_bin_path(const String& url) {
 
 static bool ensure_thumb_dir() {
   if (!ensure_sd_ready()) return false;
-  if (SD.exists(kThumbDir)) return true;
-  return SD.mkdir(kThumbDir);
+  if (SD_MMC.exists(kThumbDir)) return true;
+  return SD_MMC.mkdir(kThumbDir);
 }
 
 static String normalize_thumb_key(String raw) {
@@ -362,12 +358,12 @@ static String make_thumb_path(const String& key, uint16_t w, uint16_t h) {
 
 static void remove_thumb_variants_for_key(const String& raw_key) {
   if (!ensure_sd_ready()) return;
-  if (!SD.exists(kThumbDir)) return;
+  if (!SD_MMC.exists(kThumbDir)) return;
   String key = normalize_thumb_key(raw_key);
   uint32_t hval = hash_url(key);
   char prefix[16];
   snprintf(prefix, sizeof(prefix), "t%08lX_", static_cast<unsigned long>(hval));
-  File root = SD.open(kThumbDir);
+  File root = SD_MMC.open(kThumbDir);
   if (!root) return;
   File file = root.openNextFile();
   while (file) {
@@ -379,7 +375,7 @@ static void remove_thumb_variants_for_key(const String& raw_key) {
       String base = slash >= 0 ? name.substring(slash + 1) : name;
       if (base.startsWith(prefix)) {
         String full = String(kThumbDir) + "/" + base;
-        SD.remove(full);
+        SD_MMC.remove(full);
       }
     }
     file = root.openNextFile();
@@ -392,10 +388,10 @@ static bool write_bin_file(const String& bin_path, const lv_image_header_t& head
     error = "Leere Bilddaten";
     return false;
   }
-  if (SD.exists(bin_path)) {
-    SD.remove(bin_path);
+  if (SD_MMC.exists(bin_path)) {
+    SD_MMC.remove(bin_path);
   }
-  File f = SD.open(bin_path, FILE_WRITE);
+  File f = SD_MMC.open(bin_path, FILE_WRITE);
   if (!f) {
     error = "SD Schreibfehler";
     return false;
@@ -486,10 +482,10 @@ static bool download_url_to_sd(const String& url, const String& target_base, Str
   }
 
   out_path = target_base + ext;
-  if (SD.exists(out_path)) {
-    SD.remove(out_path);
+  if (SD_MMC.exists(out_path)) {
+    SD_MMC.remove(out_path);
   }
-  File f = SD.open(out_path, FILE_WRITE);
+  File f = SD_MMC.open(out_path, FILE_WRITE);
   if (!f) {
     error = "SD Schreibfehler";
     http.end();
@@ -504,7 +500,7 @@ static bool download_url_to_sd(const String& url, const String& target_base, Str
       error = "Abgebrochen";
       f.close();
       http.end();
-      SD.remove(out_path);
+      SD_MMC.remove(out_path);
       url_cache_consume_cancel(cancel_hash, cancel_len);
       return false;
     }
@@ -525,11 +521,11 @@ static bool download_url_to_sd(const String& url, const String& target_base, Str
   http.end();
   if (url_cache_should_cancel(cancel_hash, cancel_len)) {
     error = "Abgebrochen";
-    SD.remove(out_path);
+    SD_MMC.remove(out_path);
     url_cache_consume_cancel(cancel_hash, cancel_len);
     return false;
   }
-  if (!SD.exists(out_path)) {
+  if (!SD_MMC.exists(out_path)) {
     error = "Download fehlgeschlagen";
     return false;
   }
@@ -696,7 +692,7 @@ static bool read_bin_header(File& file, lv_image_header_t& header) {
 }
 
 static bool load_bin_header(const String& path, lv_image_header_t& header) {
-  File f = SD.open(path, FILE_READ);
+  File f = SD_MMC.open(path, FILE_READ);
   if (!f) return false;
   bool ok = read_bin_header(f, header);
   f.close();
@@ -715,7 +711,7 @@ static bool resolve_thumb_source(const String& raw, String& out_src_path, String
     out_src_path = key;
   }
   out_key = key;
-  if (!SD.exists(out_src_path)) return false;
+  if (!SD_MMC.exists(out_src_path)) return false;
   if (!ends_with_ignore_case(out_src_path, ".bin")) return false;
   return true;
 }
@@ -725,7 +721,7 @@ static bool create_thumb_from_bin(const String& src_path, const String& dst_path
     error = "Thumb Groesse ungueltig";
     return false;
   }
-  File src = SD.open(src_path, FILE_READ);
+  File src = SD_MMC.open(src_path, FILE_READ);
   if (!src) {
     error = "BIN Lesen fehlgeschlagen";
     return false;
@@ -799,8 +795,8 @@ static bool create_thumb_from_bin(const String& src_path, const String& dst_path
   }
 
   String tmp_path = dst_path + ".tmp";
-  if (SD.exists(tmp_path)) SD.remove(tmp_path);
-  File dst = SD.open(tmp_path, FILE_WRITE);
+  if (SD_MMC.exists(tmp_path)) SD_MMC.remove(tmp_path);
+  File dst = SD_MMC.open(tmp_path, FILE_WRITE);
   if (!dst) {
     src.close();
     heap_caps_free(x_map);
@@ -828,7 +824,7 @@ static bool create_thumb_from_bin(const String& src_path, const String& dst_path
     heap_caps_free(y_map);
     heap_caps_free(src_row);
     heap_caps_free(dst_row);
-    SD.remove(tmp_path);
+    SD_MMC.remove(tmp_path);
     error = "Thumb Header Fehler";
     return false;
   }
@@ -844,7 +840,7 @@ static bool create_thumb_from_bin(const String& src_path, const String& dst_path
         heap_caps_free(y_map);
         heap_caps_free(src_row);
         heap_caps_free(dst_row);
-        SD.remove(tmp_path);
+        SD_MMC.remove(tmp_path);
         error = "";
         return false;
       }
@@ -860,7 +856,7 @@ static bool create_thumb_from_bin(const String& src_path, const String& dst_path
         heap_caps_free(y_map);
         heap_caps_free(src_row);
         heap_caps_free(dst_row);
-        SD.remove(tmp_path);
+        SD_MMC.remove(tmp_path);
         error = "Thumb Seek Fehler";
         return false;
       }
@@ -871,7 +867,7 @@ static bool create_thumb_from_bin(const String& src_path, const String& dst_path
         heap_caps_free(y_map);
         heap_caps_free(src_row);
         heap_caps_free(dst_row);
-        SD.remove(tmp_path);
+        SD_MMC.remove(tmp_path);
         error = "Thumb Read Fehler";
         return false;
       }
@@ -892,7 +888,7 @@ static bool create_thumb_from_bin(const String& src_path, const String& dst_path
       heap_caps_free(y_map);
       heap_caps_free(src_row);
       heap_caps_free(dst_row);
-      SD.remove(tmp_path);
+      SD_MMC.remove(tmp_path);
       error = "Thumb Write Fehler";
       return false;
     }
@@ -906,13 +902,13 @@ static bool create_thumb_from_bin(const String& src_path, const String& dst_path
   heap_caps_free(src_row);
   heap_caps_free(dst_row);
 
-  if (SD.exists(dst_path)) SD.remove(dst_path);
-  if (!SD.rename(tmp_path, dst_path)) {
-    SD.remove(tmp_path);
+  if (SD_MMC.exists(dst_path)) SD_MMC.remove(dst_path);
+  if (!SD_MMC.rename(tmp_path, dst_path)) {
+    SD_MMC.remove(tmp_path);
     error = "Thumb Rename Fehler";
     return false;
   }
-  return SD.exists(dst_path);
+  return SD_MMC.exists(dst_path);
 }
 
 static bool thumb_list_contains(const std::vector<String>& list, const String& value);
@@ -939,7 +935,7 @@ static bool get_next_thumbnail_job(ThumbJob& job) {
 
     String dst_path = make_thumb_path(key, dst_w, dst_h);
     bool force_refresh = thumb_list_contains(g_thumb_refresh_list, dst_path);
-    if (SD.exists(dst_path) && !force_refresh) continue;
+    if (SD_MMC.exists(dst_path) && !force_refresh) continue;
 
     job.src_path = src_path;
     job.dst_path = dst_path;
@@ -1042,12 +1038,12 @@ static void cleanup_unused_thumbnails(uint32_t now) {
   }
   g_thumb_cleanup_next_ms = now + kThumbCleanupIntervalMs;
   if (!ensure_sd_ready()) return;
-  if (!SD.exists(kThumbDir)) return;
+  if (!SD_MMC.exists(kThumbDir)) return;
 
   std::vector<String> needed;
   collect_needed_thumbs(needed, nullptr);
 
-  File root = SD.open(kThumbDir);
+  File root = SD_MMC.open(kThumbDir);
   if (!root) return;
   File file = root.openNextFile();
   while (file) {
@@ -1059,7 +1055,7 @@ static void cleanup_unused_thumbnails(uint32_t now) {
       String base = slash >= 0 ? name.substring(slash + 1) : name;
       String full = String(kThumbDir) + "/" + base;
       if (!thumb_list_contains(needed, full)) {
-        SD.remove(full);
+        SD_MMC.remove(full);
       }
     }
     file = root.openNextFile();
@@ -1166,7 +1162,7 @@ static bool calc_contain_size(uint16_t src_w, uint16_t src_h, uint16_t& dst_w, u
 
 static bool decode_jpeg_to_ram(const String& fullPath, lv_image_header_t& header, String& error) {
   free_image_ram();
-  File f = SD.open(fullPath, FILE_READ);
+  File f = SD_MMC.open(fullPath, FILE_READ);
   if (!f) {
     error = "JPEG Datei nicht lesbar";
     return false;
@@ -1298,7 +1294,7 @@ static bool decode_jpeg_to_buffer(const String& fullPath, uint8_t*& out_buf, siz
   out_size = 0;
   out_w = 0;
   out_h = 0;
-  File f = SD.open(fullPath, FILE_READ);
+  File f = SD_MMC.open(fullPath, FILE_READ);
   if (!f) {
     error = "JPEG Datei nicht lesbar";
     return false;
@@ -1484,38 +1480,38 @@ static bool update_url_cache(const String& url, String& out_bin_path, String& er
   if (!download_url_to_sd(url, base, download_path, error, cancel_hash, cancel_len)) return false;
   if (url_cache_should_cancel(cancel_hash, cancel_len)) {
     error = "Abgebrochen";
-    SD.remove(download_path);
+    SD_MMC.remove(download_path);
     url_cache_consume_cancel(cancel_hash, cancel_len);
     return false;
   }
   if (!ends_with_ignore_case(download_path, ".jpg") && !ends_with_ignore_case(download_path, ".jpeg")) {
-    SD.remove(download_path);
+    SD_MMC.remove(download_path);
     error = "Nur JPEG unterstuetzt";
     return false;
   }
   String bin_path = base + ".bin";
   String tmp_path = bin_path + ".tmp";
   if (!convert_jpeg_to_bin(download_path, tmp_path, error, cancel_hash, cancel_len)) {
-    SD.remove(download_path);
+    SD_MMC.remove(download_path);
     return false;
   }
   if (url_cache_should_cancel(cancel_hash, cancel_len)) {
     error = "Abgebrochen";
-    SD.remove(tmp_path);
-    SD.remove(download_path);
+    SD_MMC.remove(tmp_path);
+    SD_MMC.remove(download_path);
     url_cache_consume_cancel(cancel_hash, cancel_len);
     return false;
   }
-  if (SD.exists(bin_path)) SD.remove(bin_path);
-  if (!SD.rename(tmp_path, bin_path)) {
-    SD.remove(tmp_path);
-    SD.remove(download_path);
+  if (SD_MMC.exists(bin_path)) SD_MMC.remove(bin_path);
+  if (!SD_MMC.rename(tmp_path, bin_path)) {
+    SD_MMC.remove(tmp_path);
+    SD_MMC.remove(download_path);
     error = "BIN Rename Fehler";
     return false;
   }
-  SD.remove(download_path);
+  SD_MMC.remove(download_path);
   out_bin_path = bin_path;
-  return SD.exists(bin_path);
+  return SD_MMC.exists(bin_path);
 }
 
 static void register_url_cache_entry(const String& url) {
@@ -1699,7 +1695,7 @@ static void mark_url_cache_queued(const String& url, uint32_t now) {
 
 static void collect_images(const String& dir, std::vector<String>& out, size_t max_entries, uint8_t depth, bool allow_bin, bool allow_jpeg) {
   if (out.size() >= max_entries) return;
-  File root = SD.open(dir);
+  File root = SD_MMC.open(dir);
   if (!root) return;
 
   File file = root.openNextFile();
@@ -1731,7 +1727,7 @@ static void collect_images(const String& dir, std::vector<String>& out, size_t m
 }
 
 static bool show_image_popup_internal(const String& fullPath, bool allow_error, bool force_reload = false) {
-  if (!SD.exists(fullPath)) {
+  if (!SD_MMC.exists(fullPath)) {
     if (allow_error) show_image_popup_error("Bild nicht gefunden", fullPath.c_str());
     return false;
   }
@@ -1903,7 +1899,7 @@ void show_image_popup(const char* path, uint16_t slideshow_sec) {
     apply_slideshow_display_mode(true);
     displayManager.setReverseFlushOnce();
     String cached = make_url_cache_bin_path(rawPath);
-    if (!SD.exists(cached)) {
+    if (!SD_MMC.exists(cached)) {
       if (WiFi.status() != WL_CONNECTED) {
         show_image_popup_error("URL Cache fehlt", "Kein WLAN");
         apply_slideshow_display_mode(false);
@@ -1959,7 +1955,7 @@ void preload_image_popup(const char* path) {
   if (is_url_path(rawPath)) return;
   String fullPath = normalize_sd_path(rawPath);
   if (get_slideshow_mode(fullPath) != SlideshowMode::None) return;
-  if (!SD.exists(fullPath)) return;
+  if (!SD_MMC.exists(fullPath)) return;
 
   String src = "S:" + fullPath;
   lv_image_header_t header;

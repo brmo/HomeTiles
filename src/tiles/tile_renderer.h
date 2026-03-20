@@ -85,7 +85,7 @@ struct TileWidgetCache {
   WeatherTileWidgets weather[TILES_PER_GRID];
 };
 
-// Rendert ein komplettes Tile-Grid (6x4)
+// Rendert ein komplettes Tile-Grid (4x4)
 void render_tile_grid(lv_obj_t* parent, const TileGridConfig& config, GridType grid_type, scene_publish_cb_t scene_cb = nullptr);
 
 // Rendert eine einzelne Kachel basierend auf Typ und liefert das erzeugte Objekt

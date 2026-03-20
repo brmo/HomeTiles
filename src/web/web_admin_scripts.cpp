@@ -21,7 +21,7 @@ void appendAdminScripts(String& html) {
   }
 
   // Tile Editor State
-  const GRID_COLS = 6;
+  const GRID_COLS = 4;
   const GRID_ROWS = 4;
   const tileTabs = [];
   const folderByTab = {};
@@ -1166,7 +1166,7 @@ void appendAdminScripts(String& html) {
         grids: grids
       };
       const ts = new Date().toISOString().replace(/[:.]/g, '-');
-      downloadJsonFile('tab5_tiles_' + ts + '.json', JSON.stringify(payload, null, 2));
+      downloadJsonFile('waveshare_tiles_' + ts + '.json', JSON.stringify(payload, null, 2));
       showNotification('Export erstellt!');
     } catch (e) {
       showNotification('Export fehlgeschlagen', false);

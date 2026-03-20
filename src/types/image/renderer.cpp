@@ -4,7 +4,7 @@
 #include "src/tiles/mdi_icons.h"
 #include "src/ui/image_popup.h"
 #include <Arduino.h>
-#include <SD.h>
+#include "src/core/waveshare_sdmmc.h"
 
 namespace {
 
@@ -78,14 +78,14 @@ static bool resolve_preview_path(const Tile& tile, String& out_path) {
     path = make_url_cache_bin_path(key);
   }
   if (!path.startsWith("/")) path = "/" + path;
-  if (!SD.exists(path)) return false;
+  if (!SD_MMC.exists(path)) return false;
 
   uint16_t tile_w = 0;
   uint16_t tile_h = 0;
   calc_thumb_pixel_size(tile, tile_w, tile_h);
   if (tile_w > 0 && tile_h > 0) {
     String thumb = make_thumb_path(key, tile_w, tile_h);
-    if (SD.exists(thumb)) {
+    if (SD_MMC.exists(thumb)) {
       out_path = thumb;
       return true;
     }

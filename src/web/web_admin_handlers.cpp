@@ -12,7 +12,7 @@
 #include "src/types/types_registry.h"
 #include <algorithm>
 #include <vector>
-#include <SD.h>
+#include "src/core/waveshare_sdmmc.h"
 #include <libs/tjpgd/tjpgd.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,7 +36,7 @@ String joinPath(const String& dir, const String& name) {
 
 void collectImageFiles(const String& dir, std::vector<String>& out, size_t max_entries, uint8_t depth, bool allow_bin, bool allow_jpeg, bool allow_png) {
   if (out.size() >= max_entries) return;
-  File root = SD.open(dir);
+  File root = SD_MMC.open(dir);
   if (!root) return;
 
   File file = root.openNextFile();
@@ -134,7 +134,7 @@ static size_t jpeg_info_input(JDEC* jd, uint8_t* buff, size_t ndata) {
 static bool read_jpeg_dimensions(const String& path, uint16_t& w, uint16_t& h) {
   w = 0;
   h = 0;
-  File f = SD.open(path, FILE_READ);
+  File f = SD_MMC.open(path, FILE_READ);
   if (!f) return false;
   uint8_t* work = static_cast<uint8_t*>(malloc(4096));
   if (!work) {
@@ -157,7 +157,7 @@ static bool read_jpeg_dimensions(const String& path, uint16_t& w, uint16_t& h) {
 static bool read_png_dimensions(const String& path, uint16_t& w, uint16_t& h) {
   w = 0;
   h = 0;
-  File f = SD.open(path, FILE_READ);
+  File f = SD_MMC.open(path, FILE_READ);
   if (!f) return false;
   uint8_t buf[24] = {0};
   if (f.read(buf, sizeof(buf)) != sizeof(buf)) {
@@ -1021,14 +1021,14 @@ void WebAdminServer::handleGetSdImages() {
 }
 
 void WebAdminServer::handleGetSdIcons() {
-  if (!SD.exists("/icons")) SD.mkdir("/icons");
+  if (!SD_MMC.exists("/icons")) SD_MMC.mkdir("/icons");
   std::vector<IconFileInfo> files;
   std::vector<String> paths;
   collectImageFiles("/icons", paths, 100, 1, false, true, true);
   for (const auto& path : paths) {
     IconFileInfo info;
     info.path = path;
-    File f = SD.open(path, FILE_READ);
+    File f = SD_MMC.open(path, FILE_READ);
     if (f) {
       info.size = static_cast<uint32_t>(f.size());
       f.close();
@@ -1063,11 +1063,11 @@ void WebAdminServer::handleUploadIcon() {
   static File uploadFile;
 
   if (upload.status == UPLOAD_FILE_START) {
-    if (!SD.exists("/icons")) SD.mkdir("/icons");
+    if (!SD_MMC.exists("/icons")) SD_MMC.mkdir("/icons");
     String filename = upload.filename;
     if (filename.indexOf('/') < 0) filename = "/icons/" + filename;
-    if (SD.exists(filename)) SD.remove(filename);
-    uploadFile = SD.open(filename, FILE_WRITE);
+    if (SD_MMC.exists(filename)) SD_MMC.remove(filename);
+    uploadFile = SD_MMC.open(filename, FILE_WRITE);
     if (!uploadFile) {
       Serial.println("[Icons] Upload open failed");
     }

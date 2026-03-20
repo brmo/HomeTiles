@@ -5,7 +5,7 @@
 WebConfigServer webConfigServer;
 
 // Hotspot Einstellungen
-static const char* AP_SSID = "Tab5_Config";
+static const char* AP_SSID = "WS_P4_Config";
 static const char* AP_PASS = "12345678";  // Mindestens 8 Zeichen für WPA2
 static const IPAddress AP_IP(192, 168, 4, 1);
 static const IPAddress AP_GATEWAY(192, 168, 4, 1);
@@ -70,7 +70,7 @@ bool WebConfigServer::start() {
 
   server.begin();
   Serial.println("✓ Webserver gestartet auf http://192.168.4.1");
-  Serial.println("  Verbinde dich mit WiFi 'Tab5_Config' und öffne Browser");
+  Serial.println("  Verbinde dich mit WiFi 'WS_P4_Config' und öffne Browser");
 
   running = true;
   config_saved = false;
@@ -195,7 +195,7 @@ String WebConfigServer::getConfigPage() {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Tab5 WiFi-Konfiguration</title>
+  <title>Waveshare WiFi-Konfiguration</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
