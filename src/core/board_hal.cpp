@@ -182,6 +182,15 @@ void BoardHAL::displayFillScreen(uint16_t color) {
   g_gfx->flush();
 }
 
+void BoardHAL::displaySetRotation(uint8_t rotation) {
+  if (!g_gfx) {
+    return;
+  }
+
+  g_gfx->setRotation(rotation & 0x03);
+  g_gfx->flush();
+}
+
 void BoardHAL::setBrightness(uint8_t value) {
   g_brightness = value;
   apply_backlight(value);

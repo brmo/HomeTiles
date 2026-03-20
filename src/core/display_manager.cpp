@@ -16,7 +16,7 @@ lv_indev_t* DisplayManager::indev = nullptr;
 lv_color_t* DisplayManager::buf1 = nullptr;
 lv_color_t* DisplayManager::buf2 = nullptr;
 uint32_t DisplayManager::last_activity_time = 0;
-uint8_t DisplayManager::rotation = 1;
+uint8_t DisplayManager::rotation = 0;
 static bool g_ignore_touch_until_release = false;
 static bool g_input_enabled = true;
 static volatile uint16_t g_flush_log_budget = 0;
@@ -31,8 +31,8 @@ static constexpr bool kEnableReverseFlushEffect = true;
 static constexpr uintptr_t kCacheLineSize = 64;
 static bool g_reverse_flush_once = false;
 static volatile uint32_t g_fullscreen_flush_seq = 0;
-static constexpr uint8_t kDisplayRotationDefault = 1;
-static constexpr uint8_t kDisplayRotationFlipped = 3;
+static constexpr uint8_t kDisplayRotationDefault = 0;
+static constexpr uint8_t kDisplayRotationFlipped = 2;
 
 static inline void flush_cache_for_dma(const void* ptr, size_t size) {
   if (!ptr || size == 0) return;
@@ -178,9 +178,9 @@ uint32_t DisplayManager::getFullScreenFlushSeq() const {
 }
 
 void DisplayManager::setRotation(uint8_t rotation_value) {
-  // Waveshare 720×720: square display, rotation is a no-op.
-  // Keep the variable for API compatibility.
+  rotation_value &= 0x03;
   if (rotation == rotation_value) return;
+  BoardHAL::displaySetRotation(rotation_value);
   rotation = rotation_value;
   lv_display_t* disp_local = lv_display_get_default();
   if (disp_local) {
@@ -309,9 +309,28 @@ void IRAM_ATTR DisplayManager::touch_cb(lv_indev_t* indev_drv, lv_indev_data_t *
 
   BoardHAL::TouchPoint tp;
   if (BoardHAL::getTouch(&tp)) {
+    int16_t mapped_x = tp.x;
+    int16_t mapped_y = tp.y;
+    switch (rotation & 0x03) {
+      case 1:
+        mapped_x = tp.y;
+        mapped_y = SCREEN_WIDTH - 1 - tp.x;
+        break;
+      case 2:
+        mapped_x = SCREEN_WIDTH - 1 - tp.x;
+        mapped_y = SCREEN_HEIGHT - 1 - tp.y;
+        break;
+      case 3:
+        mapped_x = SCREEN_HEIGHT - 1 - tp.y;
+        mapped_y = tp.x;
+        break;
+      default:
+        break;
+    }
+
     data->state = LV_INDEV_STATE_PRESSED;
-    data->point.x = tp.x;
-    data->point.y = tp.y;
+    data->point.x = mapped_x;
+    data->point.y = mapped_y;
 
     // Activity-Timer zuruecksetzen und Power Manager aufwecken
     last_activity_time = millis();

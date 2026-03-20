@@ -681,7 +681,7 @@ static bool parseBoolPayload(const char* payload, bool* out) {
   return false;
 }
 
-static constexpr uint8_t kDisplayBrightnessMin = 75;
+static constexpr uint8_t kDisplayBrightnessMin = 121;
 static constexpr uint8_t kDisplayBrightnessMax = 255;
 
 static bool entityEquals(const char* entity_id, const char* expected) {
@@ -698,14 +698,14 @@ static int brightnessPctFromRaw(int raw) {
   if (raw > kDisplayBrightnessMax) raw = kDisplayBrightnessMax;
   const int span = kDisplayBrightnessMax - kDisplayBrightnessMin;
   if (span <= 0) return 100;
-  return static_cast<int>((static_cast<long>(raw - kDisplayBrightnessMin) * 100L + (span / 2)) / span);
+  return 1 + static_cast<int>((static_cast<long>(raw - kDisplayBrightnessMin) * 99L + (span / 2)) / span);
 }
 
 static uint8_t brightnessRawFromPct(int pct) {
-  if (pct < 0) pct = 0;
+  if (pct < 1) pct = 1;
   if (pct > 100) pct = 100;
   const int span = kDisplayBrightnessMax - kDisplayBrightnessMin;
-  int raw = kDisplayBrightnessMin + static_cast<int>((static_cast<long>(pct) * span + 50L) / 100L);
+  int raw = kDisplayBrightnessMin + static_cast<int>((static_cast<long>(pct - 1) * span + 49L) / 99L);
   if (raw < kDisplayBrightnessMin) raw = kDisplayBrightnessMin;
   if (raw > kDisplayBrightnessMax) raw = kDisplayBrightnessMax;
   return static_cast<uint8_t>(raw);

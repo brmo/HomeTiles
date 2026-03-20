@@ -125,7 +125,7 @@ bool ConfigManager::load() {
   config.auto_sleep_battery_enabled = config.auto_sleep_enabled;
   config.auto_sleep_battery_seconds = config.auto_sleep_seconds;
 
-  if (config.display_brightness < 75 || config.display_brightness > 255) {
+  if (config.display_brightness < 121 || config.display_brightness > 255) {
     config.display_brightness = 200;
   }
 
