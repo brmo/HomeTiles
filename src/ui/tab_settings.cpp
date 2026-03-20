@@ -553,18 +553,14 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   lv_obj_set_style_pad_top(display_col_mid, 8, 0);
   lv_obj_set_style_pad_bottom(display_col_mid, 8, 0);
   lv_obj_set_style_pad_row(display_col_mid, 6, 0);
-  lv_obj_set_flex_align(display_col_mid, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  lv_obj_set_flex_align(display_col_mid, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
   lv_obj_t *brightness_stack = lv_obj_create(display_col_mid);
   lv_obj_clear_flag(brightness_stack, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_width(brightness_stack, LV_PCT(100));
+  lv_obj_set_size(brightness_stack, LV_PCT(100), LV_PCT(100));
   lv_obj_set_style_bg_opa(brightness_stack, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_opa(brightness_stack, LV_OPA_TRANSP, 0);
-  lv_obj_set_height(brightness_stack, LV_PCT(100));
   lv_obj_set_style_pad_all(brightness_stack, 0, 0);
-  lv_obj_set_style_pad_top(brightness_stack, 8, 0);
-  lv_obj_set_style_pad_bottom(brightness_stack, 8, 0);
-  lv_obj_set_style_pad_row(brightness_stack, 0, 0);
   lv_obj_set_flex_flow(brightness_stack, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(brightness_stack, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
@@ -578,7 +574,7 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
 
   lv_obj_t *brightness_slider = lv_slider_create(brightness_stack);
   style_settings_slider(brightness_slider);
-  lv_obj_set_width(brightness_slider, LV_PCT(88));
+  lv_obj_set_width(brightness_slider, LV_PCT(82));
   lv_slider_set_range(brightness_slider, kSettingsBrightnessPctMin, kSettingsBrightnessPctMax);
   int current_brightness_pct = brightness_pct_from_raw(BoardHAL::getBrightness());
   lv_slider_set_value(brightness_slider, current_brightness_pct, LV_ANIM_OFF);
@@ -731,18 +727,14 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   lv_obj_set_style_pad_top(sleep_col_mid, 8, 0);
   lv_obj_set_style_pad_bottom(sleep_col_mid, 8, 0);
   lv_obj_set_style_pad_row(sleep_col_mid, 6, 0);
-  lv_obj_set_flex_align(sleep_col_mid, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  lv_obj_set_flex_align(sleep_col_mid, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
   lv_obj_t *sleep_stack = lv_obj_create(sleep_col_mid);
   lv_obj_clear_flag(sleep_stack, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_width(sleep_stack, LV_PCT(100));
+  lv_obj_set_size(sleep_stack, LV_PCT(100), LV_PCT(100));
   lv_obj_set_style_bg_opa(sleep_stack, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_opa(sleep_stack, LV_OPA_TRANSP, 0);
-  lv_obj_set_height(sleep_stack, LV_PCT(100));
   lv_obj_set_style_pad_all(sleep_stack, 0, 0);
-  lv_obj_set_style_pad_top(sleep_stack, 8, 0);
-  lv_obj_set_style_pad_bottom(sleep_stack, 8, 0);
-  lv_obj_set_style_pad_row(sleep_stack, 0, 0);
   lv_obj_set_flex_flow(sleep_stack, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(sleep_stack, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
@@ -756,7 +748,7 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
 
   sleep_slider = lv_slider_create(sleep_stack);
   style_settings_slider(sleep_slider);
-  lv_obj_set_width(sleep_slider, LV_PCT(88));
+  lv_obj_set_width(sleep_slider, LV_PCT(82));
   lv_slider_set_range(sleep_slider, 0, sleep_slider_max_index());
   int32_t sleep_index = cfg.auto_sleep_enabled
                         ? sleep_index_from_seconds(cfg.auto_sleep_seconds)

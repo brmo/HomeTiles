@@ -293,12 +293,16 @@ lv_obj_set_style_bg_grad_dir(card, LV_GRAD_DIR_NONE, LV_PART_MAIN | LV_STATE_PRE
           }
           init.icon_name = icon_name;
           String unit = data->unit;
+          const bool lock_unit = unit.length() > 0;
           if (is_disabled_token(unit)) {
             unit = "";
           } else if (!unit.length()) {
             unit = haBridgeConfig.findSensorUnit(data->entity_id);
+          } else {
+            unit.trim();
           }
           init.unit = unit;
+          init.lock_unit = lock_unit;
           init.decimals = data->decimals;
           init.bg_color = data->bg_color;
           init.value = haBridgeConfig.findSensorInitialValue(data->entity_id);

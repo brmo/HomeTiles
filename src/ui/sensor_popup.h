@@ -9,6 +9,7 @@ struct SensorPopupInit {
   String icon_name;
   String value;
   String unit;
+  bool lock_unit = false;
   uint8_t decimals = 0xFF;
   uint32_t bg_color = 0;
 };
