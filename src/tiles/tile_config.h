@@ -32,6 +32,11 @@ enum TileType : uint8_t {
   TILE_WEATHER = 12
 };
 
+enum TilePopupOpenMode : uint8_t {
+  TILE_POPUP_OPEN_LONG_PRESS = 0,
+  TILE_POPUP_OPEN_SHORT_PRESS = 1
+};
+
 struct Tile {
   TileType type;
   String title;              // Für alle Typen
@@ -57,6 +62,7 @@ struct Tile {
   int16_t sensor_gauge_y_offset; // Gauge Y-Offset (-100 bis 200, Default: 12)
   int16_t sensor_value_y_offset; // Wert Y-Offset (-100 bis 200, Default: 0)
   uint16_t sensor_graph_height;  // Graph Höhe in Pixel (20-200, Default: 60)
+  uint8_t popup_open_mode;    // 0=Long Press, 1=Short Press
 
   // Scene-spezifisch
   String scene_alias;        // HA Scene Alias
@@ -87,10 +93,27 @@ struct Tile {
         sensor_gauge_y_offset(12),
         sensor_value_y_offset(0),
         sensor_graph_height(60),
+        popup_open_mode(TILE_POPUP_OPEN_LONG_PRESS),
         key_code(0),
         key_modifier(0),
         image_slideshow_sec(10) {}
 };
+
+static inline uint8_t getTilePopupOpenMode(const Tile& tile) {
+  if (tile.type != TILE_SENSOR && tile.type != TILE_WEATHER) {
+    return TILE_POPUP_OPEN_LONG_PRESS;
+  }
+  return (tile.popup_open_mode == TILE_POPUP_OPEN_SHORT_PRESS)
+             ? TILE_POPUP_OPEN_SHORT_PRESS
+             : TILE_POPUP_OPEN_LONG_PRESS;
+}
+
+static inline void setTilePopupOpenMode(Tile& tile, uint8_t mode) {
+  if (tile.type != TILE_SENSOR && tile.type != TILE_WEATHER) return;
+  tile.popup_open_mode = (mode == TILE_POPUP_OPEN_SHORT_PRESS)
+                             ? TILE_POPUP_OPEN_SHORT_PRESS
+                             : TILE_POPUP_OPEN_LONG_PRESS;
+}
 
 struct TileGridConfig {
   Tile tiles[TILES_PER_GRID];

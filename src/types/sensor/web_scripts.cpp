@@ -104,6 +104,8 @@ void append_sensor_scripts(String& html) {
     if (decEl) decEl.value = (data.sensor_decimals !== undefined && data.sensor_decimals >= 0) ? data.sensor_decimals : '';
     const fontEl = document.getElementById(prefix + '_sensor_value_font');
     if (fontEl) fontEl.value = (data.sensor_value_font !== undefined) ? String(data.sensor_value_font) : '0';
+    const popupModeEl = document.getElementById(prefix + '_sensor_popup_open_mode');
+    if (popupModeEl) popupModeEl.value = (data.popup_open_mode !== undefined) ? String(data.popup_open_mode) : '0';
     const displayModeEl = document.getElementById(prefix + '_sensor_display_mode');
     if (displayModeEl) displayModeEl.value = (data.sensor_display_mode !== undefined) ? String(data.sensor_display_mode) : '0';
     const gaugeMinEl = document.getElementById(prefix + '_sensor_gauge_min');
@@ -129,6 +131,7 @@ void append_sensor_scripts(String& html) {
     formData.append('sensor_unit', document.getElementById(prefix + '_sensor_unit')?.value || '');
     formData.append('sensor_decimals', document.getElementById(prefix + '_sensor_decimals')?.value || '');
     formData.append('sensor_value_font', document.getElementById(prefix + '_sensor_value_font')?.value || '0');
+    formData.append('popup_open_mode', document.getElementById(prefix + '_sensor_popup_open_mode')?.value || '0');
     formData.append('sensor_display_mode', document.getElementById(prefix + '_sensor_display_mode')?.value || '0');
     formData.append('sensor_gauge_min', document.getElementById(prefix + '_sensor_gauge_min')?.value || '');
     formData.append('sensor_gauge_max', document.getElementById(prefix + '_sensor_gauge_max')?.value || '');
@@ -149,6 +152,8 @@ void append_sensor_scripts(String& html) {
     if (decEl) decEl.value = '';
     const fontEl = document.getElementById(prefix + '_sensor_value_font');
     if (fontEl) fontEl.value = '0';
+    const popupModeEl = document.getElementById(prefix + '_sensor_popup_open_mode');
+    if (popupModeEl) popupModeEl.value = '0';
     const displayModeEl = document.getElementById(prefix + '_sensor_display_mode');
     if (displayModeEl) displayModeEl.value = '0';
     const gaugeMinEl = document.getElementById(prefix + '_sensor_gauge_min');

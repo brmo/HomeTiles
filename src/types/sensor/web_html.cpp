@@ -80,6 +80,13 @@ void append_sensor_fields_html(String& html, const String& tab_id, const std::ve
   html += tab_id;
   html += R"html(_sensor_graph_height" min="20" max="200" step="1" placeholder="60">
                 </div>
+                <label>Popup oeffnen</label>
+                <select id=")html";
+  html += tab_id;
+  html += R"html(_sensor_popup_open_mode">
+                  <option value="0">Long Press</option>
+                  <option value="1">Short Press</option>
+                </select>
                 <label>Wert Y-Offset (-100 bis 200)</label>
                 <input type="number" id=")html";
   html += tab_id;

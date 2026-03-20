@@ -618,6 +618,7 @@ void show_light_popup(const LightPopupInit& init) {
   lv_obj_t* title = lv_label_create(card);
   ctx->title_label = title;
   set_label_style(title, lv_color_white());
+  lv_obj_set_style_text_font(title, &ui_font_20, 0);
   lv_label_set_text(title, init.title.c_str());
   lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, kHeaderPadTop);
 
@@ -645,7 +646,7 @@ void show_light_popup(const LightPopupInit& init) {
   ctx->power_row = create_centered_power_status(content, &ctx->power_switch, &ctx->power_status_label);
   ctx->val_row = create_slider_row(content, "Helligkeit", 0, 100, &ctx->val_slider, &ctx->val_value);
   ctx->hue_row = create_slider_row(content, "Farbton", 0, 360, &ctx->hue_slider, &ctx->hue_value);
-  ctx->sat_row = create_slider_row(content, "SÃ¤ttigung", 0, 100, &ctx->sat_slider, &ctx->sat_value);
+  ctx->sat_row = create_slider_row(content, "S\xC3\xA4ttigung", 0, 100, &ctx->sat_slider, &ctx->sat_value);
 
   apply_init_to_context(ctx, init);
 

@@ -258,10 +258,16 @@ lv_obj_t* render_sensor_tile(lv_obj_t* parent, int col, int row, const Tile& til
       (tile.bg_color != 0) ? tile.bg_color : 0x2A2A2A
     };
 
+    const lv_event_code_t popup_event =
+        (getTilePopupOpenMode(tile) == TILE_POPUP_OPEN_SHORT_PRESS)
+            ? LV_EVENT_SHORT_CLICKED
+            : LV_EVENT_LONG_PRESSED;
+
     lv_obj_add_event_cb(
         card,
         [](lv_event_t* e) {
-          if (lv_event_get_code(e) != LV_EVENT_LONG_PRESSED) return;
+          lv_event_code_t code = lv_event_get_code(e);
+          if (code != LV_EVENT_SHORT_CLICKED && code != LV_EVENT_LONG_PRESSED) return;
           SensorEventData* data = static_cast<SensorEventData*>(lv_event_get_user_data(e));
           if (!data || !data->entity_id.length()) return;
           SensorPopupInit init;
@@ -293,7 +299,7 @@ lv_obj_t* render_sensor_tile(lv_obj_t* parent, int col, int row, const Tile& til
           init.value = haBridgeConfig.findSensorInitialValue(data->entity_id);
           show_sensor_popup(init);
         },
-        LV_EVENT_LONG_PRESSED,
+        popup_event,
         data);
 
     lv_obj_add_event_cb(

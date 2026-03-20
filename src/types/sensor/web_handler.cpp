@@ -22,6 +22,13 @@ void apply_sensor_fields_from_request(WebServer& server, Tile& tile) {
     value_font = (raw == 1 || raw == 2) ? static_cast<uint8_t>(raw) : 0;
   }
   tile.sensor_value_font = value_font;
+  uint8_t popup_mode = TILE_POPUP_OPEN_LONG_PRESS;
+  if (server.hasArg("popup_open_mode")) {
+    popup_mode = (server.arg("popup_open_mode").toInt() == TILE_POPUP_OPEN_SHORT_PRESS)
+                     ? TILE_POPUP_OPEN_SHORT_PRESS
+                     : TILE_POPUP_OPEN_LONG_PRESS;
+  }
+  setTilePopupOpenMode(tile, popup_mode);
   tile.sensor_display_mode = 0;
   tile.sensor_gauge_min = 0;
   tile.sensor_gauge_max = 100;

@@ -548,7 +548,7 @@ static void build_popup_ui(SensorPopupContext* ctx, const SensorPopupInit& init)
 
   lv_obj_t* title = lv_label_create(card);
   ctx->title_label = title;
-  set_label_style(title, lv_color_white(), &ui_font_24);
+  set_label_style(title, lv_color_white(), &ui_font_20);
   lv_label_set_text(title, init.title.c_str());
   lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, kHeaderPadTop);
 

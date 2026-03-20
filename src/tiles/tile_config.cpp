@@ -7,7 +7,7 @@
 #include <algorithm>
 
 static const char* PREF_NAMESPACE = "tab5_tiles";
-static constexpr uint8_t PACKED_GRID_VERSION = 6;
+static constexpr uint8_t PACKED_GRID_VERSION = 7;
 static constexpr uint16_t IMAGE_SLIDESHOW_DEFAULT_SEC = 10;
 static constexpr uint16_t IMAGE_SLIDESHOW_MAX_SEC = 3600;
 static constexpr size_t OLD_TILES_PER_GRID = 12;  // For V1-V5 migration
@@ -162,6 +162,31 @@ struct PackedTileV6 {
   int32_t sensor_gauge_max;
 };
 
+struct PackedTileV7 {
+  uint8_t type;
+  uint8_t sensor_decimals;
+  uint8_t key_code;
+  uint8_t key_modifier;
+  uint32_t bg_color;
+  uint8_t col;                       // Grid column (0-3)
+  uint8_t row;                       // Grid row (0-3)
+  uint8_t span_w;                    // Width in cells (1-4)
+  uint8_t span_h;                    // Height in cells (1-4)
+  char title[TITLE_MAX];
+  char icon_name[ICON_MAX];
+  char sensor_entity[ENTITY_MAX];
+  char sensor_unit[UNIT_MAX];
+  char scene_alias[SCENE_MAX];
+  char key_macro[MACRO_MAX];
+  uint8_t sensor_value_font;
+  uint16_t image_slideshow_sec;
+  uint8_t sensor_gauge_enabled;
+  int32_t sensor_gauge_min;
+  int32_t sensor_gauge_max;
+  uint8_t popup_open_mode;
+  uint8_t reserved[3];
+};
+
 // Split grid into 4 quarters to fit NVS size limit (~2KB per entry)
 // Each quarter holds 4 tiles for the 4x4 layout.
 static constexpr size_t TILES_PER_QUARTER = 4;
@@ -174,6 +199,13 @@ struct PackedQuarterGridV6 {
   uint8_t quarter_index;  // 0-3
   uint8_t reserved[2];
   PackedTileV6 tiles[TILES_PER_QUARTER];
+};
+
+struct PackedQuarterGridV7 {
+  uint8_t version;
+  uint8_t quarter_index;  // 0-3
+  uint8_t reserved[2];
+  PackedTileV7 tiles[TILES_PER_QUARTER];
 };
 
 struct FolderIndexHeader {
@@ -281,6 +313,12 @@ static String imagePathFileLegacy(const char* prefix, size_t index) {
 
 static String tileGridFile(uint16_t folder_id) {
   char buf[64];
+  snprintf(buf, sizeof(buf), "%s/f%05u_v7.bin", kTileGridDir, static_cast<unsigned>(folder_id));
+  return String(buf);
+}
+
+static String tileGridFileLegacyV6(uint16_t folder_id) {
+  char buf[64];
   snprintf(buf, sizeof(buf), "%s/f%05u_v6.bin", kTileGridDir, static_cast<unsigned>(folder_id));
   return String(buf);
 }
@@ -291,43 +329,57 @@ static String tileGridFileLegacy(const char* prefix) {
   return String(buf);
 }
 
-static bool writeGridSd(uint16_t folder_id, const PackedQuarterGridV6* packed, size_t count) {
+static bool writeGridSd(uint16_t folder_id, const PackedQuarterGridV7* packed, size_t count) {
   if (!sdReady()) return false;
   if (!ensureTileGridDir()) return false;
 
   String filePath = tileGridFile(folder_id);
-  if (SD_MMC.exists(filePath) && !SD_MMC.remove(filePath)) {
-    Serial.printf("[TileConfig] WARN: Konnte alte Grid-Datei nicht entfernen: %s\n", filePath.c_str());
+  if (SD_MMC.exists(filePath)) {
+    SD_MMC.remove(filePath);
   }
 
   File f = SD_MMC.open(filePath, FILE_WRITE);
   if (!f) {
-    Serial.printf("[TileConfig] SD open fehlgeschlagen: %s\n", filePath.c_str());
     return false;
   }
 
-  const size_t expected = count * sizeof(PackedQuarterGridV6);
+  const size_t expected = count * sizeof(PackedQuarterGridV7);
   const size_t written = f.write(reinterpret_cast<const uint8_t*>(packed), expected);
   f.flush();
   f.close();
 
   if (written != expected) {
-    Serial.printf("[TileConfig] SD short write: %s, geschrieben=%u erwartet=%u\n",
-                  filePath.c_str(),
+    Serial.printf("[TileConfig] SD short write: folder=%u written=%u expected=%u\n",
+                  static_cast<unsigned>(folder_id),
                   static_cast<unsigned>(written),
                   static_cast<unsigned>(expected));
-    return false;
-  }
-
-  if (!SD_MMC.exists(filePath)) {
-    Serial.printf("[TileConfig] SD write ok, Datei fehlt danach: %s\n", filePath.c_str());
     return false;
   }
 
   return true;
 }
 
-static bool readPackedGridFile(const String& filePath, PackedQuarterGridV6* packed, size_t count) {
+static bool readPackedGridFileV7(const String& filePath, PackedQuarterGridV7* packed, size_t count) {
+  if (!SD_MMC.exists(filePath)) return false;
+  File f = SD_MMC.open(filePath, FILE_READ);
+  if (!f) return false;
+  const size_t expected = count * sizeof(PackedQuarterGridV7);
+  if (static_cast<size_t>(f.size()) < expected) {
+    f.close();
+    return false;
+  }
+  size_t read = f.read(reinterpret_cast<uint8_t*>(packed), expected);
+  f.close();
+  if (read != expected) return false;
+  for (size_t q = 0; q < count; ++q) {
+    if (packed[q].version != 7 || packed[q].quarter_index != static_cast<uint8_t>(q)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool readPackedGridFileV6(const String& filePath, PackedQuarterGridV6* packed, size_t count) {
   if (!SD_MMC.exists(filePath)) return false;
   File f = SD_MMC.open(filePath, FILE_READ);
   if (!f) return false;
@@ -340,17 +392,21 @@ static bool readPackedGridFile(const String& filePath, PackedQuarterGridV6* pack
   f.close();
   if (read != expected) return false;
   for (size_t q = 0; q < count; ++q) {
-    if (packed[q].version != PACKED_GRID_VERSION ||
-        packed[q].quarter_index != static_cast<uint8_t>(q)) {
+    if (packed[q].version != 6 || packed[q].quarter_index != static_cast<uint8_t>(q)) {
       return false;
     }
   }
   return true;
 }
 
-static bool readGridSd(uint16_t folder_id, PackedQuarterGridV6* packed, size_t count) {
+static bool readGridSd(uint16_t folder_id, PackedQuarterGridV7* packed, size_t count) {
   if (!sdReady()) return false;
-  return readPackedGridFile(tileGridFile(folder_id), packed, count);
+  return readPackedGridFileV7(tileGridFile(folder_id), packed, count);
+}
+
+static bool readGridSdV6(uint16_t folder_id, PackedQuarterGridV6* packed, size_t count) {
+  if (!sdReady()) return false;
+  return readPackedGridFileV6(tileGridFileLegacyV6(folder_id), packed, count);
 }
 
 static bool writeImagePathSd(uint16_t folder_id, size_t index, const String& path) {
@@ -384,7 +440,7 @@ static bool readImagePathSd(uint16_t folder_id, size_t index, String& out) {
   return out.length() > 0;
 }
 
-static void packTile(const Tile& in, PackedTileV6& out) {
+static void packTile(const Tile& in, PackedTileV7& out) {
   memset(&out, 0, sizeof(out));
   out.type = static_cast<uint8_t>(in.type);
   uint8_t decimals = clampDecimals(in.sensor_decimals);
@@ -409,6 +465,10 @@ static void packTile(const Tile& in, PackedTileV6& out) {
   out.sensor_gauge_min = in.sensor_gauge_min;
   out.sensor_gauge_max = in.sensor_gauge_max;
   normalizeGaugeRange(out.sensor_gauge_min, out.sensor_gauge_max);
+  out.popup_open_mode = ((in.type == TILE_SENSOR || in.type == TILE_WEATHER) &&
+                         getTilePopupOpenMode(in) == TILE_POPUP_OPEN_SHORT_PRESS)
+                            ? TILE_POPUP_OPEN_SHORT_PRESS
+                            : TILE_POPUP_OPEN_LONG_PRESS;
   copyString(in.title, out.title, sizeof(out.title));
   copyString(in.icon_name, out.icon_name, sizeof(out.icon_name));
   copyString(in.sensor_unit, out.sensor_unit, sizeof(out.sensor_unit));
@@ -489,6 +549,96 @@ static void applyImagePathsFromSd(uint16_t folder_id, TileGridConfig& grid) {
   }
 }
 
+static void unpackTileV7(const PackedTileV7& in, Tile& out) {
+  TileType type = static_cast<TileType>(in.type);
+  if (type == TILE_FOLDER) {
+    if (in.sensor_decimals == LEGACY_NAV_KIND_SETTINGS) {
+      type = TILE_SETTINGS;
+    } else if (in.sensor_decimals == LEGACY_NAV_KIND_BACK) {
+      type = TILE_BACK;
+    }
+  }
+  out.type = type;
+  out.bg_color = in.bg_color;
+  out.col = (in.col < GRID_COLS) ? in.col : 0;
+  out.row = (in.row < GRID_ROWS) ? in.row : 0;
+  uint8_t span_w = (in.span_w < 1) ? 1 : in.span_w;
+  uint8_t span_h = (in.span_h < 1) ? 1 : in.span_h;
+  if (span_w > GRID_COLS - out.col) span_w = GRID_COLS - out.col;
+  if (span_h > GRID_ROWS - out.row) span_h = GRID_ROWS - out.row;
+  out.span_w = span_w;
+  out.span_h = span_h;
+  out.sensor_decimals = clampDecimals(in.sensor_decimals);
+  if (out.type == TILE_FOLDER || out.type == TILE_SETTINGS || out.type == TILE_BACK) {
+    out.sensor_decimals = 0xFF;
+  }
+  out.sensor_value_font = clampSensorValueFont(in.sensor_value_font);
+  out.sensor_display_mode = (in.sensor_gauge_enabled <= 2) ? in.sensor_gauge_enabled : 0;
+  out.sensor_gauge_min = in.sensor_gauge_min;
+  out.sensor_gauge_max = in.sensor_gauge_max;
+  normalizeGaugeRange(out.sensor_gauge_min, out.sensor_gauge_max);
+  out.sensor_gauge_arc = 100;
+  out.sensor_gauge_size = 350;
+  out.sensor_gauge_y_offset = 12;
+  out.sensor_value_y_offset = 0;
+  out.sensor_graph_height = 60;
+  out.popup_open_mode = TILE_POPUP_OPEN_LONG_PRESS;
+  if (out.type == TILE_SENSOR && in.scene_alias[0] == 0x01) {
+    uint16_t arc = static_cast<uint8_t>(in.scene_alias[1]) |
+                   (static_cast<uint8_t>(in.scene_alias[2]) << 8);
+    if (arc >= 90 && arc <= 359) out.sensor_gauge_arc = arc;
+    uint16_t size = static_cast<uint8_t>(in.scene_alias[3]) |
+                    (static_cast<uint8_t>(in.scene_alias[4]) << 8);
+    if (size >= 100 && size <= 800) out.sensor_gauge_size = size;
+    int16_t y_off = static_cast<int16_t>(
+        static_cast<uint8_t>(in.scene_alias[5]) |
+        (static_cast<uint8_t>(in.scene_alias[6]) << 8));
+    if (y_off >= -100 && y_off <= 200) out.sensor_gauge_y_offset = y_off;
+    int16_t val_y_off = static_cast<int16_t>(
+        static_cast<uint8_t>(in.scene_alias[7]) |
+        (static_cast<uint8_t>(in.scene_alias[8]) << 8));
+    if (val_y_off >= -100 && val_y_off <= 200) out.sensor_value_y_offset = val_y_off;
+    uint16_t graph_h = static_cast<uint8_t>(in.scene_alias[9]) |
+                       (static_cast<uint8_t>(in.scene_alias[10]) << 8);
+    if (graph_h >= 20 && graph_h <= 200) out.sensor_graph_height = graph_h;
+  }
+  if ((out.type == TILE_SENSOR || out.type == TILE_WEATHER) &&
+      in.popup_open_mode == TILE_POPUP_OPEN_SHORT_PRESS) {
+    out.popup_open_mode = TILE_POPUP_OPEN_SHORT_PRESS;
+  }
+  out.key_code = in.key_code;
+  out.key_modifier = in.key_modifier;
+  if (out.type == TILE_SENSOR || out.type == TILE_WEATHER) {
+    out.key_code = 0;
+    out.key_modifier = 0;
+  } else if (out.type == TILE_SETTINGS || out.type == TILE_BACK) {
+    out.key_code = 0;
+    out.key_modifier = 0;
+  }
+  out.image_slideshow_sec = clampImageSlideshowSeconds(in.image_slideshow_sec);
+  out.title = String(in.title);
+  out.icon_name = String(in.icon_name);
+  out.sensor_entity = String(in.sensor_entity);
+  out.sensor_unit = String(in.sensor_unit);
+  if (out.type == TILE_SENSOR) {
+    out.scene_alias = "";
+  } else {
+    out.scene_alias = String(in.scene_alias);
+  }
+  out.key_macro = String(in.key_macro);
+  if (out.type == TILE_IMAGE) {
+    if (looksLikeImagePath(out.sensor_entity)) {
+      out.image_path = out.sensor_entity;
+    } else {
+      out.image_path = out.key_macro;
+    }
+    out.key_macro = "";
+    out.sensor_entity = "";
+  } else {
+    out.image_path = "";
+  }
+}
+
 static void unpackTileV6(const PackedTileV6& in, Tile& out) {
   TileType type = static_cast<TileType>(in.type);
   if (type == TILE_FOLDER) {
@@ -523,6 +673,7 @@ static void unpackTileV6(const PackedTileV6& in, Tile& out) {
   out.sensor_gauge_y_offset = 12; // Default
   out.sensor_value_y_offset = 0;  // Default
   out.sensor_graph_height = 60;   // Default
+  out.popup_open_mode = TILE_POPUP_OPEN_LONG_PRESS;
   if (out.type == TILE_SENSOR && in.scene_alias[0] == 0x01) {
     // Magic byte found, extract gauge appearance data
     uint16_t arc = static_cast<uint8_t>(in.scene_alias[1]) |
@@ -545,7 +696,14 @@ static void unpackTileV6(const PackedTileV6& in, Tile& out) {
   }
   out.key_code = in.key_code;
   out.key_modifier = in.key_modifier;
-  if (out.type == TILE_SETTINGS || out.type == TILE_BACK) {
+  if (out.type == TILE_SENSOR || out.type == TILE_WEATHER) {
+    if (in.key_code == TILE_POPUP_OPEN_SHORT_PRESS ||
+        in.key_modifier == TILE_POPUP_OPEN_SHORT_PRESS) {
+      out.popup_open_mode = TILE_POPUP_OPEN_SHORT_PRESS;
+    }
+    out.key_code = 0;
+    out.key_modifier = 0;
+  } else if (out.type == TILE_SETTINGS || out.type == TILE_BACK) {
     out.key_code = 0;
     out.key_modifier = 0;
   }
@@ -1833,23 +1991,42 @@ bool TileConfig::deleteFolder(uint16_t folder_id) {
 bool TileConfig::loadGrid(uint16_t folder_id, TileGridConfig& grid) {
   initGridDefaults(grid);
 
-  static PackedQuarterGridV6 packed_sd[QUARTERS_PER_GRID];
-  memset(packed_sd, 0, sizeof(packed_sd));
-  bool ok = readGridSd(folder_id, packed_sd, QUARTERS_PER_GRID);
-  if (!ok && folder_id == kRootFolderId && sdReady()) {
-    ok = readPackedGridFile(tileGridFileLegacy("tab0"), packed_sd, QUARTERS_PER_GRID);
-  }
+  bool ok = false;
+  bool needs_migration_save = false;
 
-  if (ok) {
+  static PackedQuarterGridV7 packed_v7[QUARTERS_PER_GRID];
+  memset(packed_v7, 0, sizeof(packed_v7));
+  if (readGridSd(folder_id, packed_v7, QUARTERS_PER_GRID)) {
+    ok = true;
     for (size_t q = 0; q < QUARTERS_PER_GRID; ++q) {
       for (size_t i = 0; i < TILES_PER_QUARTER; ++i) {
         size_t grid_idx = q * TILES_PER_QUARTER + i;
-        unpackTileV6(packed_sd[q].tiles[i], grid.tiles[grid_idx]);
+        unpackTileV7(packed_v7[q].tiles[i], grid.tiles[grid_idx]);
       }
     }
     Serial.printf("[TileConfig] Grid %u geladen (SD v%u)\n",
                   static_cast<unsigned>(folder_id),
-                  static_cast<unsigned>(packed_sd[0].version));
+                  static_cast<unsigned>(packed_v7[0].version));
+  } else {
+    static PackedQuarterGridV6 packed_v6[QUARTERS_PER_GRID];
+    memset(packed_v6, 0, sizeof(packed_v6));
+    if (readGridSdV6(folder_id, packed_v6, QUARTERS_PER_GRID) ||
+        (folder_id == kRootFolderId && sdReady() &&
+         readPackedGridFileV6(tileGridFileLegacy("tab0"), packed_v6, QUARTERS_PER_GRID))) {
+      ok = true;
+      needs_migration_save = true;
+      for (size_t q = 0; q < QUARTERS_PER_GRID; ++q) {
+        for (size_t i = 0; i < TILES_PER_QUARTER; ++i) {
+          size_t grid_idx = q * TILES_PER_QUARTER + i;
+          unpackTileV6(packed_v6[q].tiles[i], grid.tiles[grid_idx]);
+        }
+      }
+      Serial.printf("[TileConfig] Grid %u geladen (SD v6)\n",
+                    static_cast<unsigned>(folder_id));
+    }
+  }
+
+  if (ok) {
     applyImagePathsFromSd(folder_id, grid);
   }
 
@@ -1859,7 +2036,7 @@ bool TileConfig::loadGrid(uint16_t folder_id, TileGridConfig& grid) {
   } else {
     changed = ensureBackTile(folder_id, grid);
   }
-  if (changed) {
+  if (needs_migration_save || changed) {
     saveGrid(folder_id, grid);
   }
   return ok;
@@ -1881,9 +2058,9 @@ bool TileConfig::saveGrid(uint16_t folder_id, const TileGridConfig& grid) {
   Serial.printf("[TileConfig] Speichere Grid %u (SD, %u x %u bytes)\n",
                 static_cast<unsigned>(folder_id),
                 static_cast<unsigned>(QUARTERS_PER_GRID),
-                static_cast<unsigned>(sizeof(PackedQuarterGridV6)));
+                static_cast<unsigned>(sizeof(PackedQuarterGridV7)));
 
-  static PackedQuarterGridV6 packed[QUARTERS_PER_GRID];
+  static PackedQuarterGridV7 packed[QUARTERS_PER_GRID];
   memset(packed, 0, sizeof(packed));
   for (size_t q = 0; q < QUARTERS_PER_GRID; ++q) {
     packed[q].version = PACKED_GRID_VERSION;
@@ -1907,9 +2084,20 @@ bool TileConfig::saveGrid(uint16_t folder_id, const TileGridConfig& grid) {
     return false;
   }
 
+  String legacy_v6 = tileGridFileLegacyV6(folder_id);
+  if (SD_MMC.exists(legacy_v6)) {
+    SD_MMC.remove(legacy_v6);
+  }
+  if (folder_id == kRootFolderId) {
+    String legacy_root = tileGridFileLegacy("tab0");
+    if (SD_MMC.exists(legacy_root)) {
+      SD_MMC.remove(legacy_root);
+    }
+  }
+
   Serial.printf("[TileConfig] Grid %u gespeichert (SD, %u x %u bytes)\n",
                 static_cast<unsigned>(folder_id),
                 static_cast<unsigned>(QUARTERS_PER_GRID),
-                static_cast<unsigned>(sizeof(PackedQuarterGridV6)));
+                static_cast<unsigned>(sizeof(PackedQuarterGridV7)));
   return true;
 }

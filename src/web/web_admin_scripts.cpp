@@ -178,7 +178,7 @@ void appendAdminScripts(String& html) {
     const prev = tiles[index] || {};
     const tile = Object.assign({}, prev);
     const layout = normalizeSnapshotLayout(snapshot, index);
-    const numericFields = ['type', 'sensor_decimals', 'sensor_value_font', 'sensor_display_mode', 'switch_style', 'navigate_target', 'image_preview'];
+    const numericFields = ['type', 'sensor_decimals', 'sensor_value_font', 'sensor_display_mode', 'switch_style', 'navigate_target', 'image_preview', 'popup_open_mode'];
 
     tile.type = clampInt(snapshot?.type, 0, 255, Number(prev.type) || 0);
     tile.title = snapshot?.title || '';
@@ -679,6 +679,7 @@ void appendAdminScripts(String& html) {
       const unitInput = document.getElementById(prefix + '_sensor_unit');
       const decimalsInput = document.getElementById(prefix + '_sensor_decimals');
       const valueFontSelect = document.getElementById(prefix + '_sensor_value_font');
+      const sensorPopupModeSelect = document.getElementById(prefix + '_sensor_popup_open_mode');
       const displayModeSelect = document.getElementById(prefix + '_sensor_display_mode');
       const gaugeMinInput = document.getElementById(prefix + '_sensor_gauge_min');
       const gaugeMaxInput = document.getElementById(prefix + '_sensor_gauge_max');
@@ -688,6 +689,7 @@ void appendAdminScripts(String& html) {
       const valueYOffsetInput = document.getElementById(prefix + '_sensor_value_y_offset');
       const graphHeightInput = document.getElementById(prefix + '_sensor_graph_height');
       const weatherSelect = document.getElementById(prefix + '_weather_entity');
+      const weatherPopupModeSelect = document.getElementById(prefix + '_weather_popup_open_mode');
       const sceneInput = document.getElementById(prefix + '_scene_alias');
     const keyInput = document.getElementById(prefix + '_key_macro');
     const textInput = document.getElementById(prefix + '_text_value');
@@ -713,9 +715,11 @@ void appendAdminScripts(String& html) {
     if (typeSelect) typeSelect.addEventListener('change', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     if (entitySelect) entitySelect.addEventListener('change', () => { maybeFillTitleFromSensor(tab); updateTilePreview(tab); updateSensorValuePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     if (weatherSelect) weatherSelect.addEventListener('change', () => { maybeFillTitleFromWeather(tab); updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
+    if (weatherPopupModeSelect) weatherPopupModeSelect.addEventListener('change', () => { updateDraft(tab); scheduleAutoSave(tab); });
       if (unitInput) unitInput.addEventListener('input', () => { updateSensorValuePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
       if (decimalsInput) decimalsInput.addEventListener('input', () => { updateSensorValuePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
       if (valueFontSelect) valueFontSelect.addEventListener('change', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
+      if (sensorPopupModeSelect) sensorPopupModeSelect.addEventListener('change', () => { updateDraft(tab); scheduleAutoSave(tab); });
       if (displayModeSelect) displayModeSelect.addEventListener('change', () => { syncGaugeUi(tab); updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
       if (gaugeMinInput) gaugeMinInput.addEventListener('input', () => { updateDraft(tab); scheduleAutoSave(tab); });
       if (gaugeMaxInput) gaugeMaxInput.addEventListener('input', () => { updateDraft(tab); scheduleAutoSave(tab); });
@@ -1285,6 +1289,9 @@ void appendAdminScripts(String& html) {
       if (tile.sensor_graph_height !== undefined && tile.sensor_graph_height !== null && String(tile.sensor_graph_height).length > 0) {
         fd.append('sensor_graph_height', tile.sensor_graph_height);
       }
+      if (tile.popup_open_mode !== undefined && tile.popup_open_mode !== null) {
+        fd.append('popup_open_mode', tile.popup_open_mode);
+      }
     } else if (safeType === 2) {
       fd.append('scene_alias', tile.scene_alias || '');
       fd.append('image_path', tile.image_path || '');
@@ -1315,6 +1322,9 @@ void appendAdminScripts(String& html) {
       fd.append('counter_value', tile.counter_value || tile.scene_alias || '0');
     } else if (safeType === 12) {
       fd.append('weather_entity', tile.sensor_entity || tile.weather_entity || '');
+      if (tile.popup_open_mode !== undefined && tile.popup_open_mode !== null) {
+        fd.append('popup_open_mode', tile.popup_open_mode);
+      }
     }
 
     const res = await fetch('/api/tiles', { method: 'POST', body: fd });

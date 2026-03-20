@@ -709,6 +709,8 @@ void WebAdminServer::handleGetTiles() {
     out += String(tile.key_code);
     out += ",\"key_modifier\":";
     out += String(tile.key_modifier);
+    out += ",\"popup_open_mode\":";
+    out += String(getTilePopupOpenMode(tile));
     out += ",\"switch_style\":";
     out += String((tile.type == TILE_SWITCH && tile.sensor_decimals == 1) ? 1 : 0);
     out += ",\"image_path\":\"";
