@@ -44,6 +44,8 @@ struct FolderCacheEntry {
 
 static FolderCacheEntry g_folder_cache[kFolderCacheSize];
 static FolderCacheEntry* g_active_cache = nullptr;
+static bool g_folder_switch_pending = false;
+static uint16_t g_pending_folder_id = kInvalidFolderId;
 
 /* === Entity-State Cache (for lazy-loaded tabs) === */
 struct EntityCacheEntry {
@@ -648,19 +650,10 @@ void tiles_switch_to_folder(uint16_t folder_id) {
   if (!g_tiles_roots[idx]) return;
   if (!tileConfig.folderExists(folder_id)) return;
 
-  if (!tileConfig.setActiveFolder(folder_id)) return;
-
-  if (!g_tiles_grids[idx]) {
-    g_tiles_grids[idx] = create_tiles_grid(g_tiles_roots[idx]);
-    g_tiles_loaded[idx] = (g_tiles_grids[idx] != nullptr);
-  }
-  if (!g_tiles_grids[idx]) return;
-
-  // Navigation nicht im Event-Callback blockieren:
-  // Layout-Rebuild wird im Main-Loop ueber tiles_process_reload_requests ausgefuehrt.
+  // Wechsel nicht im LVGL-Event-Callback blockieren.
   stop_preview_timer();
-  lv_obj_clear_flag(g_tiles_grids[idx], LV_OBJ_FLAG_HIDDEN);
-  tiles_request_reload(GridType::TAB0);
+  g_pending_folder_id = folder_id;
+  g_folder_switch_pending = true;
 }
 
 void tiles_invalidate_folder(uint16_t folder_id) {
@@ -675,6 +668,27 @@ void tiles_invalidate_folder(uint16_t folder_id) {
 
 void tiles_process_reload_requests() {
   bool did_reload = false;
+
+  if (g_folder_switch_pending) {
+    g_folder_switch_pending = false;
+    const uint16_t folder_id = g_pending_folder_id;
+    g_pending_folder_id = kInvalidFolderId;
+    const uint8_t idx = static_cast<uint8_t>(GridType::TAB0);
+
+    if (g_tiles_roots[idx] && tileConfig.folderExists(folder_id) && tileConfig.setActiveFolder(folder_id)) {
+      if (!g_tiles_grids[idx]) {
+        g_tiles_grids[idx] = create_tiles_grid(g_tiles_roots[idx]);
+        g_tiles_loaded[idx] = (g_tiles_grids[idx] != nullptr);
+      }
+      if (g_tiles_grids[idx]) {
+        lv_obj_clear_flag(g_tiles_grids[idx], LV_OBJ_FLAG_HIDDEN);
+        g_tiles_reload_requested[idx] = true;
+        g_tiles_reload_only_if_loaded[idx] = false;
+      }
+    }
+    return;
+  }
+
   for (uint8_t i = 0; i < 3; ++i) {
     if (!g_tiles_release_requested[i]) continue;
     g_tiles_release_requested[i] = false;

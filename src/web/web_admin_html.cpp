@@ -505,6 +505,28 @@ String WebAdminServer::getAdminPage() {
   html += cfg.ha_prefix;
   html += R"html(">
           </div>
+          <div>
+            <label for="status_time_font">Uhrzeit Schriftgröße</label>
+            <select id="status_time_font" name="status_time_font">
+              <option value="24")html";
+  if (cfg.status_time_font_size == 24) html += " selected";
+  html += R"html(>24</option>
+              <option value="48")html";
+  if (cfg.status_time_font_size != 24) html += " selected";
+  html += R"html(>48</option>
+            </select>
+          </div>
+          <div>
+            <label for="status_date_font">Datum Schriftgröße</label>
+            <select id="status_date_font" name="status_date_font">
+              <option value="20")html";
+  if (cfg.status_date_font_size == 20) html += " selected";
+  html += R"html(>20</option>
+              <option value="24")html";
+  if (cfg.status_date_font_size != 20) html += " selected";
+  html += R"html(>24</option>
+            </select>
+          </div>
           <button class="btn" type="submit">Speichern</button>
         </form>
       </div>

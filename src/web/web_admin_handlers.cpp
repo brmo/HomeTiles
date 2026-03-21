@@ -433,6 +433,14 @@ void WebAdminServer::handleSaveMQTT() {
     if (prefix.isEmpty()) prefix = "ha/statestream";
     copyToBuffer(cfg.ha_prefix, sizeof(cfg.ha_prefix), prefix);
   }
+  if (server.hasArg("status_time_font")) {
+    int v = server.arg("status_time_font").toInt();
+    cfg.status_time_font_size = (v == 24) ? 24 : 48;
+  }
+  if (server.hasArg("status_date_font")) {
+    int v = server.arg("status_date_font").toInt();
+    cfg.status_date_font_size = (v == 20) ? 20 : 24;
+  }
 
   if (!cfg.mqtt_host[0]) {
     server.send(400, "text/html", "<h1>Fehler: MQTT-Host ist erforderlich</h1>");

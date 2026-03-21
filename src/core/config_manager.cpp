@@ -38,6 +38,8 @@ ConfigManager::ConfigManager() {
   config.auto_sleep_seconds = 60;
   config.auto_sleep_battery_enabled = config.auto_sleep_enabled;
   config.auto_sleep_battery_seconds = config.auto_sleep_seconds;
+  config.status_time_font_size = 48;
+  config.status_date_font_size = 24;
 }
 
 bool ConfigManager::load() {
@@ -118,6 +120,10 @@ bool ConfigManager::load() {
     sleep_bat_seconds = sleep_bat_minutes * 60;
   }
   config.auto_sleep_battery_seconds = normalize_sleep_seconds(sleep_bat_seconds);
+  config.status_time_font_size = prefs.getUChar("status_time_font", 48);
+  if (config.status_time_font_size != 24 && config.status_time_font_size != 48) config.status_time_font_size = 48;
+  config.status_date_font_size = prefs.getUChar("status_date_font", 24);
+  if (config.status_date_font_size != 20 && config.status_date_font_size != 24) config.status_date_font_size = 24;
 
   // Waveshare 4B has no IMU and no battery profile. Keep both settings fixed.
   config.wake_mode_mains = kWakeModeTouch;
@@ -176,6 +182,8 @@ bool ConfigManager::save(const DeviceConfig& cfg) {
   prefs.putUShort("sleep_sec", cfg.auto_sleep_seconds);
   prefs.putBool("sleep_bat_en", cfg.auto_sleep_battery_enabled);
   prefs.putUShort("sleep_bat_sec", cfg.auto_sleep_battery_seconds);
+  prefs.putUChar("status_time_font", (cfg.status_time_font_size == 24) ? 24 : 48);
+  prefs.putUChar("status_date_font", (cfg.status_date_font_size == 20) ? 20 : 24);
 
   uint16_t sleep_minutes = (cfg.auto_sleep_seconds + 59) / 60;
   if (sleep_minutes == 0) {
@@ -285,6 +293,8 @@ void ConfigManager::clear() {
   strncpy(config.ha_prefix, "ha/statestream", CONFIG_HA_PREFIX_MAX - 1);
   config.display_rotated_180 = false;
   config.display_rotation_mode = kDisplayRotationNormal;
+  config.status_time_font_size = 48;
+  config.status_date_font_size = 24;
 
   Serial.println("✓ ConfigManager: Konfiguration gelöscht");
 }

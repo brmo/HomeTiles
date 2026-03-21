@@ -7,6 +7,7 @@
 #include "src/ui/image_popup.h"
 #include "src/ui/weather_popup.h"
 #include "src/core/display_manager.h"
+#include "src/core/config_manager.h"
 #include "src/tiles/mdi_icons.h"
 #include "src/tiles/tile_config.h"
 #include "src/network/mqtt_handlers.h"
@@ -18,6 +19,16 @@
 #include <time.h>
 
 #include "src/core/board_hal.h"
+
+static const lv_font_t* get_status_time_font() {
+  const DeviceConfig& cfg = configManager.getConfig();
+  return (cfg.status_time_font_size == 24) ? &font_roboto_mono_digits_24 : &font_roboto_mono_digits_48;
+}
+
+static const lv_font_t* get_status_date_font() {
+  const DeviceConfig& cfg = configManager.getConfig();
+  return (cfg.status_date_font_size == 20) ? &ui_font_20 : &font_roboto_mono_digits_24;
+}
 
 
 
@@ -136,9 +147,9 @@ void UIManager::statusbarInit(lv_obj_t *tab_bar) {
   lv_obj_set_style_text_align(status_time_label, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_color(status_time_label, lv_color_white(), 0);
 
-  lv_obj_set_style_text_font(status_time_label, &font_roboto_mono_digits_48, 0);
+  lv_obj_set_style_text_font(status_time_label, get_status_time_font(), 0);
   // Platzhalter nur mit Zeichen, die im Ziffern-Font vorhanden sind
-  lv_label_set_text(status_time_label, "00:00");
+  lv_label_set_text(status_time_label, "");
 
 
 
@@ -152,9 +163,9 @@ void UIManager::statusbarInit(lv_obj_t *tab_bar) {
 
   lv_obj_set_style_text_color(status_date_label, lv_color_hex(0xC8C8C8), 0);
 
-  lv_obj_set_style_text_font(status_date_label, &font_roboto_mono_digits_24, 0);
+  lv_obj_set_style_text_font(status_date_label, get_status_date_font(), 0);
   // Platzhalter nur mit Zeichen, die im Ziffern-Font vorhanden sind
-  lv_label_set_text(status_date_label, "00.00.0000");
+  lv_label_set_text(status_date_label, "");
 }
 
 lv_obj_t* UIManager::setupTabButton(lv_obj_t *btn, uint8_t tab_index, const char *icon_name, const char *tab_name) {
@@ -319,6 +330,9 @@ void UIManager::updateStatusbar() {
 
   char buf[48];
 
+  lv_obj_set_style_text_font(status_time_label, get_status_time_font(), 0);
+  lv_obj_set_style_text_font(status_date_label, get_status_date_font(), 0);
+
   static uint32_t last_rtc_sync_ms = 0;
 
   bool have_time = false;
@@ -356,7 +370,7 @@ void UIManager::updateStatusbar() {
   } else {
 
     // Kein valider Zeitstempel: neutrales Fallback aus Ziffern, damit keine fehlenden Glyphen
-    snprintf(buf, sizeof(buf), "00:00");
+    snprintf(buf, sizeof(buf), "");
 
   }
 
@@ -371,7 +385,7 @@ void UIManager::updateStatusbar() {
   } else {
 
     // Fallback ohne fehlende Glyphen
-    snprintf(buf, sizeof(buf), "00.00.0000");
+    snprintf(buf, sizeof(buf), "");
 
   }
 

@@ -46,6 +46,8 @@ struct DeviceConfig {
   uint16_t auto_sleep_seconds; // Seconds until auto-sleep (5-3600)
   bool auto_sleep_battery_enabled;     // Auto-Sleep aktiv im Batteriebetrieb?
   uint16_t auto_sleep_battery_seconds; // Seconds until auto-sleep (5-3600)
+  uint8_t status_time_font_size;      // 24 or 48
+  uint8_t status_date_font_size;      // 20 or 24
 };
 
 class ConfigManager {
