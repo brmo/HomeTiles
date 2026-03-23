@@ -5,9 +5,16 @@ void append_sensor_styles(String& html) {
   <style>
     .tile.sensor { display:grid; grid-template-rows:auto 1fr; grid-template-columns:1fr; }
     .tile.sensor .tile-title {
-      text-align:left;
+      text-align:right;
       align-self:start;
-      width:100%;
+      width:auto;
+      grid-column:1;
+      grid-row:1;
+      justify-self:end;
+      max-width:60%;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
     }
     .tile-value {
       color:#fff;
@@ -27,8 +34,8 @@ void append_sensor_styles(String& html) {
     .tile-unit { color:#e6e6e6; font-size:14px; opacity:0.95; margin-left:7px; }
     .tile.sensor .tile-icon {
       position:absolute;
-      top:10px;
-      right:8px;
+      top:4px;
+      left:6px;
     }
   </style>
 )html";

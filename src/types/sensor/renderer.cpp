@@ -97,23 +97,22 @@ lv_obj_set_style_bg_grad_dir(card, LV_GRAD_DIR_NONE, LV_PART_MAIN | LV_STATE_PRE
       if (icon_lbl) {
         set_label_style(icon_lbl, lv_color_white(), FONT_MDI_ICONS);
         lv_label_set_text(icon_lbl, iconChar.c_str());
-        lv_obj_align(icon_lbl, LV_ALIGN_TOP_RIGHT, 4, -8);  // Rechtsbündig (4px rechts, 8px hoch)
+        lv_obj_align(icon_lbl, LV_ALIGN_TOP_LEFT, -8, -8);
       }
     }
   }
 
   lv_obj_t* title_label = nullptr;
-  // Title Label (nur anzeigen wenn Titel vorhanden) - linksbündig
+  // Title Label (nur anzeigen wenn Titel vorhanden) - rechtsbündig
   if (tile.title.length() > 0) {
     title_label = lv_label_create(card);
     if (title_label) {
       set_label_style(title_label, lv_color_hex(0xFFFFFF), FONT_TITLE);
+      lv_label_set_long_mode(title_label, LV_LABEL_LONG_DOT);
+      lv_obj_set_width(title_label, LV_PCT(70));
+      lv_obj_set_style_text_align(title_label, LV_TEXT_ALIGN_RIGHT, 0);
       lv_label_set_text(title_label, tile.title.c_str());
-      if (gauge_enabled) {
-        lv_obj_align(title_label, LV_ALIGN_TOP_LEFT, 0, 4);
-      } else {
-        lv_obj_align(title_label, LV_ALIGN_TOP_LEFT, 0, 4);  // Linksbündig
-      }
+      lv_obj_align(title_label, LV_ALIGN_TOP_RIGHT, 4, 4);
     }
   }
 

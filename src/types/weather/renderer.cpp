@@ -79,18 +79,19 @@ lv_obj_set_style_bg_grad_dir(card, LV_GRAD_DIR_NONE, LV_PART_MAIN | LV_STATE_PRE
   }
   if (!location.length()) location = "--";
 
+  lv_obj_t* icon_label = lv_label_create(card);
+  set_label_style(icon_label, lv_color_white(), FONT_MDI_ICONS);
+  lv_obj_align(icon_label, LV_ALIGN_TOP_LEFT, -8, -8);
+  enable_bubble(icon_label);
+
   lv_obj_t* location_label = lv_label_create(card);
   set_label_style(location_label, lv_color_white(), FONT_TITLE);
   lv_label_set_long_mode(location_label, LV_LABEL_LONG_DOT);
   lv_obj_set_width(location_label, LV_PCT(70));
+  lv_obj_set_style_text_align(location_label, LV_TEXT_ALIGN_RIGHT, 0);
   lv_label_set_text(location_label, location.c_str());
-  lv_obj_align(location_label, LV_ALIGN_TOP_LEFT, 0, 4);
+  lv_obj_align(location_label, LV_ALIGN_TOP_RIGHT, 4, 4);
   enable_bubble(location_label);
-
-  lv_obj_t* icon_label = lv_label_create(card);
-  set_label_style(icon_label, lv_color_white(), FONT_MDI_ICONS);
-  lv_obj_align(icon_label, LV_ALIGN_TOP_RIGHT, 4, -8);
-  enable_bubble(icon_label);
 
   String icon_name = tile.icon_name;
   bool icon_disabled = isMdiIconDisabled(icon_name);
