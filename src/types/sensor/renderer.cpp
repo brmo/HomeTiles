@@ -14,9 +14,9 @@ static const lv_font_t* get_sensor_value_font(const Tile& tile) {
     case 2:
       return &ui_font_24;
     case 3:
-      return &ui_font_28;
-    case 4:
       return &ui_font_32;
+    case 4:
+      return &ui_font_40;
     default:
       return FONT_VALUE;
   }

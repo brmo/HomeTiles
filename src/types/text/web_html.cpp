@@ -14,11 +14,11 @@ void append_text_fields_html(String& html, const String& tab_id) {
               <select id=")html";
   html += tab_id;
   html += R"html(_text_value_font">
-                <option value="0">40 (Default)</option>
+                <option value="0">28 (Default)</option>
                 <option value="1">20</option>
                 <option value="2">24</option>
-                <option value="3">28</option>
-                <option value="4">32</option>
+                <option value="3">32</option>
+                <option value="4">40</option>
               </select>
               <div style="font-size:11px;color:#64748b;margin-top:4px;">Max 31 Zeichen gespeichert.</div>
             </div>

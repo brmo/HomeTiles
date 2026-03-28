@@ -66,9 +66,9 @@ lv_obj_set_style_bg_grad_dir(card, LV_GRAD_DIR_NONE, LV_PART_MAIN | LV_STATE_PRE
       case 2:
         return &ui_font_24;
       case 3:
-        return &ui_font_28;
-      case 4:
         return &ui_font_32;
+      case 4:
+        return &ui_font_40;
       default:
         return FONT_VALUE;
     }
