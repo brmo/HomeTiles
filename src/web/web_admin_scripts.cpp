@@ -1,5 +1,6 @@
 #include "src/web/web_admin_scripts.h"
 #include "src/types/types_registry.h"
+#include "src/tiles/tile_config.h"
 
 void appendAdminScripts(String& html) {
   html += R"html(
@@ -21,8 +22,10 @@ void appendAdminScripts(String& html) {
   }
 
   // Tile Editor State
-  const GRID_COLS = 4;
-  const GRID_ROWS = 4;
+)html";
+  html += "  const GRID_COLS = " + String(GRID_COLS) + ";\n";
+  html += "  const GRID_ROWS = " + String(GRID_ROWS) + ";\n";
+  html += R"html(
   const tileTabs = [];
   const folderByTab = {};
   const tabByFolder = {};

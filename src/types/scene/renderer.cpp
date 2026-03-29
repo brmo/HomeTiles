@@ -2,9 +2,9 @@
 #include "src/tiles/tile_renderer_shared.h"
 #include "src/tiles/tile_renderer_fonts.h"
 #include "src/tiles/mdi_icons.h"
+#include "src/devices/device.h"
 #include "src/network/ha_bridge_config.h"
 #include <Arduino.h>
-#include "src/core/waveshare_sdmmc.h"
 #include <libs/tjpgd/tjpgd.h>
 
 // --- Simple JPEG icon decoder ---
@@ -53,7 +53,10 @@ static int icon_jpeg_output(JDEC* jd, void* bitmap, JRECT* rect) {
 // Uses scale=0 decode (like image_popup) then simple nearest-neighbor downsample.
 // Returns nullptr on failure.
 static lv_image_dsc_t* decode_jpeg_icon(const String& path) {
-  File f = SD_MMC.open(path, FILE_READ);
+  if (!Device::storageReady()) {
+    return nullptr;
+  }
+  File f = Device::storageFS().open(path, FILE_READ);
   if (!f) { Serial.printf("[Scene] ICON open fail: '%s'\n", path.c_str()); return nullptr; }
 
   uint8_t* work = static_cast<uint8_t*>(lv_malloc(4096));

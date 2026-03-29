@@ -21,6 +21,43 @@ static uint16_t normalize_sleep_seconds(uint16_t seconds) {
   return closest;
 }
 
+static uint8_t rotation_quarters_from_legacy(bool rotate_180) {
+  return rotate_180 ? Device::kRotationFlipped : Device::kRotationDefault;
+}
+
+static uint8_t normalize_rotation_quarters(uint8_t rotation_quarters) {
+  return Device::normalizeRotationQuarterTurns(rotation_quarters);
+}
+
+static uint8_t rotation_mode_from_quarters(uint8_t rotation_quarters, uint8_t fallback_mode) {
+  if (fallback_mode == kDisplayRotationAuto) {
+    return kDisplayRotationAuto;
+  }
+  return (rotation_quarters == Device::kRotationFlipped)
+             ? kDisplayRotationFlipped
+             : kDisplayRotationNormal;
+}
+
+static void apply_device_capability_limits(DeviceConfig& cfg) {
+  if (!Device::kCapabilities.supports_auto_rotation &&
+      cfg.display_rotation_mode == kDisplayRotationAuto) {
+    cfg.display_rotation_mode =
+        (cfg.display_rotation_quarters == Device::kRotationFlipped)
+            ? kDisplayRotationFlipped
+            : kDisplayRotationNormal;
+  }
+
+  if (!Device::kCapabilities.has_imu) {
+    cfg.wake_mode_mains = kWakeModeTouch;
+    cfg.wake_mode_battery = kWakeModeTouch;
+  }
+
+  if (!Device::kCapabilities.supports_battery_sleep_profile) {
+    cfg.auto_sleep_battery_enabled = cfg.auto_sleep_enabled;
+    cfg.auto_sleep_battery_seconds = cfg.auto_sleep_seconds;
+  }
+}
+
 ConfigManager::ConfigManager() {
   memset(&config, 0, sizeof(config));
   config.configured = false;
@@ -31,6 +68,7 @@ ConfigManager::ConfigManager() {
   // Display & Power Defaults
   config.display_brightness = 200;
   config.display_rotated_180 = false;
+  config.display_rotation_quarters = Device::kRotationDefault;
   config.display_rotation_mode = kDisplayRotationNormal;
   config.wake_mode_mains = kWakeModeTouch;
   config.wake_mode_battery = kWakeModeTouch;
@@ -80,14 +118,14 @@ bool ConfigManager::load() {
   if (rot_mode > kDisplayRotationAuto) {
     rot_mode = rot_180 ? kDisplayRotationFlipped : kDisplayRotationNormal;
   }
-  config.display_rotation_mode = rot_mode;
-  if (rot_mode == kDisplayRotationNormal) {
-    config.display_rotated_180 = false;
-  } else if (rot_mode == kDisplayRotationFlipped) {
-    config.display_rotated_180 = true;
-  } else {
-    config.display_rotated_180 = rot_180;
+  uint8_t rotation_quarters = rotation_quarters_from_legacy(rot_180);
+  if (prefs.isKey("disp_rot_q")) {
+    rotation_quarters = prefs.getUChar("disp_rot_q", rotation_quarters);
   }
+  rotation_quarters = normalize_rotation_quarters(rotation_quarters);
+  config.display_rotation_quarters = rotation_quarters;
+  config.display_rotated_180 = (rotation_quarters == Device::kRotationFlipped);
+  config.display_rotation_mode = rotation_mode_from_quarters(rotation_quarters, rot_mode);
   uint8_t wake_mains = prefs.getUChar("wake_mains", config.wake_mode_mains);
   if (wake_mains > kWakeModeImu) wake_mains = config.wake_mode_mains;
   config.wake_mode_mains = wake_mains;
@@ -125,11 +163,7 @@ bool ConfigManager::load() {
   config.status_date_font_size = prefs.getUChar("status_date_font", 24);
   if (config.status_date_font_size != 20 && config.status_date_font_size != 24) config.status_date_font_size = 24;
 
-  // Waveshare 4B has no IMU and no battery profile. Keep both settings fixed.
-  config.wake_mode_mains = kWakeModeTouch;
-  config.wake_mode_battery = kWakeModeTouch;
-  config.auto_sleep_battery_enabled = config.auto_sleep_enabled;
-  config.auto_sleep_battery_seconds = config.auto_sleep_seconds;
+  apply_device_capability_limits(config);
 
   if (config.display_brightness < 121 || config.display_brightness > 255) {
     config.display_brightness = 200;
@@ -161,37 +195,47 @@ bool ConfigManager::save(const DeviceConfig& cfg) {
     return false;
   }
 
+  DeviceConfig normalized = cfg;
+  normalized.display_rotation_quarters =
+      normalize_rotation_quarters(normalized.display_rotation_quarters);
+  normalized.display_rotated_180 =
+      (normalized.display_rotation_quarters == Device::kRotationFlipped);
+  normalized.display_rotation_mode = rotation_mode_from_quarters(
+      normalized.display_rotation_quarters, normalized.display_rotation_mode);
+  apply_device_capability_limits(normalized);
+
   // Speichere alle Felder
-  prefs.putString("wifi_ssid", cfg.wifi_ssid);
-  prefs.putString("wifi_pass", cfg.wifi_pass);
-  prefs.putString("mqtt_host", cfg.mqtt_host);
-  prefs.putUShort("mqtt_port", cfg.mqtt_port);
-  prefs.putString("mqtt_user", cfg.mqtt_user);
-  prefs.putString("mqtt_pass", cfg.mqtt_pass);
-  prefs.putString("mqtt_client_id", cfg.mqtt_client_id);
-  prefs.putString("mqtt_base", cfg.mqtt_base_topic);
-  prefs.putString("ha_prefix", cfg.ha_prefix);
+  prefs.putString("wifi_ssid", normalized.wifi_ssid);
+  prefs.putString("wifi_pass", normalized.wifi_pass);
+  prefs.putString("mqtt_host", normalized.mqtt_host);
+  prefs.putUShort("mqtt_port", normalized.mqtt_port);
+  prefs.putString("mqtt_user", normalized.mqtt_user);
+  prefs.putString("mqtt_pass", normalized.mqtt_pass);
+  prefs.putString("mqtt_client_id", normalized.mqtt_client_id);
+  prefs.putString("mqtt_base", normalized.mqtt_base_topic);
+  prefs.putString("ha_prefix", normalized.ha_prefix);
 
   // Display & Power Settings speichern
-  prefs.putUChar("disp_bright", cfg.display_brightness);
-  prefs.putBool("disp_rot180", cfg.display_rotated_180);
-  prefs.putUChar("disp_rot_mode", cfg.display_rotation_mode);
-  prefs.putUChar("wake_mains", cfg.wake_mode_mains);
-  prefs.putUChar("wake_bat", cfg.wake_mode_battery);
-  prefs.putBool("sleep_en", cfg.auto_sleep_enabled);
-  prefs.putUShort("sleep_sec", cfg.auto_sleep_seconds);
-  prefs.putBool("sleep_bat_en", cfg.auto_sleep_battery_enabled);
-  prefs.putUShort("sleep_bat_sec", cfg.auto_sleep_battery_seconds);
-  prefs.putUChar("status_time_font", (cfg.status_time_font_size == 24) ? 24 : 48);
-  prefs.putUChar("status_date_font", (cfg.status_date_font_size == 20) ? 20 : 24);
+  prefs.putUChar("disp_bright", normalized.display_brightness);
+  prefs.putBool("disp_rot180", normalized.display_rotated_180);
+  prefs.putUChar("disp_rot_q", normalized.display_rotation_quarters);
+  prefs.putUChar("disp_rot_mode", normalized.display_rotation_mode);
+  prefs.putUChar("wake_mains", normalized.wake_mode_mains);
+  prefs.putUChar("wake_bat", normalized.wake_mode_battery);
+  prefs.putBool("sleep_en", normalized.auto_sleep_enabled);
+  prefs.putUShort("sleep_sec", normalized.auto_sleep_seconds);
+  prefs.putBool("sleep_bat_en", normalized.auto_sleep_battery_enabled);
+  prefs.putUShort("sleep_bat_sec", normalized.auto_sleep_battery_seconds);
+  prefs.putUChar("status_time_font", (normalized.status_time_font_size == 24) ? 24 : 48);
+  prefs.putUChar("status_date_font", (normalized.status_date_font_size == 20) ? 20 : 24);
 
-  uint16_t sleep_minutes = (cfg.auto_sleep_seconds + 59) / 60;
+  uint16_t sleep_minutes = (normalized.auto_sleep_seconds + 59) / 60;
   if (sleep_minutes == 0) {
     sleep_minutes = 1;
   }
   prefs.putUShort("sleep_min", sleep_minutes);
 
-  uint16_t sleep_bat_minutes = (cfg.auto_sleep_battery_seconds + 59) / 60;
+  uint16_t sleep_bat_minutes = (normalized.auto_sleep_battery_seconds + 59) / 60;
   if (sleep_bat_minutes == 0) {
     sleep_bat_minutes = 1;
   }
@@ -202,7 +246,7 @@ bool ConfigManager::save(const DeviceConfig& cfg) {
   prefs.end();
 
   // Update lokale Kopie
-  config = cfg;
+  config = normalized;
   config.configured = true;
 
   Serial.println("✓ ConfigManager: Konfiguration gespeichert");
@@ -219,6 +263,7 @@ bool ConfigManager::saveDisplaySettings(uint8_t brightness,
                                         uint16_t sleep_battery_seconds,
                                         uint8_t rotation_mode,
                                         bool rotate_180,
+                                        uint8_t rotation_quarters,
                                         uint8_t wake_mode_mains,
                                         uint8_t wake_mode_battery) {
   Preferences prefs;
@@ -230,14 +275,31 @@ bool ConfigManager::saveDisplaySettings(uint8_t brightness,
 
   // Speichere nur Display-Settings
   uint16_t normalized_sleep_seconds = normalize_sleep_seconds(sleep_seconds);
-  uint16_t normalized_bat_seconds = normalized_sleep_seconds;
-  wake_mode_mains = kWakeModeTouch;
-  wake_mode_battery = kWakeModeTouch;
-  sleep_battery_enabled = sleep_enabled;
-  sleep_battery_seconds = normalized_sleep_seconds;
+  uint16_t normalized_bat_seconds = normalize_sleep_seconds(sleep_battery_seconds);
+  rotation_quarters = normalize_rotation_quarters(rotation_quarters);
+  rotate_180 = (rotation_quarters == Device::kRotationFlipped);
+  rotation_mode = rotation_mode_from_quarters(rotation_quarters, rotation_mode);
+  DeviceConfig normalized_cfg = config;
+  normalized_cfg.display_brightness = brightness;
+  normalized_cfg.display_rotated_180 = rotate_180;
+  normalized_cfg.display_rotation_quarters = rotation_quarters;
+  normalized_cfg.display_rotation_mode = rotation_mode;
+  normalized_cfg.wake_mode_mains = wake_mode_mains;
+  normalized_cfg.wake_mode_battery = wake_mode_battery;
+  normalized_cfg.auto_sleep_enabled = sleep_enabled;
+  normalized_cfg.auto_sleep_seconds = normalized_sleep_seconds;
+  normalized_cfg.auto_sleep_battery_enabled = sleep_battery_enabled;
+  normalized_cfg.auto_sleep_battery_seconds = normalized_bat_seconds;
+  apply_device_capability_limits(normalized_cfg);
+  wake_mode_mains = normalized_cfg.wake_mode_mains;
+  wake_mode_battery = normalized_cfg.wake_mode_battery;
+  sleep_battery_enabled = normalized_cfg.auto_sleep_battery_enabled;
+  sleep_battery_seconds = normalized_cfg.auto_sleep_battery_seconds;
+  normalized_bat_seconds = sleep_battery_seconds;
 
   prefs.putUChar("disp_bright", brightness);
   prefs.putBool("disp_rot180", rotate_180);
+  prefs.putUChar("disp_rot_q", rotation_quarters);
   prefs.putUChar("disp_rot_mode", rotation_mode);
   prefs.putUChar("wake_mains", wake_mode_mains);
   prefs.putUChar("wake_bat", wake_mode_battery);
@@ -263,6 +325,7 @@ bool ConfigManager::saveDisplaySettings(uint8_t brightness,
   // Update lokale Kopie
   config.display_brightness = brightness;
   config.display_rotated_180 = rotate_180;
+  config.display_rotation_quarters = rotation_quarters;
   config.display_rotation_mode = rotation_mode;
   config.wake_mode_mains = wake_mode_mains;
   config.wake_mode_battery = wake_mode_battery;
@@ -270,6 +333,7 @@ bool ConfigManager::saveDisplaySettings(uint8_t brightness,
   config.auto_sleep_seconds = normalized_sleep_seconds;
   config.auto_sleep_battery_enabled = sleep_battery_enabled;
   config.auto_sleep_battery_seconds = normalized_bat_seconds;
+  apply_device_capability_limits(config);
 
   Serial.println("✓ ConfigManager: Display-Einstellungen gespeichert");
   return true;
@@ -292,6 +356,7 @@ void ConfigManager::clear() {
   strncpy(config.mqtt_base_topic, "tab5", CONFIG_MQTT_BASE_MAX - 1);
   strncpy(config.ha_prefix, "ha/statestream", CONFIG_HA_PREFIX_MAX - 1);
   config.display_rotated_180 = false;
+  config.display_rotation_quarters = Device::kRotationDefault;
   config.display_rotation_mode = kDisplayRotationNormal;
   config.status_time_font_size = 48;
   config.status_date_font_size = 24;
@@ -301,4 +366,17 @@ void ConfigManager::clear() {
 
 void ConfigManager::setRuntimeDisplayRotation(bool rotate_180) {
   config.display_rotated_180 = rotate_180;
+  config.display_rotation_quarters = rotation_quarters_from_legacy(rotate_180);
+  config.display_rotation_mode = rotate_180 ? kDisplayRotationFlipped : kDisplayRotationNormal;
+  apply_device_capability_limits(config);
+}
+
+void ConfigManager::setRuntimeDisplayRotationQuarters(uint8_t rotation_quarters) {
+  config.display_rotation_quarters = normalize_rotation_quarters(rotation_quarters);
+  config.display_rotated_180 = (config.display_rotation_quarters == Device::kRotationFlipped);
+  if (config.display_rotation_mode != kDisplayRotationAuto) {
+    config.display_rotation_mode =
+        config.display_rotated_180 ? kDisplayRotationFlipped : kDisplayRotationNormal;
+  }
+  apply_device_capability_limits(config);
 }

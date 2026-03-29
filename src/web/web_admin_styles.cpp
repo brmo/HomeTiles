@@ -1,7 +1,41 @@
 #include "src/web/web_admin_styles.h"
 #include "src/types/types_registry.h"
+#include "src/tiles/tile_config.h"
+
+namespace {
+
+constexpr int kPreviewTargetWidth = 440;
+
+int preview_pad_px() {
+  int pad = GRID_PAD * 3;
+  return (pad < 8) ? 8 : pad;
+}
+
+int preview_gap_px() {
+  int gap = (GRID_GAP * 5 + 4) / 8;
+  return (gap < 6) ? 6 : gap;
+}
+
+int preview_cell_w_px() {
+  const int pad = preview_pad_px();
+  const int gap = preview_gap_px();
+  int cell = (kPreviewTargetWidth - (2 * pad) - (gap * (GRID_COLS - 1))) / GRID_COLS;
+  return (cell < 40) ? 40 : cell;
+}
+
+int preview_cell_h_px() {
+  const int cell_w = preview_cell_w_px();
+  int cell_h = (GRID_CELL_H * cell_w + (GRID_CELL_W / 2)) / GRID_CELL_W;
+  return (cell_h < 40) ? 40 : cell_h;
+}
+
+}  // namespace
 
 void appendAdminStyles(String& html) {
+  const int preview_pad = preview_pad_px();
+  const int preview_gap = preview_gap_px();
+  const int preview_cell_w = preview_cell_w_px();
+  const int preview_cell_h = preview_cell_h_px();
   html += R"html(
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css">
   <style>
@@ -74,15 +108,15 @@ void appendAdminStyles(String& html) {
       max-width:600px;
     }
 
-    /* Tile Editor - Waveshare: 720x720 (scaled preview) */
-    /* Original: Tile 162x162px, Gap 16px, Pad 12px */
     .tile-editor { display:grid; grid-template-columns:auto 350px; gap:24px; align-items:start; }
     .tile-grid {
       display:grid;
-      grid-template-columns:repeat(4, 96px);
-      grid-template-rows:repeat(4, 96px);
-      gap:10px;
-      padding:12px;
+)html";
+  html += "      grid-template-columns:repeat(" + String(GRID_COLS) + ", " + String(preview_cell_w) + "px);\n";
+  html += "      grid-template-rows:repeat(" + String(GRID_ROWS) + ", " + String(preview_cell_h) + "px);\n";
+  html += "      gap:" + String(preview_gap) + "px;\n";
+  html += "      padding:" + String(preview_pad) + "px;\n";
+  html += R"html(
       background:#000;
       border-radius:8px;
       width:fit-content;

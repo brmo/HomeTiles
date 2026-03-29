@@ -801,6 +801,7 @@ static void handleDisplayBrightnessCommand(const char* payload, size_t) {
       cfg.auto_sleep_battery_seconds,
       cfg.display_rotation_mode,
       cfg.display_rotated_180,
+      cfg.display_rotation_quarters,
       cfg.wake_mode_mains,
       cfg.wake_mode_battery);
   mqttPublishDeviceSettings();
@@ -813,6 +814,7 @@ static void handleDisplayRotateCommand(const char* payload, size_t) {
   settings_sync_display_rotation(rotate);
 
   const DeviceConfig& cfg = configManager.getConfig();
+  uint8_t rotation_quarters = rotate ? Device::kRotationFlipped : Device::kRotationDefault;
   uint8_t rotation_mode = rotate ? kDisplayRotationFlipped : kDisplayRotationNormal;
   configManager.saveDisplaySettings(
       cfg.display_brightness,
@@ -822,6 +824,7 @@ static void handleDisplayRotateCommand(const char* payload, size_t) {
       cfg.auto_sleep_battery_seconds,
       rotation_mode,
       rotate,
+      rotation_quarters,
       cfg.wake_mode_mains,
       cfg.wake_mode_battery);
   mqttPublishDeviceSettings();
@@ -853,6 +856,7 @@ static void handleSleepMainsCommand(const char* payload, size_t) {
       cfg.auto_sleep_battery_seconds,
       cfg.display_rotation_mode,
       cfg.display_rotated_180,
+      cfg.display_rotation_quarters,
       cfg.wake_mode_mains,
       cfg.wake_mode_battery);
   mqttPublishDeviceSettings();
@@ -873,6 +877,7 @@ static void handleSleepBatteryCommand(const char* payload, size_t) {
       new_seconds,
       cfg.display_rotation_mode,
       cfg.display_rotated_180,
+      cfg.display_rotation_quarters,
       cfg.wake_mode_mains,
       cfg.wake_mode_battery);
   mqttPublishDeviceSettings();

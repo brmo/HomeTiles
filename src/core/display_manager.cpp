@@ -31,9 +31,6 @@ static constexpr bool kEnableReverseFlushEffect = true;
 static constexpr uintptr_t kCacheLineSize = 64;
 static bool g_reverse_flush_once = false;
 static volatile uint32_t g_fullscreen_flush_seq = 0;
-static constexpr uint8_t kDisplayRotationDefault = 0;
-static constexpr uint8_t kDisplayRotationFlipped = 2;
-
 static inline void flush_cache_for_dma(const void* ptr, size_t size) {
   if (!ptr || size == 0) return;
   const uintptr_t start = reinterpret_cast<uintptr_t>(ptr);
@@ -178,7 +175,7 @@ uint32_t DisplayManager::getFullScreenFlushSeq() const {
 }
 
 void DisplayManager::setRotation(uint8_t rotation_value) {
-  rotation_value &= 0x03;
+  rotation_value = Device::normalizeRotationQuarterTurns(rotation_value);
   if (rotation == rotation_value) return;
   BoardHAL::displaySetRotation(rotation_value);
   rotation = rotation_value;
@@ -190,11 +187,11 @@ void DisplayManager::setRotation(uint8_t rotation_value) {
 }
 
 void DisplayManager::setRotationFlipped(bool flipped) {
-  setRotation(flipped ? kDisplayRotationFlipped : kDisplayRotationDefault);
+  setRotation(flipped ? Device::kRotationFlipped : Device::kRotationDefault);
 }
 
 bool DisplayManager::isRotationFlipped() const {
-  return rotation == kDisplayRotationFlipped;
+  return rotation == Device::kRotationFlipped;
 }
 
 uint8_t DisplayManager::getRotation() const {
@@ -348,6 +345,7 @@ bool DisplayManager::init() {
   // 720×720 square display – no rotation needed by default.
   BoardHAL::displayFillScreen(0x0000);  // black
   BoardHAL::setBrightness(150);  // Wird spaeter vom Power Manager gesteuert
+  rotation = Device::kRotationDefault;
 
   last_activity_time = millis();
 

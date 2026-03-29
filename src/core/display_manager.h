@@ -3,25 +3,21 @@
 
 #include <lvgl.h>
 
-// Display-Konstanten (Waveshare ESP32-P4-WIFI6-Touch-LCD-4B: 720×720)
-#define SCREEN_WIDTH  720
-#define SCREEN_HEIGHT 720
+#include "src/devices/device.h"
 
-// Display Manager - Verwaltet Display-Hardware und LVGL-Integration
+static constexpr int SCREEN_WIDTH = Device::kScreenWidth;
+static constexpr int SCREEN_HEIGHT = Device::kScreenHeight;
+
 class DisplayManager {
 public:
-  // Initialisierung
   bool init();
 
-  // Zugriff auf LVGL-Objekte
   lv_display_t* getDisplay() { return disp; }
   lv_indev_t* getInput() { return indev; }
 
-  // Activity Tracking (für Power Manager)
   void resetActivityTimer();
   uint32_t getLastActivityTime() { return last_activity_time; }
 
-  // Touch-Guard nach Wake
   void armWakeTouchGuard();
   void setInputEnabled(bool enable);
   void setRotation(uint8_t rotation);
@@ -38,19 +34,17 @@ public:
   uint32_t getFullScreenFlushSeq() const;
 
 private:
-  static lv_display_t *disp;
-  static lv_indev_t *indev;
-  static lv_color_t *buf1;
-  static lv_color_t *buf2;
+  static lv_display_t* disp;
+  static lv_indev_t* indev;
+  static lv_color_t* buf1;
+  static lv_color_t* buf2;
   static uint32_t last_activity_time;
   static uint8_t rotation;
 
-  // LVGL Callbacks
-  static void flush_cb(lv_display_t *lv_disp, const lv_area_t *area, uint8_t *px_map);
-  static void touch_cb(lv_indev_t* indev_drv, lv_indev_data_t *data);
+  static void flush_cb(lv_display_t* lv_disp, const lv_area_t* area, uint8_t* px_map);
+  static void touch_cb(lv_indev_t* indev_drv, lv_indev_data_t* data);
 };
 
-// Globale Instanz
 extern DisplayManager displayManager;
 
 #endif // DISPLAY_MANAGER_H

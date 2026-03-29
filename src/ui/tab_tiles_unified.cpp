@@ -46,6 +46,14 @@ static FolderCacheEntry* g_active_cache = nullptr;
 static bool g_folder_switch_pending = false;
 static uint16_t g_pending_folder_id = kInvalidFolderId;
 
+static void build_grid_track_descriptors(lv_coord_t* dsc, uint8_t count, lv_coord_t cell_size) {
+  if (!dsc) return;
+  for (uint8_t i = 0; i < count; ++i) {
+    dsc[i] = cell_size;
+  }
+  dsc[count] = LV_GRID_TEMPLATE_LAST;
+}
+
 /* === Entity-State Cache (for lazy-loaded tabs) === */
 struct EntityCacheEntry {
   String entity_id;
@@ -368,14 +376,14 @@ static lv_obj_t* create_tiles_grid(lv_obj_t* parent) {
   lv_obj_set_style_pad_column(grid, GAP, 0);
   lv_obj_set_style_pad_row(grid, GAP, 0);
 
-  static lv_coord_t col_dsc[] = {
-    GRID_CELL_W, GRID_CELL_W, GRID_CELL_W, GRID_CELL_W,
-    LV_GRID_TEMPLATE_LAST
-  };
-  static lv_coord_t row_dsc[] = {
-    GRID_CELL_H, GRID_CELL_H, GRID_CELL_H, GRID_CELL_H,
-    LV_GRID_TEMPLATE_LAST
-  };
+  static lv_coord_t col_dsc[GRID_COLS + 1];
+  static lv_coord_t row_dsc[GRID_ROWS + 1];
+  static bool dsc_ready = false;
+  if (!dsc_ready) {
+    build_grid_track_descriptors(col_dsc, GRID_COLS, GRID_CELL_W);
+    build_grid_track_descriptors(row_dsc, GRID_ROWS, GRID_CELL_H);
+    dsc_ready = true;
+  }
   lv_obj_set_layout(grid, LV_LAYOUT_GRID);
   lv_obj_set_grid_dsc_array(grid, col_dsc, row_dsc);
   return grid;

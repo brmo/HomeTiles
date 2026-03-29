@@ -3,6 +3,8 @@
 
 #include <Arduino.h>
 
+#include "src/devices/device.h"
+
 // WiFi/MQTT Configuration Manager
 // Speichert und lädt Verbindungsdaten aus dem Flash-Speicher (Preferences)
 
@@ -39,6 +41,7 @@ struct DeviceConfig {
   // Display & Power Settings
   uint8_t display_brightness;  // 75-255
   bool display_rotated_180;    // Display 180 deg gedreht?
+  uint8_t display_rotation_quarters; // 0=0°, 1=90°, 2=180°, 3=270°
   uint8_t display_rotation_mode; // 0=Normal, 1=180, 2=Auto
   uint8_t wake_mode_mains;       // 0=Touch, 1=IMU
   uint8_t wake_mode_battery;     // 0=Touch, 1=IMU
@@ -68,10 +71,12 @@ public:
                            uint16_t sleep_battery_seconds,
                            uint8_t rotation_mode,
                            bool rotate_180,
+                           uint8_t rotation_quarters,
                            uint8_t wake_mode_mains,
                            uint8_t wake_mode_battery);
 
   void setRuntimeDisplayRotation(bool rotate_180);
+  void setRuntimeDisplayRotationQuarters(uint8_t rotation_quarters);
 
   // Löscht gespeicherte Konfiguration
   void clear();

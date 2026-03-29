@@ -1,8 +1,7 @@
 #include "src/tiles/tile_config.h"
-#include "src/core/board_hal.h"
+#include "src/devices/device.h"
 #include <Preferences.h>
 #include <string.h>
-#include "src/core/waveshare_sdmmc.h"
 #include <vector>
 #include <algorithm>
 
@@ -274,29 +273,30 @@ static const char* kFolderIndexFile = "/_tile_grids/folders.bin";
 static constexpr uint32_t kFolderIndexMagic = 0x54464C44;  // 'TFLD'
 static constexpr uint16_t kFolderIndexVersion = 1;
 
+static fs::FS& storageFS() {
+  return Device::storageFS();
+}
+
 static bool sdReady() {
-  if (SD_MMC.cardType() == CARD_NONE) {
-    BoardHAL::initSDCard();
-  }
-  return SD_MMC.cardType() != CARD_NONE;
+  return Device::storageReady();
 }
 
 static bool ensureImagePathDir() {
   if (!sdReady()) return false;
-  if (SD_MMC.exists(kImagePathDir)) return true;
-  return SD_MMC.mkdir(kImagePathDir);
+  if (storageFS().exists(kImagePathDir)) return true;
+  return storageFS().mkdir(kImagePathDir);
 }
 
 static bool ensureTileGridDir() {
   if (!sdReady()) return false;
-  if (SD_MMC.exists(kTileGridDir)) return true;
-  return SD_MMC.mkdir(kTileGridDir);
+  if (storageFS().exists(kTileGridDir)) return true;
+  return storageFS().mkdir(kTileGridDir);
 }
 
 static bool ensureIconDir() {
   if (!sdReady()) return false;
-  if (SD_MMC.exists("/icons")) return true;
-  return SD_MMC.mkdir("/icons");
+  if (storageFS().exists("/icons")) return true;
+  return storageFS().mkdir("/icons");
 }
 
 static String imagePathFile(uint16_t folder_id, size_t index) {
@@ -334,11 +334,11 @@ static bool writeGridSd(uint16_t folder_id, const PackedQuarterGridV7* packed, s
   if (!ensureTileGridDir()) return false;
 
   String filePath = tileGridFile(folder_id);
-  if (SD_MMC.exists(filePath)) {
-    SD_MMC.remove(filePath);
+  if (storageFS().exists(filePath)) {
+    storageFS().remove(filePath);
   }
 
-  File f = SD_MMC.open(filePath, FILE_WRITE);
+  File f = storageFS().open(filePath, FILE_WRITE);
   if (!f) {
     return false;
   }
@@ -360,8 +360,8 @@ static bool writeGridSd(uint16_t folder_id, const PackedQuarterGridV7* packed, s
 }
 
 static bool readPackedGridFileV7(const String& filePath, PackedQuarterGridV7* packed, size_t count) {
-  if (!SD_MMC.exists(filePath)) return false;
-  File f = SD_MMC.open(filePath, FILE_READ);
+  if (!storageFS().exists(filePath)) return false;
+  File f = storageFS().open(filePath, FILE_READ);
   if (!f) return false;
   const size_t expected = count * sizeof(PackedQuarterGridV7);
   if (static_cast<size_t>(f.size()) < expected) {
@@ -380,8 +380,8 @@ static bool readPackedGridFileV7(const String& filePath, PackedQuarterGridV7* pa
 }
 
 static bool readPackedGridFileV6(const String& filePath, PackedQuarterGridV6* packed, size_t count) {
-  if (!SD_MMC.exists(filePath)) return false;
-  File f = SD_MMC.open(filePath, FILE_READ);
+  if (!storageFS().exists(filePath)) return false;
+  File f = storageFS().open(filePath, FILE_READ);
   if (!f) return false;
   const size_t expected = count * sizeof(PackedQuarterGridV6);
   if (static_cast<size_t>(f.size()) < expected) {
@@ -413,11 +413,11 @@ static bool writeImagePathSd(uint16_t folder_id, size_t index, const String& pat
   if (!ensureImagePathDir()) return false;
   String filePath = imagePathFile(folder_id, index);
   if (path.length() == 0) {
-    if (SD_MMC.exists(filePath)) SD_MMC.remove(filePath);
+    if (storageFS().exists(filePath)) storageFS().remove(filePath);
     return true;
   }
-  if (SD_MMC.exists(filePath)) SD_MMC.remove(filePath);
-  File f = SD_MMC.open(filePath, FILE_WRITE);
+  if (storageFS().exists(filePath)) storageFS().remove(filePath);
+  File f = storageFS().open(filePath, FILE_WRITE);
   if (!f) return false;
   f.print(path);
   f.close();
@@ -428,11 +428,11 @@ static bool readImagePathSd(uint16_t folder_id, size_t index, String& out) {
   out = "";
   if (!sdReady()) return false;
   String filePath = imagePathFile(folder_id, index);
-  if (!SD_MMC.exists(filePath) && folder_id == 0) {
+  if (!storageFS().exists(filePath) && folder_id == 0) {
     filePath = imagePathFileLegacy("tab0", index);
   }
-  if (!SD_MMC.exists(filePath)) return false;
-  File f = SD_MMC.open(filePath, FILE_READ);
+  if (!storageFS().exists(filePath)) return false;
+  File f = storageFS().open(filePath, FILE_READ);
   if (!f) return false;
   out = f.readString();
   f.close();
@@ -1833,10 +1833,10 @@ bool TileConfig::loadFolders() {
     Serial.println("[TileConfig] WARN: SD fehlt, Ordner-Liste kann nicht geladen werden");
     return false;
   }
-  if (!SD_MMC.exists(kFolderIndexFile)) {
+  if (!storageFS().exists(kFolderIndexFile)) {
     return false;
   }
-  File f = SD_MMC.open(kFolderIndexFile, FILE_READ);
+  File f = storageFS().open(kFolderIndexFile, FILE_READ);
   if (!f) return false;
 
   FolderIndexHeader header{};
@@ -1875,8 +1875,8 @@ bool TileConfig::saveFolders() const {
     return false;
   }
   if (!ensureTileGridDir()) return false;
-  if (SD_MMC.exists(kFolderIndexFile)) SD_MMC.remove(kFolderIndexFile);
-  File f = SD_MMC.open(kFolderIndexFile, FILE_WRITE);
+  if (storageFS().exists(kFolderIndexFile)) storageFS().remove(kFolderIndexFile);
+  File f = storageFS().open(kFolderIndexFile, FILE_WRITE);
   if (!f) return false;
 
   FolderIndexHeader header{};
@@ -1971,10 +1971,10 @@ bool TileConfig::deleteFolder(uint16_t folder_id) {
 
   for (uint16_t id : to_delete) {
     String grid_path = tileGridFile(id);
-    if (SD_MMC.exists(grid_path)) SD_MMC.remove(grid_path);
+    if (storageFS().exists(grid_path)) storageFS().remove(grid_path);
     for (size_t i = 0; i < TILES_PER_GRID; ++i) {
       String link_path = imagePathFile(id, i);
-      if (SD_MMC.exists(link_path)) SD_MMC.remove(link_path);
+      if (storageFS().exists(link_path)) storageFS().remove(link_path);
     }
   }
 
@@ -2098,13 +2098,13 @@ bool TileConfig::saveGrid(uint16_t folder_id, const TileGridConfig& grid) {
   }
 
   String legacy_v6 = tileGridFileLegacyV6(folder_id);
-  if (SD_MMC.exists(legacy_v6)) {
-    SD_MMC.remove(legacy_v6);
+  if (storageFS().exists(legacy_v6)) {
+    storageFS().remove(legacy_v6);
   }
   if (folder_id == kRootFolderId) {
     String legacy_root = tileGridFileLegacy("tab0");
-    if (SD_MMC.exists(legacy_root)) {
-      SD_MMC.remove(legacy_root);
+    if (storageFS().exists(legacy_root)) {
+      storageFS().remove(legacy_root);
     }
   }
 

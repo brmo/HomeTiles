@@ -10,9 +10,9 @@
 #include "src/ui/ui_manager.h"
 #include "src/web/web_admin_tile_helpers.h"
 #include "src/types/types_registry.h"
+#include "src/devices/device.h"
 #include <algorithm>
 #include <vector>
-#include "src/core/waveshare_sdmmc.h"
 #include <libs/tjpgd/tjpgd.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,9 +34,18 @@ String joinPath(const String& dir, const String& name) {
   return dir + "/" + name;
 }
 
+bool storageReady() {
+  return Device::storageReady();
+}
+
+fs::FS& storageFS() {
+  return Device::storageFS();
+}
+
 void collectImageFiles(const String& dir, std::vector<String>& out, size_t max_entries, uint8_t depth, bool allow_bin, bool allow_jpeg, bool allow_png) {
   if (out.size() >= max_entries) return;
-  File root = SD_MMC.open(dir);
+  if (!storageReady()) return;
+  File root = storageFS().open(dir);
   if (!root) return;
 
   File file = root.openNextFile();
@@ -134,7 +143,8 @@ static size_t jpeg_info_input(JDEC* jd, uint8_t* buff, size_t ndata) {
 static bool read_jpeg_dimensions(const String& path, uint16_t& w, uint16_t& h) {
   w = 0;
   h = 0;
-  File f = SD_MMC.open(path, FILE_READ);
+  if (!storageReady()) return false;
+  File f = storageFS().open(path, FILE_READ);
   if (!f) return false;
   uint8_t* work = static_cast<uint8_t*>(malloc(4096));
   if (!work) {
@@ -157,7 +167,8 @@ static bool read_jpeg_dimensions(const String& path, uint16_t& w, uint16_t& h) {
 static bool read_png_dimensions(const String& path, uint16_t& w, uint16_t& h) {
   w = 0;
   h = 0;
-  File f = SD_MMC.open(path, FILE_READ);
+  if (!storageReady()) return false;
+  File f = storageFS().open(path, FILE_READ);
   if (!f) return false;
   uint8_t buf[24] = {0};
   if (f.read(buf, sizeof(buf)) != sizeof(buf)) {
@@ -1021,14 +1032,18 @@ void WebAdminServer::handleGetSdImages() {
 }
 
 void WebAdminServer::handleGetSdIcons() {
-  if (!SD_MMC.exists("/icons")) SD_MMC.mkdir("/icons");
+  if (!storageReady()) {
+    server.send(200, "application/json", "[]");
+    return;
+  }
+  if (!storageFS().exists("/icons")) storageFS().mkdir("/icons");
   std::vector<IconFileInfo> files;
   std::vector<String> paths;
   collectImageFiles("/icons", paths, 100, 1, false, true, true);
   for (const auto& path : paths) {
     IconFileInfo info;
     info.path = path;
-    File f = SD_MMC.open(path, FILE_READ);
+    File f = storageFS().open(path, FILE_READ);
     if (f) {
       info.size = static_cast<uint32_t>(f.size());
       f.close();
@@ -1063,11 +1078,15 @@ void WebAdminServer::handleUploadIcon() {
   static File uploadFile;
 
   if (upload.status == UPLOAD_FILE_START) {
-    if (!SD_MMC.exists("/icons")) SD_MMC.mkdir("/icons");
+    if (!storageReady()) {
+      Serial.println("[Icons] Upload failed: storage unavailable");
+      return;
+    }
+    if (!storageFS().exists("/icons")) storageFS().mkdir("/icons");
     String filename = upload.filename;
     if (filename.indexOf('/') < 0) filename = "/icons/" + filename;
-    if (SD_MMC.exists(filename)) SD_MMC.remove(filename);
-    uploadFile = SD_MMC.open(filename, FILE_WRITE);
+    if (storageFS().exists(filename)) storageFS().remove(filename);
+    uploadFile = storageFS().open(filename, FILE_WRITE);
     if (!uploadFile) {
       Serial.println("[Icons] Upload open failed");
     }

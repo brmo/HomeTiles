@@ -4,18 +4,16 @@
 #include <Arduino.h>
 #include <vector>
 
-// Grid Layout: 4 columns x 4 rows = 16 tiles max (Waveshare 720Ãƒâ€”720)
-static constexpr uint8_t GRID_COLS = 4;
-static constexpr uint8_t GRID_ROWS = 4;
+#include "src/devices/device.h"
+
+static constexpr uint8_t GRID_COLS = Device::kGridCols;
+static constexpr uint8_t GRID_ROWS = Device::kGridRows;
 static constexpr size_t TILES_PER_GRID = GRID_COLS * GRID_ROWS;
 
-// Grid Dimensions (pixels) Ã¢â‚¬â€œ 720Ãƒâ€”720 square display
-// Full-bleed grid with no outer padding:
-// (720 - 2*4 - 3*16) / 4 = 166px per cell
-static constexpr int GRID_GAP = 16;       // Gap between tiles
-static constexpr int GRID_PAD = 4;        // Edge padding
-static constexpr int GRID_CELL_W = 166;   // Single cell width
-static constexpr int GRID_CELL_H = 166;   // Single cell height (square)
+static constexpr int GRID_GAP = Device::kGridGap;
+static constexpr int GRID_PAD = Device::kGridPad;
+static constexpr int GRID_CELL_W = Device::kGridCellW;
+static constexpr int GRID_CELL_H = Device::kGridCellH;
 
 enum TileType : uint8_t {
   TILE_EMPTY = 0,
@@ -41,42 +39,37 @@ enum TilePopupOpenMode : uint8_t {
 
 struct Tile {
   TileType type;
-  String title;              // FÃƒÂ¼r alle Typen
-  String icon_name;          // MDI Icon Name (z.B. "home", "thermometer")
-  uint32_t bg_color;         // Hintergrundfarbe (0 = Standard)
+  String title;
+  String icon_name;
+  uint32_t bg_color;
 
-  // Grid Position & Size
-  uint8_t col;               // Column (0-3)
-  uint8_t row;               // Row (0-3)
-  uint8_t span_w;            // Width in cells (1-4)
-  uint8_t span_h;            // Height in cells (1-4)
+  uint8_t col;
+  uint8_t row;
+  uint8_t span_w;
+  uint8_t span_h;
 
-  // Sensor-spezifisch
-  String sensor_entity;      // HA Entity ID (z.B. "sensor.temperature")
-  String sensor_unit;        // Einheit (z.B. "Ã‚Â°C")
-  uint8_t sensor_decimals;   // Nachkommastellen (0xFF = unverÃƒÂ¤ndert)
-  uint8_t sensor_value_font; // 0=Standard, 1=20, 2=24
-  uint8_t sensor_display_mode; // 0=none, 1=gauge, 2=graph
-  int32_t sensor_gauge_min;  // Gauge-Min
-  int32_t sensor_gauge_max;  // Gauge-Max
-  uint16_t sensor_gauge_arc; // Gauge Bogengrad (90-359, Default: 100)
-  uint16_t sensor_gauge_size; // Gauge GrÃƒÂ¶ÃƒÅ¸e in Pixel (100-800, Default: 350)
-  int16_t sensor_gauge_y_offset; // Gauge Y-Offset (-100 bis 200, Default: 12)
-  int16_t sensor_value_y_offset; // Wert Y-Offset (-100 bis 200, Default: 0)
-  uint16_t sensor_graph_height;  // Graph HÃƒÂ¶he in Pixel (20-200, Default: 60)
-  uint8_t popup_open_mode;    // 0=Long Press, 1=Short Press
+  String sensor_entity;
+  String sensor_unit;
+  uint8_t sensor_decimals;
+  uint8_t sensor_value_font;
+  uint8_t sensor_display_mode;
+  int32_t sensor_gauge_min;
+  int32_t sensor_gauge_max;
+  uint16_t sensor_gauge_arc;
+  uint16_t sensor_gauge_size;
+  int16_t sensor_gauge_y_offset;
+  int16_t sensor_value_y_offset;
+  uint16_t sensor_graph_height;
+  uint8_t popup_open_mode;
 
-  // Scene-spezifisch
-  String scene_alias;        // HA Scene Alias
+  String scene_alias;
 
-  // Key-spezifisch
-  String key_macro;          // Makro-String (z.B. "ctrl+g")
-  uint8_t key_code;          // USB HID Scancode
-  uint8_t key_modifier;      // Modifier bits (CTRL=0x01, SHIFT=0x02, ALT=0x04)
+  String key_macro;
+  uint8_t key_code;
+  uint8_t key_modifier;
 
-  // Image-spezifisch
-  String image_path;         // SD-Karten Pfad (z.B. "/bild.bin")
-  uint16_t image_slideshow_sec;  // Diashow-Intervall in Sekunden (Default 10)
+  String image_path;
+  uint16_t image_slideshow_sec;
 
   Tile()
       : type(TILE_EMPTY),
@@ -85,7 +78,7 @@ struct Tile {
         row(0),
         span_w(1),
         span_h(1),
-        sensor_decimals(0xFF),  // 0xFF = keine Rundung, Originalwert anzeigen
+        sensor_decimals(0xFF),
         sensor_value_font(0),
         sensor_display_mode(0),
         sensor_gauge_min(0),
@@ -171,6 +164,3 @@ private:
 extern TileConfig tileConfig;
 
 #endif // TILE_CONFIG_H
-
-
-
