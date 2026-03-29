@@ -10,10 +10,8 @@
 #include <Wire.h>
 #include <driver/gpio.h>
 #include <driver/ledc.h>
+#include "esp_cache.h"
 #include <esp_err.h>
-#include <esp_lcd_mipi_dsi.h>
-#include <esp_lcd_panel_io.h>
-#include <esp_lcd_panel_ops.h>
 #include <esp_ldo_regulator.h>
 
 #include "src/devices/m5stack_tab5/vendor/display_config.h"
@@ -132,16 +130,6 @@ bool init_backlight() {
   return true;
 }
 
-void dsi_probe_log_result(const char* label, esp_err_t err) {
-  if (err == ESP_OK) {
-    Serial.printf("[Device/M5StackTab5] DSI probe: %s OK\n", label);
-  } else {
-    Serial.printf("[Device/M5StackTab5] DSI probe: %s failed: %s (0x%x)\n",
-                  label, esp_err_to_name(err), static_cast<unsigned>(err));
-  }
-  Serial.flush();
-}
-
 bool i2c_write_reg8(TwoWire& wire, uint8_t addr, uint8_t reg, uint8_t value) {
   wire.beginTransmission(addr);
   wire.write(reg);
@@ -234,128 +222,21 @@ bool init_pi4io_reset() {
   return true;
 }
 
-bool run_dsi_probe() {
-  Serial.println("[Device/M5StackTab5] DSI probe: start");
-  Serial.flush();
-
-  esp_ldo_channel_handle_t ldo_handle = nullptr;
-  esp_lcd_dsi_bus_handle_t dsi_bus = nullptr;
-  esp_lcd_panel_io_handle_t io_handle = nullptr;
-  esp_lcd_panel_handle_t panel_handle = nullptr;
-
-  esp_ldo_channel_config_t ldo_cfg = {
-      .chan_id = kMipiLdoChannel,
-      .voltage_mv = kMipiLdoVoltageMv,
-  };
-  esp_err_t err = esp_ldo_acquire_channel(&ldo_cfg, &ldo_handle);
-  dsi_probe_log_result("esp_ldo_acquire_channel", err);
-  if (err != ESP_OK) {
-    return false;
-  }
-
-  esp_lcd_dsi_bus_config_t bus_cfg = {
-      .bus_id = 0,
-      .num_data_lanes = 2,
-      .phy_clk_src = MIPI_DSI_PHY_CLK_SRC_DEFAULT,
-      .lane_bit_rate_mbps = kTab5DisplayConfig.lane_bit_rate,
-  };
-  err = esp_lcd_new_dsi_bus(&bus_cfg, &dsi_bus);
-  dsi_probe_log_result("esp_lcd_new_dsi_bus", err);
-  if (err != ESP_OK) {
-    esp_ldo_release_channel(ldo_handle);
-    return false;
-  }
-
-  esp_lcd_dbi_io_config_t dbi_cfg = {
-      .virtual_channel = 0,
-      .lcd_cmd_bits = 8,
-      .lcd_param_bits = 8,
-  };
-  err = esp_lcd_new_panel_io_dbi(dsi_bus, &dbi_cfg, &io_handle);
-  dsi_probe_log_result("esp_lcd_new_panel_io_dbi", err);
-  if (err != ESP_OK) {
-    esp_lcd_del_dsi_bus(dsi_bus);
-    esp_ldo_release_channel(ldo_handle);
-    return false;
-  }
-
-  esp_lcd_dpi_panel_config_t dpi_cfg = {
-      .virtual_channel = 0,
-      .dpi_clk_src = MIPI_DSI_DPI_CLK_SRC_DEFAULT,
-      .dpi_clock_freq_mhz = kTab5DisplayConfig.prefer_speed / 1000000,
-      .pixel_format = LCD_COLOR_PIXEL_FORMAT_RGB565,
-      .num_fbs = 1,
-      .video_timing = {
-          .h_size = kTab5DisplayConfig.width,
-          .v_size = kTab5DisplayConfig.height,
-          .hsync_pulse_width = kTab5DisplayConfig.hsync_pulse_width,
-          .hsync_back_porch = kTab5DisplayConfig.hsync_back_porch,
-          .hsync_front_porch = kTab5DisplayConfig.hsync_front_porch,
-          .vsync_pulse_width = kTab5DisplayConfig.vsync_pulse_width,
-          .vsync_back_porch = kTab5DisplayConfig.vsync_back_porch,
-          .vsync_front_porch = kTab5DisplayConfig.vsync_front_porch,
-      },
-      .flags = {
-          .use_dma2d = true,
-      },
-  };
-  err = esp_lcd_new_panel_dpi(dsi_bus, &dpi_cfg, &panel_handle);
-  dsi_probe_log_result("esp_lcd_new_panel_dpi", err);
-  if (err != ESP_OK) {
-    esp_lcd_panel_io_del(io_handle);
-    esp_lcd_del_dsi_bus(dsi_bus);
-    esp_ldo_release_channel(ldo_handle);
-    return false;
-  }
-
-  for (size_t i = 0; i < kTab5DisplayConfig.init_cmds_size; ++i) {
-    const lcd_init_cmd_t& cmd = kTab5DisplayConfig.init_cmds[i];
-    Serial.printf("[Device/M5StackTab5] DSI probe: tx cmd[%u]=0x%02X len=%u delay=%u\n",
-                  static_cast<unsigned>(i),
-                  static_cast<unsigned>(cmd.cmd & 0xFF),
-                  static_cast<unsigned>(cmd.data_bytes),
-                  static_cast<unsigned>(cmd.delay_ms));
-    Serial.flush();
-    err = esp_lcd_panel_io_tx_param(io_handle, cmd.cmd, cmd.data, cmd.data_bytes);
-    dsi_probe_log_result("esp_lcd_panel_io_tx_param", err);
-    if (err != ESP_OK) {
-      break;
-    }
-    if (cmd.delay_ms) {
-      delay(cmd.delay_ms);
-    }
-  }
-
-  if (err == ESP_OK) {
-    err = esp_lcd_panel_init(panel_handle);
-    dsi_probe_log_result("esp_lcd_panel_init", err);
-  }
-
-  if (panel_handle) {
-    esp_lcd_panel_del(panel_handle);
-  }
-  if (io_handle) {
-    esp_lcd_panel_io_del(io_handle);
-  }
-  if (dsi_bus) {
-    esp_lcd_del_dsi_bus(dsi_bus);
-  }
-  if (ldo_handle) {
-    esp_ldo_release_channel(ldo_handle);
-  }
-
-  Serial.println("[Device/M5StackTab5] DSI probe: done");
-  Serial.flush();
-  return err == ESP_OK;
-}
-
 bool init_display() {
   if (g_display_ready) {
     return true;
   }
 
-  if (!run_dsi_probe()) {
-    Serial.println("[Device/M5StackTab5] DSI probe failed");
+  // LDO for MIPI DSI PHY
+  esp_ldo_channel_handle_t ldo_handle = nullptr;
+  esp_ldo_channel_config_t ldo_cfg = {
+      .chan_id = kMipiLdoChannel,
+      .voltage_mv = kMipiLdoVoltageMv,
+  };
+  esp_err_t ldo_err = esp_ldo_acquire_channel(&ldo_cfg, &ldo_handle);
+  if (ldo_err != ESP_OK) {
+    Serial.printf("[Device/M5StackTab5] LDO acquire failed: %s\n",
+                  esp_err_to_name(ldo_err));
     Serial.flush();
     return false;
   }
@@ -592,12 +473,70 @@ bool DeviceM5StackTab5::init() {
 
 void DeviceM5StackTab5::displayPushPixels(int32_t x, int32_t y, int32_t w, int32_t h,
                                           const uint16_t* data) {
-  if (!g_display_ready || !g_gfx || !data) {
+  if (!g_display_ready || !g_gfx || !data || w <= 0 || h <= 0) {
     return;
   }
 
-  g_gfx->draw16bitRGBBitmap(x, y, const_cast<uint16_t*>(data), w, h);
-  panel_flush();
+  uint16_t* fb = g_gfx->getFramebuffer();
+  if (!fb) {
+    g_gfx->draw16bitRGBBitmap(x, y, const_cast<uint16_t*>(data), w, h);
+    panel_flush();
+    return;
+  }
+
+  // Native framebuffer is 720 wide x 1280 tall (portrait).
+  // We write directly into it with rotation, iterating so that
+  // the inner loop touches consecutive framebuffer addresses.
+  constexpr int32_t fb_w = 720;
+  constexpr int32_t fb_h = 1280;
+  const uint8_t rot = to_panel_rotation(g_rotation);
+
+  int32_t sync_first_row = 0;
+  int32_t sync_last_row = 0;
+
+  if (rot == 1) {
+    // 90 deg CW: logical (lx, ly) -> fb[lx * fb_w + (fb_w-1-ly)]
+    // Outer loop over logical columns -> each fixes one native row.
+    // Inner loop walks consecutive (descending) native columns.
+    sync_first_row = x;
+    sync_last_row = x + w - 1;
+    for (int32_t col = 0; col < w; ++col) {
+      const int32_t nat_row = x + col;
+      if (nat_row < 0 || nat_row >= fb_h) continue;
+      uint16_t* dst = fb + nat_row * fb_w + (fb_w - 1 - y);
+      const uint16_t* src = data + col;
+      for (int32_t row = 0; row < h; ++row) {
+        *dst-- = *src;
+        src += w;
+      }
+    }
+  } else {
+    // 270 deg (90 CCW): logical (lx, ly) -> fb[(fb_h-1-lx) * fb_w + ly]
+    // Outer loop over logical columns -> each fixes one native row.
+    // Inner loop walks consecutive (ascending) native columns.
+    sync_first_row = fb_h - (x + w);
+    sync_last_row = fb_h - 1 - x;
+    for (int32_t col = 0; col < w; ++col) {
+      const int32_t nat_row = fb_h - 1 - (x + col);
+      if (nat_row < 0 || nat_row >= fb_h) continue;
+      uint16_t* dst = fb + nat_row * fb_w + y;
+      const uint16_t* src = data + col;
+      for (int32_t row = 0; row < h; ++row) {
+        *dst++ = *src;
+        src += w;
+      }
+    }
+  }
+
+  // Sync only the affected native rows to DMA memory.
+  if (sync_first_row < 0) sync_first_row = 0;
+  if (sync_last_row >= fb_h) sync_last_row = fb_h - 1;
+  if (sync_first_row <= sync_last_row) {
+    esp_cache_msync(
+        fb + sync_first_row * fb_w,
+        (size_t)(sync_last_row - sync_first_row + 1) * fb_w * sizeof(uint16_t),
+        ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+  }
 }
 
 void DeviceM5StackTab5::displayPushPixelsDMA(int32_t x, int32_t y, int32_t w, int32_t h,
