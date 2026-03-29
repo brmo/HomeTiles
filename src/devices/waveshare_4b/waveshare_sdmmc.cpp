@@ -1,5 +1,7 @@
 #include "src/devices/waveshare_4b/waveshare_sdmmc.h"
 
+#if defined(DEVICE_WAVESHARE_4B)
+
 #include <Arduino.h>
 #include <esp_err.h>
 #include <esp_ldo_regulator.h>
@@ -113,4 +115,6 @@ uint64_t WaveshareSDMMCFS::cardSize() const {
 
 }  // namespace fs
 
-fs::WaveshareSDMMCFS SD_MMC(FSImplPtr(new VFSImpl()));
+fs::WaveshareSDMMCFS WaveshareSDMMC(FSImplPtr(new VFSImpl()));
+
+#endif  // defined(DEVICE_WAVESHARE_4B)

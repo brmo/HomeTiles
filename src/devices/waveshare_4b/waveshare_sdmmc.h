@@ -1,6 +1,10 @@
 #ifndef WAVESHARE_SDMMC_H
 #define WAVESHARE_SDMMC_H
 
+#include "src/devices/device_select.h"
+
+#if defined(DEVICE_WAVESHARE_4B)
+
 #include <FS.h>
 #include <vfs_api.h>
 #include <driver/sdmmc_host.h>
@@ -36,6 +40,8 @@ private:
 
 }  // namespace fs
 
-extern fs::WaveshareSDMMCFS SD_MMC;
+extern fs::WaveshareSDMMCFS WaveshareSDMMC;
+
+#endif  // defined(DEVICE_WAVESHARE_4B)
 
 #endif

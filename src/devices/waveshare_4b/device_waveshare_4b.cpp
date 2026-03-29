@@ -1,5 +1,9 @@
 #include "src/devices/waveshare_4b/device_waveshare_4b.h"
 
+#include "src/devices/device_select.h"
+
+#if defined(DEVICE_WAVESHARE_4B)
+
 #include <Arduino_GFX_Library.h>
 #include <driver/gpio.h>
 #include <driver/ledc.h>
@@ -256,7 +260,7 @@ void DeviceWaveshare4B::displayWaitDisplay() {
 }
 
 bool DeviceWaveshare4B::initSDCard() {
-  if (g_sd_available && SD_MMC.cardType() != CARD_NONE) {
+  if (g_sd_available && WaveshareSDMMC.cardType() != CARD_NONE) {
     return true;
   }
 
@@ -267,26 +271,26 @@ bool DeviceWaveshare4B::initSDCard() {
   g_sd_init_attempted = true;
   g_sd_retry_tick_ms = now;
 
-  SD_MMC.end();
+  WaveshareSDMMC.end();
 
-  if (!SD_MMC.begin("/sdcard", false, SDMMC_FREQ_DEFAULT, 5)) {
+  if (!WaveshareSDMMC.begin("/sdcard", false, SDMMC_FREQ_DEFAULT, 5)) {
     g_sd_available = false;
     Serial.println("[Device/Waveshare4B] SD card mount failed");
     return false;
   }
 
-  const uint8_t card_type = SD_MMC.cardType();
+  const uint8_t card_type = WaveshareSDMMC.cardType();
   if (card_type == CARD_NONE) {
     g_sd_available = false;
     Serial.println("[Device/Waveshare4B] SD card absent after mount");
-    SD_MMC.end();
+    WaveshareSDMMC.end();
     return false;
   }
 
   g_sd_available = true;
   Serial.printf("[Device/Waveshare4B] SD card OK, type=%u, size=%llu MB\n",
                 static_cast<unsigned>(card_type),
-                static_cast<unsigned long long>(SD_MMC.cardSize() / (1024ULL * 1024ULL)));
+                static_cast<unsigned long long>(WaveshareSDMMC.cardSize() / (1024ULL * 1024ULL)));
   return true;
 }
 
@@ -295,5 +299,7 @@ bool DeviceWaveshare4B::storageReady() {
 }
 
 fs::FS& DeviceWaveshare4B::storageFS() {
-  return SD_MMC;
+  return WaveshareSDMMC;
 }
+
+#endif  // defined(DEVICE_WAVESHARE_4B)
