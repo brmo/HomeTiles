@@ -16,8 +16,8 @@ Everything visible on the dashboard is tile-based and can be configured through 
 
 ## Supported Devices
 
-- M5Stacks Tab5
-- Waveshare B4
+- [M5Stacks Tab5](https://shop.m5stack.com/products/m5stack-tab5-iot-development-kit-esp32-p4)
+- [Waveshare B4](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4b.htm)
 
 Device-specific Arduino IDE settings are documented in [BOARD_SETTINGS.md](BOARD_SETTINGS.md).
 
