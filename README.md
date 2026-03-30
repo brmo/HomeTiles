@@ -47,11 +47,7 @@ Home dashboard, folder view, and settings screen:
 Sensor history, weather details, and light control popups:
 
 <p>
-  <img src="docs/images/b4-sensor-popup-kitchen.png" alt="Kitchen sensor popup" width="32%"> &nbsp; <img src="docs/images/b4-sensor-popup-water.png" alt="Water sensor popup" width="32%"> &nbsp; <img src="docs/images/b4-sensor-popup-battery.png" alt="Battery sensor popup" width="32%">
-</p>
-
-<p>
-  <img src="docs/images/b4-weather-popup.png" alt="Weather popup" width="32%"> &nbsp; <img src="docs/images/b4-light-popup-desk.png" alt="Light control popup" width="32%">
+  <img src="docs/images/b4-sensor-popup-kitchen.png" alt="Kitchen sensor popup" width="32%"> &nbsp; <img src="docs/images/b4-sensor-popup-water.png" alt="Water sensor popup" width="32%"> &nbsp; <img src="docs/images/b4-sensor-popup-battery.png" alt="Battery sensor popup" width="32%"> &nbsp; <img src="docs/images/b4-weather-popup.png" alt="Weather popup" width="32%"> &nbsp; <img src="docs/images/b4-light-popup-desk.png" alt="Light control popup" width="32%">
 </p>
 
 ### Web Admin
