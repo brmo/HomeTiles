@@ -113,10 +113,17 @@ When using the ESP Flash Download Tool:
 1. Insert a microSD card formatted as FAT32.
 2. Flash the firmware.
 3. Boot the device.
-4. Open the temporary device WiFi Access Point if needed.
-5. Configure WiFi and MQTT in the built-in web interface.
-6. Open the web admin panel through the device IP address.
-7. Configure your tiles, folders, and layout.
+4. Activate AP mode on the device to continue setup.
+5. Connect your phone or computer to the temporary device WiFi Access Point.
+6. Use password `12345678`.
+7. Open the captive portal and enter your WiFi credentials.
+8. After saving, the device restarts and connects to your WiFi network.
+9. Open the on-device `Settings` tab and note the displayed IP address.
+10. Open the web admin panel through that IP address.
+11. Enter your MQTT settings in the web interface.
+12. Set up the Home Assistant bridge/integration so the device receives entity data:
+    [ha-tab5-mqtt-bridge](https://github.com/GalusPeres/ha-tab5-mqtt-bridge)
+13. Configure your tiles, folders, and layout.
 
 ## Home Assistant Integration
 
