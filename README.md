@@ -27,33 +27,39 @@ Device-specific Arduino IDE settings are documented in [BOARD_SETTINGS.md](BOARD
 
 ## Screenshots
 
-The screenshots below were captured on the Waveshare B4. The same firmware and web admin panel also run on the M5Stacks Tab5.
+The screenshots below were captured on the Waveshare B4. They are meant as example views of the UI; the same firmware and web admin panel also run on the M5Stacks Tab5.
 
-### Dashboard
+### Main Views
 
-![Home dashboard](docs/images/b4-home.bmp)
+These examples show the normal dashboard, a folder view, and the on-device settings screen with date, time, and device options.
 
-### Folder View
+<p>
+  <img src="docs/images/b4-home.bmp" alt="Waveshare B4 home dashboard" width="260">
+  <img src="docs/images/b4-folder-lights.bmp" alt="Waveshare B4 folder view" width="260">
+  <img src="docs/images/b4-settings.bmp" alt="Waveshare B4 settings screen" width="260">
+</p>
 
-![Folder view](docs/images/b4-folder-lights.bmp)
+### Popup Examples
 
-### Popups
+The popup system is used for detailed views without leaving the dashboard. The examples below show weather, light control, and different sensor popups.
 
-![Weather popup](docs/images/b4-weather-popup.bmp)
+<p>
+  <img src="docs/images/b4-weather-popup.bmp" alt="Weather popup" width="250">
+  <img src="docs/images/b4-light-popup-desk.bmp" alt="Light popup" width="250">
+  <img src="docs/images/b4-sensor-popup-kitchen.bmp" alt="Kitchen sensor popup" width="250">
+</p>
+<p>
+  <img src="docs/images/b4-sensor-popup-water.bmp" alt="Water sensor popup" width="250">
+  <img src="docs/images/b4-sensor-popup-battery.bmp" alt="Battery sensor popup" width="250">
+</p>
 
-![Light popup](docs/images/b4-light-popup-desk.bmp)
+### Web Admin
 
-![Sensor popup - kitchen](docs/images/b4-sensor-popup-kitchen.bmp)
+The web admin panel is used to configure tiles, folders, WiFi, MQTT, localization, screenshots, and the overall layout directly from the browser.
 
-![Sensor popup - water](docs/images/b4-sensor-popup-water.bmp)
-
-![Sensor popup - battery](docs/images/b4-sensor-popup-battery.bmp)
-
-### Settings And Web Admin
-
-![On-device settings](docs/images/b4-settings.bmp)
-
-![Web admin interface](docs/images/web-admin.png)
+<p>
+  <img src="docs/images/web-admin.png" alt="Web admin interface" width="900">
+</p>
 
 ## Requirements
 
