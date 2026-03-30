@@ -38,19 +38,13 @@ The screenshots below were captured on the Waveshare B4. They are meant as examp
 
 Home dashboard, folder view, and settings screen:
 
-![Home dashboard](docs/images/b4-home.png)
-![Folder view](docs/images/b4-folder-lights.png)
-![Settings view](docs/images/b4-settings.png)
+<img src="docs/images/b4-home.png" alt="Home dashboard" width="32%"> <img src="docs/images/b4-folder-lights.png" alt="Folder view" width="32%"> <img src="docs/images/b4-settings.png" alt="Settings view" width="32%">
 
 ### Popups
 
 Sensor history, weather details, and light control popups:
 
-![Kitchen sensor popup](docs/images/b4-sensor-popup-kitchen.png)
-![Water sensor popup](docs/images/b4-sensor-popup-water.png)
-![Battery sensor popup](docs/images/b4-sensor-popup-battery.png)
-![Weather popup](docs/images/b4-weather-popup.png)
-![Light control popup](docs/images/b4-light-popup-desk.png)
+<img src="docs/images/b4-sensor-popup-kitchen.png" alt="Kitchen sensor popup" width="32%"> <img src="docs/images/b4-sensor-popup-water.png" alt="Water sensor popup" width="32%"> <img src="docs/images/b4-sensor-popup-battery.png" alt="Battery sensor popup" width="32%"> <img src="docs/images/b4-weather-popup.png" alt="Weather popup" width="32%"> <img src="docs/images/b4-light-popup-desk.png" alt="Light control popup" width="32%">
 
 ### Web Admin
 
