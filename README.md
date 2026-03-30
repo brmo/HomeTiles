@@ -58,8 +58,8 @@ Sensor history, weather details, and light control popups:
 
 Built-in web admin interface for tiles, folders, WiFi, MQTT, and layout configuration:
 
-<p align="center">
-  <img src="docs/images/web-admin.png" alt="Web admin interface" width="90%">
+<p>
+  <img src="docs/images/web-admin.png" alt="Web admin interface" width="100%">
 </p>
 
 ## Requirements
