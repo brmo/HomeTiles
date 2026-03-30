@@ -43,6 +43,9 @@ struct Strings {
   const char* admin_settings_wifi;
   const char* admin_settings_mqtt;
   const char* admin_settings_language;
+  const char* admin_settings_screenshot;
+  const char* screenshot_create_download;
+  const char* screenshot_saved_note;
 
   const char* wifi_status;
   const char* wifi_connected;
@@ -189,6 +192,9 @@ struct Strings {
   const char* js_tiles_moved_saved;
   const char* js_move_failed;
   const char* js_network_error_move;
+  const char* js_screenshot_creating;
+  const char* js_screenshot_saved;
+  const char* js_screenshot_failed;
 };
 
 const Strings& strings(const char* language_code);

@@ -12,6 +12,8 @@
 #include "src/web/web_admin_tile_helpers.h"
 #include "src/types/types_registry.h"
 #include "src/devices/device.h"
+#include "src/core/display_manager.h"
+#include <lvgl.h>
 #include <algorithm>
 #include <vector>
 #include <memory>
@@ -43,6 +45,147 @@ bool storageReady() {
 
 fs::FS& storageFS() {
   return Device::storageFS();
+}
+
+constexpr const char* kScreenshotPath = "/ui_screenshot.bmp";
+
+bool writeU16LE(File& file, uint16_t value) {
+  uint8_t bytes[2] = {
+      static_cast<uint8_t>(value & 0xFFu),
+      static_cast<uint8_t>((value >> 8) & 0xFFu),
+  };
+  return file.write(bytes, sizeof(bytes)) == sizeof(bytes);
+}
+
+bool writeU32LE(File& file, uint32_t value) {
+  uint8_t bytes[4] = {
+      static_cast<uint8_t>(value & 0xFFu),
+      static_cast<uint8_t>((value >> 8) & 0xFFu),
+      static_cast<uint8_t>((value >> 16) & 0xFFu),
+      static_cast<uint8_t>((value >> 24) & 0xFFu),
+  };
+  return file.write(bytes, sizeof(bytes)) == sizeof(bytes);
+}
+
+bool writeI32LE(File& file, int32_t value) {
+  return writeU32LE(file, static_cast<uint32_t>(value));
+}
+
+bool saveDrawBufferAsBmp(const lv_draw_buf_t* draw_buf, const String& path, String& error) {
+  if (!draw_buf || !draw_buf->data) {
+    error = "Screenshot buffer missing";
+    return false;
+  }
+  if (draw_buf->header.cf != LV_COLOR_FORMAT_RGB565) {
+    error = "Unsupported screenshot color format";
+    return false;
+  }
+
+  const int32_t width = draw_buf->header.w;
+  const int32_t height = draw_buf->header.h;
+  const uint32_t src_stride = draw_buf->header.stride;
+  if (width <= 0 || height <= 0 || src_stride == 0) {
+    error = "Invalid screenshot size";
+    return false;
+  }
+
+  const uint32_t row_bytes = static_cast<uint32_t>(width) * 3u;
+  const uint32_t row_padding = (4u - (row_bytes & 3u)) & 3u;
+  const uint32_t pixel_bytes = (row_bytes + row_padding) * static_cast<uint32_t>(height);
+  const uint32_t file_size = 14u + 40u + pixel_bytes;
+
+  std::unique_ptr<uint8_t[]> row_buf(new (std::nothrow) uint8_t[row_bytes + row_padding]);
+  if (!row_buf) {
+    error = "Screenshot row buffer allocation failed";
+    return false;
+  }
+  if (storageFS().exists(path)) storageFS().remove(path);
+
+  File file = storageFS().open(path, FILE_WRITE);
+  if (!file) {
+    error = "Could not open screenshot file";
+    return false;
+  }
+
+  bool ok = true;
+  ok = ok && file.write(reinterpret_cast<const uint8_t*>("BM"), 2) == 2;
+  ok = ok && writeU32LE(file, file_size);
+  ok = ok && writeU16LE(file, 0);
+  ok = ok && writeU16LE(file, 0);
+  ok = ok && writeU32LE(file, 54);
+  ok = ok && writeU32LE(file, 40);
+  ok = ok && writeI32LE(file, width);
+  ok = ok && writeI32LE(file, height);
+  ok = ok && writeU16LE(file, 1);
+  ok = ok && writeU16LE(file, 24);
+  ok = ok && writeU32LE(file, 0);
+  ok = ok && writeU32LE(file, pixel_bytes);
+  ok = ok && writeI32LE(file, 2835);
+  ok = ok && writeI32LE(file, 2835);
+  ok = ok && writeU32LE(file, 0);
+  ok = ok && writeU32LE(file, 0);
+
+  if (!ok) {
+    file.close();
+    storageFS().remove(path);
+    error = "Could not write BMP header";
+    return false;
+  }
+
+  for (int32_t y = height - 1; y >= 0; --y) {
+    const uint8_t* src_row = draw_buf->data + static_cast<uint32_t>(y) * src_stride;
+    const uint16_t* src = reinterpret_cast<const uint16_t*>(src_row);
+    uint8_t* dst = row_buf.get();
+    for (int32_t x = 0; x < width; ++x) {
+      const uint16_t px = src[x];
+      const uint8_t r = static_cast<uint8_t>((((px >> 11) & 0x1Fu) * 255u) / 31u);
+      const uint8_t g = static_cast<uint8_t>((((px >> 5) & 0x3Fu) * 255u) / 63u);
+      const uint8_t b = static_cast<uint8_t>(((px & 0x1Fu) * 255u) / 31u);
+      *dst++ = b;
+      *dst++ = g;
+      *dst++ = r;
+    }
+    for (uint32_t i = 0; i < row_padding; ++i) {
+      *dst++ = 0;
+    }
+    const size_t write_len = row_bytes + row_padding;
+    if (file.write(row_buf.get(), write_len) != write_len) {
+      file.close();
+      storageFS().remove(path);
+      error = "Could not write BMP pixels";
+      return false;
+    }
+  }
+
+  file.close();
+  return true;
+}
+
+bool createUiScreenshot(String& error) {
+  if (!storageReady()) {
+    error = "microSD card not available";
+    return false;
+  }
+
+  lv_display_t* disp = displayManager.getDisplay();
+  lv_obj_t* screen = lv_screen_active();
+  if (!disp || !screen) {
+    error = "Display not ready";
+    return false;
+  }
+
+  lv_refr_now(disp);
+  Device::displayWaitDisplay();
+
+  lv_draw_buf_t* draw_buf = lv_snapshot_take(screen, LV_COLOR_FORMAT_RGB565);
+  if (!draw_buf) {
+    error = "LVGL snapshot failed";
+    return false;
+  }
+
+  const bool ok = saveDrawBufferAsBmp(draw_buf, String(kScreenshotPath), error);
+  lv_draw_buf_destroy(draw_buf);
+  return ok;
 }
 
 void collectImageFiles(const String& dir, std::vector<String>& out, size_t max_entries, uint8_t depth, bool allow_bin, bool allow_jpeg, bool allow_png) {
@@ -1135,6 +1278,46 @@ void WebAdminServer::handleUploadIconDone() {
   appendJsonEscaped(json, path);
   json += "\"}";
   server.send(200, "application/json", json);
+}
+
+void WebAdminServer::handleCreateScreenshot() {
+  String error;
+  if (!createUiScreenshot(error)) {
+    String json = "{\"success\":false,\"error\":\"";
+    appendJsonEscaped(json, error);
+    json += "\"}";
+    server.send(500, "application/json", json);
+    return;
+  }
+
+  String json = "{\"success\":true,\"path\":\"";
+  appendJsonEscaped(json, kScreenshotPath);
+  json += "\"}";
+  server.send(200, "application/json", json);
+}
+
+void WebAdminServer::handleDownloadScreenshot() {
+  if (!storageReady()) {
+    server.send(503, "text/plain", "microSD card not available");
+    return;
+  }
+  if (!storageFS().exists(kScreenshotPath)) {
+    server.send(404, "text/plain", "Screenshot not found");
+    return;
+  }
+
+  File file = storageFS().open(kScreenshotPath, FILE_READ);
+  if (!file) {
+    server.send(500, "text/plain", "Could not open screenshot");
+    return;
+  }
+
+  String filename = Device::profile().key;
+  filename += "-ui-screenshot.bmp";
+  server.sendHeader("Content-Disposition", "attachment; filename=\"" + filename + "\"");
+  server.sendHeader("Cache-Control", "no-store");
+  server.streamFile(file, "image/bmp");
+  file.close();
 }
 
 // ========== Folder API ==========

@@ -62,6 +62,9 @@ void appendAdminScripts(String& html) {
   appendJsEntry("tilesMovedSaved", tr.js_tiles_moved_saved);
   appendJsEntry("moveFailed", tr.js_move_failed);
   appendJsEntry("networkErrorMove", tr.js_network_error_move);
+  appendJsEntry("screenshotCreating", tr.js_screenshot_creating);
+  appendJsEntry("screenshotSaved", tr.js_screenshot_saved);
+  appendJsEntry("screenshotFailed", tr.js_screenshot_failed);
   html += R"html(  };
   function t(key) {
     return Object.prototype.hasOwnProperty.call(APP_I18N, key) ? APP_I18N[key] : key;
@@ -104,6 +107,26 @@ void appendAdminScripts(String& html) {
     const isHidden = input.type === 'password';
     input.type = isHidden ? 'text' : 'password';
     buttonEl.textContent = isHidden ? hideLabel : showLabel;
+  }
+
+  async function createScreenshotAndDownload() {
+    showNotification(t('screenshotCreating'));
+    try {
+      const res = await fetch('/api/screenshot', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || t('screenshotFailed'));
+      }
+      showNotification(t('screenshotSaved'));
+      const link = document.createElement('a');
+      link.href = '/api/screenshot/download?ts=' + Date.now();
+      link.download = 'ui_screenshot.bmp';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (err) {
+      showNotification(err?.message || t('screenshotFailed'), false);
+    }
   }
 
   // Tile Editor State

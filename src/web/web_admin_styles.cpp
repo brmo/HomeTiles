@@ -87,6 +87,8 @@ void appendAdminStyles(String& html) {
     .settings-subgrid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:16px; }
     .settings-full { grid-column:1 / -1; }
     .settings-note { font-size:12px; color:#64748b; margin-top:4px; }
+    .settings-actions { display:flex; gap:10px; flex-wrap:wrap; }
+    .settings-actions .btn { width:auto; }
     .settings-checkbox { display:flex; align-items:center; gap:10px; margin:0; font-size:14px; color:#0f172a; }
     .settings-checkbox input { width:auto; padding:0; margin:0; }
     .is-hidden { display:none !important; }

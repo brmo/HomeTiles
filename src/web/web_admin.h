@@ -47,6 +47,8 @@ public:
   void handleGetSensorValues();
   void handleGetSdImages();
   void handleGetSdIcons();
+  void handleCreateScreenshot();
+  void handleDownloadScreenshot();
   void handleUploadIcon();
   void handleUploadIconDone();
 

@@ -722,6 +722,24 @@ String WebAdminServer::getAdminPage() {
             </div>
           </div>
 
+          <div class="settings-section">
+            <div class="section-title">)html";
+  html += tr.admin_settings_screenshot;
+  html += R"html(</div>
+            <div class="settings-grid">
+              <div class="settings-full">
+                <div class="settings-actions">
+                  <button class="btn" type="button" onclick="createScreenshotAndDownload()">)html";
+  html += tr.screenshot_create_download;
+  html += R"html(</button>
+                </div>
+                <div class="settings-note">)html";
+  html += tr.screenshot_saved_note;
+  html += R"html(</div>
+              </div>
+            </div>
+          </div>
+
           <button class="btn" type="submit">Speichern</button>
         </form>
       </div>

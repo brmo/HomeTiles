@@ -40,6 +40,9 @@ static const Strings kStringsDe = {
     "WiFi",
     "MQTT",
     "Sprache",
+    "Screenshot",
+    "Screenshot erstellen & herunterladen",
+    "Speichert /ui_screenshot.bmp auf der microSD-Karte. Die vorhandene Datei wird überschrieben.",
 
     "WiFi Status",
     "Verbunden",
@@ -185,7 +188,10 @@ static const Strings kStringsDe = {
     "Keine sinnvolle Anordnung gefunden",
     "Kacheln verschoben & gespeichert!",
     "Fehler beim Verschieben",
-    "Netzwerkfehler beim Verschieben"};
+    "Netzwerkfehler beim Verschieben",
+    "Screenshot wird erstellt...",
+    "Screenshot gespeichert & Download gestartet!",
+    "Screenshot fehlgeschlagen"};
 
 static const Strings kStringsEn = {
     "en",
@@ -225,6 +231,9 @@ static const Strings kStringsEn = {
     "WiFi",
     "MQTT",
     "Language",
+    "Screenshot",
+    "Create & Download Screenshot",
+    "Saves /ui_screenshot.bmp to the microSD card. The existing file is overwritten.",
 
     "WiFi Status",
     "Connected",
@@ -370,7 +379,10 @@ static const Strings kStringsEn = {
     "No valid arrangement found",
     "Tiles moved & saved!",
     "Move failed",
-    "Network error while moving"};
+    "Network error while moving",
+    "Creating screenshot...",
+    "Screenshot saved & download started!",
+    "Screenshot failed"};
 
 const char* normalize_language_code(const char* language_code) {
   if (!language_code || !language_code[0]) return kStringsEn.code;
