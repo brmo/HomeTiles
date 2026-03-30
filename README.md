@@ -1,6 +1,8 @@
-<img align="right" width="46%" src="docs/images/b4-home.png" alt="Waveshare B4 home dashboard">
-
 ## ESP32-P4 Home Assistant Display
+
+<p align="center">
+  <img src="docs/images/b4-home.png" alt="Waveshare B4 home dashboard" width="60%">
+</p>
 
 Tile-based ESP32-P4 firmware for Home Assistant dashboards with a fully configurable web interface.
 
@@ -10,8 +12,6 @@ The project currently supports multiple ESP32-P4 display devices and combines:
 - MQTT-based Home Assistant integration
 - on-device web configuration
 - microSD-backed runtime storage
-
-<br clear="both">
 
 ## Overview
 
@@ -36,45 +36,35 @@ The screenshots below were captured on the Waveshare B4. They are meant as examp
 
 ### Main Views
 
-These examples show the main dashboard, a folder page, and the on-device settings screen used during normal operation.
+Home dashboard, folder view, and settings screen:
 
 <p align="center">
   <img src="docs/images/b4-home.png" alt="Home dashboard" width="32%">
   <img src="docs/images/b4-folder-lights.png" alt="Folder view" width="32%">
   <img src="docs/images/b4-settings.png" alt="Settings view" width="32%">
-  <br>
-  <sub>Home dashboard&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;Folder view&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;Settings view</sub>
 </p>
 
 ### Popups
 
-The popup system is used for detailed sensor history, weather information, and direct light control without leaving the current page.
+Sensor history, weather details, and light control popups:
 
 <p align="center">
   <img src="docs/images/b4-sensor-popup-kitchen.png" alt="Kitchen sensor popup" width="32%">
   <img src="docs/images/b4-sensor-popup-water.png" alt="Water sensor popup" width="32%">
   <img src="docs/images/b4-sensor-popup-battery.png" alt="Battery sensor popup" width="32%">
-  <br>
-  <sub>Kitchen sensor popup&emsp;&emsp;&emsp;&emsp;Water temperature popup&emsp;&emsp;&emsp;&emsp;Battery / energy popup</sub>
 </p>
 
 <p align="center">
   <img src="docs/images/b4-weather-popup.png" alt="Weather popup" width="32%">
   <img src="docs/images/b4-light-popup-desk.png" alt="Light control popup" width="32%">
-  <br>
-  <sub>Weather popup&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;Light control popup</sub>
 </p>
 
 ### Web Admin
 
-The web admin panel is used to configure tiles, folders, WiFi, MQTT, localization, screenshots, and the overall layout directly from the browser.
+Built-in web admin interface for tiles, folders, WiFi, MQTT, and layout configuration:
 
 <p align="center">
   <img src="docs/images/web-admin.png" alt="Web admin interface" width="90%">
-</p>
-
-<p align="center">
-  <sub>Built-in web admin interface</sub>
 </p>
 
 ## Requirements
