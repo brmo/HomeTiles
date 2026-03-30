@@ -137,7 +137,7 @@ That integration handles the Home Assistant-side MQTT communication and entity b
 
 - `src/` firmware source code
 - `docs/images/` screenshots and documentation images
-- `electron-app/` optional desktop companion tooling
+- `electron-app/` desktop companion tooling
 - `mdi-extractor/` icon tooling
 - `simconnect-bridge/` additional companion tooling
 - `BOARD_SETTINGS.md` documented Arduino IDE board settings
@@ -149,6 +149,11 @@ That integration handles the Home Assistant-side MQTT communication and entity b
 - Board selection and board settings must match the target device.
 - On the M5Stacks Tab5, enabling AP mode can currently crash the device if display brightness is above 50% and no battery is installed. This is a known bug.
 - In general, the M5Stacks Tab5 currently feels noticeably slower than the Waveshare B4. This may be related to the display driver or another device-specific bottleneck. If you know the cause or a fix, help is welcome.
+- The popup system still needs more work overall. Sensor popups should become more flexible, for example with more data, longer history ranges, and easier switching between views.
+- The weather popup also still needs improvements, such as a better 24-hour view and larger weather icons.
+- The light popup is still rough and should be simplified further. The sliders currently feel too wide, and a hue wheel may be a better long-term direction.
+- OTA is planned for the future so devices can be updated directly on-device without reflashing over USB.
+- A Windows Electron companion app also exists under `electron-app/`. It can be used to send PC-side data to the device, for example Microsoft Flight Simulator values, system metrics, or simulated keyboard input/commands for Windows. This still needs proper documentation and its own release packaging.
 
 ## License
 
