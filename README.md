@@ -39,28 +39,31 @@ The screenshots below were captured on the Waveshare B4. They are meant as examp
 These examples show the main dashboard, a folder page, and the on-device settings screen used during normal operation.
 
 <p align="center">
-  <img src="docs/images/b4-home.png" alt="Waveshare B4 home dashboard" width="30%">&nbsp;
-  <img src="docs/images/b4-folder-lights.png" alt="Waveshare B4 folder view" width="30%">&nbsp;
-  <img src="docs/images/b4-settings.png" alt="Waveshare B4 settings screen" width="30%">
+  <img src="docs/images/b4-home.png" alt="Home dashboard" width="32%">
+  <img src="docs/images/b4-folder-lights.png" alt="Folder view" width="32%">
+  <img src="docs/images/b4-settings.png" alt="Settings view" width="32%">
+  <br>
+  <sub>Home dashboard&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;Folder view&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;Settings view</sub>
 </p>
-<p align="center"><sub>Home dashboard &nbsp;·&nbsp; Folder view &nbsp;·&nbsp; Settings view</sub></p>
 
 ### Popups
 
 The popup system is used for detailed sensor history, weather information, and direct light control without leaving the current page.
 
 <p align="center">
-  <img src="docs/images/b4-sensor-popup-kitchen.png" alt="Kitchen sensor popup" width="30%">&nbsp;
-  <img src="docs/images/b4-sensor-popup-water.png" alt="Water sensor popup" width="30%">&nbsp;
-  <img src="docs/images/b4-sensor-popup-battery.png" alt="Battery sensor popup" width="30%">
+  <img src="docs/images/b4-sensor-popup-kitchen.png" alt="Kitchen sensor popup" width="32%">
+  <img src="docs/images/b4-sensor-popup-water.png" alt="Water sensor popup" width="32%">
+  <img src="docs/images/b4-sensor-popup-battery.png" alt="Battery sensor popup" width="32%">
+  <br>
+  <sub>Kitchen sensor popup&emsp;&emsp;&emsp;&emsp;Water temperature popup&emsp;&emsp;&emsp;&emsp;Battery / energy popup</sub>
 </p>
-<p align="center"><sub>Kitchen sensor popup &nbsp;·&nbsp; Water temperature popup &nbsp;·&nbsp; Battery / energy popup</sub></p>
 
 <p align="center">
-  <img src="docs/images/b4-weather-popup.png" alt="Weather popup" width="30%">&nbsp;
-  <img src="docs/images/b4-light-popup-desk.png" alt="Light popup" width="30%">
+  <img src="docs/images/b4-weather-popup.png" alt="Weather popup" width="32%">
+  <img src="docs/images/b4-light-popup-desk.png" alt="Light control popup" width="32%">
+  <br>
+  <sub>Weather popup&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;Light control popup</sub>
 </p>
-<p align="center"><sub>Weather popup &nbsp;·&nbsp; Light control popup</sub></p>
 
 ### Web Admin
 
