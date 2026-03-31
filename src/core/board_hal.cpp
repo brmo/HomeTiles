@@ -67,6 +67,10 @@ void BoardHAL::displayWaitDisplay() {
   Device::displayWaitDisplay();
 }
 
+void BoardHAL::prepareForRestart() {
+  Device::prepareForRestart();
+}
+
 bool BoardHAL::initSDCard() {
   return Device::initSDCard();
 }

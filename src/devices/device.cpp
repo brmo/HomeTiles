@@ -72,6 +72,10 @@ void displayWaitDisplay() {
   DeviceImpl::displayWaitDisplay();
 }
 
+void prepareForRestart() {
+  DeviceImpl::prepareForRestart();
+}
+
 bool initSDCard() {
   return DeviceImpl::initSDCard();
 }

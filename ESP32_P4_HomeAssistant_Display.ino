@@ -7,11 +7,13 @@
 #include <freertos/task.h>
 #include <nvs_flash.h>
 #include <esp_err.h>
+#include <esp_ota_ops.h>
 
 #include "src/core/board_hal.h"
 #include "src/core/display_manager.h"
 #include "src/core/power_manager.h"
 #include "src/core/config_manager.h"
+#include "src/core/firmware_version.h"
 #include "src/ui/ui_manager.h"
 #include "src/ui/sensor_popup.h"
 #include "src/ui/weather_popup.h"
@@ -45,16 +47,36 @@ static TaskHandle_t ui_build_waiter = nullptr;
 static scene_publish_cb_t ui_scene_cb = nullptr;
 static hotspot_start_cb_t ui_hotspot_cb = nullptr;
 
-static void set_display_black_for_restart() {
-  displayManager.setInputEnabled(false);
-  BoardHAL::displayWaitDisplay();
-  BoardHAL::displayFillScreen(0x0000);
-  BoardHAL::displayWaitDisplay();
-  BoardHAL::displaySleep();
+static void confirm_running_ota_if_needed() {
+  const esp_partition_t* running = esp_ota_get_running_partition();
+  if (!running) {
+    Serial.println("[OTA] Running partition lookup failed");
+    return;
+  }
+
+  esp_ota_img_states_t ota_state = ESP_OTA_IMG_UNDEFINED;
+  const esp_err_t state_err = esp_ota_get_state_partition(running, &ota_state);
+  if (state_err != ESP_OK) {
+    Serial.printf("[OTA] Could not read running OTA state: %s (%d)\n", esp_err_to_name(state_err), state_err);
+    return;
+  }
+
+  Serial.printf("[OTA] Running partition state: %d\n", static_cast<int>(ota_state));
+
+  if (ota_state != ESP_OTA_IMG_PENDING_VERIFY) {
+    return;
+  }
+
+  const esp_err_t mark_err = esp_ota_mark_app_valid_cancel_rollback();
+  if (mark_err == ESP_OK) {
+    Serial.println("[OTA] Running app marked valid; rollback cancelled");
+  } else {
+    Serial.printf("[OTA] Failed to mark running app valid: %s (%d)\n", esp_err_to_name(mark_err), mark_err);
+  }
 }
 
 static void restore_display_after_ota_pause() {
-  BoardHAL::displayWake();
+  BoardHAL::displayPowerSaveOff();
   displayManager.setInputEnabled(true);
   lv_obj_invalidate(lv_screen_active());
   lv_refr_now(displayManager.getDisplay());
@@ -135,6 +157,8 @@ void setup() {
   Serial.begin(115200);
   delay(2000);
   Serial.println("\n\n=== WAVESHARE P4 STARTUP ===");
+  Serial.printf("[Setup] Firmware: esp32-p4-homeassistant-display-%s-%s\n", FW_VERSION, Device::profile().key);
+  confirm_running_ota_if_needed();
   Serial.flush();
 
   // Board-HAL initialisiert I2C, Display (MIPI-DSI HX8394), GT911 Touch, Backlight
@@ -216,6 +240,17 @@ void setup() {
   Serial.println("[Setup] Statusbar updated");
   Serial.flush();
 
+  BoardHAL::displayWake();
+  lv_obj_invalidate(lv_screen_active());
+  lv_refr_now(displayManager.getDisplay());
+  BoardHAL::displayWaitDisplay();
+  delay(20);
+  lv_obj_invalidate(lv_screen_active());
+  lv_refr_now(displayManager.getDisplay());
+  BoardHAL::displayWaitDisplay();
+  Serial.println("[Setup] Display wake OK");
+  Serial.flush();
+
   Serial.println("[Setup] MQTT Topics...");
   Serial.flush();
   TopicSettings ts;
@@ -274,7 +309,8 @@ void loop() {
 
   if (ota_in_progress) {
     if (!ota_display_suspended) {
-      set_display_black_for_restart();
+      displayManager.setInputEnabled(false);
+      BoardHAL::displayPowerSaveOn();
       ota_display_suspended = true;
     }
     displayManager.resetActivityTimer();
@@ -318,7 +354,8 @@ void loop() {
     settings_update_power_status();
 
     if (webConfigServer.hasNewConfig()) {
-      set_display_black_for_restart();
+      displayManager.setInputEnabled(false);
+      BoardHAL::prepareForRestart();
       delay(200);
       ESP.restart();
     }

@@ -72,5 +72,6 @@ private:
 // Globale Instanz
 extern WebAdminServer webAdminServer;
 bool webAdminOtaInProgress();
+void webAdminServiceOta();
 
 #endif // WEB_ADMIN_H

@@ -31,6 +31,31 @@ bool g_sd_init_attempted = false;
 bool g_sd_available = false;
 uint32_t g_sd_retry_tick_ms = 0;
 
+void pulse_panel_reset() {
+  if (display_cfg.lcd_rst < 0) {
+    return;
+  }
+
+  const gpio_num_t rst_pin = static_cast<gpio_num_t>(display_cfg.lcd_rst);
+  gpio_set_direction(rst_pin, GPIO_MODE_OUTPUT);
+  gpio_set_level(rst_pin, 1);
+  delay(5);
+  gpio_set_level(rst_pin, 0);
+  delay(20);
+  gpio_set_level(rst_pin, 1);
+  delay(120);
+}
+
+void hold_panel_reset_low() {
+  if (display_cfg.lcd_rst < 0) {
+    return;
+  }
+
+  const gpio_num_t rst_pin = static_cast<gpio_num_t>(display_cfg.lcd_rst);
+  gpio_set_direction(rst_pin, GPIO_MODE_OUTPUT);
+  gpio_set_level(rst_pin, 0);
+}
+
 void apply_backlight(uint8_t value) {
   if (!g_backlight_ready) {
     return;
@@ -50,6 +75,9 @@ bool init_backlight() {
   if (g_backlight_ready) {
     return true;
   }
+
+  gpio_set_direction(kBacklightPin, GPIO_MODE_OUTPUT);
+  gpio_set_level(kBacklightPin, kBacklightActiveLow ? 1 : 0);
 
   ledc_timer_config_t timer_cfg = {};
   timer_cfg.speed_mode = LEDC_LOW_SPEED_MODE;
@@ -83,6 +111,8 @@ bool init_display() {
   if (g_gfx) {
     return true;
   }
+
+  pulse_panel_reset();
 
   g_dsi_panel = new Arduino_ESP32DSIPanel(
       display_cfg.hsync_pulse_width,
@@ -249,10 +279,17 @@ void DeviceWaveshare4B::displayWake() {
 }
 
 void DeviceWaveshare4B::displayPowerSaveOn() {
+  if (g_gfx) {
+    g_gfx->displayOff();
+  }
   apply_backlight(0);
 }
 
 void DeviceWaveshare4B::displayPowerSaveOff() {
+  if (g_gfx) {
+    g_gfx->displayOn();
+    g_gfx->flush();
+  }
   apply_backlight(g_brightness);
 }
 
@@ -260,6 +297,20 @@ void DeviceWaveshare4B::displayWaitDisplay() {
   if (g_gfx) {
     g_gfx->flush();
   }
+}
+
+void DeviceWaveshare4B::prepareForRestart() {
+  if (g_gfx) {
+    g_gfx->fillScreen(0x0000);
+    g_gfx->flush();
+    g_gfx->displayOff();
+  }
+
+  hold_panel_reset_low();
+  apply_backlight(0);
+  ledc_stop(LEDC_LOW_SPEED_MODE, kBacklightChannel, kBacklightActiveLow ? 1u : 0u);
+  gpio_set_direction(kBacklightPin, GPIO_MODE_OUTPUT);
+  gpio_set_level(kBacklightPin, kBacklightActiveLow ? 1 : 0);
 }
 
 bool DeviceWaveshare4B::initSDCard() {

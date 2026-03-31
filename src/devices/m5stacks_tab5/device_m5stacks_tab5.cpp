@@ -227,6 +227,18 @@ void DeviceM5StacksTab5::displayWaitDisplay() {
   M5.Display.waitDMA();
 }
 
+void DeviceM5StacksTab5::prepareForRestart() {
+  if (!g_display_ready) {
+    return;
+  }
+
+  M5.Display.waitDMA();
+  M5.Display.fillScreen(0x0000);
+  M5.Display.waitDMA();
+  M5.Display.setBrightness(0);
+  M5.Display.sleep();
+}
+
 bool DeviceM5StacksTab5::initSDCard() {
   if (g_sd_available && SD.cardType() != CARD_NONE) {
     return true;

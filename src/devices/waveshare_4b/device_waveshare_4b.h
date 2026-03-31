@@ -44,6 +44,7 @@ void displayWake();
 void displayPowerSaveOn();
 void displayPowerSaveOff();
 void displayWaitDisplay();
+void prepareForRestart();
 
 bool initSDCard();
 bool storageReady();

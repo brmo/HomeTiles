@@ -53,39 +53,37 @@ fs::FS& storageFS() {
 }
 
 constexpr const char* kScreenshotPath = "/ui_screenshot.bmp";
-constexpr const char* kOtaUploadPath = "/ota_update.bin";
-
 struct OtaUploadState {
   bool upload_started = false;
   bool upload_success = false;
-  bool file_received = false;
   bool image_validated = false;
   bool install_started = false;
   bool install_success = false;
-  bool install_task_running = false;
   bool restart_pending = false;
+  uint32_t restart_at_ms = 0;
   size_t buffered_len = 0;
   size_t upload_total_bytes = 0;
   size_t install_total_bytes = 0;
   size_t install_written_bytes = 0;
+  size_t next_progress_log = 0;
   uint8_t buffered_bytes[4096] = {0};
   String error;
 };
 
 OtaUploadState g_ota_upload_state;
-File g_ota_upload_file;
-TaskHandle_t g_ota_install_task = nullptr;
 
 void prepareDisplayForRestart() {
   displayManager.setInputEnabled(false);
-  BoardHAL::displayWaitDisplay();
-  BoardHAL::displayFillScreen(0x0000);
-  BoardHAL::displayWaitDisplay();
-  BoardHAL::displaySleep();
+  BoardHAL::prepareForRestart();
+}
+
+void prepareDisplayForOtaInstall() {
+  displayManager.setInputEnabled(false);
+  BoardHAL::displayPowerSaveOn();
 }
 
 void restoreDisplayAfterOtaFailure() {
-  BoardHAL::displayWake();
+  BoardHAL::displayPowerSaveOff();
   displayManager.setInputEnabled(true);
   lv_display_t* disp = displayManager.getDisplay();
   if (disp) {
@@ -95,23 +93,22 @@ void restoreDisplayAfterOtaFailure() {
 }
 
 void resetOtaUploadState() {
-  if (g_ota_upload_file) {
-    g_ota_upload_file.close();
+  if (Update.isRunning()) {
+    Update.abort();
   }
   g_ota_upload_state.upload_started = false;
   g_ota_upload_state.upload_success = false;
-  g_ota_upload_state.file_received = false;
   g_ota_upload_state.image_validated = false;
   g_ota_upload_state.install_started = false;
   g_ota_upload_state.install_success = false;
-  g_ota_upload_state.install_task_running = false;
   g_ota_upload_state.restart_pending = false;
+  g_ota_upload_state.restart_at_ms = 0;
   g_ota_upload_state.buffered_len = 0;
   g_ota_upload_state.upload_total_bytes = 0;
   g_ota_upload_state.install_total_bytes = 0;
   g_ota_upload_state.install_written_bytes = 0;
+  g_ota_upload_state.next_progress_log = 0;
   g_ota_upload_state.error = "";
-  g_ota_install_task = nullptr;
 }
 
 bool otaFilenameLooksLikeFactory(const String& filename) {
@@ -120,80 +117,86 @@ bool otaFilenameLooksLikeFactory(const String& filename) {
   return lowered.indexOf("factory") >= 0;
 }
 
-void otaInstallTask(void* param) {
-  (void)param;
+size_t parseOtaExpectedSize(WebServer& server) {
+  if (!server.hasArg("size")) {
+    return 0;
+  }
+  const String raw = server.arg("size");
+  if (!raw.length()) {
+    return 0;
+  }
+  const unsigned long parsed = strtoul(raw.c_str(), nullptr, 10);
+  return static_cast<size_t>(parsed);
+}
 
-  File file = storageFS().open(kOtaUploadPath, FILE_READ);
-  if (!file) {
-    g_ota_upload_state.error = "Could not open staged OTA file";
-    g_ota_upload_state.install_task_running = false;
-    g_ota_upload_state.install_started = false;
-    restoreDisplayAfterOtaFailure();
-    g_ota_install_task = nullptr;
-    vTaskDelete(nullptr);
-    return;
+bool beginDirectOtaInstall() {
+  if (g_ota_upload_state.install_started) {
+    return true;
   }
 
-  g_ota_upload_state.install_total_bytes = static_cast<size_t>(file.size());
+  g_ota_upload_state.install_started = true;
+  g_ota_upload_state.install_success = false;
+  g_ota_upload_state.restart_pending = false;
+  g_ota_upload_state.restart_at_ms = 0;
   g_ota_upload_state.install_written_bytes = 0;
+  g_ota_upload_state.install_total_bytes = g_ota_upload_state.upload_total_bytes;
+  g_ota_upload_state.next_progress_log = 512 * 1024;
 
-  prepareDisplayForRestart();
-  delay(50);
+  if (g_ota_upload_state.install_total_bytes > 0) {
+    Serial.printf("[OTA] Install started: %u bytes\n", static_cast<unsigned>(g_ota_upload_state.install_total_bytes));
+  } else {
+    Serial.println("[OTA] Install started: size unknown");
+  }
 
-  const uint32_t max_sketch_space = (ESP.getFreeSketchSpace() - 0x1000u) & 0xFFFFF000u;
-  if (!Update.begin(max_sketch_space, U_FLASH)) {
-    file.close();
+  prepareDisplayForOtaInstall();
+  delay(20);
+
+  const size_t ota_size = g_ota_upload_state.install_total_bytes ? g_ota_upload_state.install_total_bytes : UPDATE_SIZE_UNKNOWN;
+  if (!Update.begin(ota_size, U_FLASH)) {
+    Serial.printf("[OTA] Install failed: Update.begin() -> %s\n", Update.errorString());
     g_ota_upload_state.error = String("OTA begin failed: ") + Update.errorString();
-    g_ota_upload_state.install_task_running = false;
     g_ota_upload_state.install_started = false;
     restoreDisplayAfterOtaFailure();
-    g_ota_install_task = nullptr;
-    vTaskDelete(nullptr);
-    return;
+    return false;
   }
 
-  uint8_t buffer[4096];
-  while (true) {
-    const size_t bytes_read = file.read(buffer, sizeof(buffer));
-    if (bytes_read == 0) break;
-    const size_t bytes_written = Update.write(buffer, bytes_read);
-    if (bytes_written != bytes_read) {
-      file.close();
-      Update.abort();
-      g_ota_upload_state.error = String("OTA write failed: ") + Update.errorString();
-      g_ota_upload_state.install_task_running = false;
-      g_ota_upload_state.install_started = false;
-      restoreDisplayAfterOtaFailure();
-      g_ota_install_task = nullptr;
-      vTaskDelete(nullptr);
-      return;
-    }
-    g_ota_upload_state.install_written_bytes += bytes_written;
-    vTaskDelay(pdMS_TO_TICKS(1));
+  if (ota_size == UPDATE_SIZE_UNKNOWN) {
+    Serial.println("[OTA] Update.begin OK, target size: unknown");
+  } else {
+    Serial.printf("[OTA] Update.begin OK, target size: %u\n", static_cast<unsigned>(ota_size));
+  }
+  return true;
+}
+
+bool writeDirectOtaChunk(const uint8_t* data, size_t len) {
+  if (!data || len == 0) {
+    return true;
   }
 
-  file.close();
-
-  if (!Update.end(true)) {
+  const size_t bytes_written = Update.write(const_cast<uint8_t*>(data), len);
+  if (bytes_written != len) {
     Update.abort();
-    g_ota_upload_state.error = String("OTA finalize failed: ") + Update.errorString();
-    g_ota_upload_state.install_task_running = false;
+    Serial.printf("[OTA] Install failed: Update.write() -> %s\n", Update.errorString());
+    g_ota_upload_state.error = String("OTA write failed: ") + Update.errorString();
     g_ota_upload_state.install_started = false;
     restoreDisplayAfterOtaFailure();
-    g_ota_install_task = nullptr;
-    vTaskDelete(nullptr);
-    return;
+    return false;
   }
 
-  g_ota_upload_state.install_written_bytes = g_ota_upload_state.install_total_bytes;
-  g_ota_upload_state.install_success = true;
-  g_ota_upload_state.install_task_running = false;
-  g_ota_upload_state.restart_pending = true;
-  if (storageFS().exists(kOtaUploadPath)) {
-    storageFS().remove(kOtaUploadPath);
+  g_ota_upload_state.install_written_bytes += bytes_written;
+  if (g_ota_upload_state.install_written_bytes >= g_ota_upload_state.next_progress_log ||
+      g_ota_upload_state.install_written_bytes == g_ota_upload_state.install_total_bytes) {
+    if (g_ota_upload_state.install_total_bytes > 0) {
+      Serial.printf("[OTA] Install progress: %u / %u bytes\n",
+                    static_cast<unsigned>(g_ota_upload_state.install_written_bytes),
+                    static_cast<unsigned>(g_ota_upload_state.install_total_bytes));
+    } else {
+      Serial.printf("[OTA] Install progress: %u bytes written\n",
+                    static_cast<unsigned>(g_ota_upload_state.install_written_bytes));
+    }
+    g_ota_upload_state.next_progress_log += 512 * 1024;
   }
-  vTaskDelay(pdMS_TO_TICKS(1200));
-  ESP.restart();
+  return true;
 }
 
 bool writeU16LE(File& file, uint16_t value) {
@@ -1095,6 +1098,7 @@ void WebAdminServer::handleStatus() {
 void WebAdminServer::handleRestart() {
   server.sendHeader("Location", "/");
   server.send(303, "text/plain", "");
+  Serial.println("[WebAdmin] Restart requested");
   prepareDisplayForRestart();
   delay(200);
   ESP.restart();
@@ -1551,17 +1555,13 @@ void WebAdminServer::handleOtaUpdate() {
   if (upload.status == UPLOAD_FILE_START) {
     resetOtaUploadState();
     g_ota_upload_state.upload_started = true;
-    g_ota_upload_state.upload_total_bytes = upload.totalSize;
+    g_ota_upload_state.upload_total_bytes = parseOtaExpectedSize(server);
+    g_ota_upload_state.install_total_bytes = g_ota_upload_state.upload_total_bytes;
 
     if (Update.isRunning()) {
       Update.abort();
     }
     Update.clearError();
-
-    if (g_ota_install_task || g_ota_upload_state.install_task_running) {
-      g_ota_upload_state.error = "Another OTA update is already running";
-      return;
-    }
 
     if (!upload.filename.length()) {
       g_ota_upload_state.error = "No firmware file received";
@@ -1575,29 +1575,17 @@ void WebAdminServer::handleOtaUpdate() {
       g_ota_upload_state.error = "Please upload the update.bin, not the factory.bin";
       return;
     }
-    if (!storageReady()) {
-      g_ota_upload_state.error = "microSD card not available";
-      return;
-    }
-    if (storageFS().exists(kOtaUploadPath)) {
-      storageFS().remove(kOtaUploadPath);
-    }
-    g_ota_upload_file = storageFS().open(kOtaUploadPath, FILE_WRITE);
-    if (!g_ota_upload_file) {
-      g_ota_upload_state.error = "Could not create staged OTA file";
-      return;
-    }
-
-    g_ota_upload_state.file_received = true;
     Serial.printf("[OTA] Upload started: %s\n", upload.filename.c_str());
     return;
   }
 
-  if (g_ota_upload_state.error.length() > 0 || !g_ota_upload_state.file_received) {
+  if (g_ota_upload_state.error.length() > 0 || !g_ota_upload_state.upload_started) {
     return;
   }
 
   if (upload.status == UPLOAD_FILE_WRITE) {
+    size_t buffered_copy_len = 0;
+
     if (g_ota_upload_state.buffered_len < sizeof(g_ota_upload_state.buffered_bytes)) {
       const size_t remaining = sizeof(g_ota_upload_state.buffered_bytes) - g_ota_upload_state.buffered_len;
       const size_t copy_len = std::min(remaining, static_cast<size_t>(upload.currentSize));
@@ -1605,6 +1593,7 @@ void WebAdminServer::handleOtaUpdate() {
              upload.buf,
              copy_len);
       g_ota_upload_state.buffered_len += copy_len;
+      buffered_copy_len = copy_len;
     }
 
     if (!g_ota_upload_state.image_validated) {
@@ -1626,37 +1615,78 @@ void WebAdminServer::handleOtaUpdate() {
           return;
         }
         g_ota_upload_state.image_validated = true;
+        if (!beginDirectOtaInstall()) {
+          return;
+        }
+        if (!writeDirectOtaChunk(g_ota_upload_state.buffered_bytes, g_ota_upload_state.buffered_len)) {
+          return;
+        }
+        g_ota_upload_state.buffered_len = 0;
+        if (static_cast<size_t>(upload.currentSize) > buffered_copy_len) {
+          const size_t remaining_in_chunk = static_cast<size_t>(upload.currentSize) - buffered_copy_len;
+          if (!writeDirectOtaChunk(upload.buf + buffered_copy_len, remaining_in_chunk)) {
+            return;
+          }
+        }
+        return;
       } else if (g_ota_upload_state.buffered_len >= firmware_meta::kDeviceDescriptorImageBytes) {
         g_ota_upload_state.error = "Firmware metadata missing or invalid";
         return;
       }
+      return;
     }
 
-    if (!g_ota_upload_file || g_ota_upload_file.write(upload.buf, upload.currentSize) != upload.currentSize) {
-      g_ota_upload_state.error = "Could not write staged OTA file";
-      return;
+    if (g_ota_upload_state.image_validated) {
+      if (!writeDirectOtaChunk(upload.buf, upload.currentSize)) {
+        return;
+      }
     }
     return;
   }
 
   if (upload.status == UPLOAD_FILE_ABORTED) {
     g_ota_upload_state.error = "OTA upload aborted";
-    if (g_ota_upload_file) g_ota_upload_file.close();
-    if (storageFS().exists(kOtaUploadPath)) storageFS().remove(kOtaUploadPath);
+    if (Update.isRunning()) {
+      Update.abort();
+    }
+    if (g_ota_upload_state.install_started) {
+      restoreDisplayAfterOtaFailure();
+      g_ota_upload_state.install_started = false;
+    }
     return;
   }
 
   if (upload.status == UPLOAD_FILE_END) {
-    if (g_ota_upload_file) {
-      g_ota_upload_file.close();
+    if (upload.totalSize > 0) {
+      g_ota_upload_state.upload_total_bytes = upload.totalSize;
+      g_ota_upload_state.install_total_bytes = upload.totalSize;
     }
     if (!g_ota_upload_state.image_validated) {
       g_ota_upload_state.error = "Firmware metadata missing or incomplete";
-      if (storageFS().exists(kOtaUploadPath)) storageFS().remove(kOtaUploadPath);
       return;
     }
+    if (!g_ota_upload_state.install_started) {
+      g_ota_upload_state.error = "OTA install did not start";
+      return;
+    }
+
     g_ota_upload_state.upload_success = true;
     Serial.printf("[OTA] Upload finished: %s (%u bytes)\n", upload.filename.c_str(), upload.totalSize);
+
+    if (!Update.end(true)) {
+      Update.abort();
+      Serial.printf("[OTA] Install failed: Update.end() -> %s\n", Update.errorString());
+      g_ota_upload_state.error = String("OTA finalize failed: ") + Update.errorString();
+      g_ota_upload_state.install_started = false;
+      restoreDisplayAfterOtaFailure();
+      return;
+    }
+
+    g_ota_upload_state.install_written_bytes = g_ota_upload_state.install_total_bytes;
+    g_ota_upload_state.install_success = true;
+    g_ota_upload_state.restart_pending = true;
+    g_ota_upload_state.restart_at_ms = millis() + 1200;
+    Serial.println("[OTA] Install finished successfully, restarting device...");
   }
 }
 
@@ -1670,16 +1700,14 @@ void WebAdminServer::handleOtaUploadDone() {
     String json = "{\"success\":false,\"error\":\"";
     appendJsonEscaped(json, g_ota_upload_state.error);
     json += "\"}";
-    if (storageFS().exists(kOtaUploadPath)) storageFS().remove(kOtaUploadPath);
     resetOtaUploadState();
     server.send(500, "application/json", json);
     return;
   }
 
-  if (!g_ota_upload_state.upload_success) {
-    if (storageFS().exists(kOtaUploadPath)) storageFS().remove(kOtaUploadPath);
+  if (!g_ota_upload_state.upload_success || !g_ota_upload_state.install_success) {
     resetOtaUploadState();
-    server.send(500, "application/json", "{\"success\":false,\"error\":\"OTA upload failed\"}");
+    server.send(500, "application/json", "{\"success\":false,\"error\":\"OTA update failed\"}");
     return;
   }
 
@@ -1688,32 +1716,7 @@ void WebAdminServer::handleOtaUploadDone() {
 }
 
 void WebAdminServer::handleStartOtaInstall() {
-  if (g_ota_install_task || g_ota_upload_state.install_task_running) {
-    server.send(409, "application/json", "{\"success\":false,\"error\":\"OTA install already running\"}");
-    return;
-  }
-  if (!g_ota_upload_state.upload_success || !storageFS().exists(kOtaUploadPath)) {
-    server.send(400, "application/json", "{\"success\":false,\"error\":\"No staged OTA firmware available\"}");
-    return;
-  }
-
-  g_ota_upload_state.error = "";
-  g_ota_upload_state.install_started = true;
-  g_ota_upload_state.install_success = false;
-  g_ota_upload_state.install_task_running = true;
-  g_ota_upload_state.restart_pending = false;
-  g_ota_upload_state.install_total_bytes = 0;
-  g_ota_upload_state.install_written_bytes = 0;
-
-  if (xTaskCreatePinnedToCore(otaInstallTask, "otaInstall", 8192, nullptr, 1, &g_ota_install_task, ARDUINO_RUNNING_CORE) != pdPASS) {
-    g_ota_upload_state.install_started = false;
-    g_ota_upload_state.install_task_running = false;
-    g_ota_install_task = nullptr;
-    server.send(500, "application/json", "{\"success\":false,\"error\":\"Could not start OTA install task\"}");
-    return;
-  }
-
-  server.send(202, "application/json", "{\"success\":true}");
+  server.send(410, "application/json", "{\"success\":false,\"error\":\"OTA install starts automatically during upload\"}");
 }
 
 void WebAdminServer::handleGetOtaStatus() {
@@ -1729,7 +1732,7 @@ void WebAdminServer::handleGetOtaStatus() {
   String json = "{\"success\":true,\"upload_ready\":";
   json += g_ota_upload_state.upload_success ? "true" : "false";
   json += ",\"installing\":";
-  json += g_ota_upload_state.install_task_running ? "true" : "false";
+  json += (g_ota_upload_state.install_started && !g_ota_upload_state.install_success && g_ota_upload_state.error.length() == 0) ? "true" : "false";
   json += ",\"install_started\":";
   json += g_ota_upload_state.install_started ? "true" : "false";
   json += ",\"install_success\":";
@@ -1750,6 +1753,18 @@ bool webAdminOtaInProgress() {
   return g_ota_upload_state.install_started &&
          g_ota_upload_state.error.length() == 0 &&
          (!g_ota_upload_state.install_success || g_ota_upload_state.restart_pending);
+}
+
+void webAdminServiceOta() {
+  if (!g_ota_upload_state.restart_pending || g_ota_upload_state.restart_at_ms == 0) {
+    return;
+  }
+  if ((int32_t)(millis() - g_ota_upload_state.restart_at_ms) < 0) {
+    return;
+  }
+  prepareDisplayForRestart();
+  delay(50);
+  ESP.restart();
 }
 
 void WebAdminServer::handleCreateScreenshot() {

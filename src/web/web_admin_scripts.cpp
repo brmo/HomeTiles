@@ -205,41 +205,6 @@ void appendAdminScripts(String& html) {
       window.setTimeout(tryReload, 2500);
     };
 
-    const startOtaInstall = async () => {
-      const res = await fetch('/api/ota/install', { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || t('otaFailed'));
-      }
-    };
-
-    const pollOtaInstall = async () => {
-      while (true) {
-        const res = await fetch('/api/ota/status?ts=' + Date.now(), {
-          method: 'GET',
-          cache: 'no-store'
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.success) {
-          throw new Error(data.error || t('otaFailed'));
-        }
-        if (data.error) {
-          throw new Error(data.error);
-        }
-        const percent = Number.isFinite(Number(data.percent)) ? Number(data.percent) : 0;
-        setOtaUi(t('otaInstalling') + ' ' + percent + '%', 'busy', '', percent);
-        if (data.install_success) {
-          const message = t('otaSuccess');
-          setOtaUi(message, 'done', 'success', 100);
-          showNotification(message);
-          if (statusEl) statusEl.textContent = message + ' ' + t('otaReconnecting');
-          waitForDeviceReload();
-          return;
-        }
-        await new Promise(resolve => window.setTimeout(resolve, 250));
-      }
-    };
-
     if (button) {
       if (!button.dataset.defaultLabel) button.dataset.defaultLabel = button.textContent;
       button.disabled = true;
@@ -254,7 +219,7 @@ void appendAdminScripts(String& html) {
     formData.append('firmware', file);
 
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', '/api/ota/upload', true);
+    xhr.open('POST', '/api/ota/upload?size=' + encodeURIComponent(String(file.size || 0)), true);
 
     xhr.upload.onprogress = (event) => {
       if (!event.lengthComputable) return;
@@ -262,9 +227,11 @@ void appendAdminScripts(String& html) {
       setOtaUi(t('otaUploading') + ' ' + percent + '%', 'busy', '', percent);
     };
 
-    xhr.upload.onload = () => {};
+    xhr.upload.onload = () => {
+      setOtaUi(t('otaInstalling'), 'busy', '', null);
+    };
 
-    xhr.onload = async () => {
+    xhr.onload = () => {
       let data = {};
       try {
         data = JSON.parse(xhr.responseText || '{}');
@@ -283,24 +250,13 @@ void appendAdminScripts(String& html) {
         return;
       }
 
-      try {
-        setOtaUi(t('otaInstalling') + ' 0%', 'busy', '', 0);
-        await startOtaInstall();
-        await pollOtaInstall();
-        input.value = '';
-        updateOtaFileName(input);
-      } catch (err) {
-        const message = err?.message || t('otaFailed');
-        setOtaUi(message, 'idle', 'error');
-        showNotification(message, false);
-        if (button) {
-          button.disabled = false;
-          button.textContent = button.dataset.defaultLabel || 'Update';
-        }
-        if (chooseBtn) chooseBtn.disabled = false;
-        input.disabled = false;
-        return;
-      }
+      const message = t('otaSuccess');
+      setOtaUi(message, 'done', 'success', 100);
+      showNotification(message);
+      if (statusEl) statusEl.textContent = message + ' ' + t('otaReconnecting');
+      input.value = '';
+      updateOtaFileName(input);
+      waitForDeviceReload();
     };
 
     xhr.onerror = () => {

@@ -59,8 +59,11 @@ void WebAdminServer::stop() {
 void WebAdminServer::handle() {
   if (!running) return;
   server.handleClient();
+  webAdminServiceOta();
 }
 
 void WebAdminServer::handleRoot() {
+  server.sendHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+  server.sendHeader("Pragma", "no-cache");
   server.send(200, "text/html", getAdminPage());
 }
