@@ -65,6 +65,10 @@ void appendAdminScripts(String& html) {
   appendJsEntry("screenshotCreating", tr.js_screenshot_creating);
   appendJsEntry("screenshotSaved", tr.js_screenshot_saved);
   appendJsEntry("screenshotFailed", tr.js_screenshot_failed);
+  appendJsEntry("otaSelectFile", tr.js_ota_select_file);
+  appendJsEntry("otaUploading", tr.js_ota_uploading);
+  appendJsEntry("otaSuccess", tr.js_ota_success);
+  appendJsEntry("otaFailed", tr.js_ota_failed);
   html += R"html(  };
   function t(key) {
     return Object.prototype.hasOwnProperty.call(APP_I18N, key) ? APP_I18N[key] : key;
@@ -126,6 +130,44 @@ void appendAdminScripts(String& html) {
       link.remove();
     } catch (err) {
       showNotification(err?.message || t('screenshotFailed'), false);
+    }
+  }
+
+  async function uploadOtaFirmware() {
+    const input = document.getElementById('ota_file');
+    const button = document.getElementById('ota_upload_btn');
+    if (!input || !input.files || !input.files.length) {
+      showNotification(t('otaSelectFile'), false);
+      return;
+    }
+
+    const file = input.files[0];
+    if (!file || !String(file.name || '').toLowerCase().endsWith('.bin')) {
+      showNotification(t('otaSelectFile'), false);
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('firmware', file);
+
+    if (button) button.disabled = true;
+    showNotification(t('otaUploading'));
+
+    try {
+      const res = await fetch('/api/ota', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || t('otaFailed'));
+      }
+      showNotification(data.message || t('otaSuccess'));
+      input.value = '';
+    } catch (err) {
+      showNotification(err?.message || t('otaFailed'), false);
+    } finally {
+      if (button) button.disabled = false;
     }
   }
 

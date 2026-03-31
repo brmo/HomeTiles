@@ -42,8 +42,13 @@ static const Strings kStringsDe = {
     "MQTT",
     "Lokalisierung",
     "Screenshot",
+    "Firmware Update",
     "Screenshot erstellen & herunterladen",
     "Speichert /ui_screenshot.bmp auf der microSD-Karte. Die vorhandene Datei wird überschrieben.",
+    "Firmware-Datei",
+    "Aktuelle Version",
+    "Update hochladen & installieren",
+    "Hier nur die update.bin hochladen. Die factory.bin ist nur für den ersten Flash gedacht.",
 
     "WiFi Status",
     "Verbunden",
@@ -194,7 +199,11 @@ static const Strings kStringsDe = {
     "Netzwerkfehler beim Verschieben",
     "Screenshot wird erstellt...",
     "Screenshot gespeichert & Download gestartet!",
-    "Screenshot fehlgeschlagen"};
+    "Screenshot fehlgeschlagen",
+    "Bitte zuerst eine update.bin auswählen",
+    "Firmware wird hochgeladen...",
+    "Update erfolgreich installiert. Das Gerät startet jetzt neu.",
+    "Firmware-Update fehlgeschlagen"};
 
 static const Strings kStringsEn = {
     "en",
@@ -236,8 +245,13 @@ static const Strings kStringsEn = {
     "MQTT",
     "Localization",
     "Screenshot",
+    "Firmware Update",
     "Create & Download Screenshot",
     "Saves /ui_screenshot.bmp to the microSD card. The existing file is overwritten.",
+    "Firmware file",
+    "Current version",
+    "Upload & Install Update",
+    "Upload only the update.bin here. The factory.bin is only for the first flash.",
 
     "WiFi Status",
     "Connected",
@@ -388,7 +402,11 @@ static const Strings kStringsEn = {
     "Network error while moving",
     "Creating screenshot...",
     "Screenshot saved & download started!",
-    "Screenshot failed"};
+    "Screenshot failed",
+    "Please select an update.bin first",
+    "Uploading firmware update...",
+    "Update installed successfully. The device is restarting now.",
+    "Firmware update failed"};
 
 const char* normalize_language_code(const char* language_code) {
   if (!language_code || !language_code[0]) return kStringsEn.code;

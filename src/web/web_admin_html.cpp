@@ -13,6 +13,7 @@
 #include "src/tiles/tile_config.h"
 #include "src/types/types_registry.h"
 #include "src/core/device_entities.h"
+#include "src/core/firmware_version.h"
 #include "src/core/i18n.h"
 #include "src/devices/device.h"
 #include <cstring>
@@ -824,6 +825,33 @@ String WebAdminServer::getAdminPage() {
                 </div>
                 <div class="settings-note">)html";
   html += tr.screenshot_saved_note;
+  html += R"html(</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <div class="section-title">)html";
+  html += tr.admin_settings_ota;
+  html += R"html(</div>
+            <div class="settings-grid">
+              <div class="settings-full">
+                <label for="ota_file">)html";
+  html += tr.ota_firmware_file;
+  html += R"html(</label>
+                <div class="settings-note"><strong>)html";
+  html += tr.ota_current_version;
+  html += R"html(:</strong> )html";
+  html += FW_VERSION;
+  html += R"html(</div>
+                <input type="file" id="ota_file" accept=".bin,application/octet-stream">
+                <div class="settings-actions">
+                  <button class="btn btn-secondary" type="button" id="ota_upload_btn" onclick="uploadOtaFirmware()">)html";
+  html += tr.ota_upload_install;
+  html += R"html(</button>
+                </div>
+                <div class="settings-note">)html";
+  html += tr.ota_update_note;
   html += R"html(</div>
               </div>
             </div>

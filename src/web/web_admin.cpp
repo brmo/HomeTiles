@@ -33,6 +33,9 @@ bool WebAdminServer::start() {
   server.on("/api/sd_icons", HTTP_GET, [this]() { this->handleGetSdIcons(); });
   server.on("/api/screenshot", HTTP_POST, [this]() { this->handleCreateScreenshot(); });
   server.on("/api/screenshot/download", HTTP_GET, [this]() { this->handleDownloadScreenshot(); });
+  server.on("/api/ota", HTTP_POST,
+    [this]() { this->handleOtaUpdateDone(); },
+    [this]() { this->handleOtaUpdate(); });
   server.on("/api/upload_icon", HTTP_POST,
     [this]() { this->handleUploadIconDone(); },
     [this]() { this->handleUploadIcon(); });

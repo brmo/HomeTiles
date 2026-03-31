@@ -45,8 +45,13 @@ struct Strings {
   const char* admin_settings_mqtt;
   const char* admin_settings_language;
   const char* admin_settings_screenshot;
+  const char* admin_settings_ota;
   const char* screenshot_create_download;
   const char* screenshot_saved_note;
+  const char* ota_firmware_file;
+  const char* ota_current_version;
+  const char* ota_upload_install;
+  const char* ota_update_note;
 
   const char* wifi_status;
   const char* wifi_connected;
@@ -198,6 +203,10 @@ struct Strings {
   const char* js_screenshot_creating;
   const char* js_screenshot_saved;
   const char* js_screenshot_failed;
+  const char* js_ota_select_file;
+  const char* js_ota_uploading;
+  const char* js_ota_success;
+  const char* js_ota_failed;
 };
 
 const Strings& strings(const char* language_code);

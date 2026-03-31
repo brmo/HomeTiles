@@ -49,6 +49,8 @@ public:
   void handleGetSdIcons();
   void handleCreateScreenshot();
   void handleDownloadScreenshot();
+  void handleOtaUpdate();
+  void handleOtaUpdateDone();
   void handleUploadIcon();
   void handleUploadIconDone();
 

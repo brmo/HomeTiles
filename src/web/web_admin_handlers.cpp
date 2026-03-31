@@ -13,6 +13,8 @@
 #include "src/types/types_registry.h"
 #include "src/devices/device.h"
 #include "src/core/display_manager.h"
+#include "src/core/firmware_metadata.h"
+#include <Update.h>
 #include <lvgl.h>
 #include <algorithm>
 #include <vector>
@@ -48,6 +50,33 @@ fs::FS& storageFS() {
 }
 
 constexpr const char* kScreenshotPath = "/ui_screenshot.bmp";
+
+struct OtaUploadState {
+  bool upload_started = false;
+  bool upload_success = false;
+  bool file_received = false;
+  bool image_validated = false;
+  size_t buffered_len = 0;
+  uint8_t buffered_bytes[4096] = {0};
+  String error;
+};
+
+OtaUploadState g_ota_upload_state;
+
+void resetOtaUploadState() {
+  g_ota_upload_state.upload_started = false;
+  g_ota_upload_state.upload_success = false;
+  g_ota_upload_state.file_received = false;
+  g_ota_upload_state.image_validated = false;
+  g_ota_upload_state.buffered_len = 0;
+  g_ota_upload_state.error = "";
+}
+
+bool otaFilenameLooksLikeFactory(const String& filename) {
+  String lowered = filename;
+  lowered.toLowerCase();
+  return lowered.indexOf("factory") >= 0;
+}
 
 bool writeU16LE(File& file, uint16_t value) {
   uint8_t bytes[2] = {
@@ -1395,6 +1424,155 @@ void WebAdminServer::handleUploadIconDone() {
   appendJsonEscaped(json, path);
   json += "\"}";
   server.send(200, "application/json", json);
+}
+
+void WebAdminServer::handleOtaUpdate() {
+  HTTPUpload& upload = server.upload();
+
+  if (upload.status == UPLOAD_FILE_START) {
+    resetOtaUploadState();
+    g_ota_upload_state.upload_started = true;
+
+    if (Update.isRunning()) {
+      Update.abort();
+    }
+    Update.clearError();
+
+    if (!upload.filename.length()) {
+      g_ota_upload_state.error = "No firmware file received";
+      return;
+    }
+    if (!endsWithIgnoreCase(upload.filename, ".bin")) {
+      g_ota_upload_state.error = "Please upload a .bin firmware file";
+      return;
+    }
+    if (otaFilenameLooksLikeFactory(upload.filename)) {
+      g_ota_upload_state.error = "Please upload the update.bin, not the factory.bin";
+      return;
+    }
+
+    g_ota_upload_state.file_received = true;
+    Serial.printf("[OTA] Upload started: %s\n", upload.filename.c_str());
+    return;
+  }
+
+  if (g_ota_upload_state.error.length() > 0 || !g_ota_upload_state.file_received) {
+    return;
+  }
+
+  if (upload.status == UPLOAD_FILE_WRITE) {
+    if (!g_ota_upload_state.image_validated) {
+      if (g_ota_upload_state.buffered_len + upload.currentSize > sizeof(g_ota_upload_state.buffered_bytes)) {
+        g_ota_upload_state.error = "Firmware header buffer too small";
+        return;
+      }
+
+      memcpy(g_ota_upload_state.buffered_bytes + g_ota_upload_state.buffered_len,
+             upload.buf,
+             upload.currentSize);
+      g_ota_upload_state.buffered_len += upload.currentSize;
+
+      firmware_meta::DeviceDescriptor incoming_desc{};
+      if (!firmware_meta::parseDeviceDescriptorFromImage(
+              g_ota_upload_state.buffered_bytes,
+              g_ota_upload_state.buffered_len,
+              incoming_desc)) {
+        if (g_ota_upload_state.buffered_len >= firmware_meta::kDeviceDescriptorImageBytes) {
+          g_ota_upload_state.error = "Firmware metadata missing or invalid";
+        }
+        return;
+      }
+
+      if (strcmp(incoming_desc.device_key, firmware_meta::currentDeviceKey()) != 0) {
+        g_ota_upload_state.error =
+            String("Firmware device mismatch: got ") + incoming_desc.display_name +
+            ", expected " + firmware_meta::currentDisplayName();
+        return;
+      }
+      if (strcmp(incoming_desc.project_key, firmware_meta::currentProjectKey()) != 0) {
+        g_ota_upload_state.error =
+            String("Firmware project mismatch: got ") + incoming_desc.project_key +
+            ", expected " + firmware_meta::currentProjectKey();
+        return;
+      }
+
+      const uint32_t max_sketch_space = (ESP.getFreeSketchSpace() - 0x1000u) & 0xFFFFF000u;
+      if (!Update.begin(max_sketch_space, U_FLASH)) {
+        g_ota_upload_state.error = String("OTA begin failed: ") + Update.errorString();
+        return;
+      }
+
+      if (Update.write(g_ota_upload_state.buffered_bytes, g_ota_upload_state.buffered_len) !=
+          g_ota_upload_state.buffered_len) {
+        g_ota_upload_state.error = String("OTA write failed: ") + Update.errorString();
+        Update.abort();
+        return;
+      }
+
+      g_ota_upload_state.image_validated = true;
+      g_ota_upload_state.buffered_len = 0;
+      return;
+    }
+
+    if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+      g_ota_upload_state.error = String("OTA write failed: ") + Update.errorString();
+      Update.abort();
+    }
+    return;
+  }
+
+  if (upload.status == UPLOAD_FILE_ABORTED) {
+    g_ota_upload_state.error = "OTA upload aborted";
+    Update.abort();
+    return;
+  }
+
+  if (upload.status == UPLOAD_FILE_END) {
+    if (!g_ota_upload_state.image_validated) {
+      g_ota_upload_state.error = "Firmware metadata missing or incomplete";
+      return;
+    }
+    if (!Update.end(true)) {
+      g_ota_upload_state.error = String("OTA finalize failed: ") + Update.errorString();
+      Update.abort();
+      return;
+    }
+    g_ota_upload_state.upload_success = true;
+    Serial.printf("[OTA] Upload finished: %s (%u bytes)\n", upload.filename.c_str(), upload.totalSize);
+  }
+}
+
+void WebAdminServer::handleOtaUpdateDone() {
+  const auto& tr = i18n::strings(configManager.getConfig().language);
+
+  if (!g_ota_upload_state.upload_started) {
+    server.send(400, "application/json", "{\"success\":false,\"error\":\"No OTA upload started\"}");
+    return;
+  }
+
+  if (g_ota_upload_state.error.length() > 0) {
+    String json = "{\"success\":false,\"error\":\"";
+    appendJsonEscaped(json, g_ota_upload_state.error);
+    json += "\"}";
+    resetOtaUploadState();
+    server.send(500, "application/json", json);
+    return;
+  }
+
+  if (!g_ota_upload_state.upload_success) {
+    resetOtaUploadState();
+    server.send(500, "application/json", "{\"success\":false,\"error\":\"OTA update failed\"}");
+    return;
+  }
+
+  String json = "{\"success\":true,\"message\":\"";
+  appendJsonEscaped(json, tr.js_ota_success);
+  json += "\"}";
+  resetOtaUploadState();
+  server.sendHeader("Connection", "close");
+  server.send(200, "application/json", json);
+  delay(250);
+  ESP.restart();
 }
 
 void WebAdminServer::handleCreateScreenshot() {
