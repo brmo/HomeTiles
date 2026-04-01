@@ -51,6 +51,12 @@ bool initSDCard();
 bool storageReady();
 fs::FS& storageFS();
 
+bool sdReady();
+fs::FS& sdFS();
+
+bool initLittleFS();
+void migrateStorageFromSD();
+
 uint8_t normalizeRotationQuarterTurns(uint8_t rotation);
 bool supportsQuarterTurnRotation();
 

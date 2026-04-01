@@ -88,6 +88,22 @@ fs::FS& storageFS() {
   return DeviceImpl::storageFS();
 }
 
+bool sdReady() {
+  return DeviceImpl::sdReady();
+}
+
+fs::FS& sdFS() {
+  return DeviceImpl::sdFS();
+}
+
+bool initLittleFS() {
+  return DeviceImpl::initLittleFS();
+}
+
+void migrateStorageFromSD() {
+  DeviceImpl::migrateStorageFromSD();
+}
+
 uint8_t normalizeRotationQuarterTurns(uint8_t rotation) {
   rotation &= 0x03;
   if (kRotationStepMode == RotationStepMode::FlipOnly) {

@@ -52,6 +52,14 @@ fs::FS& storageFS() {
   return Device::storageFS();
 }
 
+bool sdReady() {
+  return Device::sdReady();
+}
+
+fs::FS& sdFS() {
+  return Device::sdFS();
+}
+
 constexpr const char* kScreenshotPath = "/ui_screenshot.bmp";
 struct OtaUploadState {
   bool upload_started = false;
@@ -249,9 +257,9 @@ bool saveDrawBufferAsBmp(const lv_draw_buf_t* draw_buf, const String& path, Stri
     error = "Screenshot row buffer allocation failed";
     return false;
   }
-  if (storageFS().exists(path)) storageFS().remove(path);
+  if (sdFS().exists(path)) sdFS().remove(path);
 
-  File file = storageFS().open(path, FILE_WRITE);
+  File file = sdFS().open(path, FILE_WRITE);
   if (!file) {
     error = "Could not open screenshot file";
     return false;
@@ -277,7 +285,7 @@ bool saveDrawBufferAsBmp(const lv_draw_buf_t* draw_buf, const String& path, Stri
 
   if (!ok) {
     file.close();
-    storageFS().remove(path);
+    sdFS().remove(path);
     error = "Could not write BMP header";
     return false;
   }
@@ -301,7 +309,7 @@ bool saveDrawBufferAsBmp(const lv_draw_buf_t* draw_buf, const String& path, Stri
     const size_t write_len = row_bytes + row_padding;
     if (file.write(row_buf.get(), write_len) != write_len) {
       file.close();
-      storageFS().remove(path);
+      sdFS().remove(path);
       error = "Could not write BMP pixels";
       return false;
     }
@@ -402,8 +410,8 @@ bool blendArgb8888OverRgb565(lv_draw_buf_t* base,
 }
 
 bool createUiScreenshot(String& error) {
-  if (!storageReady()) {
-    error = "microSD card not available";
+  if (!sdReady()) {
+    error = "microSD card not available for screenshots";
     return false;
   }
 
@@ -1784,16 +1792,16 @@ void WebAdminServer::handleCreateScreenshot() {
 }
 
 void WebAdminServer::handleDownloadScreenshot() {
-  if (!storageReady()) {
-    server.send(503, "text/plain", "microSD card not available");
+  if (!sdReady()) {
+    server.send(503, "text/plain", "microSD card not available for screenshots");
     return;
   }
-  if (!storageFS().exists(kScreenshotPath)) {
+  if (!sdFS().exists(kScreenshotPath)) {
     server.send(404, "text/plain", "Screenshot not found");
     return;
   }
 
-  File file = storageFS().open(kScreenshotPath, FILE_READ);
+  File file = sdFS().open(kScreenshotPath, FILE_READ);
   if (!file) {
     server.send(500, "text/plain", "Could not open screenshot");
     return;

@@ -5,6 +5,7 @@
 #if defined(DEVICE_WAVESHARE_4B)
 
 #include <Arduino_GFX_Library.h>
+#include <LittleFS.h>
 #include <driver/gpio.h>
 #include <driver/ledc.h>
 
@@ -30,6 +31,7 @@ bool g_backlight_ready = false;
 bool g_sd_init_attempted = false;
 bool g_sd_available = false;
 uint32_t g_sd_retry_tick_ms = 0;
+bool g_littlefs_ready = false;
 
 void pulse_panel_reset() {
   if (display_cfg.lcd_rst < 0) {
@@ -349,11 +351,104 @@ bool DeviceWaveshare4B::initSDCard() {
 }
 
 bool DeviceWaveshare4B::storageReady() {
-  return initSDCard();
+  return g_littlefs_ready;
 }
 
 fs::FS& DeviceWaveshare4B::storageFS() {
+  return LittleFS;
+}
+
+bool DeviceWaveshare4B::sdReady() {
+  return initSDCard();
+}
+
+fs::FS& DeviceWaveshare4B::sdFS() {
   return WaveshareSDMMC;
+}
+
+bool DeviceWaveshare4B::initLittleFS() {
+  if (g_littlefs_ready) {
+    return true;
+  }
+  if (!LittleFS.begin(true, "/littlefs", 10, "spiffs")) {
+    Serial.println("[Device/Waveshare4B] LittleFS mount failed");
+    return false;
+  }
+  g_littlefs_ready = true;
+  Serial.printf("[Device/Waveshare4B] LittleFS ready, total=%u, used=%u\n",
+                static_cast<unsigned>(LittleFS.totalBytes()),
+                static_cast<unsigned>(LittleFS.usedBytes()));
+  return true;
+}
+
+static bool copyFile(fs::FS& srcFS, fs::FS& dstFS, const char* path) {
+  File src = srcFS.open(path, FILE_READ);
+  if (!src) {
+    return false;
+  }
+  File dst = dstFS.open(path, FILE_WRITE);
+  if (!dst) {
+    src.close();
+    return false;
+  }
+  uint8_t buf[512];
+  while (src.available()) {
+    const size_t n = src.read(buf, sizeof(buf));
+    if (n == 0) break;
+    dst.write(buf, n);
+  }
+  dst.close();
+  src.close();
+  return true;
+}
+
+static void copyDirectory(fs::FS& srcFS, fs::FS& dstFS, const char* dirPath) {
+  File dir = srcFS.open(dirPath);
+  if (!dir || !dir.isDirectory()) {
+    return;
+  }
+  dstFS.mkdir(dirPath);
+  File entry = dir.openNextFile();
+  while (entry) {
+    String fullPath = String(dirPath) + "/" + entry.name();
+    if (entry.isDirectory()) {
+      copyDirectory(srcFS, dstFS, fullPath.c_str());
+    } else {
+      copyFile(srcFS, dstFS, fullPath.c_str());
+      Serial.printf("[Storage] Migrated: %s (%u bytes)\n", fullPath.c_str(),
+                    static_cast<unsigned>(entry.size()));
+    }
+    entry = dir.openNextFile();
+  }
+}
+
+void DeviceWaveshare4B::migrateStorageFromSD() {
+  if (!g_littlefs_ready) {
+    return;
+  }
+  if (LittleFS.exists("/_migrated")) {
+    return;
+  }
+
+  LittleFS.mkdir("/_tile_grids");
+  LittleFS.mkdir("/_tile_links");
+  LittleFS.mkdir("/icons");
+
+  if (initSDCard()) {
+    Serial.println("[Storage] Migrating data from SD to LittleFS...");
+    copyDirectory(WaveshareSDMMC, LittleFS, "/_tile_grids");
+    copyDirectory(WaveshareSDMMC, LittleFS, "/_tile_links");
+    copyDirectory(WaveshareSDMMC, LittleFS, "/icons");
+    Serial.println("[Storage] Migration complete");
+  } else {
+    Serial.println("[Storage] No SD card, starting fresh");
+  }
+
+  File flag = LittleFS.open("/_migrated", FILE_WRITE);
+  if (flag) {
+    flag.print("1");
+    flag.close();
+  }
 }
 
 #endif  // defined(DEVICE_WAVESHARE_4B)

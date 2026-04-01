@@ -171,10 +171,26 @@ void setup() {
   Serial.println("[Setup] BoardHAL OK");
   Serial.flush();
 
-  // SD Card (SDMMC 4-bit)
-  Serial.println("[Setup] SD Card init (SDMMC)...");
+  // LittleFS (primary storage on flash)
+  Serial.println("[Setup] LittleFS init...");
+  Serial.flush();
+  if (!Device::initLittleFS()) {
+    Serial.println("[Setup] LittleFS FAILED!");
+    while(1) delay(1000);
+  }
+  Serial.println("[Setup] LittleFS OK");
+  Serial.flush();
+
+  // SD Card (optional, for screenshots)
+  Serial.println("[Setup] SD Card init...");
   Serial.flush();
   BoardHAL::initSDCard();
+  Serial.flush();
+
+  // Migrate tile data from SD to LittleFS on first boot
+  Serial.println("[Setup] Storage migration check...");
+  Serial.flush();
+  Device::migrateStorageFromSD();
   Serial.flush();
 
   Serial.println("[Setup] displayManager.init()...");

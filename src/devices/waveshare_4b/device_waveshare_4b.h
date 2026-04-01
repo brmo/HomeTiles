@@ -50,4 +50,10 @@ bool initSDCard();
 bool storageReady();
 fs::FS& storageFS();
 
+bool sdReady();
+fs::FS& sdFS();
+
+bool initLittleFS();
+void migrateStorageFromSD();
+
 }  // namespace DeviceWaveshare4B

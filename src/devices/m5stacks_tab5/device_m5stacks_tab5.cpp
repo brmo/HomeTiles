@@ -4,6 +4,7 @@
 
 #if defined(DEVICE_M5STACKS_TAB5)
 
+#include <LittleFS.h>
 #include <M5Unified.h>
 #include <SD.h>
 #include <SPI.h>
@@ -24,6 +25,7 @@ bool g_display_ready = false;
 bool g_sd_init_attempted = false;
 bool g_sd_available = false;
 uint32_t g_sd_retry_tick_ms = 0;
+bool g_littlefs_ready = false;
 uint8_t g_brightness = 150;
 uint8_t g_rotation = DeviceM5StacksTab5::kProfile.rotation_default;
 
@@ -291,11 +293,104 @@ bool DeviceM5StacksTab5::initSDCard() {
 }
 
 bool DeviceM5StacksTab5::storageReady() {
-  return initSDCard();
+  return g_littlefs_ready;
 }
 
 fs::FS& DeviceM5StacksTab5::storageFS() {
+  return LittleFS;
+}
+
+bool DeviceM5StacksTab5::sdReady() {
+  return initSDCard();
+}
+
+fs::FS& DeviceM5StacksTab5::sdFS() {
   return SD;
+}
+
+bool DeviceM5StacksTab5::initLittleFS() {
+  if (g_littlefs_ready) {
+    return true;
+  }
+  if (!LittleFS.begin(true, "/littlefs", 10, "spiffs")) {
+    Serial.println("[Device/M5StacksTab5] LittleFS mount failed");
+    return false;
+  }
+  g_littlefs_ready = true;
+  Serial.printf("[Device/M5StacksTab5] LittleFS ready, total=%u, used=%u\n",
+                static_cast<unsigned>(LittleFS.totalBytes()),
+                static_cast<unsigned>(LittleFS.usedBytes()));
+  return true;
+}
+
+static bool copyFile(fs::FS& srcFS, fs::FS& dstFS, const char* path) {
+  File src = srcFS.open(path, FILE_READ);
+  if (!src) {
+    return false;
+  }
+  File dst = dstFS.open(path, FILE_WRITE);
+  if (!dst) {
+    src.close();
+    return false;
+  }
+  uint8_t buf[512];
+  while (src.available()) {
+    const size_t n = src.read(buf, sizeof(buf));
+    if (n == 0) break;
+    dst.write(buf, n);
+  }
+  dst.close();
+  src.close();
+  return true;
+}
+
+static void copyDirectory(fs::FS& srcFS, fs::FS& dstFS, const char* dirPath) {
+  File dir = srcFS.open(dirPath);
+  if (!dir || !dir.isDirectory()) {
+    return;
+  }
+  dstFS.mkdir(dirPath);
+  File entry = dir.openNextFile();
+  while (entry) {
+    String fullPath = String(dirPath) + "/" + entry.name();
+    if (entry.isDirectory()) {
+      copyDirectory(srcFS, dstFS, fullPath.c_str());
+    } else {
+      copyFile(srcFS, dstFS, fullPath.c_str());
+      Serial.printf("[Storage] Migrated: %s (%u bytes)\n", fullPath.c_str(),
+                    static_cast<unsigned>(entry.size()));
+    }
+    entry = dir.openNextFile();
+  }
+}
+
+void DeviceM5StacksTab5::migrateStorageFromSD() {
+  if (!g_littlefs_ready) {
+    return;
+  }
+  if (LittleFS.exists("/_migrated")) {
+    return;
+  }
+
+  LittleFS.mkdir("/_tile_grids");
+  LittleFS.mkdir("/_tile_links");
+  LittleFS.mkdir("/icons");
+
+  if (initSDCard()) {
+    Serial.println("[Storage] Migrating data from SD to LittleFS...");
+    copyDirectory(SD, LittleFS, "/_tile_grids");
+    copyDirectory(SD, LittleFS, "/_tile_links");
+    copyDirectory(SD, LittleFS, "/icons");
+    Serial.println("[Storage] Migration complete");
+  } else {
+    Serial.println("[Storage] No SD card, starting fresh");
+  }
+
+  File flag = LittleFS.open("/_migrated", FILE_WRITE);
+  if (flag) {
+    flag.print("1");
+    flag.close();
+  }
 }
 
 #endif

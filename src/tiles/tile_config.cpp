@@ -283,24 +283,24 @@ static fs::FS& storageFS() {
   return Device::storageFS();
 }
 
-static bool sdReady() {
+static bool storageReady() {
   return Device::storageReady();
 }
 
 static bool ensureImagePathDir() {
-  if (!sdReady()) return false;
+  if (!storageReady()) return false;
   if (storageFS().exists(kImagePathDir)) return true;
   return storageFS().mkdir(kImagePathDir);
 }
 
 static bool ensureTileGridDir() {
-  if (!sdReady()) return false;
+  if (!storageReady()) return false;
   if (storageFS().exists(kTileGridDir)) return true;
   return storageFS().mkdir(kTileGridDir);
 }
 
 static bool ensureIconDir() {
-  if (!sdReady()) return false;
+  if (!storageReady()) return false;
   if (storageFS().exists("/icons")) return true;
   return storageFS().mkdir("/icons");
 }
@@ -336,7 +336,7 @@ static String tileGridFileLegacy(const char* prefix) {
 }
 
 static bool writeGridSd(uint16_t folder_id, const PackedQuarterGridV7* packed, size_t count) {
-  if (!sdReady()) return false;
+  if (!storageReady()) return false;
   if (!ensureTileGridDir()) return false;
 
   String filePath = tileGridFile(folder_id);
@@ -355,7 +355,7 @@ static bool writeGridSd(uint16_t folder_id, const PackedQuarterGridV7* packed, s
   f.close();
 
   if (written != expected) {
-    Serial.printf("[TileConfig] SD short write: folder=%u written=%u expected=%u\n",
+    Serial.printf("[TileConfig] Storage short write: folder=%u written=%u expected=%u\n",
                   static_cast<unsigned>(folder_id),
                   static_cast<unsigned>(written),
                   static_cast<unsigned>(expected));
@@ -406,12 +406,12 @@ static bool readPackedGridFileV6(const String& filePath, PackedQuarterGridV6* pa
 }
 
 static bool readGridSd(uint16_t folder_id, PackedQuarterGridV7* packed, size_t count) {
-  if (!sdReady()) return false;
+  if (!storageReady()) return false;
   return readPackedGridFileV7(tileGridFile(folder_id), packed, count);
 }
 
 static bool readGridSdV6(uint16_t folder_id, PackedQuarterGridV6* packed, size_t count) {
-  if (!sdReady()) return false;
+  if (!storageReady()) return false;
   return readPackedGridFileV6(tileGridFileLegacyV6(folder_id), packed, count);
 }
 
@@ -432,7 +432,7 @@ static bool writeImagePathSd(uint16_t folder_id, size_t index, const String& pat
 
 static bool readImagePathSd(uint16_t folder_id, size_t index, String& out) {
   out = "";
-  if (!sdReady()) return false;
+  if (!storageReady()) return false;
   String filePath = imagePathFile(folder_id, index);
   if (!storageFS().exists(filePath) && folder_id == 0) {
     filePath = imagePathFileLegacy("tab0", index);
@@ -518,10 +518,10 @@ static void packTile(const Tile& in, PackedTileV7& out) {
     copyString(in.scene_alias, out.scene_alias, sizeof(out.scene_alias));
   }
   if (in.type == TILE_IMAGE) {
-    // TILE_IMAGE speichert image_path nicht im NVS (liegt auf SD).
+    // TILE_IMAGE speichert image_path nicht im NVS (liegt im dateibasierten Storage).
     out.sensor_entity[0] = '\0';
     out.key_macro[0] = '\0';
-    Serial.printf("[TileConfig] packTile - TILE_IMAGE: image_path='%s' (SD)\n",
+    Serial.printf("[TileConfig] packTile - TILE_IMAGE: image_path='%s' (storage)\n",
                   in.image_path.c_str());
   } else {
     copyString(in.sensor_entity, out.sensor_entity, sizeof(out.sensor_entity));
@@ -537,21 +537,21 @@ static bool looksLikeImagePath(const String& value) {
 }
 
 static void applyImagePathsFromSd(uint16_t folder_id, TileGridConfig& grid) {
-  const bool have_sd = sdReady();
+  const bool have_storage = storageReady();
   for (size_t i = 0; i < TILES_PER_GRID; ++i) {
     Tile& tile = grid.tiles[i];
     if (tile.type != TILE_IMAGE && tile.type != TILE_SCENE) continue;
     String sd_path;
-    if (have_sd && readImagePathSd(folder_id, i, sd_path)) {
+    if (have_storage && readImagePathSd(folder_id, i, sd_path)) {
       tile.image_path = sd_path;
       Serial.printf("[TileConfig] applyImagePaths folder=%u idx=%u type=%d -> '%s'\n",
         folder_id, (unsigned)i, tile.type, sd_path.c_str());
       continue;
     }
-    if (have_sd && tile.image_path.length() > 0) {
+    if (have_storage && tile.image_path.length() > 0) {
       writeImagePathSd(folder_id, i, tile.image_path);
     }
-    if (!have_sd) {
+    if (!have_storage) {
       tile.image_path = "";
     }
   }
@@ -1430,7 +1430,7 @@ bool TileConfig::loadGrid(const char* prefix, TileGridConfig& grid) {
   // Initialize all tiles to empty with default positions
   initGridDefaults(grid);
 
-  // Try SD storage first
+  // Try file-based storage first
   {
     PackedQuarterGridV6 packed_sd[QUARTERS_PER_GRID]{};
     if (readGridSd(prefix, packed_sd, QUARTERS_PER_GRID)) {
@@ -1440,7 +1440,7 @@ bool TileConfig::loadGrid(const char* prefix, TileGridConfig& grid) {
           unpackTileV6(packed_sd[q].tiles[i], grid.tiles[grid_idx]);
         }
       }
-      Serial.printf("[TileConfig] Grid '%s' geladen (SD v%u)\n",
+      Serial.printf("[TileConfig] Grid '%s' geladen (storage v%u)\n",
                     prefix, static_cast<unsigned>(packed_sd[0].version));
       applyImagePathsFromSd(prefix, grid);
       return true;
@@ -1611,13 +1611,13 @@ bool TileConfig::loadGrid(const char* prefix, TileGridConfig& grid) {
 }
 
 bool TileConfig::saveGrid(const char* prefix, const TileGridConfig& grid) {
-  // V6 stored on SD card (single file with 4 quarters)
-  if (!sdReady()) {
-    Serial.println("[TileConfig] WARN: SD fehlt, Grid kann nicht gespeichert werden");
+  // V6 stored in file-based storage (single file with 4 quarters)
+  if (!storageReady()) {
+    Serial.println("[TileConfig] WARN: Storage nicht verfuegbar, Grid kann nicht gespeichert werden");
     return false;
   }
 
-  Serial.printf("[TileConfig] Speichere Grid '%s' (SD, %u x %u bytes)\n",
+  Serial.printf("[TileConfig] Speichere Grid '%s' (storage, %u x %u bytes)\n",
                 prefix,
                 static_cast<unsigned>(QUARTERS_PER_GRID),
                 static_cast<unsigned>(sizeof(PackedQuarterGridV6)));
@@ -1630,10 +1630,10 @@ bool TileConfig::saveGrid(const char* prefix, const TileGridConfig& grid) {
     for (size_t i = 0; i < TILES_PER_QUARTER; ++i) {
       size_t grid_idx = q * TILES_PER_QUARTER + i;
       if (grid.tiles[grid_idx].type == TILE_IMAGE || grid.tiles[grid_idx].type == TILE_SCENE) {
-        if (!sdReady()) {
-          Serial.println("[TileConfig] WARN: SD fehlt, image_path wird nicht gespeichert");
+        if (!storageReady()) {
+          Serial.println("[TileConfig] WARN: Storage nicht verfuegbar, image_path wird nicht gespeichert");
         } else if (!writeImagePathSd(prefix, grid_idx, grid.tiles[grid_idx].image_path)) {
-          Serial.println("[TileConfig] WARN: image_path konnte nicht auf SD gespeichert werden");
+          Serial.println("[TileConfig] WARN: image_path konnte nicht im Storage gespeichert werden");
         }
       }
       packTile(grid.tiles[grid_idx], packed[q].tiles[i]);
@@ -1641,11 +1641,11 @@ bool TileConfig::saveGrid(const char* prefix, const TileGridConfig& grid) {
   }
 
   if (!writeGridSd(prefix, packed, QUARTERS_PER_GRID)) {
-    Serial.printf("[TileConfig] Fehler beim Speichern von Grid '%s' (SD write failed)\n", prefix);
+    Serial.printf("[TileConfig] Fehler beim Speichern von Grid '%s' (storage write failed)\n", prefix);
     return false;
   }
 
-  Serial.printf("[TileConfig] Grid '%s' gespeichert (SD, %u x %u bytes)\n",
+  Serial.printf("[TileConfig] Grid '%s' gespeichert (storage, %u x %u bytes)\n",
                 prefix,
                 static_cast<unsigned>(QUARTERS_PER_GRID),
                 static_cast<unsigned>(sizeof(PackedQuarterGridV6)));
@@ -1766,6 +1766,7 @@ static FolderEntry makeFolderEntry(uint16_t id, uint16_t parent_id, const String
 
 bool TileConfig::load() {
   folders.clear();
+  grid_cache.clear();
   bool folders_ok = loadFolders();
   bool had_root = folderExists(kRootFolderId);
   ensureRootFolder();
@@ -1773,15 +1774,41 @@ bool TileConfig::load() {
     saveFolders();
   }
 
+  // Pre-cache all folder grids in RAM
+  for (const auto& folder : folders) {
+    TileGridConfig grid;
+    if (loadGrid(folder.id, grid)) {
+      grid_cache[folder.id] = grid;
+    }
+  }
+  Serial.printf("[TileConfig] %u Grids im RAM gecacht\n",
+                static_cast<unsigned>(grid_cache.size()));
+
   active_folder_id = kRootFolderId;
+  auto it = grid_cache.find(kRootFolderId);
+  if (it != grid_cache.end()) {
+    active_grid = it->second;
+    return true;
+  }
   return loadGrid(active_folder_id, active_grid);
 }
 
 bool TileConfig::loadFolderGrid(uint16_t folder_id, TileGridConfig& out) {
   if (!folderExists(folder_id)) return false;
+  auto it = grid_cache.find(folder_id);
+  if (it != grid_cache.end()) {
+    out = it->second;
+    if (folder_id == active_folder_id) {
+      active_grid = out;
+    }
+    return true;
+  }
   bool ok = loadGrid(folder_id, out);
-  if (folder_id == active_folder_id) {
-    active_grid = out;
+  if (ok) {
+    grid_cache[folder_id] = out;
+    if (folder_id == active_folder_id) {
+      active_grid = out;
+    }
   }
   return ok;
 }
@@ -1789,14 +1816,24 @@ bool TileConfig::loadFolderGrid(uint16_t folder_id, TileGridConfig& out) {
 bool TileConfig::saveFolderGrid(uint16_t folder_id, const TileGridConfig& grid) {
   if (!folderExists(folder_id)) return false;
   bool ok = saveGrid(folder_id, grid);
-  if (ok && folder_id == active_folder_id) {
-    active_grid = grid;
+  if (ok) {
+    grid_cache[folder_id] = grid;
+    if (folder_id == active_folder_id) {
+      active_grid = grid;
+    }
   }
   return ok;
 }
 
 bool TileConfig::setActiveFolder(uint16_t folder_id) {
   if (!folderExists(folder_id)) return false;
+  auto it = grid_cache.find(folder_id);
+  if (it != grid_cache.end()) {
+    active_folder_id = folder_id;
+    active_grid = it->second;
+    return true;
+  }
+  // Fallback: not in cache, load from storage
   const uint16_t previous_folder_id = active_folder_id;
   if (!loadGrid(folder_id, active_grid)) {
     if (previous_folder_id != folder_id && folderExists(previous_folder_id)) {
@@ -1805,6 +1842,7 @@ bool TileConfig::setActiveFolder(uint16_t folder_id) {
     return false;
   }
   active_folder_id = folder_id;
+  grid_cache[folder_id] = active_grid;
   return true;
 }
 
@@ -1847,8 +1885,8 @@ void TileConfig::ensureRootFolder() {
 }
 
 bool TileConfig::loadFolders() {
-  if (!sdReady()) {
-    Serial.println("[TileConfig] WARN: SD fehlt, Ordner-Liste kann nicht geladen werden");
+  if (!storageReady()) {
+    Serial.println("[TileConfig] WARN: Storage nicht verfuegbar, Ordner-Liste kann nicht geladen werden");
     return false;
   }
   if (!storageFS().exists(kFolderIndexFile)) {
@@ -1888,8 +1926,8 @@ bool TileConfig::loadFolders() {
 }
 
 bool TileConfig::saveFolders() const {
-  if (!sdReady()) {
-    Serial.println("[TileConfig] WARN: SD fehlt, Ordner-Liste kann nicht gespeichert werden");
+  if (!storageReady()) {
+    Serial.println("[TileConfig] WARN: Storage nicht verfuegbar, Ordner-Liste kann nicht gespeichert werden");
     return false;
   }
   if (!ensureTileGridDir()) return false;
@@ -1925,7 +1963,7 @@ bool TileConfig::saveFolders() const {
 }
 
 bool TileConfig::createFolder(uint16_t parent_id, const String& name, const String& icon, uint16_t& out_id) {
-  if (!sdReady()) return false;
+  if (!storageReady()) return false;
   if (!folderExists(parent_id)) parent_id = kRootFolderId;
   uint16_t next_id = nextFolderId();
   if (next_id == kInvalidFolderId) return false;
@@ -1943,6 +1981,7 @@ bool TileConfig::createFolder(uint16_t parent_id, const String& name, const Stri
     return false;
   }
 
+  grid_cache[next_id] = *grid;
   out_id = next_id;
   return true;
 }
@@ -1965,8 +2004,8 @@ bool TileConfig::updateFolder(uint16_t folder_id, const String& name, const Stri
 bool TileConfig::deleteFolder(uint16_t folder_id) {
   if (folder_id == kRootFolderId) return false;
   if (!folderExists(folder_id)) return false;
-  if (!sdReady()) {
-    Serial.println("[TileConfig] WARN: SD fehlt, Ordner kann nicht geloescht werden");
+  if (!storageReady()) {
+    Serial.println("[TileConfig] WARN: Storage nicht verfuegbar, Ordner kann nicht geloescht werden");
     return false;
   }
 
@@ -1990,6 +2029,7 @@ bool TileConfig::deleteFolder(uint16_t folder_id) {
   }
 
   for (uint16_t id : to_delete) {
+    grid_cache.erase(id);
     String grid_path = tileGridFile(id);
     if (storageFS().exists(grid_path)) storageFS().remove(grid_path);
     for (size_t i = 0; i < TILES_PER_GRID; ++i) {
@@ -2024,14 +2064,14 @@ bool TileConfig::loadGrid(uint16_t folder_id, TileGridConfig& grid) {
         unpackTileV7(packed_v7[q].tiles[i], grid.tiles[grid_idx]);
       }
     }
-    Serial.printf("[TileConfig] Grid %u geladen (SD v%u)\n",
+    Serial.printf("[TileConfig] Grid %u geladen (storage v%u)\n",
                   static_cast<unsigned>(folder_id),
                   static_cast<unsigned>(packed_v7[0].version));
   } else {
     static PackedQuarterGridV6 packed_v6[QUARTERS_PER_GRID];
     memset(packed_v6, 0, sizeof(packed_v6));
     if (readGridSdV6(folder_id, packed_v6, QUARTERS_PER_GRID) ||
-        (folder_id == kRootFolderId && sdReady() &&
+        (folder_id == kRootFolderId && storageReady() &&
          readPackedGridFileV6(tileGridFileLegacy("tab0"), packed_v6, QUARTERS_PER_GRID))) {
       ok = true;
       needs_migration_save = true;
@@ -2041,7 +2081,7 @@ bool TileConfig::loadGrid(uint16_t folder_id, TileGridConfig& grid) {
           unpackTileV6(packed_v6[q].tiles[i], grid.tiles[grid_idx]);
         }
       }
-      Serial.printf("[TileConfig] Grid %u geladen (SD v6)\n",
+      Serial.printf("[TileConfig] Grid %u geladen (storage v6)\n",
                     static_cast<unsigned>(folder_id));
     }
   }
@@ -2054,7 +2094,7 @@ bool TileConfig::loadGrid(uint16_t folder_id, TileGridConfig& grid) {
   }
 
   if (!ok) {
-    Serial.printf("[TileConfig] WARN: Grid %u konnte nicht geladen werden, SD-Inhalt bleibt unveraendert\n",
+    Serial.printf("[TileConfig] WARN: Grid %u konnte nicht geladen werden, Storage-Inhalt bleibt unveraendert\n",
                   static_cast<unsigned>(folder_id));
     return false;
   }
@@ -2076,8 +2116,8 @@ bool TileConfig::loadGrid(uint16_t folder_id, TileGridConfig& grid) {
 }
 
 bool TileConfig::saveGrid(uint16_t folder_id, const TileGridConfig& grid) {
-  if (!sdReady()) {
-    Serial.println("[TileConfig] WARN: SD fehlt, Grid kann nicht gespeichert werden");
+  if (!storageReady()) {
+    Serial.println("[TileConfig] WARN: Storage nicht verfuegbar, Grid kann nicht gespeichert werden");
     return false;
   }
 
@@ -2088,7 +2128,7 @@ bool TileConfig::saveGrid(uint16_t folder_id, const TileGridConfig& grid) {
     ensureBackTile(folder_id, working);
   }
 
-  Serial.printf("[TileConfig] Speichere Grid %u (SD, %u x %u bytes)\n",
+  Serial.printf("[TileConfig] Speichere Grid %u (storage, %u x %u bytes)\n",
                 static_cast<unsigned>(folder_id),
                 static_cast<unsigned>(QUARTERS_PER_GRID),
                 static_cast<unsigned>(sizeof(PackedQuarterGridV7)));
@@ -2101,10 +2141,10 @@ bool TileConfig::saveGrid(uint16_t folder_id, const TileGridConfig& grid) {
     for (size_t i = 0; i < TILES_PER_QUARTER; ++i) {
       size_t grid_idx = q * TILES_PER_QUARTER + i;
       if (working.tiles[grid_idx].type == TILE_IMAGE || working.tiles[grid_idx].type == TILE_SCENE) {
-        if (!sdReady()) {
-          Serial.println("[TileConfig] WARN: SD fehlt, image_path wird nicht gespeichert");
+        if (!storageReady()) {
+          Serial.println("[TileConfig] WARN: Storage nicht verfuegbar, image_path wird nicht gespeichert");
         } else if (!writeImagePathSd(folder_id, grid_idx, working.tiles[grid_idx].image_path)) {
-          Serial.println("[TileConfig] WARN: image_path konnte nicht auf SD gespeichert werden");
+          Serial.println("[TileConfig] WARN: image_path konnte nicht im Storage gespeichert werden");
         }
       }
       packTile(working.tiles[grid_idx], packed[q].tiles[i]);
@@ -2112,7 +2152,7 @@ bool TileConfig::saveGrid(uint16_t folder_id, const TileGridConfig& grid) {
   }
 
   if (!writeGridSd(folder_id, packed, QUARTERS_PER_GRID)) {
-    Serial.printf("[TileConfig] Fehler beim Speichern von Grid %u (SD write failed)\n",
+    Serial.printf("[TileConfig] Fehler beim Speichern von Grid %u (storage write failed)\n",
                   static_cast<unsigned>(folder_id));
     return false;
   }
@@ -2128,7 +2168,7 @@ bool TileConfig::saveGrid(uint16_t folder_id, const TileGridConfig& grid) {
     }
   }
 
-  Serial.printf("[TileConfig] Grid %u gespeichert (SD, %u x %u bytes)\n",
+  Serial.printf("[TileConfig] Grid %u gespeichert (storage, %u x %u bytes)\n",
                 static_cast<unsigned>(folder_id),
                 static_cast<unsigned>(QUARTERS_PER_GRID),
                 static_cast<unsigned>(sizeof(PackedQuarterGridV7)));
