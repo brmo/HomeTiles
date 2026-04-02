@@ -42,8 +42,12 @@ static bool g_external_temp_valid = false;
 static constexpr uint32_t kExternalTempGridRefreshMs = 5000;
 static String g_external_last_grid_payload;
 static uint32_t g_external_last_grid_ms = 0;
-static constexpr uint16_t kExternalTempHistoryPoints = 288;
-static constexpr uint32_t kExternalTempHistorySampleMs = 5UL * 60UL * 1000UL;
+static constexpr uint16_t kExternalTempHistoryHoursMax = 168;
+static constexpr uint16_t kExternalTempHistorySampleMinutes = 5;
+static constexpr uint16_t kExternalTempHistoryPoints =
+    static_cast<uint16_t>((kExternalTempHistoryHoursMax * 60U) / kExternalTempHistorySampleMinutes);
+static constexpr uint32_t kExternalTempHistorySampleMs =
+    static_cast<uint32_t>(kExternalTempHistorySampleMinutes) * 60UL * 1000UL;
 static float g_external_history_values[kExternalTempHistoryPoints] = {};
 static bool g_external_history_valid[kExternalTempHistoryPoints] = {};
 static uint16_t g_external_history_head = 0;
@@ -55,6 +59,9 @@ static constexpr uint8_t kHistoryPendingSlots = 8;
 struct PendingHistoryRequest {
   String entity_id;
   uint32_t requested_at_ms = 0;
+  uint16_t hours = 24;
+  uint16_t period_minutes = 5;
+  uint16_t points = 288;
   bool active = false;
 };
 
@@ -120,8 +127,8 @@ static void push_external_temp_history(float value, bool valid) {
 
 static void store_external_temp_history(uint32_t now_ms) {
   if (!has_valid_local_time_for_history()) {
-    // Erst mit valider Uhrzeit starten, damit die 24h-Graphen nicht
-    // mit pre-NTP Bootdaten gefuellt werden.
+    // Erst mit valider Uhrzeit starten, damit Historien nicht mit
+    // pre-NTP Bootdaten gefuellt werden.
     g_external_history_last_store_ms = 0;
     return;
   }
@@ -145,9 +152,32 @@ static void store_external_temp_history(uint32_t now_ms) {
   }
 }
 
-static String build_external_temp_history_payload(const char* entity_id) {
+static String build_external_temp_history_payload(const char* entity_id,
+                                                  uint16_t hours,
+                                                  uint16_t period_minutes,
+                                                  uint16_t points) {
+  if (hours == 0) hours = 24;
+  if (hours > kExternalTempHistoryHoursMax) hours = kExternalTempHistoryHoursMax;
+  if (period_minutes == 0) period_minutes = kExternalTempHistorySampleMinutes;
+  if (points == 0) {
+    points = static_cast<uint16_t>((static_cast<uint32_t>(hours) * 60U) / period_minutes);
+  }
+  if (points == 0) points = 1;
+
+  const uint16_t samples_per_bucket = static_cast<uint16_t>(
+      (period_minutes + kExternalTempHistorySampleMinutes - 1U) / kExternalTempHistorySampleMinutes);
+  const uint32_t requested_base_points =
+      static_cast<uint32_t>(points) * static_cast<uint32_t>(samples_per_bucket);
+  const uint16_t clamped_base_points = static_cast<uint16_t>(
+      requested_base_points > kExternalTempHistoryPoints ? kExternalTempHistoryPoints : requested_base_points);
+  const uint16_t available_base_points =
+      (g_external_history_count > clamped_base_points) ? clamped_base_points : g_external_history_count;
+  const uint16_t missing_base_points = static_cast<uint16_t>(clamped_base_points - available_base_points);
+  const uint16_t history_start = static_cast<uint16_t>(
+      (g_external_history_head + kExternalTempHistoryPoints - available_base_points) % kExternalTempHistoryPoints);
+
   String payload;
-  payload.reserve(8192);
+  payload.reserve(12288);
   payload = "{\"entity_id\":\"";
   payload += entity_id ? entity_id : kEntityExternalTemperature;
   payload += "\",\"unit\":\"C\",\"current\":\"";
@@ -160,51 +190,71 @@ static String build_external_temp_history_payload(const char* entity_id) {
   } else {
     payload += "unavailable";
   }
-  payload += "\",\"hours\":24,\"period_minutes\":5,\"stat\":\"mean\",\"values\":[";
+  payload += "\",\"hours\":";
+  payload += String(hours);
+  payload += ",\"period_minutes\":";
+  payload += String(period_minutes);
+  payload += ",\"stat\":\"mean\",\"values\":[";
 
-  const uint16_t clamped_count =
-    (g_external_history_count > kExternalTempHistoryPoints) ? kExternalTempHistoryPoints : g_external_history_count;
-  if (clamped_count == 0) {
-    payload += "]}";
-    return payload;
-  }
-
-  const uint16_t missing_prefix = static_cast<uint16_t>(kExternalTempHistoryPoints - clamped_count);
   bool first = true;
 
-  // Voller 24h-Raster: fehlende historische Fenster bleiben explizit null.
-  for (uint16_t i = 0; i < missing_prefix; ++i) {
+  for (uint16_t bucket = 0; bucket < points; ++bucket) {
     if (!first) payload += ",";
-    payload += "null";
-    first = false;
-  }
 
-  if (clamped_count > 0) {
-    const uint16_t start = static_cast<uint16_t>(
-      (g_external_history_head + kExternalTempHistoryPoints - clamped_count) % kExternalTempHistoryPoints);
-    for (uint16_t i = 0; i < clamped_count; ++i) {
-      const uint16_t idx = static_cast<uint16_t>((start + i) % kExternalTempHistoryPoints);
-      if (!first) payload += ",";
-      if (!g_external_history_valid[idx] || std::isnan(g_external_history_values[idx]) || std::isinf(g_external_history_values[idx])) {
-        payload += "null";
-      } else {
-        dtostrf(g_external_history_values[idx], 0, 1, current_buf);
-        payload += current_buf;
+    float sum = 0.0f;
+    uint16_t valid_count = 0;
+    for (uint16_t sample = 0; sample < samples_per_bucket; ++sample) {
+      const uint32_t virtual_index =
+          static_cast<uint32_t>(bucket) * static_cast<uint32_t>(samples_per_bucket) + sample;
+      if (virtual_index < missing_base_points) continue;
+
+      const uint32_t local_offset = virtual_index - missing_base_points;
+      if (local_offset >= available_base_points) continue;
+
+      const uint16_t idx = static_cast<uint16_t>((history_start + local_offset) % kExternalTempHistoryPoints);
+      if (!g_external_history_valid[idx] || std::isnan(g_external_history_values[idx]) ||
+          std::isinf(g_external_history_values[idx])) {
+        continue;
       }
-      first = false;
+      sum += g_external_history_values[idx];
+      ++valid_count;
     }
+
+    if (valid_count == 0) {
+      payload += "null";
+    } else {
+      dtostrf(sum / valid_count, 0, 1, current_buf);
+      payload += current_buf;
+    }
+    first = false;
   }
 
   payload += "]}";
   return payload;
 }
 
-static String build_empty_history_payload(const char* entity_id) {
+static String build_empty_history_payload(const char* entity_id,
+                                          uint16_t hours = 0,
+                                          uint16_t period_minutes = 0,
+                                          uint16_t points = 0) {
   String payload;
-  payload.reserve(96);
+  payload.reserve(160);
   payload = "{\"entity_id\":\"";
   payload += entity_id ? entity_id : "";
-  payload += "\",\"values\":[]}";
+  payload += "\"";
+  if (hours) {
+    payload += ",\"hours\":";
+    payload += String(hours);
+  }
+  if (period_minutes) {
+    payload += ",\"period_minutes\":";
+    payload += String(period_minutes);
+  }
+  if (points) {
+    payload += ",\"points\":";
+    payload += String(points);
+  }
+  payload += ",\"values\":[]}";
   return payload;
 }
 
@@ -242,11 +292,18 @@ static void clear_pending_history_request(const char* entity_id) {
       g_pending_history[i].active = false;
       g_pending_history[i].entity_id = "";
       g_pending_history[i].requested_at_ms = 0;
+      g_pending_history[i].hours = 24;
+      g_pending_history[i].period_minutes = 5;
+      g_pending_history[i].points = 288;
     }
   }
 }
 
-static void mark_pending_history_request(const char* entity_id, uint32_t now_ms) {
+static void mark_pending_history_request(const char* entity_id,
+                                         uint32_t now_ms,
+                                         uint16_t hours,
+                                         uint16_t period_minutes,
+                                         uint16_t points) {
   if (!entity_id || !*entity_id) return;
 
   int free_idx = -1;
@@ -257,6 +314,9 @@ static void mark_pending_history_request(const char* entity_id, uint32_t now_ms)
     if (g_pending_history[i].active) {
       if (g_pending_history[i].entity_id.equalsIgnoreCase(entity_id)) {
         g_pending_history[i].requested_at_ms = now_ms;
+        g_pending_history[i].hours = hours;
+        g_pending_history[i].period_minutes = period_minutes;
+        g_pending_history[i].points = points;
         return;
       }
       if (g_pending_history[i].requested_at_ms < oldest_ms) {
@@ -274,24 +334,31 @@ static void mark_pending_history_request(const char* entity_id, uint32_t now_ms)
   g_pending_history[idx].active = true;
   g_pending_history[idx].entity_id = entity_id;
   g_pending_history[idx].requested_at_ms = now_ms;
+  g_pending_history[idx].hours = hours;
+  g_pending_history[idx].period_minutes = period_minutes;
+  g_pending_history[idx].points = points;
 }
 
-static bool queue_history_fallback_for_entity(const char* entity_id, bool time_valid, const char* reason) {
+static bool queue_history_fallback_for_entity(const char* entity_id,
+                                              bool time_valid,
+                                              const char* reason,
+                                              uint16_t hours,
+                                              uint16_t period_minutes,
+                                              uint16_t points) {
   if (!entity_id || !*entity_id) return false;
 
   if (is_external_temp_entity(entity_id)) {
     if (time_valid) {
       store_external_temp_history(millis());
-      String local_payload = build_external_temp_history_payload(entity_id);
+      String local_payload = build_external_temp_history_payload(entity_id, hours, period_minutes, points);
       if (local_payload.length()) {
         queue_sensor_popup_history(entity_id, local_payload.c_str(), local_payload.length());
         queue_tile_graph_history(entity_id, local_payload.c_str(), local_payload.length());
-        const unsigned points = g_external_history_count;
-        Serial.printf("[History] %s -> lokale Historie fuer %s (%u Punkte)\n",
-                      reason ? reason : "Fallback", entity_id, points);
+        Serial.printf("[History] %s -> lokale Historie fuer %s (%u Punkte, %uh/%umin)\n",
+                      reason ? reason : "Fallback", entity_id, points, hours, period_minutes);
       }
     } else {
-      String empty_payload = build_empty_history_payload(entity_id);
+      String empty_payload = build_empty_history_payload(entity_id, hours, period_minutes, points);
       queue_sensor_popup_history(entity_id, empty_payload.c_str(), empty_payload.length());
       queue_tile_graph_history(entity_id, empty_payload.c_str(), empty_payload.length());
       Serial.printf("[History] %s -> Zeit ungueltig, leere Historie fuer %s\n",
@@ -301,7 +368,7 @@ static bool queue_history_fallback_for_entity(const char* entity_id, bool time_v
   }
 
   if (is_internal_tab5_entity(entity_id)) {
-    String empty_payload = build_empty_history_payload(entity_id);
+    String empty_payload = build_empty_history_payload(entity_id, hours, period_minutes, points);
     queue_sensor_popup_history(entity_id, empty_payload.c_str(), empty_payload.length());
     queue_tile_graph_history(entity_id, empty_payload.c_str(), empty_payload.length());
     Serial.printf("[History] %s -> interne Historie fuer %s leer\n",
@@ -324,12 +391,18 @@ static void service_pending_history_fallback() {
     }
 
     String entity = g_pending_history[i].entity_id;
+    const uint16_t hours = g_pending_history[i].hours;
+    const uint16_t period_minutes = g_pending_history[i].period_minutes;
+    const uint16_t points = g_pending_history[i].points;
     g_pending_history[i].active = false;
     g_pending_history[i].entity_id = "";
     g_pending_history[i].requested_at_ms = 0;
+    g_pending_history[i].hours = 24;
+    g_pending_history[i].period_minutes = 5;
+    g_pending_history[i].points = 288;
 
     if (!entity.length()) continue;
-    queue_history_fallback_for_entity(entity.c_str(), time_valid, "HA Timeout");
+    queue_history_fallback_for_entity(entity.c_str(), time_valid, "HA Timeout", hours, period_minutes, points);
   }
 }
 
@@ -1364,8 +1437,18 @@ void mqttPublishLightCommand(const char* entity_id, const char* state, int brigh
   Serial.printf("Light command -> MQTT '%s' (%s)\n", topic, ok ? "ok" : "fail");
 }
 
-void mqttPublishHistoryRequest(const char* entity_id) {
+void mqttPublishHistoryRequest(const char* entity_id,
+                               uint16_t hours,
+                               uint16_t period_minutes,
+                               uint16_t points) {
   if (!entity_id || !*entity_id) return;
+
+  if (hours == 0) hours = 24;
+  if (period_minutes == 0) period_minutes = 5;
+  if (points == 0) {
+    points = static_cast<uint16_t>((static_cast<uint32_t>(hours) * 60U) / period_minutes);
+  }
+  if (points == 0) points = 1;
 
   PubSubClient& mqtt = networkManager.getMqttClient();
   const bool mqtt_online = mqtt.connected();
@@ -1384,18 +1467,26 @@ void mqttPublishHistoryRequest(const char* entity_id) {
 
     String payload = "{\"entity_id\":\"";
     payload += entity_id;
-    payload += "\",\"hours\":24,\"period_minutes\":5,\"points\":288,\"stat\":\"mean\"}";
+    payload += "\",\"hours\":";
+    payload += String(hours);
+    payload += ",\"period_minutes\":";
+    payload += String(period_minutes);
+    payload += ",\"points\":";
+    payload += String(points);
+    payload += ",\"stat\":\"mean\"}";
     bool ok = mqtt.publish(history_topic, payload.c_str(), false);
     Serial.printf("History request -> MQTT '%s' (%s)\n", history_topic, ok ? "ok" : "fail");
     if (ok) {
-      mark_pending_history_request(entity_id, millis());
+      mark_pending_history_request(entity_id, millis(), hours, period_minutes, points);
       return;
     }
-    queue_history_fallback_for_entity(entity_id, time_valid, "HA Publish fehlgeschlagen");
+    queue_history_fallback_for_entity(entity_id, time_valid, "HA Publish fehlgeschlagen",
+                                      hours, period_minutes, points);
     return;
   }
 
-  if (queue_history_fallback_for_entity(entity_id, time_valid, "HA nicht verfuegbar")) {
+  if (queue_history_fallback_for_entity(entity_id, time_valid, "HA nicht verfuegbar",
+                                        hours, period_minutes, points)) {
     return;
   }
 

@@ -31,7 +31,26 @@ constexpr int kChartHeight = 300;
 constexpr int kTimeAxisHeight = 20;  // space for time labels below chart
 constexpr int kTimeAxisMarkerCount = 4;  // 4 time markers (every 6h)
 constexpr int kChartLineWidth = 4;
-constexpr int kHistoryPointsDefault = 288;
+constexpr uint16_t kHistoryHours24h = 24;
+constexpr uint16_t kHistoryPeriodMinutes24h = 5;
+constexpr uint16_t kHistoryPoints24h = 288;
+constexpr uint16_t kHistoryHours7d = 168;
+constexpr uint16_t kHistoryPeriodMinutes7d = 60;
+constexpr uint16_t kHistoryPoints7d = 168;
+constexpr int kRangeButtonWidth = 72;
+constexpr int kRangeButtonHeight = 40;
+constexpr int kRangeButtonGap = 10;
+
+enum class SensorHistoryRange : uint8_t {
+  Day24,
+  Day7,
+};
+
+struct HistoryRangeConfig {
+  uint16_t hours;
+  uint16_t period_minutes;
+  uint16_t points;
+};
 
 struct SensorPopupContext {
   String entity_id;
@@ -39,11 +58,14 @@ struct SensorPopupContext {
   bool lock_unit = false;
   uint8_t decimals = 0xFF;
   uint32_t bg_color = 0;
+  SensorHistoryRange history_range = SensorHistoryRange::Day24;
   lv_obj_t* overlay = nullptr;
   lv_obj_t* card = nullptr;
   lv_obj_t* title_label = nullptr;
   lv_obj_t* icon_label = nullptr;
   lv_obj_t* value_label = nullptr;
+  lv_obj_t* range_day_btn = nullptr;
+  lv_obj_t* range_week_btn = nullptr;
   lv_obj_t* chart = nullptr;
   lv_chart_series_t* series = nullptr;
   lv_obj_t* y_max_label = nullptr;
@@ -53,7 +75,7 @@ struct SensorPopupContext {
   lv_obj_t* time_labels[kTimeAxisMarkerCount] = {};
   lv_obj_t* time_lines[kTimeAxisMarkerCount] = {};
   lv_obj_t* chart_wrap = nullptr;
-  uint16_t point_count = kHistoryPointsDefault;
+  uint16_t point_count = kHistoryPoints24h;
 };
 
 struct PendingValueUpdate {
@@ -73,6 +95,23 @@ struct PendingHistoryUpdate {
 static SensorPopupContext* g_sensor_popup_ctx = nullptr;
 static PendingValueUpdate g_pending_value;
 static PendingHistoryUpdate g_pending_history;
+
+static HistoryRangeConfig get_history_range_config(SensorHistoryRange range) {
+  switch (range) {
+    case SensorHistoryRange::Day7:
+      return {kHistoryHours7d, kHistoryPeriodMinutes7d, kHistoryPoints7d};
+    case SensorHistoryRange::Day24:
+    default:
+      return {kHistoryHours24h, kHistoryPeriodMinutes24h, kHistoryPoints24h};
+  }
+}
+
+static const char* get_weekday_abbrev(uint8_t wday, bool german) {
+  static constexpr const char* kWeekdaysEn[7] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+  static constexpr const char* kWeekdaysDe[7] = {"So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"};
+  if (wday > 6) wday = 0;
+  return german ? kWeekdaysDe[wday] : kWeekdaysEn[wday];
+}
 
 static const lv_font_t* get_value_font() {
   return &ui_font_40;
@@ -127,6 +166,27 @@ static void update_value_label(SensorPopupContext* ctx, const String& value, con
   }
   lv_label_set_text(ctx->value_label, display.c_str());
   ctx->unit = display_unit;
+}
+
+static void style_range_button(lv_obj_t* btn, bool active) {
+  if (!btn) return;
+  lv_obj_set_style_bg_color(btn, active ? lv_color_white() : lv_color_hex(0xFFFFFF), 0);
+  lv_obj_set_style_bg_opa(btn, active ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_color(btn, lv_color_white(), 0);
+  lv_obj_set_style_border_width(btn, 2, 0);
+  lv_obj_set_style_outline_opa(btn, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_shadow_opa(btn, LV_OPA_TRANSP, 0);
+
+  lv_obj_t* label = lv_obj_get_child(btn, 0);
+  if (label) {
+    lv_obj_set_style_text_color(label, active ? lv_color_hex(0x1F1F1F) : lv_color_white(), 0);
+  }
+}
+
+static void update_range_buttons(SensorPopupContext* ctx) {
+  if (!ctx) return;
+  style_range_button(ctx->range_day_btn, ctx->history_range == SensorHistoryRange::Day24);
+  style_range_button(ctx->range_week_btn, ctx->history_range == SensorHistoryRange::Day7);
 }
 
 static bool extract_numeric(JsonVariant v, float& out) {
@@ -211,19 +271,15 @@ static lv_coord_t measure_label_text_width(lv_obj_t* label) {
   return lv_obj_get_width(label);
 }
 
-// Get current local hour (0-23). Returns -1 if time not available.
-static int get_local_hour() {
-  struct tm timeinfo;
-  if (getLocalTime(&timeinfo, 0)) {
-    const int year = timeinfo.tm_year + 1900;
-    const int month = timeinfo.tm_mon + 1;
-    const int day = timeinfo.tm_mday;
-    if (year < 2024 || year > 2100) return -1;
-    if (month < 1 || month > 12) return -1;
-    if (day < 1 || day > 31) return -1;
-    return timeinfo.tm_hour;
-  }
-  return -1;
+static bool get_valid_local_time(struct tm& out) {
+  if (!getLocalTime(&out, 0)) return false;
+  const int year = out.tm_year + 1900;
+  const int month = out.tm_mon + 1;
+  const int day = out.tm_mday;
+  if (year < 2024 || year > 2100) return false;
+  if (month < 1 || month > 12) return false;
+  if (day < 1 || day > 31) return false;
+  return true;
 }
 
 static String format_time_axis_label(int hour24) {
@@ -239,27 +295,51 @@ static String format_time_axis_label(int hour24) {
   return String(hour12) + (normalized < 12 ? " AM" : " PM");
 }
 
-// Calculate time axis marker positions and labels.
-// History covers the last 24h ending at "now".  We place markers at full
-// 6-hour boundaries (0:00, 6:00, 12:00, 18:00) that fall within that window.
-// out_labels[i] receives the hour string ("0","6","12","18").
-// out_frac[i] receives the fractional X position (0.0 = left, 1.0 = right).
-// Returns number of markers placed (0-4).
-static int calc_time_axis(String out_labels[], float out_frac[], int max_markers) {
-  int hour = get_local_hour();
-  if (hour < 0 || max_markers < 1) return 0;
+static String format_day_axis_label(time_t ts) {
+  struct tm timeinfo;
+#ifdef _WIN32
+  localtime_s(&timeinfo, &ts);
+#else
+  localtime_r(&ts, &timeinfo);
+#endif
+  const bool is_de = configManager.getConfig().language[0] == 'd';
+  String label = get_weekday_abbrev(static_cast<uint8_t>(timeinfo.tm_wday), is_de);
+  label += " ";
+  label += String(timeinfo.tm_mday);
+  return label;
+}
 
-  // The chart spans 24h ending at the current hour.
-  // Position 0.0 = 24h ago, position 1.0 = now.
-  // A clock-hour H occurred (hour - H) hours ago  (mod 24).
-  // Its fractional position = 1.0 - (hours_ago / 24.0).
+// Calculate time axis marker positions and labels.
+static int calc_time_axis(const SensorPopupContext* ctx, String out_labels[], float out_frac[], int max_markers) {
+  if (!ctx || max_markers < 1) return 0;
+
+  struct tm now_tm;
+  if (!get_valid_local_time(now_tm)) return 0;
+
+  if (ctx->history_range == SensorHistoryRange::Day7) {
+    time_t now_local = mktime(&now_tm);
+    if (now_local <= 0) return 0;
+
+    static constexpr int kDayOffsets[] = {6, 4, 2, 0};
+    int count = 0;
+    for (int offset : kDayOffsets) {
+      if (count >= max_markers) break;
+      time_t marker_time = now_local - static_cast<time_t>(offset) * 24 * 60 * 60;
+      out_labels[count] = format_day_axis_label(marker_time);
+      out_frac[count] = 1.0f - (static_cast<float>(offset) / 7.0f);
+      ++count;
+    }
+    return count;
+  }
+
+  const int hour = now_tm.tm_hour;
   int count = 0;
   for (int m = 0; m < 4 && count < max_markers; ++m) {
-    int h = m * 6;  // 0, 6, 12, 18
+    int h = m * 6;
     int hours_ago = (hour - h + 24) % 24;
-    if (hours_ago == 0) hours_ago = 24;  // "now" maps to 24h ago at same hour
+    if (hours_ago == 0) hours_ago = 24;
     float frac = 1.0f - (static_cast<float>(hours_ago) / 24.0f);
-    if (frac < 0.02f || frac > 0.98f) continue;  // skip if too close to edges
+    if (frac < 0.02f || frac > 0.98f) continue;
     out_labels[count] = format_time_axis_label(h);
     out_frac[count] = frac;
     ++count;
@@ -302,7 +382,7 @@ static void update_y_axis_layout(SensorPopupContext* ctx) {
 
   String labels[kTimeAxisMarkerCount];
   float fracs[kTimeAxisMarkerCount];
-  int n = calc_time_axis(labels, fracs, kTimeAxisMarkerCount);
+  int n = calc_time_axis(ctx, labels, fracs, kTimeAxisMarkerCount);
   lv_coord_t max_time_label_w = 0;
 
   for (int i = 0; i < kTimeAxisMarkerCount; ++i) {
@@ -402,6 +482,13 @@ static void apply_history_payload(SensorPopupContext* ctx, const char* payload) 
     }
   }
 
+  const HistoryRangeConfig range_cfg = get_history_range_config(ctx->history_range);
+  const uint16_t payload_hours = doc["hours"] | range_cfg.hours;
+  const uint16_t payload_period_minutes = doc["period_minutes"] | range_cfg.period_minutes;
+  if (payload_hours != range_cfg.hours || payload_period_minutes != range_cfg.period_minutes) {
+    return;
+  }
+
   if (doc.containsKey("current")) {
     String current = String(doc["current"].as<const char*>());
     update_value_label(ctx, current, ctx->unit);
@@ -414,7 +501,7 @@ static void apply_history_payload(SensorPopupContext* ctx, const char* payload) 
 
   size_t count = values.size();
   if (count == 0) {
-    clear_chart(ctx, kHistoryPointsDefault);
+    clear_chart(ctx, range_cfg.points);
     return;
   }
 
@@ -558,6 +645,16 @@ static void apply_history_payload(SensorPopupContext* ctx, const char* payload) 
   }
 }
 
+static bool should_request_history(const String& entity_id) {
+  return entity_id.length() && !entity_id.startsWith("__");
+}
+
+static void request_history_for_context(SensorPopupContext* ctx) {
+  if (!ctx || !should_request_history(ctx->entity_id)) return;
+  const HistoryRangeConfig cfg = get_history_range_config(ctx->history_range);
+  mqttPublishHistoryRequest(ctx->entity_id.c_str(), cfg.hours, cfg.period_minutes, cfg.points);
+}
+
 static void on_overlay_click(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   (void)e;
@@ -580,6 +677,22 @@ static void on_overlay_delete(lv_event_t* e) {
     g_sensor_popup_ctx = nullptr;
   }
   delete ctx;
+}
+
+static void on_range_click(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  SensorPopupContext* ctx = static_cast<SensorPopupContext*>(lv_event_get_user_data(e));
+  lv_obj_t* target = lv_event_get_target(e);
+  if (!ctx || !target) return;
+
+  SensorHistoryRange next_range =
+      (target == ctx->range_week_btn) ? SensorHistoryRange::Day7 : SensorHistoryRange::Day24;
+  if (ctx->history_range == next_range) return;
+
+  ctx->history_range = next_range;
+  update_range_buttons(ctx);
+  clear_chart(ctx, get_history_range_config(ctx->history_range).points);
+  request_history_for_context(ctx);
 }
 
 static void build_popup_ui(SensorPopupContext* ctx, const SensorPopupInit& init) {
@@ -663,6 +776,36 @@ static void build_popup_ui(SensorPopupContext* ctx, const SensorPopupInit& init)
   lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_width(value, LV_PCT(100));
   lv_obj_set_style_translate_y(value, -6, 0);
+
+  lv_obj_t* range_row = lv_obj_create(content);
+  lv_obj_remove_style_all(range_row);
+  lv_obj_set_size(range_row, LV_PCT(100), kRangeButtonHeight);
+  lv_obj_set_style_bg_opa(range_row, LV_OPA_TRANSP, 0);
+  lv_obj_set_layout(range_row, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(range_row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(range_row, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(range_row, kRangeButtonGap, 0);
+  lv_obj_clear_flag(range_row, LV_OBJ_FLAG_CLICKABLE);
+
+  auto make_range_button = [&](const char* text) -> lv_obj_t* {
+    lv_obj_t* btn = lv_button_create(range_row);
+    lv_obj_set_size(btn, kRangeButtonWidth, kRangeButtonHeight);
+    lv_obj_set_style_radius(btn, 14, 0);
+    lv_obj_set_style_pad_all(btn, 0, 0);
+    lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(btn, LV_OBJ_FLAG_PRESS_LOCK);
+    lv_obj_t* label = lv_label_create(btn);
+    set_label_style(label, lv_color_white(), &ui_font_20);
+    lv_label_set_text(label, text);
+    lv_obj_center(label);
+    return btn;
+  };
+
+  ctx->range_day_btn = make_range_button("24H");
+  ctx->range_week_btn = make_range_button("7D");
+  lv_obj_add_event_cb(ctx->range_day_btn, on_range_click, LV_EVENT_CLICKED, ctx);
+  lv_obj_add_event_cb(ctx->range_week_btn, on_range_click, LV_EVENT_CLICKED, ctx);
+  update_range_buttons(ctx);
 
   // Chart wrapper: Y-axis labels on the left, chart on the right, time labels below.
   // Extra vertical space (kLabelOverhang) at top/bottom so labels don't get clipped.
@@ -759,7 +902,7 @@ static void build_popup_ui(SensorPopupContext* ctx, const SensorPopupInit& init)
   lv_obj_set_style_size(chart, 0, 0, LV_PART_INDICATOR);
 
   ctx->series = lv_chart_add_series(chart, lv_color_white(), LV_CHART_AXIS_PRIMARY_Y);
-  clear_chart(ctx, kHistoryPointsDefault);
+  clear_chart(ctx, get_history_range_config(ctx->history_range).points);
 
   lv_obj_move_foreground(icon);
   lv_obj_move_foreground(title);
@@ -769,10 +912,6 @@ static void build_popup_ui(SensorPopupContext* ctx, const SensorPopupInit& init)
 
   lv_obj_add_event_cb(overlay, on_overlay_click, LV_EVENT_CLICKED, ctx);
   lv_obj_add_event_cb(overlay, on_overlay_delete, LV_EVENT_DELETE, ctx);
-}
-
-static bool should_request_history(const SensorPopupInit& init) {
-  return init.entity_id.length() && !init.entity_id.startsWith("__");
 }
 
 }  // namespace
@@ -786,7 +925,9 @@ void show_sensor_popup(const SensorPopupInit& init) {
 
   if (g_sensor_popup_ctx && g_sensor_popup_ctx->overlay && g_sensor_popup_ctx->card) {
     apply_init_to_context(g_sensor_popup_ctx, init);
-    clear_chart(g_sensor_popup_ctx, kHistoryPointsDefault);
+    g_sensor_popup_ctx->history_range = SensorHistoryRange::Day24;
+    update_range_buttons(g_sensor_popup_ctx);
+    clear_chart(g_sensor_popup_ctx, get_history_range_config(g_sensor_popup_ctx->history_range).points);
     lv_obj_clear_flag(g_sensor_popup_ctx->card, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_sensor_popup_ctx->overlay, LV_OBJ_FLAG_CLICKABLE);
   } else {
@@ -795,9 +936,8 @@ void show_sensor_popup(const SensorPopupInit& init) {
     build_popup_ui(ctx, init);
   }
 
-  if (should_request_history(init)) {
-    mqttPublishHistoryRequest(init.entity_id.c_str());
-  }
+  g_pending_history.valid = false;
+  request_history_for_context(g_sensor_popup_ctx);
 }
 
 void preload_sensor_popup() {

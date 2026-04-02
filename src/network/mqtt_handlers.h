@@ -10,7 +10,10 @@ void mqttPublishDiscovery();
 void mqttPublishScene(const char* scene_name);
 void mqttPublishSwitchCommand(const char* entity_id, const char* state);
 void mqttPublishLightCommand(const char* entity_id, const char* state, int brightness_pct, bool has_color, uint32_t color);
-void mqttPublishHistoryRequest(const char* entity_id);
+void mqttPublishHistoryRequest(const char* entity_id,
+                               uint16_t hours = 24,
+                               uint16_t period_minutes = 5,
+                               uint16_t points = 288);
 void mqttPublishHomeSnapshot();
 void mqttPublishDeviceSettings();
 void mqttServiceLocalSensors();
