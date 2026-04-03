@@ -29,8 +29,10 @@ constexpr int kContentPadTop = 76;
 constexpr int kContentRowGap = 15;
 constexpr int kChartHeight = 300;
 constexpr int kTimeAxisHeight = 20;  // space for time labels below chart
-constexpr int kTimeAxisMarkerCount = 7;
+constexpr int kTimeAxisMarkerCount = 8;
 constexpr int kChartLineWidth = 4;
+constexpr int kChartGroupOffsetY = 80;
+constexpr int kRangeRowOffsetY = 181;
 constexpr uint16_t kHistoryHours24h = 24;
 constexpr uint16_t kHistoryPeriodMinutes24h = 5;
 constexpr uint16_t kHistoryPoints24h = 288;
@@ -325,43 +327,143 @@ static String format_day_axis_label(time_t ts) {
   return String(get_weekday_abbrev(static_cast<uint8_t>(timeinfo.tm_wday), is_de));
 }
 
+static bool get_day7_axis_base(time_t& now_local, time_t& range_start, struct tm& today_midnight_tm) {
+  struct tm now_tm;
+  if (!get_valid_local_time(now_tm)) return false;
+
+  now_local = mktime(&now_tm);
+  if (now_local <= 0) return false;
+
+  range_start = now_local - static_cast<time_t>(kHistoryHours7d) * 60 * 60;
+  today_midnight_tm = now_tm;
+  today_midnight_tm.tm_hour = 0;
+  today_midnight_tm.tm_min = 0;
+  today_midnight_tm.tm_sec = 0;
+  return true;
+}
+
+static time_t next_local_midnight_after(time_t ts) {
+  struct tm timeinfo;
+#ifdef _WIN32
+  localtime_s(&timeinfo, &ts);
+#else
+  localtime_r(&ts, &timeinfo);
+#endif
+  timeinfo.tm_hour = 0;
+  timeinfo.tm_min = 0;
+  timeinfo.tm_sec = 0;
+  timeinfo.tm_mday += 1;
+  return mktime(&timeinfo);
+}
+
+static time_t next_local_6h_boundary_after(time_t ts) {
+  struct tm timeinfo;
+#ifdef _WIN32
+  localtime_s(&timeinfo, &ts);
+#else
+  localtime_r(&ts, &timeinfo);
+#endif
+
+  const int current_hour = timeinfo.tm_hour;
+  int next_hour = ((current_hour / 6) + 1) * 6;
+  if (next_hour >= 24) {
+    next_hour -= 24;
+    timeinfo.tm_mday += 1;
+  }
+
+  timeinfo.tm_hour = next_hour;
+  timeinfo.tm_min = 0;
+  timeinfo.tm_sec = 0;
+  return mktime(&timeinfo);
+}
+
+static int calc_day24_axis(String out_labels[], float out_frac[], int max_markers) {
+  struct tm now_tm;
+  if (!get_valid_local_time(now_tm)) return 0;
+
+  time_t now_local = mktime(&now_tm);
+  if (now_local <= 0) return 0;
+
+  const time_t range_start = now_local - static_cast<time_t>(kHistoryHours24h) * 60 * 60;
+  const float span = static_cast<float>(now_local - range_start);
+  if (span <= 0.0f) return 0;
+
+  int count = 0;
+  time_t boundary = next_local_6h_boundary_after(range_start);
+  while (boundary < now_local && count < max_markers) {
+    struct tm boundary_tm;
+#ifdef _WIN32
+    localtime_s(&boundary_tm, &boundary);
+#else
+    localtime_r(&boundary, &boundary_tm);
+#endif
+    out_labels[count] = format_time_axis_label(boundary_tm.tm_hour);
+    out_frac[count] = static_cast<float>(boundary - range_start) / span;
+    ++count;
+    boundary = next_local_6h_boundary_after(boundary);
+  }
+
+  return count;
+}
+
+static int calc_day7_label_axis(String out_labels[], float out_frac[], int max_markers) {
+  time_t now_local = 0;
+  time_t range_start = 0;
+  struct tm today_midnight_tm;
+  if (!get_day7_axis_base(now_local, range_start, today_midnight_tm)) return 0;
+
+  const float span = static_cast<float>(now_local - range_start);
+  if (span <= 0.0f) return 0;
+
+  int count = 0;
+  time_t segment_start = range_start;
+  while (segment_start < now_local && count < max_markers) {
+    time_t segment_end = next_local_midnight_after(segment_start);
+    if (segment_end > now_local) segment_end = now_local;
+    if (segment_end <= segment_start) break;
+
+    const float center = static_cast<float>(segment_start - range_start) +
+                         (static_cast<float>(segment_end - segment_start) * 0.5f);
+    out_labels[count] = format_day_axis_label(segment_start);
+    out_frac[count] = center / span;
+    ++count;
+    segment_start = segment_end;
+  }
+
+  return count;
+}
+
+static int calc_day7_boundary_axis(float out_frac[], int max_markers) {
+  time_t now_local = 0;
+  time_t range_start = 0;
+  struct tm today_midnight_tm;
+  if (!get_day7_axis_base(now_local, range_start, today_midnight_tm)) return 0;
+
+  const float span = static_cast<float>(now_local - range_start);
+  if (span <= 0.0f) return 0;
+
+  int count = 0;
+  time_t boundary = next_local_midnight_after(range_start);
+  while (boundary < now_local && count < max_markers) {
+    if (boundary > range_start) {
+      out_frac[count] = static_cast<float>(boundary - range_start) / span;
+      ++count;
+    }
+    boundary = next_local_midnight_after(boundary);
+  }
+
+  return count;
+}
+
 // Calculate time axis marker positions and labels.
 static int calc_time_axis(const SensorPopupContext* ctx, String out_labels[], float out_frac[], int max_markers) {
   if (!ctx || max_markers < 1) return 0;
 
-  struct tm now_tm;
-  if (!get_valid_local_time(now_tm)) return 0;
-
   if (ctx->history_range == SensorHistoryRange::Day7) {
-    time_t now_local = mktime(&now_tm);
-    if (now_local <= 0) return 0;
-
-    int count = 0;
-    for (int i = 0; i < 7 && count < max_markers; ++i) {
-      const int offset = 6 - i;
-      const float frac = (static_cast<float>(i) + 0.5f) / 7.0f;
-      if (count >= max_markers) break;
-      time_t marker_time = now_local - static_cast<time_t>(offset) * 24 * 60 * 60;
-      out_labels[count] = format_day_axis_label(marker_time);
-      out_frac[count] = frac;
-      ++count;
-    }
-    return count;
+    return calc_day7_label_axis(out_labels, out_frac, max_markers);
   }
 
-  const int hour = now_tm.tm_hour;
-  int count = 0;
-  for (int m = 0; m < 4 && count < max_markers; ++m) {
-    int h = m * 6;
-    int hours_ago = (hour - h + 24) % 24;
-    if (hours_ago == 0) hours_ago = 24;
-    float frac = 1.0f - (static_cast<float>(hours_ago) / 24.0f);
-    if (frac < 0.02f || frac > 0.98f) continue;
-    out_labels[count] = format_time_axis_label(h);
-    out_frac[count] = frac;
-    ++count;
-  }
-  return count;
+  return calc_day24_axis(out_labels, out_frac, max_markers);
 }
 
 // Recalculate Y-axis layout based on actual label text widths.
@@ -435,18 +537,23 @@ static void update_y_axis_layout(SensorPopupContext* ctx) {
   if (chart_draw_w < 10) return;
 
   const bool is_week_range = ctx->history_range == SensorHistoryRange::Day7;
+  float week_boundary_fracs[kTimeAxisMarkerCount] = {};
+  int week_boundary_count = 0;
+  if (is_week_range) {
+    week_boundary_count = calc_day7_boundary_axis(week_boundary_fracs, kTimeAxisMarkerCount);
+  }
 
   for (int i = 0; i < kTimeAxisMarkerCount; ++i) {
     if (i < n) {
       int label_x_anchor = chart_left + static_cast<int>(fracs[i] * chart_draw_w);
       int line_x = label_x_anchor;
       if (is_week_range) {
-        if (i < (n - 1)) {
-          line_x = chart_left + static_cast<int>(((static_cast<float>(i) + 1.0f) / 7.0f) * chart_draw_w);
+        if (i < week_boundary_count) {
+          line_x = chart_left + static_cast<int>(week_boundary_fracs[i] * chart_draw_w);
         }
       }
       if (ctx->time_lines[i]) {
-        if (is_week_range && i >= (n - 1)) {
+        if (is_week_range && i >= week_boundary_count) {
           lv_obj_add_flag(ctx->time_lines[i], LV_OBJ_FLAG_HIDDEN);
         } else {
           lv_obj_set_x(ctx->time_lines[i], line_x);
@@ -792,7 +899,7 @@ static void build_popup_ui(SensorPopupContext* ctx, const SensorPopupInit& init)
   ctx->range_row = range_row;
   lv_obj_remove_style_all(range_row);
   lv_obj_set_size(range_row, (kRangeButtonWidth * 2) + kRangeButtonGap, kRangeButtonHeight);
-  lv_obj_align(range_row, LV_ALIGN_TOP_RIGHT, -4, 129);
+  lv_obj_align(range_row, LV_ALIGN_TOP_RIGHT, -4, kRangeRowOffsetY);
   lv_obj_set_style_bg_opa(range_row, LV_OPA_TRANSP, 0);
   lv_obj_set_layout(range_row, LV_LAYOUT_FLEX);
   lv_obj_set_flex_flow(range_row, LV_FLEX_FLOW_ROW);
@@ -859,6 +966,7 @@ static void build_popup_ui(SensorPopupContext* ctx, const SensorPopupInit& init)
   ctx->chart_wrap = chart_wrap;
   lv_obj_remove_style_all(chart_wrap);
   lv_obj_set_size(chart_wrap, LV_PCT(100), kChartHeight + 2 * kLabelOverhang + kTimeAxisHeight);
+  lv_obj_set_style_margin_top(chart_wrap, kChartGroupOffsetY, 0);
   lv_obj_set_style_bg_opa(chart_wrap, LV_OPA_TRANSP, 0);
   lv_obj_remove_flag(chart_wrap, LV_OBJ_FLAG_SCROLLABLE);
 
