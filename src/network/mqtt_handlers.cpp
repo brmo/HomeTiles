@@ -1386,7 +1386,12 @@ void mqttPublishSwitchCommand(const char* entity_id, const char* state) {
   Serial.printf("Switch command -> MQTT '%s' (%s)\n", topic, ok ? "ok" : "fail");
 }
 
-void mqttPublishLightCommand(const char* entity_id, const char* state, int brightness_pct, bool has_color, uint32_t color) {
+void mqttPublishLightCommand(const char* entity_id,
+                             const char* state,
+                             int brightness_pct,
+                             bool has_color,
+                             uint32_t color,
+                             int color_temp_kelvin) {
   if (!entity_id || !*entity_id) return;
   if (handle_local_light_command(entity_id, state, brightness_pct)) return;
 
@@ -1429,6 +1434,11 @@ void mqttPublishLightCommand(const char* entity_id, const char* state, int brigh
     payload += ",";
     payload += b;
     payload += "]";
+  }
+
+  if (color_temp_kelvin > 0) {
+    payload += ",\"color_temp_kelvin\":";
+    payload += color_temp_kelvin;
   }
 
   payload += "}";

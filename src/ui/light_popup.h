@@ -9,14 +9,17 @@ struct LightPopupInit {
   String icon_name;
   uint32_t color = 0;
   uint8_t brightness_pct = 100;
+  uint16_t color_temp_kelvin = 4000;
   bool has_color = false;
   bool has_brightness = false;
+  bool has_color_temp = false;
   bool has_state = false;
   bool has_hs = false;
   float hs_h = 0.0f;
   float hs_s = 0.0f;
   bool supports_color = false;
   bool supports_brightness = false;
+  bool supports_temperature = false;
   bool is_light = true;
   bool is_on = true;
   bool keep_icon_white = false;

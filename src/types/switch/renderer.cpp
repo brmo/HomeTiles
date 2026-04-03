@@ -60,9 +60,11 @@ static LightPopupInit build_light_popup_init(const SwitchEventData* data) {
   init.has_state = state.has_state;
   init.has_color = state.has_color;
   init.has_brightness = state.has_brightness;
+  init.has_color_temp = state.has_color_temp;
   init.has_hs = state.has_hs;
   init.hs_h = state.hs_h;
   init.hs_s = state.hs_s;
+  init.color_temp_kelvin = state.color_temp_kelvin;
   if (state.has_state) {
     init.is_on = state.is_on;
   } else if (state.has_brightness) {
@@ -74,9 +76,11 @@ static LightPopupInit build_light_popup_init(const SwitchEventData* data) {
   if (init.is_light) {
     init.supports_color = state.supports_color;
     init.supports_brightness = state.supports_brightness || state.supports_color;
+    init.supports_temperature = state.supports_temperature;
   } else {
     init.supports_color = false;
     init.supports_brightness = false;
+    init.supports_temperature = false;
   }
   if (state.has_color) {
     init.color = state.color;
@@ -290,5 +294,4 @@ lv_obj_set_style_bg_grad_dir(container, LV_GRAD_DIR_NONE, LV_PART_MAIN | LV_STAT
 
   return container;
 }
-
 

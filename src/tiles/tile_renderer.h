@@ -72,8 +72,11 @@ struct SwitchState {
   float hs_s = 0.0f;
   bool has_brightness = false;
   uint8_t brightness_pct = 100;
+  bool has_color_temp = false;
+  uint16_t color_temp_kelvin = 4000;
   bool supports_color = false;
   bool supports_brightness = false;
+  bool supports_temperature = false;
   bool supported_modes_known = false;
   bool supported_onoff_only = false;
 };

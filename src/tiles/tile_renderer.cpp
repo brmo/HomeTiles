@@ -667,9 +667,11 @@ static LightPopupInit build_popup_init_from_state(
   init.has_state = state.has_state;
   init.has_color = state.has_color;
   init.has_brightness = state.has_brightness;
+  init.has_color_temp = state.has_color_temp;
   init.has_hs = state.has_hs;
   init.hs_h = state.hs_h;
   init.hs_s = state.hs_s;
+  init.color_temp_kelvin = state.color_temp_kelvin;
 
   if (state.has_state) {
     init.is_on = state.is_on;
@@ -682,9 +684,11 @@ static LightPopupInit build_popup_init_from_state(
   if (init.is_light) {
     init.supports_color = state.supports_color;
     init.supports_brightness = state.supports_brightness || state.supports_color;
+    init.supports_temperature = state.supports_temperature;
   } else {
     init.supports_color = false;
     init.supports_brightness = false;
+    init.supports_temperature = false;
   }
 
   if (state.has_color) {
@@ -708,6 +712,37 @@ static SwitchState parse_switch_payload(const char* payload) {
   text.trim();
   if (!text.length()) return out;
 
+  auto set_color_temp_kelvin = [&out](float raw_kelvin) {
+    int kelvin = static_cast<int>(roundf(raw_kelvin));
+    if (kelvin < 1500) kelvin = 1500;
+    if (kelvin > 9000) kelvin = 9000;
+    out.has_color_temp = true;
+    out.color_temp_kelvin = static_cast<uint16_t>(kelvin);
+    out.supports_temperature = true;
+  };
+
+  auto try_extract_color_temp = [&set_color_temp_kelvin](const String& source) {
+    float color_temp_kelvin = 0.0f;
+    if (extract_json_number_field(source, "color_temp_kelvin", color_temp_kelvin) ||
+        extract_json_number_or_string_field(source, "color_temp_kelvin", color_temp_kelvin) ||
+        extract_json_number_field(source, "kelvin", color_temp_kelvin) ||
+        extract_json_number_or_string_field(source, "kelvin", color_temp_kelvin)) {
+      set_color_temp_kelvin(color_temp_kelvin);
+      return true;
+    }
+
+    float color_temp_mired = 0.0f;
+    if (extract_json_number_field(source, "color_temp", color_temp_mired) ||
+        extract_json_number_or_string_field(source, "color_temp", color_temp_mired)) {
+      if (color_temp_mired > 0.0f) {
+        set_color_temp_kelvin(1000000.0f / color_temp_mired);
+        return true;
+      }
+    }
+
+    return false;
+  };
+
   if (text.startsWith("{")) {
     String state;
     if (extract_json_string_field(text, "state", state)) {
@@ -724,9 +759,11 @@ static SwitchState parse_switch_payload(const char* payload) {
                        list_contains_mode(supported_modes, "rgbw") ||
                        list_contains_mode(supported_modes, "rgbww") ||
                        list_contains_mode(supported_modes, "color_temp");
+      bool has_temperature = list_contains_mode(supported_modes, "color_temp");
       bool has_onoff = list_contains_mode(supported_modes, "onoff");
       out.supports_brightness = has_brightness;
       out.supports_color = has_color;
+      out.supports_temperature = has_temperature;
       out.supported_onoff_only = has_onoff && !has_brightness && !has_color;
     }
 
@@ -737,6 +774,9 @@ static SwitchState parse_switch_payload(const char* payload) {
       if (mode == "brightness") {
         out.supports_brightness = true;
         out.supported_onoff_only = false;
+      }
+      if (mode == "color_temp") {
+        out.supports_temperature = true;
       }
       if (is_color_mode(mode)) {
         out.supports_color = true;
@@ -798,6 +838,8 @@ static SwitchState parse_switch_payload(const char* payload) {
       }
     }
 
+    try_extract_color_temp(text);
+
     String attributes;
     if (extract_json_object_field(text, "attributes", attributes)) {
       if (extract_json_array_field(attributes, "supported_color_modes", supported_modes)) {
@@ -809,9 +851,11 @@ static SwitchState parse_switch_payload(const char* payload) {
                          list_contains_mode(supported_modes, "rgbw") ||
                          list_contains_mode(supported_modes, "rgbww") ||
                          list_contains_mode(supported_modes, "color_temp");
+        bool has_temperature = list_contains_mode(supported_modes, "color_temp");
         bool has_onoff = list_contains_mode(supported_modes, "onoff");
         out.supports_brightness = has_brightness;
         out.supports_color = has_color;
+        out.supports_temperature = has_temperature;
         out.supported_onoff_only = has_onoff && !has_brightness && !has_color;
       }
 
@@ -821,6 +865,9 @@ static SwitchState parse_switch_payload(const char* payload) {
         if (mode == "brightness") {
           out.supports_brightness = true;
           out.supported_onoff_only = false;
+        }
+        if (mode == "color_temp") {
+          out.supports_temperature = true;
         }
         if (is_color_mode(mode)) {
           out.supports_color = true;
@@ -880,6 +927,8 @@ static SwitchState parse_switch_payload(const char* payload) {
           }
         }
       }
+
+      try_extract_color_temp(attributes);
     }
   }
 
@@ -910,12 +959,19 @@ static SwitchState parse_switch_payload(const char* payload) {
     out.has_state = true;
     out.is_on = out.brightness_pct > 0;
   }
+  if (!out.has_state && out.has_color_temp) {
+    out.has_state = true;
+    out.is_on = true;
+  }
 
   if (out.has_color) {
     out.supports_color = true;
   }
   if (out.has_hs) {
     out.supports_color = true;
+  }
+  if (out.has_color_temp) {
+    out.supports_temperature = true;
   }
   if (out.has_brightness) {
     out.supports_brightness = true;
