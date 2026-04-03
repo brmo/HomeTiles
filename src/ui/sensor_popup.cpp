@@ -27,12 +27,13 @@ constexpr int kHeaderIconOffsetX = 4;
 constexpr int kHeaderIconOffsetY = -8;
 constexpr int kContentPadTop = 76;
 constexpr int kContentRowGap = 15;
-constexpr int kChartHeight = 300;
+constexpr int kChartHeight = 325;
 constexpr int kTimeAxisHeight = 20;  // space for time labels below chart
 constexpr int kTimeAxisMarkerCount = 8;
 constexpr int kChartLineWidth = 4;
-constexpr int kChartGroupOffsetY = 80;
-constexpr int kRangeRowOffsetY = 181;
+constexpr int kChartGroupOffsetY = 63;
+constexpr int kRangeRowOffsetY = 136;
+constexpr int kValueOffsetY = 31;
 constexpr uint16_t kHistoryHours24h = 24;
 constexpr uint16_t kHistoryPeriodMinutes24h = 5;
 constexpr uint16_t kHistoryPoints24h = 288;
@@ -957,7 +958,7 @@ static void build_popup_ui(SensorPopupContext* ctx, const SensorPopupInit& init)
   set_label_style(value, lv_color_white(), get_value_font());
   lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_width(value, LV_PCT(100));
-  lv_obj_set_style_translate_y(value, -20, 0);
+  lv_obj_set_style_translate_y(value, kValueOffsetY, 0);
 
   // Chart wrapper: Y-axis labels on the left, chart on the right, time labels below.
   // Extra vertical space (kLabelOverhang) at top/bottom so labels don't get clipped.
