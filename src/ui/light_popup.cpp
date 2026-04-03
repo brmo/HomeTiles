@@ -9,6 +9,8 @@
 #include "src/tiles/mdi_icons.h"
 #include "src/tiles/tile_config.h"
 #include "src/tiles/tile_renderer_shared.h"
+#include "esp_heap_caps.h"
+#include <math.h>
 
 namespace {
 
@@ -22,9 +24,9 @@ constexpr int kCardPad = 20;
 constexpr int kHeaderPadTop = 4;
 constexpr int kHeaderIconOffsetX = 4;
 constexpr int kHeaderIconOffsetY = -8;
-constexpr int kContentPadTop = 96;
+constexpr int kContentPadTop = 88;
 constexpr int kPowerStatusGap = 20;
-constexpr int kPowerStatusMarginBottom = 35;
+constexpr int kPowerStatusMarginBottom = 22;
 
 constexpr int kLabelWidth = 140;
 constexpr int kValueWidth = 80;
@@ -44,6 +46,15 @@ constexpr int kPreviewHeight = 64;
 constexpr uint32_t kDefaultColor = 0xFFD54F;
 constexpr uint32_t kSwitchOnColor = 0x3B82F6;
 constexpr uint32_t kRemoteBlockMs = 3000;
+constexpr int kTopValueHeight = 58;
+constexpr int kTopValueBottomPad = 4;
+constexpr int kColorFieldWidth = 260;
+constexpr int kColorFieldHeight = 260;
+constexpr int kColorFieldWrapHeight = 308;
+constexpr int kColorFieldTitleBottomPad = 12;
+constexpr int kColorFieldCursorSize = 28;
+constexpr int kColorFieldFrameRadius = 22;
+constexpr float kPi = 3.14159265358979323846f;
 
 struct LightPopupContext {
   String entity_id;
@@ -51,6 +62,12 @@ struct LightPopupContext {
   lv_obj_t* card = nullptr;
   lv_obj_t* icon_label = nullptr;
   lv_obj_t* title_label = nullptr;
+  lv_obj_t* top_value_label = nullptr;
+  lv_obj_t* color_field_wrap = nullptr;
+  lv_obj_t* color_field_title_label = nullptr;
+  lv_obj_t* color_field_frame = nullptr;
+  lv_obj_t* color_field_canvas = nullptr;
+  lv_obj_t* color_field_cursor = nullptr;
   lv_obj_t* hue_title_label = nullptr;
   lv_obj_t* sat_title_label = nullptr;
   lv_obj_t* val_title_label = nullptr;
@@ -82,6 +99,9 @@ struct LightPopupContext {
   uint32_t last_user_action_ms = 0;
   uint32_t block_remote_until_ms = 0;
   bool suppress_events = false;
+  bool color_field_ready = false;
+  uint8_t* color_field_buf = nullptr;
+  uint32_t color_field_stride = 0;
 };
 
 static LightPopupContext* g_light_popup_ctx = nullptr;
@@ -154,12 +174,26 @@ static void set_label_style(lv_obj_t* lbl, lv_color_t color) {
   lv_obj_set_style_text_font(lbl, &ui_font_24, 0);
 }
 
+static bool is_german_language() {
+  const auto& tr = i18n::strings(configManager.getConfig().language);
+  return tr.code && strncmp(tr.code, "de", 2) == 0;
+}
+
+static const char* get_off_text() {
+  return is_german_language() ? "Aus" : "Off";
+}
+
+static const char* get_on_text() {
+  return is_german_language() ? "An" : "On";
+}
+
 static void update_popup_language(LightPopupContext* ctx) {
   if (!ctx) return;
   const auto& tr = i18n::strings(configManager.getConfig().language);
   if (ctx->val_title_label) lv_label_set_text(ctx->val_title_label, tr.brightness_label);
   if (ctx->hue_title_label) lv_label_set_text(ctx->hue_title_label, tr.hue_label);
   if (ctx->sat_title_label) lv_label_set_text(ctx->sat_title_label, tr.saturation_label);
+  if (ctx->color_field_title_label) lv_label_set_text(ctx->color_field_title_label, tr.hue_label);
 }
 
 static const lv_font_t* get_value_font() {
@@ -180,6 +214,103 @@ static void update_value_label(lv_obj_t* label, int value, const char* suffix) {
 static uint32_t color_from_hsv(uint16_t h, uint8_t s, uint8_t v) {
   lv_color_t color = lv_color_hsv_to_rgb(h, s, v);
   return lv_color_to_u32(color) & 0xFFFFFF;
+}
+
+static uint16_t normalize_hue(int value) {
+  while (value < 0) value += 360;
+  while (value >= 360) value -= 360;
+  return static_cast<uint16_t>(value);
+}
+
+static bool ensure_color_field_buffer(LightPopupContext* ctx) {
+  if (!ctx) return false;
+  if (ctx->color_field_buf) return true;
+
+  ctx->color_field_stride = lv_draw_buf_width_to_stride(kColorFieldWidth, LV_COLOR_FORMAT_ARGB8888);
+  const size_t bytes = static_cast<size_t>(ctx->color_field_stride) *
+                       static_cast<size_t>(kColorFieldHeight);
+  ctx->color_field_buf = static_cast<uint8_t*>(
+      heap_caps_aligned_alloc(64, bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!ctx->color_field_buf) {
+    ctx->color_field_buf = static_cast<uint8_t*>(
+        heap_caps_aligned_alloc(64, bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  }
+  return ctx->color_field_buf != nullptr;
+}
+
+static void render_color_field(LightPopupContext* ctx) {
+  if (!ctx || !ctx->color_field_canvas) return;
+  if (!ensure_color_field_buffer(ctx)) return;
+
+  lv_canvas_set_buffer(ctx->color_field_canvas,
+                       ctx->color_field_buf,
+                       kColorFieldWidth,
+                       kColorFieldHeight,
+                       LV_COLOR_FORMAT_ARGB8888);
+
+  const float cx = (kColorFieldWidth - 1) * 0.5f;
+  const float cy = (kColorFieldHeight - 1) * 0.5f;
+  const float radius = (kColorFieldWidth - 2) * 0.5f;
+
+  for (int y = 0; y < kColorFieldHeight; ++y) {
+    lv_color32_t* row = reinterpret_cast<lv_color32_t*>(ctx->color_field_buf + (y * ctx->color_field_stride));
+    for (int x = 0; x < kColorFieldWidth; ++x) {
+      const float dx = x - cx;
+      const float dy = cy - y;
+      const float dist = sqrtf((dx * dx) + (dy * dy));
+
+      if (dist > radius) {
+        row[x] = lv_color32_make(0, 0, 0, 0);
+        continue;
+      }
+
+      float angle = atan2f(dy, dx) * 180.0f / kPi;
+      if (angle < 0.0f) angle += 360.0f;
+      const uint16_t hue = static_cast<uint16_t>(angle);
+      const uint8_t sat = static_cast<uint8_t>(lroundf((dist / radius) * 100.0f));
+      const lv_color_t color = lv_color_hsv_to_rgb(hue, sat, 100);
+      row[x] = lv_color_to_32(color, LV_OPA_COVER);
+    }
+  }
+
+  lv_obj_invalidate(ctx->color_field_canvas);
+  ctx->color_field_ready = true;
+}
+
+static void update_color_field_cursor(LightPopupContext* ctx) {
+  if (!ctx || !ctx->color_field_ready || !ctx->color_field_cursor) return;
+
+  const float cx = (kColorFieldWidth - 1) * 0.5f;
+  const float cy = (kColorFieldHeight - 1) * 0.5f;
+  const float radius = (kColorFieldWidth - 2) * 0.5f;
+  const float angle = (static_cast<float>(ctx->hue) * kPi) / 180.0f;
+  const float sat_radius = (static_cast<float>(ctx->sat) / 100.0f) * radius;
+  const int x = static_cast<int>(lroundf(cx + cosf(angle) * sat_radius));
+  const int y = static_cast<int>(lroundf(cy - sinf(angle) * sat_radius));
+  lv_obj_set_pos(ctx->color_field_cursor,
+                 x - (kColorFieldCursorSize / 2),
+                 y - (kColorFieldCursorSize / 2));
+
+  const uint32_t rgb = color_from_hsv(ctx->hue, ctx->sat, 100);
+  lv_obj_set_style_bg_color(ctx->color_field_cursor, lv_color_hex(rgb), 0);
+}
+
+static void update_top_value_label(LightPopupContext* ctx) {
+  if (!ctx || !ctx->top_value_label) return;
+
+  char buf[24];
+  if (!ctx->is_on || (ctx->supports_brightness && ctx->val == 0)) {
+    lv_label_set_text(ctx->top_value_label, get_off_text());
+    return;
+  }
+
+  if (ctx->supports_brightness) {
+    snprintf(buf, sizeof(buf), "%u %%", ctx->val);
+    lv_label_set_text(ctx->top_value_label, buf);
+    return;
+  }
+
+  lv_label_set_text(ctx->top_value_label, get_on_text());
 }
 
 static void publish_light_popup(LightPopupContext* ctx) {
@@ -264,6 +395,8 @@ static void update_preview(LightPopupContext* ctx) {
   update_value_label(ctx->hue_value, ctx->hue, "");
   update_value_label(ctx->sat_value, ctx->sat, "%");
   update_value_label(ctx->val_value, ctx->val, "%");
+  update_top_value_label(ctx);
+  update_color_field_cursor(ctx);
 }
 
 static void align_header_row(lv_obj_t* card, lv_obj_t* title_label, lv_obj_t* icon_label) {
@@ -302,12 +435,12 @@ static void apply_init_to_context(LightPopupContext* ctx, const LightPopupInit& 
   bool update_color = ctx->supports_color && (init.has_hs || init.has_color);
   if (update_color) {
     if (init.has_hs) {
-      ctx->hue = static_cast<uint16_t>(roundf(init.hs_h));
+      ctx->hue = normalize_hue(static_cast<int>(roundf(init.hs_h)));
       ctx->sat = static_cast<uint8_t>(roundf(init.hs_s));
     } else {
       uint32_t base_color = init.color ? init.color : kDefaultColor;
       lv_color_hsv_t hsv = lv_color_to_hsv(lv_color_hex(base_color));
-      ctx->hue = hsv.h;
+      ctx->hue = normalize_hue(hsv.h);
       ctx->sat = hsv.s;
     }
   } else if (!ctx->supports_color) {
@@ -367,17 +500,21 @@ static void apply_init_to_context(LightPopupContext* ctx, const LightPopupInit& 
       lv_obj_remove_state(ctx->power_switch, LV_STATE_CHECKED);
     }
   }
-  if (ctx->hue_row) {
-    if (show_color) lv_obj_clear_flag(ctx->hue_row, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(ctx->hue_row, LV_OBJ_FLAG_HIDDEN);
-  }
-  if (ctx->sat_row) {
-    if (show_color) lv_obj_clear_flag(ctx->sat_row, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(ctx->sat_row, LV_OBJ_FLAG_HIDDEN);
-  }
   if (ctx->val_row) {
     if (show_val) lv_obj_clear_flag(ctx->val_row, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(ctx->val_row, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (ctx->color_field_wrap) {
+    if (show_color && ctx->color_field_ready) lv_obj_clear_flag(ctx->color_field_wrap, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(ctx->color_field_wrap, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (ctx->hue_row) {
+    if (show_color && !ctx->color_field_ready) lv_obj_clear_flag(ctx->hue_row, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(ctx->hue_row, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (ctx->sat_row) {
+    if (show_color && !ctx->color_field_ready) lv_obj_clear_flag(ctx->sat_row, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(ctx->sat_row, LV_OBJ_FLAG_HIDDEN);
   }
   update_preview(ctx);
   ctx->suppress_events = false;
@@ -460,6 +597,66 @@ static lv_obj_t* create_slider_row(lv_obj_t* parent,
   return row;
 }
 
+static lv_obj_t* create_color_field_row(lv_obj_t* parent,
+                                        lv_obj_t** title_out,
+                                        lv_obj_t** frame_out,
+                                        lv_obj_t** canvas_out,
+                                        lv_obj_t** cursor_out) {
+  lv_obj_t* wrap = lv_obj_create(parent);
+  lv_obj_set_width(wrap, LV_PCT(100));
+  lv_obj_set_height(wrap, kColorFieldWrapHeight);
+  lv_obj_set_style_bg_opa(wrap, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(wrap, 0, 0);
+  lv_obj_set_style_pad_all(wrap, 0, 0);
+  lv_obj_set_layout(wrap, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(wrap, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(wrap, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_row(wrap, kColorFieldTitleBottomPad, 0);
+
+  lv_obj_t* title = lv_label_create(wrap);
+  set_label_style(title, lv_color_white());
+  lv_obj_set_width(title, LV_PCT(100));
+  lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_LEFT, 0);
+  lv_label_set_text(title, "");
+
+  lv_obj_t* frame = lv_obj_create(wrap);
+  lv_obj_set_size(frame, kColorFieldWidth, kColorFieldHeight);
+  lv_obj_set_style_bg_color(frame, lv_color_hex(0x1F1F1F), 0);
+  lv_obj_set_style_bg_opa(frame, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(frame, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_border_width(frame, 0, 0);
+  lv_obj_set_style_pad_all(frame, 0, 0);
+  lv_obj_set_style_clip_corner(frame, true, 0);
+  lv_obj_clear_flag(frame, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(frame, LV_OBJ_FLAG_CLICKABLE);
+
+  lv_obj_t* canvas = lv_canvas_create(frame);
+  lv_obj_set_size(canvas, kColorFieldWidth, kColorFieldHeight);
+  lv_obj_center(canvas);
+  lv_obj_clear_flag(canvas, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* cursor = lv_obj_create(frame);
+  lv_obj_set_size(cursor, kColorFieldCursorSize, kColorFieldCursorSize);
+  lv_obj_set_style_radius(cursor, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_opa(cursor, LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_color(cursor, lv_color_white(), 0);
+  lv_obj_set_style_border_width(cursor, 3, 0);
+  lv_obj_set_style_border_color(cursor, lv_color_white(), 0);
+  lv_obj_set_style_outline_width(cursor, 1, 0);
+  lv_obj_set_style_outline_color(cursor, lv_color_hex(0x111111), 0);
+  lv_obj_set_style_shadow_width(cursor, 12, 0);
+  lv_obj_set_style_shadow_opa(cursor, LV_OPA_30, 0);
+  lv_obj_set_style_shadow_color(cursor, lv_color_black(), 0);
+  lv_obj_add_flag(cursor, LV_OBJ_FLAG_IGNORE_LAYOUT);
+  lv_obj_clear_flag(cursor, LV_OBJ_FLAG_CLICKABLE);
+
+  if (title_out) *title_out = title;
+  if (frame_out) *frame_out = frame;
+  if (canvas_out) *canvas_out = canvas;
+  if (cursor_out) *cursor_out = cursor;
+  return wrap;
+}
+
 static lv_obj_t* create_switch_row(lv_obj_t* parent,
                                    const char* label_text,
                                    lv_obj_t** switch_out) {
@@ -531,7 +728,7 @@ static void on_hue_changed(lv_event_t* e) {
   int value = lv_slider_get_value(ctx->hue_slider);
   if (value < 0) value = 0;
   if (value > 360) value = 360;
-  ctx->hue = static_cast<uint16_t>(value);
+  ctx->hue = normalize_hue(value);
   mark_user_action(ctx);
   update_preview(ctx);
   sync_bound_tile_from_popup(ctx);
@@ -584,6 +781,86 @@ static void on_val_changed(lv_event_t* e) {
   publish_light_popup(ctx);
 }
 
+static void apply_color_field_point(LightPopupContext* ctx, lv_obj_t* frame, const lv_point_t& point) {
+  if (!ctx || !frame || !ctx->supports_color) return;
+
+  lv_area_t area;
+  lv_obj_get_coords(frame, &area);
+
+  int x = point.x - area.x1;
+  int y = point.y - area.y1;
+  if (x < 0) x = 0;
+  if (x >= kColorFieldWidth) x = kColorFieldWidth - 1;
+  if (y < 0) y = 0;
+  if (y >= kColorFieldHeight) y = kColorFieldHeight - 1;
+
+  const float cx = (kColorFieldWidth - 1) * 0.5f;
+  const float cy = (kColorFieldHeight - 1) * 0.5f;
+  const float radius = (kColorFieldWidth - 2) * 0.5f;
+
+  float dx = x - cx;
+  float dy = cy - y;
+  float dist = sqrtf((dx * dx) + (dy * dy));
+
+  if (dist > radius && dist > 0.0f) {
+    const float scale = radius / dist;
+    dx *= scale;
+    dy *= scale;
+    dist = radius;
+  }
+
+  float angle = atan2f(dy, dx) * 180.0f / kPi;
+  if (angle < 0.0f) angle += 360.0f;
+
+  ctx->hue = normalize_hue(static_cast<int>(lroundf(angle)));
+  ctx->sat = static_cast<uint8_t>(lroundf((dist / radius) * 100.0f));
+
+  if (ctx->supports_brightness && !ctx->is_on) {
+    ctx->is_on = true;
+    if (ctx->val == 0) {
+      ctx->val = ctx->last_brightness > 0 ? ctx->last_brightness : 100;
+      if (ctx->val_slider) {
+        ctx->suppress_events = true;
+        lv_slider_set_value(ctx->val_slider, ctx->val, LV_ANIM_OFF);
+        ctx->suppress_events = false;
+      }
+    }
+    if (ctx->power_switch) {
+      lv_obj_add_state(ctx->power_switch, LV_STATE_CHECKED);
+    }
+  }
+
+  mark_user_action(ctx);
+  update_preview(ctx);
+  sync_bound_tile_from_popup(ctx);
+  publish_light_popup(ctx);
+}
+
+static void on_color_field_event(lv_event_t* e) {
+  LightPopupContext* ctx = static_cast<LightPopupContext*>(lv_event_get_user_data(e));
+  if (!ctx || ctx->suppress_events || !ctx->color_field_ready) return;
+
+  lv_event_code_t code = lv_event_get_code(e);
+  if (code == LV_EVENT_PRESSED) {
+    ctx->user_dragging = true;
+  } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+    ctx->user_dragging = false;
+  } else if (code != LV_EVENT_PRESSING) {
+    return;
+  }
+
+  if (code == LV_EVENT_PRESSED || code == LV_EVENT_PRESSING || code == LV_EVENT_RELEASED) {
+    lv_indev_t* indev = lv_indev_get_act();
+    if (!indev) return;
+    lv_point_t point;
+    lv_indev_get_point(indev, &point);
+    lv_obj_t* target = static_cast<lv_obj_t*>(lv_event_get_target(e));
+    apply_color_field_point(ctx, target, point);
+  } else {
+    mark_user_action(ctx);
+  }
+}
+
 static void on_slider_pressed(lv_event_t* e) {
   LightPopupContext* ctx = static_cast<LightPopupContext*>(lv_event_get_user_data(e));
   if (!ctx || ctx->suppress_events) return;
@@ -602,6 +879,10 @@ static void on_overlay_delete(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_DELETE) return;
   LightPopupContext* ctx = static_cast<LightPopupContext*>(lv_event_get_user_data(e));
   if (!ctx) return;
+  if (ctx->color_field_buf) {
+    heap_caps_free(ctx->color_field_buf);
+    ctx->color_field_buf = nullptr;
+  }
   if (g_light_popup_ctx == ctx) {
     g_light_popup_ctx = nullptr;
   }
@@ -705,10 +986,25 @@ void show_light_popup(const LightPopupInit& init) {
   lv_obj_set_style_pad_row(content, kRowPadY, 0);
   lv_obj_clear_flag(content, LV_OBJ_FLAG_CLICKABLE);
 
+  ctx->top_value_label = lv_label_create(content);
+  lv_obj_set_width(ctx->top_value_label, LV_PCT(100));
+  lv_obj_set_height(ctx->top_value_label, kTopValueHeight);
+  lv_obj_set_style_text_align(ctx->top_value_label, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_text_font(ctx->top_value_label, &ui_font_48, 0);
+  lv_obj_set_style_text_color(ctx->top_value_label, lv_color_white(), 0);
+  lv_obj_set_style_pad_bottom(ctx->top_value_label, kTopValueBottomPad, 0);
+  lv_label_set_text(ctx->top_value_label, "");
+
   ctx->power_row = create_centered_power_status(content, &ctx->power_switch, &ctx->power_status_label);
   ctx->val_row = create_slider_row(content, "", 0, 100, &ctx->val_title_label, &ctx->val_slider, &ctx->val_value);
+  ctx->color_field_wrap = create_color_field_row(content,
+                                                 &ctx->color_field_title_label,
+                                                 &ctx->color_field_frame,
+                                                 &ctx->color_field_canvas,
+                                                 &ctx->color_field_cursor);
   ctx->hue_row = create_slider_row(content, "", 0, 360, &ctx->hue_title_label, &ctx->hue_slider, &ctx->hue_value);
   ctx->sat_row = create_slider_row(content, "", 0, 100, &ctx->sat_title_label, &ctx->sat_slider, &ctx->sat_value);
+  render_color_field(ctx);
   lv_obj_move_foreground(icon);
   lv_obj_move_foreground(title);
   lv_obj_move_foreground(close_btn);
@@ -728,6 +1024,12 @@ void show_light_popup(const LightPopupInit& init) {
   lv_obj_add_event_cb(ctx->hue_slider, on_slider_released, LV_EVENT_PRESS_LOST, ctx);
   lv_obj_add_event_cb(ctx->sat_slider, on_slider_released, LV_EVENT_PRESS_LOST, ctx);
   lv_obj_add_event_cb(ctx->val_slider, on_slider_released, LV_EVENT_PRESS_LOST, ctx);
+  if (ctx->color_field_frame) {
+    lv_obj_add_event_cb(ctx->color_field_frame, on_color_field_event, LV_EVENT_PRESSED, ctx);
+    lv_obj_add_event_cb(ctx->color_field_frame, on_color_field_event, LV_EVENT_PRESSING, ctx);
+    lv_obj_add_event_cb(ctx->color_field_frame, on_color_field_event, LV_EVENT_RELEASED, ctx);
+    lv_obj_add_event_cb(ctx->color_field_frame, on_color_field_event, LV_EVENT_PRESS_LOST, ctx);
+  }
   lv_obj_add_event_cb(overlay, on_overlay_click, LV_EVENT_CLICKED, ctx);
   lv_obj_add_event_cb(overlay, on_overlay_delete, LV_EVENT_DELETE, ctx);
 }
