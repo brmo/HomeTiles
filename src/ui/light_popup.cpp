@@ -21,32 +21,34 @@ constexpr int kCardWidth =
         : (SCREEN_WIDTH - (kCardMargin * 2));
 constexpr int kCardHeight = SCREEN_HEIGHT - (kCardMargin * 2);
 constexpr int kCardPad = 20;
-constexpr int kContentPadTop = 82;
-constexpr int kHeaderIconOffsetX = 4;
-constexpr int kHeaderIconOffsetY = -8;
+constexpr int kContentPadTop = 94;
+constexpr int kHeaderIconOffsetX = 0;
+constexpr int kHeaderIconOffsetY = 0;
 constexpr int kTopValueHeight = 60;
-constexpr int kTopValueBottomPad = 4;
-constexpr int kMainPanelHeight = 370;
-constexpr int kControlsRowTopPad = 18;
-constexpr int kControlsRowHeight = 82;
+constexpr int kTopValueBottomPad = 16;
+constexpr int kMainPanelHeight = 384;
+constexpr int kControlsRowTopPad = 12;
+constexpr int kControlsRowHeight = 98;
 constexpr int kControlsRowPadX = 12;
 constexpr int kControlsRowGap = 12;
-constexpr int kControlButtonSize = 68;
-constexpr int kVerticalSliderWidth = 110;
-constexpr int kVerticalSliderHeight = 286;
+constexpr int kControlButtonSize = 86;
+constexpr int kVerticalSliderWidth = 160;
+constexpr int kVerticalSliderHeight = 340;
 constexpr int kVerticalSliderRadius = 32;
-constexpr int kVerticalValueLabelPadTop = 10;
+constexpr int kVerticalValueLabelPadTop = 0;
 constexpr int kTempHandleWidth = kVerticalSliderWidth;
-constexpr int kTempHandleHeight = kVerticalSliderRadius * 2;
 constexpr int kTempHandleRadius = kVerticalSliderRadius;
+constexpr int kTempHandleHeight = kTempHandleRadius * 2;
 constexpr int kTempHandleDashWidth = 46;
 constexpr int kTempHandleDashHeight = 4;
 constexpr int kTempWrapWidth = kVerticalSliderWidth;
 constexpr int kTempWrapHeight = kVerticalSliderHeight + kTempHandleHeight;
-constexpr int kColorFieldWidth = 300;
-constexpr int kColorFieldHeight = 300;
-constexpr int kColorFieldWrapHeight = 340;
-constexpr int kColorFieldCursorSize = 28;
+constexpr int kColorFieldWidth = 340;
+constexpr int kColorFieldHeight = 340;
+constexpr int kColorFieldWrapHeight = 384;
+constexpr int kColorFieldCursorSize = 30;
+constexpr int kBrightnessDashWidth = kTempHandleDashWidth;
+constexpr int kBrightnessDashHeight = kTempHandleDashHeight;
 
 constexpr uint32_t kDefaultColor = 0xFFD54F;
 constexpr uint32_t kSwitchOnColor = 0x3B82F6;
@@ -127,6 +129,7 @@ static LightPopupContext* g_light_popup_ctx = nullptr;
 static void update_preview(LightPopupContext* ctx);
 static void commit_popup_state(LightPopupContext* ctx);
 static void on_overlay_click(lv_event_t* e);
+static void on_val_slider_draw(lv_event_t* e);
 static void on_temp_slider_draw(lv_event_t* e);
 
 static void on_close_click(lv_event_t* e) {
@@ -314,6 +317,15 @@ static void update_value_label(lv_obj_t* label, int value, const char* suffix) {
   lv_label_set_text(label, buf);
 }
 
+static float get_brightness_visual_ratio(uint8_t value) {
+  if (value == 0) return 0.0f;
+  if (value >= 100) return 1.0f;
+  const float logical = static_cast<float>(value - 1) / 99.0f;
+  constexpr float kMinVisibleRatio =
+      static_cast<float>(kVerticalSliderRadius * 2) / static_cast<float>(kVerticalSliderHeight);
+  return kMinVisibleRatio + (logical * (1.0f - kMinVisibleRatio));
+}
+
 static bool ensure_color_field_buffer(LightPopupContext* ctx) {
   if (!ctx) return false;
   if (ctx->color_field_buf) return true;
@@ -375,11 +387,18 @@ static void render_color_field(LightPopupContext* ctx) {
 
 static void update_color_field_cursor(LightPopupContext* ctx) {
   if (!ctx || !ctx->color_field_ready || !ctx->color_field_cursor || !ctx->color_field_frame) return;
+  uint16_t display_hue = ctx->hue;
+  uint8_t display_sat = ctx->sat;
+  if (ctx->supports_temperature && ctx->use_color_temperature) {
+    const lv_color_hsv_t hsv = lv_color_to_hsv(color_from_temperature_kelvin(ctx->color_temp_kelvin));
+    display_hue = normalize_hue(static_cast<int>(hsv.h));
+    display_sat = hsv.s;
+  }
   const float cx = (kColorFieldWidth - 1) * 0.5f;
   const float cy = (kColorFieldHeight - 1) * 0.5f;
   const float radius = (kColorFieldWidth - 2) * 0.5f;
-  const float angle = (static_cast<float>(ctx->hue) * kPi) / 180.0f;
-  const float sat_radius = (static_cast<float>(ctx->sat) / 100.0f) * radius;
+  const float angle = (static_cast<float>(display_hue) * kPi) / 180.0f;
+  const float sat_radius = (static_cast<float>(display_sat) / 100.0f) * radius;
   const int frame_x = lv_obj_get_x(ctx->color_field_frame);
   const int frame_y = lv_obj_get_y(ctx->color_field_frame);
   const int x = frame_x + static_cast<int>(lroundf(cx + cosf(angle) * sat_radius));
@@ -387,7 +406,10 @@ static void update_color_field_cursor(LightPopupContext* ctx) {
   lv_obj_set_pos(ctx->color_field_cursor,
                  x - (kColorFieldCursorSize / 2),
                  y - (kColorFieldCursorSize / 2));
-  lv_obj_set_style_bg_color(ctx->color_field_cursor, lv_color_hex(color_from_hsv(ctx->hue, ctx->sat, 100)), 0);
+  const uint32_t display_rgb = (ctx->supports_temperature && ctx->use_color_temperature)
+                                   ? (lv_color_to_u32(color_from_temperature_kelvin(ctx->color_temp_kelvin)) & 0xFFFFFF)
+                                   : color_from_hsv(display_hue, display_sat, 100);
+  lv_obj_set_style_bg_color(ctx->color_field_cursor, lv_color_hex(display_rgb), 0);
 }
 
 static void update_top_value_label(LightPopupContext* ctx) {
@@ -523,9 +545,8 @@ static void apply_mode_visibility(LightPopupContext* ctx) {
 static void set_mode(LightPopupContext* ctx, LightPopupMode mode) {
   if (!ctx || !is_mode_available(ctx, mode)) return;
   ctx->mode = mode;
-  if (mode == LightPopupMode::Color) ctx->use_color_temperature = false;
-  if (mode == LightPopupMode::Temperature) ctx->use_color_temperature = true;
   apply_mode_visibility(ctx);
+  update_preview(ctx);
 }
 
 static void publish_light_popup(LightPopupContext* ctx) {
@@ -617,11 +638,11 @@ static void update_preview(LightPopupContext* ctx) {
   // Brightness slider indicator matches lamp color
   if (ctx->val_slider) {
     lv_color_t base_color = lv_color_hex(icon_rgb);
-    lv_obj_set_style_bg_color(ctx->val_slider, base_color, LV_PART_INDICATOR);
-    // Track uses same color as indicator with 30% opacity (kein schwarzer Hintergrund)
     lv_obj_set_style_bg_color(ctx->val_slider, base_color, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(ctx->val_slider, LV_OPA_30, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(ctx->val_slider, LV_OPA_TRANSP, LV_PART_INDICATOR);
     lv_obj_set_style_border_width(ctx->val_slider, 0, LV_PART_MAIN);
+    lv_obj_invalidate(ctx->val_slider);
   }
 
   update_value_label(ctx->val_value, ctx->val, "%");
@@ -637,6 +658,7 @@ static void update_preview(LightPopupContext* ctx) {
         color_from_temperature_kelvin(ctx->max_color_temp_kelvin),
         LV_PART_MAIN);
     lv_obj_set_style_bg_grad_dir(ctx->temp_slider, LV_GRAD_DIR_VER, LV_PART_MAIN);
+    lv_obj_invalidate(ctx->temp_slider);
   }
   update_color_field_cursor(ctx);
 }
@@ -741,19 +763,21 @@ static lv_obj_t* create_vertical_slider_panel(lv_obj_t* parent,
     lv_obj_set_style_bg_opa(slider, LV_OPA_TRANSP, LV_PART_INDICATOR);
     lv_obj_set_style_bg_opa(slider, LV_OPA_TRANSP, LV_PART_KNOB);
   } else {
-    // Brightness: track initial color matches default lamp color mit 30% opa
+    // Brightness: track is tinted, fill is custom-drawn to allow a visible 1% state.
     lv_obj_set_style_bg_color(slider, lv_color_hex(kDefaultColor), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(slider, LV_OPA_30, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(slider, lv_color_hex(kDefaultColor), LV_PART_INDICATOR);
-    lv_obj_set_style_bg_opa(slider, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(slider, LV_OPA_TRANSP, LV_PART_INDICATOR);
     lv_obj_set_style_bg_opa(slider, LV_OPA_TRANSP, LV_PART_KNOB);
   }
+  lv_obj_set_style_border_width(slider, 0, LV_PART_MAIN);
+  lv_obj_set_style_border_width(slider, 0, LV_PART_INDICATOR);
   lv_obj_set_ext_click_area(slider, 24);
 
   lv_obj_t* value = lv_label_create(panel);
   lv_obj_set_style_text_font(value, &ui_font_24, 0);
   lv_obj_set_style_text_color(value, lv_color_white(), 0);
   lv_label_set_text(value, "");
+  lv_obj_add_flag(value, LV_OBJ_FLAG_HIDDEN);
 
   if (slider_out) *slider_out = slider;
   if (value_out) *value_out = value;
@@ -896,13 +920,16 @@ static void apply_init_to_context(LightPopupContext* ctx, const LightPopupInit& 
       ctx->use_color_temperature = !init.has_hs && !init.has_color;
     } else {
       ctx->color_temp_kelvin = clamp_color_temp_kelvin_to_range(
-          ctx->color_temp_kelvin, ctx->min_color_temp_kelvin, ctx->max_color_temp_kelvin);
+        ctx->color_temp_kelvin, ctx->min_color_temp_kelvin, ctx->max_color_temp_kelvin);
     }
   } else {
     ctx->color_temp_kelvin = 4000;
     ctx->min_color_temp_kelvin = 2200;
     ctx->max_color_temp_kelvin = 6500;
     ctx->use_color_temperature = false;
+  }
+  if (ctx->supports_temperature && !ctx->supports_color) {
+    ctx->use_color_temperature = true;
   }
 
   if (ctx->supports_brightness) {
@@ -1037,6 +1064,56 @@ static void on_temp_changed(lv_event_t* e) {
   update_preview(ctx);
 }
 
+static void on_val_slider_draw(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_DRAW_MAIN_END) return;
+
+  LightPopupContext* ctx = static_cast<LightPopupContext*>(lv_event_get_user_data(e));
+  lv_obj_t* obj = lv_event_get_target_obj(e);
+  if (!ctx || !obj || !ctx->supports_brightness) return;
+
+  lv_area_t slider_area;
+  lv_obj_get_coords(obj, &slider_area);
+  const int slider_h = lv_area_get_height(&slider_area);
+  if (slider_h <= 1) return;
+
+  const uint8_t logical_value = (ctx->is_on || ctx->val > 0) ? ctx->val : 0;
+  const float ratio = get_brightness_visual_ratio(logical_value);
+  if (ratio <= 0.0f) return;
+
+  int fill_h = static_cast<int>(lroundf(ratio * slider_h));
+  if (fill_h < 1) fill_h = 1;
+  lv_area_t fill_area = slider_area;
+  fill_area.y1 = slider_area.y2 - fill_h + 1;
+
+  lv_draw_rect_dsc_t fill_dsc;
+  lv_draw_rect_dsc_init(&fill_dsc);
+  fill_dsc.bg_color = lv_obj_get_style_bg_color(obj, LV_PART_MAIN);
+  fill_dsc.bg_opa = LV_OPA_COVER;
+  fill_dsc.radius = kVerticalSliderRadius;
+
+  lv_layer_t* layer = lv_event_get_layer(e);
+  lv_draw_rect(layer, &fill_dsc, &fill_area);
+
+  int dash_center_y = fill_area.y1 + kVerticalSliderRadius;
+  const int min_dash_center_y = fill_area.y1 + (kBrightnessDashHeight / 2);
+  const int max_dash_center_y = fill_area.y2 - (kBrightnessDashHeight / 2);
+  if (dash_center_y < min_dash_center_y) dash_center_y = min_dash_center_y;
+  if (dash_center_y > max_dash_center_y) dash_center_y = max_dash_center_y;
+
+  lv_area_t dash_area;
+  dash_area.x1 = slider_area.x1 + ((lv_area_get_width(&slider_area) - kBrightnessDashWidth) / 2);
+  dash_area.x2 = dash_area.x1 + kBrightnessDashWidth - 1;
+  dash_area.y1 = dash_center_y - (kBrightnessDashHeight / 2);
+  dash_area.y2 = dash_area.y1 + kBrightnessDashHeight - 1;
+
+  lv_draw_rect_dsc_t dash_dsc;
+  lv_draw_rect_dsc_init(&dash_dsc);
+  dash_dsc.bg_color = lv_color_hex(0x2A2A2A);
+  dash_dsc.bg_opa = LV_OPA_COVER;
+  dash_dsc.radius = LV_RADIUS_CIRCLE;
+  lv_draw_rect(layer, &dash_dsc, &dash_area);
+}
+
 static void on_temp_slider_draw(lv_event_t* e) {
   const lv_event_code_t code = lv_event_get_code(e);
   if (code == LV_EVENT_REFR_EXT_DRAW_SIZE) {
@@ -1050,6 +1127,7 @@ static void on_temp_slider_draw(lv_event_t* e) {
   LightPopupContext* ctx = static_cast<LightPopupContext*>(lv_event_get_user_data(e));
   lv_obj_t* obj = lv_event_get_target_obj(e);
   if (!ctx || !obj || !ctx->supports_temperature) return;
+  if (!ctx->use_color_temperature) return;
 
   lv_area_t slider_area;
   lv_obj_get_coords(obj, &slider_area);
@@ -1236,6 +1314,18 @@ static void on_color_field_event(lv_event_t* e) {
 static void on_slider_pressed(lv_event_t* e) {
   LightPopupContext* ctx = static_cast<LightPopupContext*>(lv_event_get_user_data(e));
   if (!ctx || ctx->suppress_events) return;
+  lv_obj_t* target = lv_event_get_target_obj(e);
+  if (target == ctx->temp_slider && ctx->supports_temperature && !ctx->use_color_temperature) {
+    lv_indev_t* indev = lv_indev_get_act();
+    if (indev) {
+      lv_point_t point;
+      lv_indev_get_point(indev, &point);
+      apply_temperature_point(ctx, point, false);
+    } else {
+      ctx->use_color_temperature = true;
+      update_preview(ctx);
+    }
+  }
   ctx->user_dragging = true;
   mark_user_action(ctx);
 }
@@ -1389,8 +1479,8 @@ void show_light_popup(const LightPopupInit& init) {
   lv_obj_set_style_border_width(ctx->controls_row, 0, 0);
   lv_obj_set_style_pad_left(ctx->controls_row, kControlsRowPadX, 0);
   lv_obj_set_style_pad_right(ctx->controls_row, kControlsRowPadX, 0);
-  lv_obj_set_style_pad_top(ctx->controls_row, 8, 0);
-  lv_obj_set_style_pad_bottom(ctx->controls_row, 8, 0);
+  lv_obj_set_style_pad_top(ctx->controls_row, 6, 0);
+  lv_obj_set_style_pad_bottom(ctx->controls_row, 6, 0);
   lv_obj_set_style_pad_column(ctx->controls_row, kControlsRowGap, 0);
   lv_obj_set_style_margin_top(ctx->controls_row, kControlsRowTopPad, 0);
   lv_obj_set_layout(ctx->controls_row, LV_LAYOUT_FLEX);
@@ -1415,6 +1505,7 @@ void show_light_popup(const LightPopupInit& init) {
   lv_obj_add_event_cb(ctx->color_button, on_mode_color_click, LV_EVENT_CLICKED, ctx);
   lv_obj_add_event_cb(ctx->temperature_button, on_mode_temperature_click, LV_EVENT_CLICKED, ctx);
   lv_obj_add_event_cb(ctx->val_slider, on_val_changed, LV_EVENT_VALUE_CHANGED, ctx);
+  lv_obj_add_event_cb(ctx->val_slider, on_val_slider_draw, LV_EVENT_DRAW_MAIN_END, ctx);
   lv_obj_add_event_cb(ctx->temp_slider, on_temp_changed, LV_EVENT_VALUE_CHANGED, ctx);
   lv_obj_add_event_cb(ctx->temp_slider, on_temp_slider_draw, LV_EVENT_REFR_EXT_DRAW_SIZE, ctx);
   lv_obj_add_event_cb(ctx->temp_slider, on_temp_slider_draw, LV_EVENT_DRAW_MAIN_END, ctx);
