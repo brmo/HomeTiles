@@ -53,12 +53,13 @@ constexpr int kBrightnessDashHeight = kTempHandleDashHeight;
 constexpr uint32_t kDefaultColor = 0xFFD54F;
 constexpr uint32_t kSwitchOnColor = 0x3B82F6;
 constexpr uint32_t kRemoteBlockMs = 3000;
+constexpr uint32_t kLivePublishIntervalMs = 80;
 constexpr uint32_t kControlButtonBg = 0x2A2A2A;
 constexpr uint32_t kControlButtonActiveBg = 0x3A3A3D;
 constexpr uint32_t kControlButtonDisabled = 0x6B6B6B;
 constexpr uint32_t kControlBarBg = 0x1F1F22;
 constexpr uint32_t kTempWarmColor = 0xFFD27D;
-constexpr uint32_t kTempCoolColor = 0xFFFFFF;
+constexpr uint32_t kTempCoolColor = 0xF7F1E8;
 constexpr float kPi = 3.14159265358979323846f;
 
 enum class LightPopupMode : uint8_t {
@@ -116,6 +117,7 @@ struct LightPopupContext {
   bool user_dragging = false;
   uint32_t last_user_action_ms = 0;
   uint32_t block_remote_until_ms = 0;
+  uint32_t last_live_publish_ms = 0;
   bool suppress_events = false;
   bool color_field_ready = false;
   bool use_color_temperature = false;
@@ -129,6 +131,7 @@ static LightPopupContext* g_light_popup_ctx = nullptr;
 // Forward declarations
 static void update_preview(LightPopupContext* ctx);
 static void commit_popup_state(LightPopupContext* ctx);
+static void maybe_live_publish_during_drag(LightPopupContext* ctx);
 static void on_overlay_click(lv_event_t* e);
 static void on_val_slider_draw(lv_event_t* e);
 static void on_temp_slider_draw(lv_event_t* e);
@@ -435,6 +438,68 @@ static void update_temperature_value_label(LightPopupContext* ctx) {
   lv_label_set_text(ctx->temp_value_label, buf);
 }
 
+static bool is_visible_obj(lv_obj_t* obj) {
+  return obj && !lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN);
+}
+
+static uint32_t get_preview_icon_rgb(const LightPopupContext* ctx) {
+  if (!ctx || !ctx->is_on) return 0xB0B0B0;
+  if (ctx->supports_temperature && ctx->use_color_temperature) {
+    return lv_color_to_u32(color_from_temperature_kelvin(ctx->color_temp_kelvin)) & 0xFFFFFF;
+  }
+  if (ctx->supports_color) {
+    return color_from_hsv(ctx->hue, ctx->sat, 100);
+  }
+  return kDefaultColor;
+}
+
+static void update_header_and_power_visuals(LightPopupContext* ctx, uint32_t icon_rgb) {
+  if (!ctx) return;
+  if (ctx->icon_label) {
+    lv_obj_set_style_text_color(
+        ctx->icon_label,
+        lv_color_hex(ctx->keep_icon_white ? 0xFFFFFF : icon_rgb),
+        0);
+  }
+  if (ctx->power_button) {
+    lv_obj_set_style_bg_color(ctx->power_button,
+                              lv_color_hex(ctx->is_on ? icon_rgb : 0xFFFFFF),
+                              0);
+    lv_obj_set_style_bg_opa(ctx->power_button, ctx->is_on ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(ctx->power_button, 0, 0);
+    lv_obj_set_style_border_opa(ctx->power_button, LV_OPA_TRANSP, 0);
+  }
+  if (ctx->power_button_icon) {
+    lv_obj_set_style_text_color(ctx->power_button_icon,
+                                lv_color_hex(ctx->is_on ? kControlButtonBg : 0xFFFFFF),
+                                0);
+  }
+}
+
+static void update_brightness_slider_visuals(LightPopupContext* ctx, uint32_t icon_rgb, bool invalidate) {
+  if (!ctx || !ctx->val_slider) return;
+  lv_color_t base_color = lv_color_hex(icon_rgb);
+  lv_obj_set_style_bg_color(ctx->val_slider, base_color, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(ctx->val_slider, LV_OPA_30, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(ctx->val_slider, LV_OPA_TRANSP, LV_PART_INDICATOR);
+  lv_obj_set_style_border_width(ctx->val_slider, 0, LV_PART_MAIN);
+  if (invalidate) lv_obj_invalidate(ctx->val_slider);
+}
+
+static void update_temperature_slider_visuals(LightPopupContext* ctx, bool invalidate) {
+  if (!ctx || !ctx->temp_slider || !ctx->supports_temperature) return;
+  lv_obj_set_style_bg_color(
+      ctx->temp_slider,
+      color_from_temperature_kelvin(ctx->min_color_temp_kelvin),
+      LV_PART_MAIN);
+  lv_obj_set_style_bg_grad_color(
+      ctx->temp_slider,
+      color_from_temperature_kelvin(ctx->max_color_temp_kelvin),
+      LV_PART_MAIN);
+  lv_obj_set_style_bg_grad_dir(ctx->temp_slider, LV_GRAD_DIR_VER, LV_PART_MAIN);
+  if (invalidate) lv_obj_invalidate(ctx->temp_slider);
+}
+
 static void update_temperature_handle(LightPopupContext* ctx) {
   if (!ctx || !ctx->temp_slider || !ctx->temp_slider_handle || !ctx->temp_slider_wrap) return;
 
@@ -604,65 +669,40 @@ static void commit_popup_state(LightPopupContext* ctx) {
   if (!ctx) return;
   sync_bound_tile_from_popup(ctx);
   publish_light_popup(ctx);
+  ctx->last_live_publish_ms = millis();
+}
+
+static void maybe_live_publish_during_drag(LightPopupContext* ctx) {
+  if (!ctx || !ctx->user_dragging || !ctx->is_light || !ctx->entity_id.length()) return;
+  const uint32_t now = millis();
+  if (ctx->last_live_publish_ms != 0 &&
+      (now - ctx->last_live_publish_ms) < kLivePublishIntervalMs) {
+    return;
+  }
+  ctx->last_live_publish_ms = now;
+  publish_light_popup(ctx);
 }
 
 static void update_preview(LightPopupContext* ctx) {
   if (!ctx) return;
-  uint32_t icon_rgb = 0xB0B0B0;
-  if (ctx->is_on) {
-    if (ctx->supports_temperature && ctx->use_color_temperature) {
-      icon_rgb = lv_color_to_u32(color_from_temperature_kelvin(ctx->color_temp_kelvin)) & 0xFFFFFF;
-    } else if (ctx->supports_color) {
-      icon_rgb = color_from_hsv(ctx->hue, ctx->sat, 100);
-    } else {
-      icon_rgb = kDefaultColor;
+  const uint32_t icon_rgb = get_preview_icon_rgb(ctx);
+  update_header_and_power_visuals(ctx, icon_rgb);
+  if (is_visible_obj(ctx->brightness_panel)) {
+    update_brightness_slider_visuals(ctx, icon_rgb, true);
+  }
+  update_top_value_label(ctx);
+  if (is_visible_obj(ctx->val_value)) {
+    update_value_label(ctx->val_value, ctx->val, "%");
+  }
+  if (is_visible_obj(ctx->temperature_panel)) {
+    update_temperature_slider_visuals(ctx, true);
+    if (is_visible_obj(ctx->temp_value_label)) {
+      update_temperature_value_label(ctx);
     }
   }
-
-  if (ctx->icon_label) {
-    lv_obj_set_style_text_color(
-        ctx->icon_label,
-        lv_color_hex(ctx->keep_icon_white ? 0xFFFFFF : icon_rgb),
-        0);
+  if (is_visible_obj(ctx->color_panel)) {
+    update_color_field_cursor(ctx);
   }
-  if (ctx->power_button) {
-    lv_obj_set_style_bg_color(ctx->power_button, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_bg_opa(ctx->power_button, ctx->is_on ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(ctx->power_button, 0, 0);
-    lv_obj_set_style_border_opa(ctx->power_button, LV_OPA_TRANSP, 0);
-  }
-  if (ctx->power_button_icon) {
-    lv_obj_set_style_text_color(ctx->power_button_icon,
-                                lv_color_hex(ctx->is_on ? kControlButtonBg : 0xFFFFFF),
-                                0);
-  }
-
-  // Brightness slider indicator matches lamp color
-  if (ctx->val_slider) {
-    lv_color_t base_color = lv_color_hex(icon_rgb);
-    lv_obj_set_style_bg_color(ctx->val_slider, base_color, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(ctx->val_slider, LV_OPA_30, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(ctx->val_slider, LV_OPA_TRANSP, LV_PART_INDICATOR);
-    lv_obj_set_style_border_width(ctx->val_slider, 0, LV_PART_MAIN);
-    lv_obj_invalidate(ctx->val_slider);
-  }
-
-  update_value_label(ctx->val_value, ctx->val, "%");
-  update_top_value_label(ctx);
-  update_temperature_value_label(ctx);
-  if (ctx->temp_slider && ctx->supports_temperature) {
-    lv_obj_set_style_bg_color(
-        ctx->temp_slider,
-        color_from_temperature_kelvin(ctx->min_color_temp_kelvin),
-        LV_PART_MAIN);
-    lv_obj_set_style_bg_grad_color(
-        ctx->temp_slider,
-        color_from_temperature_kelvin(ctx->max_color_temp_kelvin),
-        LV_PART_MAIN);
-    lv_obj_set_style_bg_grad_dir(ctx->temp_slider, LV_GRAD_DIR_VER, LV_PART_MAIN);
-    lv_obj_invalidate(ctx->temp_slider);
-  }
-  update_color_field_cursor(ctx);
 }
 
 static void align_header_row(lv_obj_t* card, lv_obj_t* title_label, lv_obj_t* icon_label) {
@@ -1033,6 +1073,7 @@ static void on_val_changed(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   LightPopupContext* ctx = static_cast<LightPopupContext*>(lv_event_get_user_data(e));
   if (!ctx || !ctx->val_slider || !ctx->supports_brightness || ctx->suppress_events) return;
+  const bool was_on = ctx->is_on;
   int value = lv_slider_get_value(ctx->val_slider);
   if (value < 0) value = 0;
   if (value > 100) value = 100;
@@ -1040,7 +1081,15 @@ static void on_val_changed(lv_event_t* e) {
   ctx->is_on = value > 0;
   if (value > 0) ctx->last_brightness = static_cast<uint8_t>(value);
   mark_user_action(ctx);
-  update_preview(ctx);
+  update_top_value_label(ctx);
+  if (was_on != ctx->is_on) {
+    const uint32_t icon_rgb = get_preview_icon_rgb(ctx);
+    update_header_and_power_visuals(ctx, icon_rgb);
+    if (is_visible_obj(ctx->brightness_panel)) {
+      update_brightness_slider_visuals(ctx, icon_rgb, true);
+    }
+  }
+  maybe_live_publish_during_drag(ctx);
 }
 
 static void on_temp_changed(lv_event_t* e) {
@@ -1048,6 +1097,8 @@ static void on_temp_changed(lv_event_t* e) {
   LightPopupContext* ctx = static_cast<LightPopupContext*>(lv_event_get_user_data(e));
   lv_obj_t* obj = lv_event_get_target_obj(e);
   if (!ctx || !obj || !ctx->supports_temperature || ctx->suppress_events) return;
+  const bool was_on = ctx->is_on;
+  bool restored_brightness = false;
   ctx->color_temp_kelvin =
       kelvin_from_slider_value(lv_slider_get_value(obj),
                                ctx->min_color_temp_kelvin,
@@ -1056,6 +1107,7 @@ static void on_temp_changed(lv_event_t* e) {
   ctx->is_on = true;
   if (ctx->supports_brightness && ctx->val == 0) {
     ctx->val = ctx->last_brightness > 0 ? ctx->last_brightness : 100;
+    restored_brightness = true;
     if (ctx->val_slider) {
       ctx->suppress_events = true;
       lv_slider_set_value(ctx->val_slider, ctx->val, LV_ANIM_OFF);
@@ -1063,7 +1115,12 @@ static void on_temp_changed(lv_event_t* e) {
     }
   }
   mark_user_action(ctx);
-  update_preview(ctx);
+  update_top_value_label(ctx);
+  update_header_and_power_visuals(ctx, get_preview_icon_rgb(ctx));
+  if ((was_on != ctx->is_on || restored_brightness) && is_visible_obj(ctx->brightness_panel)) {
+    update_brightness_slider_visuals(ctx, get_preview_icon_rgb(ctx), true);
+  }
+  maybe_live_publish_during_drag(ctx);
 }
 
 static void on_val_slider_draw(lv_event_t* e) {
@@ -1164,9 +1221,6 @@ static void on_temp_slider_draw(lv_event_t* e) {
   handle_dsc.bg_color = lv_color_hex(0xF5F2EE);
   handle_dsc.bg_opa = LV_OPA_COVER;
   handle_dsc.radius = kTempHandleRadius;
-  handle_dsc.shadow_width = 18;
-  handle_dsc.shadow_opa = LV_OPA_20;
-  handle_dsc.shadow_color = lv_color_black();
 
   lv_layer_t* layer = lv_event_get_layer(e);
   lv_draw_rect(layer, &handle_dsc, &handle_area);
@@ -1179,7 +1233,7 @@ static void on_temp_slider_draw(lv_event_t* e) {
 
   lv_draw_rect_dsc_t dash_dsc;
   lv_draw_rect_dsc_init(&dash_dsc);
-  dash_dsc.bg_color = lv_color_hex(0x707684);
+  dash_dsc.bg_color = lv_color_hex(kControlButtonBg);
   dash_dsc.bg_opa = LV_OPA_COVER;
   dash_dsc.radius = LV_RADIUS_CIRCLE;
   lv_draw_rect(layer, &dash_dsc, &dash_area);
@@ -1187,6 +1241,8 @@ static void on_temp_slider_draw(lv_event_t* e) {
 
 static void apply_temperature_point(LightPopupContext* ctx, const lv_point_t& point, bool commit) {
   if (!ctx || !ctx->temp_slider || !ctx->supports_temperature) return;
+  const bool was_on = ctx->is_on;
+  bool restored_brightness = false;
 
   lv_area_t area;
   lv_obj_get_coords(ctx->temp_slider, &area);
@@ -1214,6 +1270,7 @@ static void apply_temperature_point(LightPopupContext* ctx, const lv_point_t& po
   ctx->is_on = true;
   if (ctx->supports_brightness && ctx->val == 0) {
     ctx->val = ctx->last_brightness > 0 ? ctx->last_brightness : 100;
+    restored_brightness = true;
     if (ctx->val_slider) {
       ctx->suppress_events = true;
       lv_slider_set_value(ctx->val_slider, ctx->val, LV_ANIM_OFF);
@@ -1221,7 +1278,13 @@ static void apply_temperature_point(LightPopupContext* ctx, const lv_point_t& po
     }
   }
   mark_user_action(ctx);
-  update_preview(ctx);
+  update_top_value_label(ctx);
+  update_header_and_power_visuals(ctx, get_preview_icon_rgb(ctx));
+  lv_obj_invalidate(ctx->temp_slider);
+  if ((was_on != ctx->is_on || restored_brightness) && is_visible_obj(ctx->brightness_panel)) {
+    update_brightness_slider_visuals(ctx, get_preview_icon_rgb(ctx), true);
+  }
+  if (!commit) maybe_live_publish_during_drag(ctx);
   if (commit) commit_popup_state(ctx);
 }
 
@@ -1251,6 +1314,8 @@ static void apply_color_field_point(LightPopupContext* ctx,
                                     const lv_point_t& point,
                                     bool commit) {
   if (!ctx || !frame || !ctx->supports_color) return;
+  const bool was_on = ctx->is_on;
+  bool restored_brightness = false;
   lv_area_t area;
   lv_obj_get_coords(frame, &area);
 
@@ -1284,6 +1349,7 @@ static void apply_color_field_point(LightPopupContext* ctx,
     ctx->is_on = true;
     if (ctx->val == 0) {
       ctx->val = ctx->last_brightness > 0 ? ctx->last_brightness : 100;
+      restored_brightness = true;
       if (ctx->val_slider) {
         ctx->suppress_events = true;
         lv_slider_set_value(ctx->val_slider, ctx->val, LV_ANIM_OFF);
@@ -1293,7 +1359,15 @@ static void apply_color_field_point(LightPopupContext* ctx,
   }
 
   mark_user_action(ctx);
-  update_preview(ctx);
+  update_top_value_label(ctx);
+  update_header_and_power_visuals(ctx, get_preview_icon_rgb(ctx));
+  if (is_visible_obj(ctx->color_panel)) {
+    update_color_field_cursor(ctx);
+  }
+  if ((was_on != ctx->is_on || restored_brightness) && is_visible_obj(ctx->brightness_panel)) {
+    update_brightness_slider_visuals(ctx, get_preview_icon_rgb(ctx), true);
+  }
+  if (!commit) maybe_live_publish_during_drag(ctx);
   if (commit) commit_popup_state(ctx);
 }
 
