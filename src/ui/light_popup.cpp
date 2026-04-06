@@ -892,6 +892,8 @@ static lv_obj_t* create_color_field_panel(lv_obj_t* parent,
   lv_obj_set_style_shadow_color(cursor, lv_color_black(), 0);
   lv_obj_add_flag(cursor, LV_OBJ_FLAG_IGNORE_LAYOUT);
   lv_obj_clear_flag(cursor, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_clear_flag(cursor, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scrollbar_mode(cursor, LV_SCROLLBAR_MODE_OFF);
   lv_obj_move_foreground(cursor);
 
   if (frame_out) *frame_out = frame;
