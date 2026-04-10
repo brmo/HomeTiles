@@ -2380,6 +2380,9 @@ static void reset_weather_popup_content(WeatherPopupContext* ctx) {
   clear_forecast(ctx);
   clear_detail_view(ctx);
   show_week_view(ctx);
+  // Hide both header action buttons until content loads (update_mode_buttons will show them)
+  if (ctx->header_week_btn) lv_obj_add_flag(ctx->header_week_btn, LV_OBJ_FLAG_HIDDEN);
+  if (ctx->header_today_btn) lv_obj_add_flag(ctx->header_today_btn, LV_OBJ_FLAG_HIDDEN);
   align_header_row(ctx->card, ctx->location_label, ctx->icon_label);
 }
 

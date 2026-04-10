@@ -433,7 +433,11 @@ void loop() {
   mqttServiceLocalSensors();
 
   if (first_run) Serial.println("[Loop] process_sensor_update_queue()...");
-  // Im Idle nur alle 2s Queues verarbeiten (spart CPU bei 10 FPS)
+  // Popup-Queues immer sofort verarbeiten (User wartet auf Inhalt)
+  process_sensor_popup_queue();
+  process_weather_popup_queue();
+
+  // Im Idle nur alle 2s tile/sensor Queues verarbeiten (spart CPU bei 10 FPS)
   {
     static uint32_t last_queue_ms = 0;
     bool idle = !powerManager.isHighPerformance();
@@ -441,8 +445,6 @@ void loop() {
       process_sensor_update_queue();  // WICHTIG: VOR lv_timer_handler()!
       process_switch_update_queue();
       process_weather_update_queue();
-      process_sensor_popup_queue();
-      process_weather_popup_queue();
       process_tile_graph_queue();
       last_queue_ms = millis();
     }
