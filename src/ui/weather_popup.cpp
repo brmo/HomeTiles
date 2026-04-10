@@ -1695,7 +1695,6 @@ static void clear_forecast(WeatherPopupContext* ctx) {
 
 static bool update_detail_view(WeatherPopupContext* ctx, int day_index) {
   if (!ctx) return false;
-  clear_detail_view(ctx);
 
   if (day_index < 0 || day_index >= kCols) return false;
   const ForecastData& day = ctx->forecast_data[day_index];
@@ -2306,8 +2305,19 @@ static bool update_detail_view(WeatherPopupContext* ctx, int day_index) {
       lv_obj_clear_flag(ctx->detail_current_dot, LV_OBJ_FLAG_HIDDEN);
       lv_obj_move_foreground(ctx->detail_current_dot);
     }
-  } else if (ctx->detail_current_dot) {
-    lv_obj_add_flag(ctx->detail_current_dot, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    // Hide all now-marker elements when not showing now marker
+    if (ctx->detail_current_dot) lv_obj_add_flag(ctx->detail_current_dot, LV_OBJ_FLAG_HIDDEN);
+    if (ctx->detail_now_time_line) lv_obj_add_flag(ctx->detail_now_time_line, LV_OBJ_FLAG_HIDDEN);
+    if (ctx->detail_now_precip_guide) lv_obj_add_flag(ctx->detail_now_precip_guide, LV_OBJ_FLAG_HIDDEN);
+    if (ctx->detail_now_time_label) lv_obj_add_flag(ctx->detail_now_time_label, LV_OBJ_FLAG_HIDDEN);
+    if (ctx->detail_now_icon_label) lv_obj_add_flag(ctx->detail_now_icon_label, LV_OBJ_FLAG_HIDDEN);
+    if (ctx->detail_now_temp_value_label) lv_obj_add_flag(ctx->detail_now_temp_value_label, LV_OBJ_FLAG_HIDDEN);
+    if (ctx->detail_now_temp_unit_label) lv_obj_add_flag(ctx->detail_now_temp_unit_label, LV_OBJ_FLAG_HIDDEN);
+    if (ctx->detail_now_precip_amount_label) lv_obj_add_flag(ctx->detail_now_precip_amount_label, LV_OBJ_FLAG_HIDDEN);
+    if (ctx->detail_now_precip_amount_unit_label) lv_obj_add_flag(ctx->detail_now_precip_amount_unit_label, LV_OBJ_FLAG_HIDDEN);
+    if (ctx->detail_now_probability_label) lv_obj_add_flag(ctx->detail_now_probability_label, LV_OBJ_FLAG_HIDDEN);
+    if (ctx->detail_now_probability_unit_label) lv_obj_add_flag(ctx->detail_now_probability_unit_label, LV_OBJ_FLAG_HIDDEN);
   }
 
   if ((ctx->detail_past_overlay && !lv_obj_has_flag(ctx->detail_past_overlay, LV_OBJ_FLAG_HIDDEN)) ||
