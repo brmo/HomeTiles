@@ -515,6 +515,34 @@ static String format_weather_temp(float temp, const String& unit) {
   return text;
 }
 
+static String format_weather_temp_value(float temp) {
+  String text = String(temp, 1);
+  if (text.endsWith(".0")) {
+    text.remove(text.length() - 2);
+  }
+  return text;
+}
+
+static String format_weather_temp_unit(const String& unit) {
+  return String("\xE2\x80\x89") + (unit.length() ? unit : String("\xC2\xB0\x43"));
+}
+
+static void position_tile_value_unit_centered(
+    lv_obj_t* val_label, lv_obj_t* unit_label,
+    lv_coord_t center_x, lv_coord_t y, lv_coord_t wrap_w) {
+  lv_obj_update_layout(val_label);
+  lv_obj_update_layout(unit_label);
+  lv_coord_t val_w = lv_obj_get_width(val_label);
+  lv_coord_t unit_w = lv_obj_get_width(unit_label);
+  lv_coord_t total_w = val_w + unit_w;
+  lv_coord_t x = center_x - (total_w / 2);
+  if (x < 0) x = 0;
+  if (x + total_w > wrap_w) x = wrap_w - total_w;
+  lv_obj_set_pos(val_label, x, y);
+  const lv_coord_t unit_y_offset = 5;
+  lv_obj_set_pos(unit_label, x + val_w, y + unit_y_offset);
+}
+
 static void decode_basic_json_escapes(String& text) {
   if (!text.length()) return;
   text.replace("\\u00b0", "\xC2\xB0");
@@ -1495,12 +1523,12 @@ static void update_weather_tile_state(GridType grid_type, uint8_t grid_index, co
     }
 
     String day_text = slot.day_text;
-    if (has_today && display_date.length() && display_date == today_date) {
+    if (i == 0 && (slot.has_data || display_date.length())) {
+      day_text = weather_today_tile_label();
+    } else if (has_today && display_date.length() && display_date == today_date) {
       day_text = weather_today_tile_label();
     } else if (!day_text.length() && display_date.length()) {
       day_text = weekday_from_iso(display_date);
-    } else if (!day_text.length() && i == 0 && has_today) {
-      day_text = weather_today_tile_label();
     }
     if (!day_text.length()) day_text = "--";
 
@@ -1530,7 +1558,39 @@ static void update_weather_tile_state(GridType grid_type, uint8_t grid_index, co
         lv_obj_add_flag(fw.icon_label, LV_OBJ_FLAG_HIDDEN);
       }
     }
-    if (fw.temp_label) {
+    if (fw.temp_high_label) {
+      constexpr lv_coord_t kTileForecastTempTop = 52 + 54;
+      constexpr lv_coord_t kTileForecastLowTop = kTileForecastTempTop + 30;
+      constexpr lv_coord_t kTileColContentW = WEATHER_FORECAST_COL_W - 40;
+      constexpr lv_coord_t kTileColCenterX = kTileColContentW / 2;
+      String unit_text = format_weather_temp_unit(unit);
+      if (slot.has_data && slot.has_temp) {
+        lv_label_set_text(fw.temp_high_label, format_weather_temp_value(slot.temp).c_str());
+        lv_label_set_text(fw.temp_high_unit_label, unit_text.c_str());
+        lv_obj_set_style_text_color(fw.temp_high_label, forecast_active_color, 0);
+        lv_obj_set_style_text_color(fw.temp_high_unit_label, forecast_active_color, 0);
+        position_tile_value_unit_centered(fw.temp_high_label, fw.temp_high_unit_label,
+                                          kTileColCenterX, kTileForecastTempTop, kTileColContentW);
+        lv_obj_clear_flag(fw.temp_high_label, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(fw.temp_high_unit_label, LV_OBJ_FLAG_HIDDEN);
+      } else {
+        lv_obj_add_flag(fw.temp_high_label, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(fw.temp_high_unit_label, LV_OBJ_FLAG_HIDDEN);
+      }
+      if (slot.has_data && slot.has_low) {
+        lv_label_set_text(fw.temp_low_label, format_weather_temp_value(slot.low).c_str());
+        lv_label_set_text(fw.temp_low_unit_label, unit_text.c_str());
+        lv_obj_set_style_text_color(fw.temp_low_label, forecast_active_color, 0);
+        lv_obj_set_style_text_color(fw.temp_low_unit_label, forecast_active_color, 0);
+        position_tile_value_unit_centered(fw.temp_low_label, fw.temp_low_unit_label,
+                                          kTileColCenterX, kTileForecastLowTop, kTileColContentW);
+        lv_obj_clear_flag(fw.temp_low_label, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(fw.temp_low_unit_label, LV_OBJ_FLAG_HIDDEN);
+      } else {
+        lv_obj_add_flag(fw.temp_low_label, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(fw.temp_low_unit_label, LV_OBJ_FLAG_HIDDEN);
+      }
+    } else if (fw.temp_label) {
       if (slot.has_data) {
         String hi_text = slot.has_temp ? format_weather_temp(slot.temp, unit) : String("--");
         String lo_text = slot.has_low ? format_weather_temp(slot.low, unit) : String("--");

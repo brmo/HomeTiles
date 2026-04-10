@@ -34,6 +34,10 @@ struct WeatherForecastWidgets {
   lv_obj_t* sep_label = nullptr;
   lv_obj_t* icon_label = nullptr;
   lv_obj_t* temp_label = nullptr;
+  lv_obj_t* temp_high_label = nullptr;
+  lv_obj_t* temp_high_unit_label = nullptr;
+  lv_obj_t* temp_low_label = nullptr;
+  lv_obj_t* temp_low_unit_label = nullptr;
 };
 
 static constexpr uint8_t WEATHER_FORECAST_MAX = 8;

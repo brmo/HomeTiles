@@ -899,11 +899,17 @@ static void update_forecast_graph(WeatherPopupContext* ctx) {
             (data.precipitation / max_precipitation) * kForecastPrecipChartHeight));
         if (bar_h < 4) bar_h = 4;
         if (bar_h > kForecastPrecipChartHeight) bar_h = kForecastPrecipChartHeight;
-        lv_coord_t bar_w = col_w - (kForecastBarSideInset * 2);
+        const lv_coord_t col_x = lv_obj_get_x(fw.column);
+        const lv_coord_t slot_left = map_forecast_chart_x(ctx, i * kForecastHoursPerDay);
+        const lv_coord_t slot_right = map_forecast_chart_x(ctx, (i + 1) * kForecastHoursPerDay);
+        lv_coord_t slot_w = slot_right - slot_left;
+        if (slot_w < 0) slot_w = 0;
+        lv_coord_t bar_w = slot_w - (kForecastBarSideInset * 2);
         if (bar_w < 1) bar_w = 1;
+        lv_coord_t bar_x = (slot_left - col_x) + ((slot_w - bar_w) / 2);
         lv_obj_set_size(fw.precip_bar, bar_w, bar_h);
         lv_obj_set_pos(fw.precip_bar,
-                       kForecastBarSideInset,
+                       bar_x,
                        kForecastPrecipChartTop + kForecastPrecipChartHeight - bar_h);
         lv_obj_clear_flag(fw.precip_bar, LV_OBJ_FLAG_HIDDEN);
       } else {
