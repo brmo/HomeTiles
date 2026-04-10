@@ -2,6 +2,7 @@
 
 #include <lvgl.h>
 
+LV_FONT_DECLARE(ui_font_16);
 LV_FONT_DECLARE(ui_font_20);
 LV_FONT_DECLARE(ui_font_20_semibold);
 LV_FONT_DECLARE(ui_font_24);

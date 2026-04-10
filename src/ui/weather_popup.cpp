@@ -34,7 +34,7 @@ constexpr int kModeButtonHeight = 54;
 constexpr int kModeButtonGap = 12;
 constexpr int kSummaryRowTop = 108;
 constexpr int kDetailHeaderSubrowTop = 170;
-constexpr int kForecastRowTop = 230;
+constexpr int kForecastRowTop = 238;
 constexpr int kForecastRowHeight = kCardHeight - kForecastRowTop - kCardPad - 10;
 constexpr int kForecastSidePad = 4;
 constexpr int kForecastColGap = 4;
@@ -62,6 +62,9 @@ constexpr int kDetailTitleTop = kDetailHeaderSubrowTop + 6;
 constexpr int kDetailNavButtonSize = 74;
 constexpr int kDetailNavButtonOffsetX = 196;
 constexpr int kDetailNavButtonOffsetY = kDetailHeaderSubrowTop - 18;
+constexpr float kDetailNowCollisionHours = 4.0f;
+constexpr int kDetailNowGuideWidth = 1;
+constexpr int kDetailNowGuideOpa = LV_OPA_30;
 constexpr int kDetailChartWrapTop = 0;
 constexpr int kDetailLabelOverhang = 12;
 constexpr int kDetailYAxisWidth = 18;
@@ -71,13 +74,14 @@ constexpr int kDetailChartGap =
     kForecastPrecipChartTop - kForecastTempChartTop - kForecastTempChartHeight;
 constexpr int kDetailProbabilityGap = 4;
 constexpr int kDetailProbabilityHeight = 22;
-constexpr int kDetailTempValueGap = 14;
-constexpr int kDetailTempMarkerSize = 10;
-constexpr int kDetailCurrentHourDotSize = 14;
+constexpr int kDetailTempValueGap = 28;
+constexpr int kDetailTempMarkerSize = 12;
+constexpr int kDetailCurrentHourDotSize = 18;
 constexpr int kDetailPrecipBarWidth = 12;
 constexpr int kDetailSectionGutter = 16;
+constexpr int kDetailRightInsetAdjust = 6;
 constexpr int kDetailChartLeftInset = kForecastFirstCenter;
-constexpr int kDetailChartRightInset = kForecastPlotTotalW - kForecastLastCenter;
+constexpr int kDetailChartRightInset = (kForecastPlotTotalW - kForecastLastCenter) + kDetailRightInsetAdjust;
 constexpr int kDetailTimeLabelY = kForecastDayTop;
 constexpr int kDetailIconY = kForecastIconTop;
 constexpr int kDetailPastOverlayRadius = 16;
@@ -167,6 +171,9 @@ struct WeatherPopupContext {
   uint32_t bg_color = 0;
   String unit;
   String precipitation_unit = "mm";
+  bool current_has_temp = false;
+  float current_temp = 0.0f;
+  String current_icon;
   lv_obj_t* overlay = nullptr;
   lv_obj_t* card = nullptr;
   lv_obj_t* location_label = nullptr;
@@ -207,9 +214,20 @@ struct WeatherPopupContext {
   lv_obj_t* detail_icon_labels[kDetailMarkerCount] = {};
   lv_obj_t* detail_temp_point_dots[kDetailMarkerCount] = {};
   lv_obj_t* detail_current_dot = nullptr;
+  lv_obj_t* detail_now_time_line = nullptr;
+  lv_obj_t* detail_now_precip_guide = nullptr;
+  lv_obj_t* detail_now_time_label = nullptr;
+  lv_obj_t* detail_now_icon_label = nullptr;
+  lv_obj_t* detail_now_temp_value_label = nullptr;
+  lv_obj_t* detail_now_precip_amount_label = nullptr;
+  lv_obj_t* detail_now_precip_amount_unit_label = nullptr;
+  lv_obj_t* detail_now_probability_label = nullptr;
+  lv_obj_t* detail_now_probability_unit_label = nullptr;
   lv_obj_t* detail_temp_value_labels[kDetailMarkerCount] = {};
   lv_obj_t* detail_precip_amount_labels[kDetailMarkerCount] = {};
+  lv_obj_t* detail_precip_amount_unit_labels[kDetailMarkerCount] = {};
   lv_obj_t* detail_probability_labels[kDetailMarkerCount] = {};
+  lv_obj_t* detail_probability_unit_labels[kDetailMarkerCount] = {};
   lv_obj_t* detail_precip_guides[kDetailMarkerCount] = {};
   lv_obj_t* detail_precip_bars[kDetailChartPointCount] = {};
   lv_obj_t* detail_temp_chart = nullptr;
@@ -410,8 +428,41 @@ static String format_precipitation_amount(float amount, const String& unit) {
   return text;
 }
 
+static String format_precipitation_amount_value(float amount) {
+  String text = String(amount, 1);
+  if (text.endsWith(".0")) {
+    text.remove(text.length() - 2);
+  }
+  return text;
+}
+
+static String format_precipitation_amount_unit(const String& unit) {
+  return unit.length() ? unit : "mm";
+}
+
 static String format_precipitation_probability(float probability) {
   return String(static_cast<int>(lroundf(probability))) + " %";
+}
+
+static String format_precipitation_probability_value(float probability) {
+  return String(static_cast<int>(lroundf(probability)));
+}
+
+static void position_value_unit_centered(
+    lv_obj_t* val_label, lv_obj_t* unit_label,
+    lv_coord_t center_x, lv_coord_t y,
+    lv_coord_t wrap_w) {
+  lv_obj_update_layout(val_label);
+  lv_obj_update_layout(unit_label);
+  lv_coord_t val_w = lv_obj_get_width(val_label);
+  lv_coord_t unit_w = lv_obj_get_width(unit_label);
+  lv_coord_t total_w = val_w + unit_w;
+  lv_coord_t x = center_x - (total_w / 2);
+  if (x < 0) x = 0;
+  if (x + total_w > wrap_w) x = wrap_w - total_w;
+  lv_obj_set_pos(val_label, x, y);
+  const lv_coord_t unit_y_offset = 3;
+  lv_obj_set_pos(unit_label, x + val_w, y + unit_y_offset);
 }
 
 static String format_forecast_chart_temp(float temp) {
@@ -444,11 +495,12 @@ static lv_coord_t map_detail_chart_y(const WeatherPopupContext* ctx, int scaled_
   int min_temp = ctx->detail_temp_min;
   int max_temp = ctx->detail_temp_max;
   if (max_temp <= min_temp) return kDetailTempChartTop + (kDetailTempChartHeight / 2);
-  const lv_coord_t pad = 6;
-  const lv_coord_t draw_h = kDetailTempChartHeight - pad * 2;
+  const lv_coord_t pad_top = 18;
+  const lv_coord_t pad_bottom = 3;
+  const lv_coord_t draw_h = kDetailTempChartHeight - pad_top - pad_bottom;
   const float ratio = static_cast<float>(max_temp - scaled_temp) /
                       static_cast<float>(max_temp - min_temp);
-  return kDetailTempChartTop + pad + static_cast<lv_coord_t>(lroundf(ratio * draw_h));
+  return kDetailTempChartTop + pad_top + static_cast<lv_coord_t>(lroundf(ratio * draw_h));
 }
 
 static lv_coord_t map_detail_chart_x(const WeatherPopupContext* ctx, int point_id) {
@@ -458,6 +510,22 @@ static lv_coord_t map_detail_chart_x(const WeatherPopupContext* ctx, int point_i
   lv_point_t point;
   lv_chart_get_point_pos_by_id(ctx->detail_temp_chart, ctx->detail_temp_series, clamped_point, &point);
   return lv_obj_get_x(ctx->detail_temp_chart) + point.x;
+}
+
+static lv_coord_t map_detail_chart_xf(const WeatherPopupContext* ctx, float point_pos) {
+  if (!ctx) return 0;
+  float clamped = point_pos;
+  if (clamped < 0.0f) clamped = 0.0f;
+  if (clamped > static_cast<float>(kDetailChartPointCount - 1)) {
+    clamped = static_cast<float>(kDetailChartPointCount - 1);
+  }
+  const int left = static_cast<int>(floorf(clamped));
+  const int right = static_cast<int>(ceilf(clamped));
+  const lv_coord_t left_x = map_detail_chart_x(ctx, left);
+  if (left == right) return left_x;
+  const lv_coord_t right_x = map_detail_chart_x(ctx, right);
+  const float ratio = clamped - static_cast<float>(left);
+  return left_x + static_cast<lv_coord_t>(lroundf((right_x - left_x) * ratio));
 }
 
 static void clear_forecast_chart(WeatherPopupContext* ctx) {
@@ -724,6 +792,41 @@ static String weather_icon_from_condition(const String& condition) {
   return "";
 }
 
+static bool extract_weather_condition_field(const String& json, String& condition_out) {
+  condition_out = "";
+  if (extract_json_string_field(json, "state", condition_out)) return true;
+  if (extract_json_string_field(json, "condition", condition_out)) return true;
+  return extract_json_string_field(json, "c", condition_out);
+}
+
+static bool extract_weather_icon_field(const String& json, String& icon_out) {
+  icon_out = "";
+  if (extract_json_string_field(json, "icon", icon_out)) return true;
+  return extract_json_string_field(json, "i", icon_out);
+}
+
+static void resolve_weather_visual_fields(const String& json,
+                                          String& condition_out,
+                                          String& icon_out) {
+  String state_value;
+  condition_out = "";
+  extract_weather_icon_field(json, icon_out);
+  if (!extract_json_string_field(json, "condition", condition_out)) {
+    if (!extract_json_string_field(json, "c", condition_out)) {
+      extract_json_string_field(json, "state", condition_out);
+    }
+  }
+  if (!icon_out.length() && condition_out.length()) {
+    icon_out = weather_icon_from_condition(condition_out);
+  }
+  if (!condition_out.length()) {
+    extract_json_string_field(json, "state", condition_out);
+  }
+  if (!icon_out.length() && extract_json_string_field(json, "state", state_value)) {
+    icon_out = weather_icon_from_condition(state_value);
+  }
+}
+
 static String weather_condition_to_german(const String& condition) {
   return i18n::weather_condition_label(configManager.getConfig().language, condition);
   String key = condition;
@@ -867,7 +970,7 @@ static int iso_hour_part(const String& text) {
   return text.substring(11, 13).toInt();
 }
 
-static bool get_local_now_parts(String& date_out, int& hour_out) {
+static bool get_local_now_parts(String& date_out, int& hour_out, int* minute_out = nullptr) {
   time_t now = time(nullptr);
   if (now < 1704067200) return false;
 
@@ -879,6 +982,7 @@ static bool get_local_now_parts(String& date_out, int& hour_out) {
 
   date_out = date_buf;
   hour_out = local_tm.tm_hour;
+  if (minute_out) *minute_out = local_tm.tm_min;
   return true;
 }
 
@@ -1264,13 +1368,51 @@ static void clear_detail_view(WeatherPopupContext* ctx) {
       lv_label_set_text(ctx->detail_precip_amount_labels[i], "");
       lv_obj_add_flag(ctx->detail_precip_amount_labels[i], LV_OBJ_FLAG_HIDDEN);
     }
+    if (ctx->detail_precip_amount_unit_labels[i]) {
+      lv_label_set_text(ctx->detail_precip_amount_unit_labels[i], "");
+      lv_obj_add_flag(ctx->detail_precip_amount_unit_labels[i], LV_OBJ_FLAG_HIDDEN);
+    }
     if (ctx->detail_probability_labels[i]) {
       lv_label_set_text(ctx->detail_probability_labels[i], "");
       lv_obj_add_flag(ctx->detail_probability_labels[i], LV_OBJ_FLAG_HIDDEN);
     }
+    if (ctx->detail_probability_unit_labels[i]) {
+      lv_label_set_text(ctx->detail_probability_unit_labels[i], "");
+      lv_obj_add_flag(ctx->detail_probability_unit_labels[i], LV_OBJ_FLAG_HIDDEN);
+    }
   }
   if (ctx->detail_current_dot) {
     lv_obj_add_flag(ctx->detail_current_dot, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (ctx->detail_now_time_line) lv_obj_add_flag(ctx->detail_now_time_line, LV_OBJ_FLAG_HIDDEN);
+  if (ctx->detail_now_precip_guide) lv_obj_add_flag(ctx->detail_now_precip_guide, LV_OBJ_FLAG_HIDDEN);
+  if (ctx->detail_now_time_label) {
+    lv_label_set_text(ctx->detail_now_time_label, "");
+    lv_obj_add_flag(ctx->detail_now_time_label, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (ctx->detail_now_icon_label) {
+    lv_label_set_text(ctx->detail_now_icon_label, "");
+    lv_obj_add_flag(ctx->detail_now_icon_label, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (ctx->detail_now_temp_value_label) {
+    lv_label_set_text(ctx->detail_now_temp_value_label, "");
+    lv_obj_add_flag(ctx->detail_now_temp_value_label, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (ctx->detail_now_precip_amount_label) {
+    lv_label_set_text(ctx->detail_now_precip_amount_label, "");
+    lv_obj_add_flag(ctx->detail_now_precip_amount_label, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (ctx->detail_now_precip_amount_unit_label) {
+    lv_label_set_text(ctx->detail_now_precip_amount_unit_label, "");
+    lv_obj_add_flag(ctx->detail_now_precip_amount_unit_label, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (ctx->detail_now_probability_label) {
+    lv_label_set_text(ctx->detail_now_probability_label, "");
+    lv_obj_add_flag(ctx->detail_now_probability_label, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (ctx->detail_now_probability_unit_label) {
+    lv_label_set_text(ctx->detail_now_probability_unit_label, "");
+    lv_obj_add_flag(ctx->detail_now_probability_unit_label, LV_OBJ_FLAG_HIDDEN);
   }
 }
 
@@ -1368,6 +1510,15 @@ static bool update_detail_view(WeatherPopupContext* ctx, int day_index) {
   String now_date;
   int now_hour = 0;
   const bool clip_today = get_local_now_parts(now_date, now_hour) && now_date == day.date_local;
+  const float now_hour_pos = static_cast<float>(now_hour);
+  bool now_marker_has_icon = false;
+  String now_marker_icon;
+  bool now_marker_has_temp = false;
+  float now_marker_temp = 0.0f;
+  bool now_marker_has_precipitation = false;
+  float now_marker_precipitation = 0.0f;
+  bool now_marker_has_probability = false;
+  float now_marker_probability = 0.0f;
 
   lv_chart_set_point_count(ctx->detail_temp_chart, kDetailChartPointCount);
   lv_chart_set_all_value(ctx->detail_temp_chart, ctx->detail_temp_series, LV_CHART_POINT_NONE);
@@ -1413,6 +1564,25 @@ static bool update_detail_view(WeatherPopupContext* ctx, int day_index) {
       }
     }
 
+    if (clip_today && is_same_day && hour.hour_local == now_hour) {
+      if (hour.icon.length()) {
+        now_marker_has_icon = true;
+        now_marker_icon = hour.icon;
+      }
+      if (hour.has_temp) {
+        now_marker_has_temp = true;
+        now_marker_temp = hour.temp;
+      }
+      if (hour.has_precipitation) {
+        now_marker_has_precipitation = true;
+        now_marker_precipitation = hour.precipitation;
+      }
+      if (hour.has_precipitation_probability) {
+        now_marker_has_probability = true;
+        now_marker_probability = hour.precipitation_probability;
+      }
+    }
+
     for (int marker = 0; marker < kDetailMarkerCount; ++marker) {
       const bool is_marker_same_day =
           is_same_day && hour.hour_local == marker_hours[marker];
@@ -1441,11 +1611,17 @@ static bool update_detail_view(WeatherPopupContext* ctx, int day_index) {
   }
 
   if (has_temp) {
-    int padding = (max_temp - min_temp) / 4;
-    if (padding < 10) padding = 10;
-    if (max_temp == min_temp) padding = 14;
-    ctx->detail_temp_min = min_temp - padding;
-    ctx->detail_temp_max = max_temp + padding;
+    int base_padding = (max_temp - min_temp) / 4;
+    if (base_padding < 10) base_padding = 10;
+    int bottom_padding = base_padding / 6;
+    if (bottom_padding < 1) bottom_padding = 1;
+    int top_padding = base_padding + 34;
+    if (max_temp == min_temp) {
+      bottom_padding = 2;
+      top_padding = 42;
+    }
+    ctx->detail_temp_min = min_temp - bottom_padding;
+    ctx->detail_temp_max = max_temp + top_padding;
     lv_chart_set_range(ctx->detail_temp_chart,
                        LV_CHART_AXIS_PRIMARY_Y,
                        ctx->detail_temp_min,
@@ -1472,32 +1648,51 @@ static bool update_detail_view(WeatherPopupContext* ctx, int day_index) {
   lv_obj_update_layout(ctx->detail_temp_chart);
   lv_obj_update_layout(ctx->detail_precip_chart);
   const lv_coord_t first_point_x = map_detail_chart_x(ctx, 0);
-  const lv_coord_t second_point_x = map_detail_chart_x(ctx, 1);
   const lv_coord_t last_point_x = map_detail_chart_x(ctx, kDetailChartPointCount - 1);
   const lv_coord_t prev_point_x = map_detail_chart_x(ctx, kDetailChartPointCount - 2);
-  const lv_coord_t left_overlay_bound =
-      first_point_x - ((second_point_x - first_point_x) / 2);
   const lv_coord_t right_overlay_bound =
       last_point_x + ((last_point_x - prev_point_x) / 2);
   if (ctx->detail_past_overlay) {
     lv_obj_add_flag(ctx->detail_past_overlay, LV_OBJ_FLAG_HIDDEN);
-    if (clip_today && now_hour > 0) {
-      lv_coord_t overlay_right = map_detail_chart_x(ctx, now_hour);
-      const lv_coord_t prev_x = map_detail_chart_x(ctx, now_hour - 1);
-      overlay_right = prev_x + ((overlay_right - prev_x) / 2);
-      const lv_coord_t overlay_left = (left_overlay_bound > 0) ? left_overlay_bound : 0;
-      if (overlay_right > overlay_left) {
-        lv_obj_set_pos(ctx->detail_past_overlay, overlay_left, kDetailDisabledOverlayTop);
-        lv_obj_set_size(ctx->detail_past_overlay,
-                        overlay_right - overlay_left,
-                        kDetailDisabledOverlayHeight);
-        lv_obj_clear_flag(ctx->detail_past_overlay, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_move_foreground(ctx->detail_past_overlay);
-      }
-    }
   }
   const lv_coord_t chart_wrap_w = lv_obj_get_width(chart_wrap);
-  const bool missing_end_marker =
+  const lv_coord_t chart_wrap_h = lv_obj_get_height(chart_wrap);
+  const lv_coord_t separator_left = first_point_x;
+  const lv_coord_t separator_right = last_point_x;
+  const lv_coord_t separator_width =
+      (separator_right >= separator_left) ? (separator_right - separator_left + 1) : 0;
+  const lv_coord_t top_separator_y =
+      kDetailDisabledOverlayTop + kDetailDisabledSeparator1Top + (kDetailDisabledBlockGap / 2);
+  const lv_coord_t temp_guide_bottom = kDetailTempGuideTop + kDetailTempGuideHeight;
+  const lv_coord_t bottom_separator_y =
+      temp_guide_bottom + ((kDetailPrecipGuideTop - temp_guide_bottom) / 2);
+  const lv_coord_t guide_top_overhang = 6;
+  const lv_coord_t guide_bottom_overhang = 8;
+  const lv_coord_t full_guide_top = top_separator_y - guide_top_overhang;
+  lv_coord_t full_guide_bottom = kDetailPrecipGuideTop + kDetailPrecipGuideHeight + guide_bottom_overhang;
+  if (full_guide_bottom > chart_wrap_h) {
+    full_guide_bottom = chart_wrap_h;
+  }
+  const lv_coord_t full_guide_height = full_guide_bottom - full_guide_top;
+  if (ctx->detail_y_max_line) {
+    if (separator_width > 0) {
+      lv_obj_set_pos(ctx->detail_y_max_line, separator_left, top_separator_y);
+      lv_obj_set_size(ctx->detail_y_max_line, separator_width, 1);
+      lv_obj_clear_flag(ctx->detail_y_max_line, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_add_flag(ctx->detail_y_max_line, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+  if (ctx->detail_y_min_line) {
+    if (separator_width > 0) {
+      lv_obj_set_pos(ctx->detail_y_min_line, separator_left, bottom_separator_y);
+      lv_obj_set_size(ctx->detail_y_min_line, separator_width, 1);
+      lv_obj_clear_flag(ctx->detail_y_min_line, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_add_flag(ctx->detail_y_min_line, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+  const bool last_marker_missing =
       !point_has_temp[kDetailChartPointCount - 1] &&
       !point_has_precipitation[kDetailChartPointCount - 1] &&
       !marker_has_icon[kDetailMarkerCount - 1] &&
@@ -1506,7 +1701,7 @@ static bool update_detail_view(WeatherPopupContext* ctx, int day_index) {
       !marker_has_probability[kDetailMarkerCount - 1];
   if (ctx->detail_end_overlay) {
     lv_obj_add_flag(ctx->detail_end_overlay, LV_OBJ_FLAG_HIDDEN);
-    if (missing_end_marker) {
+    if (next_date_local.length() && last_marker_missing) {
       lv_coord_t overlay_left = prev_point_x + ((last_point_x - prev_point_x) / 2);
       lv_coord_t overlay_right =
           (right_overlay_bound < chart_wrap_w) ? right_overlay_bound : chart_wrap_w;
@@ -1543,11 +1738,79 @@ static bool update_detail_view(WeatherPopupContext* ctx, int day_index) {
     lv_obj_clear_flag(ctx->detail_precip_bars[point_id], LV_OBJ_FLAG_HIDDEN);
   }
 
+  auto clamp_centered_x = [&](lv_obj_t* obj, lv_coord_t center_x) -> lv_coord_t {
+    lv_obj_update_layout(obj);
+    lv_coord_t w = lv_obj_get_width(obj);
+    lv_coord_t x = center_x - (w / 2);
+    if (x < 0) x = 0;
+    if (x > chart_wrap_w - w) x = chart_wrap_w - w;
+    return x;
+  };
+
+  const bool show_now_marker = clip_today &&
+                               now_hour_pos >= 0.0f &&
+                               now_hour_pos <= static_cast<float>(kDetailDataHourCount) &&
+                               (now_marker_has_temp ||
+                                now_marker_has_icon ||
+                                now_marker_has_precipitation ||
+                                now_marker_has_probability);
+  const lv_coord_t now_x = show_now_marker ? map_detail_chart_xf(ctx, now_hour_pos) : 0;
+  String now_time_text;
+  lv_coord_t now_time_label_x = 0;
+  lv_coord_t now_time_label_w = 0;
+  if (show_now_marker && ctx->detail_now_time_label) {
+    now_time_text = format_detail_time_axis_label(now_hour);
+    lv_label_set_text(ctx->detail_now_time_label, now_time_text.c_str());
+    now_time_label_x = clamp_centered_x(ctx->detail_now_time_label, now_x);
+    now_time_label_w = lv_obj_get_width(ctx->detail_now_time_label);
+  }
+  String now_marker_icon_char;
+  const bool now_marker_has_renderable_icon =
+      now_marker_has_icon && (now_marker_icon_char = getMdiChar(now_marker_icon)).length();
+  bool hide_marker_time_for_now[kDetailMarkerCount] = {};
+  bool hide_marker_icon_for_now[kDetailMarkerCount] = {};
+  bool hide_marker_temp_for_now[kDetailMarkerCount] = {};
+  bool hide_marker_precip_for_now[kDetailMarkerCount] = {};
+  bool hide_marker_probability_for_now[kDetailMarkerCount] = {};
+  if (show_now_marker) {
+    for (int marker = 0; marker < kDetailMarkerCount; ++marker) {
+      const float marker_hour = static_cast<float>(marker_hours[marker]);
+      bool time_collides = false;
+      if (ctx->detail_time_labels[marker] && now_time_label_w > 0) {
+        String marker_time_text = format_detail_time_axis_label(marker_hours[marker]);
+        lv_label_set_text(ctx->detail_time_labels[marker], marker_time_text.c_str());
+        const lv_coord_t marker_time_label_x =
+            clamp_centered_x(ctx->detail_time_labels[marker], map_detail_chart_x(ctx, marker_hours[marker]));
+        const lv_coord_t marker_time_label_w = lv_obj_get_width(ctx->detail_time_labels[marker]);
+        constexpr lv_coord_t kNowTimeLabelGap = 6;
+        const lv_coord_t marker_time_right = marker_time_label_x + marker_time_label_w;
+        const lv_coord_t now_time_right = now_time_label_x + now_time_label_w;
+        time_collides =
+            !(marker_time_right + kNowTimeLabelGap <= now_time_label_x ||
+              now_time_right + kNowTimeLabelGap <= marker_time_label_x);
+      }
+      const bool forward_collides =
+          marker_hour > now_hour_pos &&
+          (marker_hour - now_hour_pos) < kDetailNowCollisionHours;
+      hide_marker_time_for_now[marker] = time_collides || forward_collides;
+      hide_marker_icon_for_now[marker] = forward_collides && now_marker_has_renderable_icon;
+      hide_marker_temp_for_now[marker] = forward_collides && now_marker_has_temp;
+      hide_marker_precip_for_now[marker] = forward_collides && now_marker_has_precipitation;
+      hide_marker_probability_for_now[marker] = forward_collides && now_marker_has_probability;
+    }
+  }
+
   for (int marker = 0; marker < kDetailMarkerCount; ++marker) {
     lv_coord_t marker_x = map_detail_chart_x(ctx, marker_hours[marker]);
     lv_coord_t marker_y = kDetailTempChartTop + (kDetailTempChartHeight / 2);
     const bool end_missing_marker =
-        missing_end_marker && marker == (kDetailMarkerCount - 1);
+        last_marker_missing && marker == (kDetailMarkerCount - 1);
+    const bool hidden_time_for_now = show_now_marker && hide_marker_time_for_now[marker];
+    const bool hidden_icon_for_now = show_now_marker && hide_marker_icon_for_now[marker];
+    const bool hidden_temp_for_now = show_now_marker && hide_marker_temp_for_now[marker];
+    const bool hidden_precip_for_now = show_now_marker && hide_marker_precip_for_now[marker];
+    const bool hidden_probability_for_now =
+        show_now_marker && hide_marker_probability_for_now[marker];
     if (ctx->detail_temp_chart && ctx->detail_temp_series) {
       lv_point_t point;
       lv_chart_get_point_pos_by_id(ctx->detail_temp_chart,
@@ -1561,51 +1824,49 @@ static bool update_detail_view(WeatherPopupContext* ctx, int day_index) {
 
     if (ctx->detail_time_lines[marker]) {
       if ((!clip_today || marker_hours[marker] >= now_hour) &&
+          !hidden_time_for_now &&
           !(end_missing_marker && marker == (kDetailMarkerCount - 1))) {
-        lv_obj_set_pos(ctx->detail_time_lines[marker], marker_x, kDetailTempGuideTop);
-        lv_obj_set_size(ctx->detail_time_lines[marker], 1, kDetailTempGuideHeight);
+        lv_obj_set_pos(ctx->detail_time_lines[marker], marker_x, full_guide_top);
+        lv_obj_set_size(ctx->detail_time_lines[marker], 1, full_guide_height);
         lv_obj_clear_flag(ctx->detail_time_lines[marker], LV_OBJ_FLAG_HIDDEN);
       }
     }
 
     if (ctx->detail_precip_guides[marker]) {
-      if ((!clip_today || marker_hours[marker] >= now_hour) &&
-          !(end_missing_marker && marker == (kDetailMarkerCount - 1))) {
-        lv_obj_set_pos(ctx->detail_precip_guides[marker], marker_x, kDetailPrecipGuideTop);
-        lv_obj_set_size(ctx->detail_precip_guides[marker], 1, kDetailPrecipGuideHeight);
-        lv_obj_clear_flag(ctx->detail_precip_guides[marker], LV_OBJ_FLAG_HIDDEN);
-      }
+      lv_obj_add_flag(ctx->detail_precip_guides[marker], LV_OBJ_FLAG_HIDDEN);
     }
 
     if (ctx->detail_time_labels[marker]) {
-      const bool past_marker = clip_today && marker_hours[marker] < now_hour;
-      lv_obj_set_style_text_color(ctx->detail_time_labels[marker],
-                                  (past_marker || end_missing_marker)
-                                      ? past_overlay_label_color
-                                      : lv_color_white(),
-                                  0);
-      String label = format_detail_time_axis_label(marker_hours[marker]);
-      lv_label_set_text(ctx->detail_time_labels[marker], label.c_str());
-      lv_obj_update_layout(ctx->detail_time_labels[marker]);
-      lv_coord_t lbl_w = lv_obj_get_width(ctx->detail_time_labels[marker]);
-      lv_coord_t x = marker_x - (lbl_w / 2);
-      if (x < 0) x = 0;
-      if (x > chart_wrap_w - lbl_w) x = chart_wrap_w - lbl_w;
-      lv_obj_set_pos(ctx->detail_time_labels[marker], x, kDetailTimeLabelY);
-      lv_obj_clear_flag(ctx->detail_time_labels[marker], LV_OBJ_FLAG_HIDDEN);
+      if (hidden_time_for_now) {
+        lv_label_set_text(ctx->detail_time_labels[marker], "");
+        lv_obj_add_flag(ctx->detail_time_labels[marker], LV_OBJ_FLAG_HIDDEN);
+      } else {
+        const bool past_marker = clip_today && marker_hours[marker] < now_hour;
+        lv_obj_set_style_text_color(ctx->detail_time_labels[marker],
+                                    (past_marker || end_missing_marker)
+                                        ? past_overlay_label_color
+                                        : lv_color_white(),
+                                    0);
+        String label = format_detail_time_axis_label(marker_hours[marker]);
+        lv_label_set_text(ctx->detail_time_labels[marker], label.c_str());
+        lv_obj_set_pos(ctx->detail_time_labels[marker],
+                       clamp_centered_x(ctx->detail_time_labels[marker], marker_x),
+                       kDetailTimeLabelY);
+        lv_obj_clear_flag(ctx->detail_time_labels[marker], LV_OBJ_FLAG_HIDDEN);
+      }
     }
 
     if (ctx->detail_icon_labels[marker]) {
-      if (marker_has_icon[marker]) {
+      if (hidden_icon_for_now) {
+        lv_label_set_text(ctx->detail_icon_labels[marker], "");
+        lv_obj_add_flag(ctx->detail_icon_labels[marker], LV_OBJ_FLAG_HIDDEN);
+      } else if (marker_has_icon[marker]) {
         String icon_char = getMdiChar(marker_icon[marker]);
         if (icon_char.length()) {
           lv_label_set_text(ctx->detail_icon_labels[marker], icon_char.c_str());
-          lv_obj_update_layout(ctx->detail_icon_labels[marker]);
-          lv_coord_t icon_w = lv_obj_get_width(ctx->detail_icon_labels[marker]);
-          lv_coord_t x = marker_x - (icon_w / 2);
-          if (x < 0) x = 0;
-          if (x > chart_wrap_w - icon_w) x = chart_wrap_w - icon_w;
-          lv_obj_set_pos(ctx->detail_icon_labels[marker], x, kDetailIconY);
+          lv_obj_set_pos(ctx->detail_icon_labels[marker],
+                         clamp_centered_x(ctx->detail_icon_labels[marker], marker_x),
+                         kDetailIconY);
           lv_obj_clear_flag(ctx->detail_icon_labels[marker], LV_OBJ_FLAG_HIDDEN);
         } else {
           lv_label_set_text(ctx->detail_icon_labels[marker], "");
@@ -1618,19 +1879,26 @@ static bool update_detail_view(WeatherPopupContext* ctx, int day_index) {
     }
 
     if (ctx->detail_temp_point_dots[marker]) {
-      lv_obj_add_flag(ctx->detail_temp_point_dots[marker], LV_OBJ_FLAG_HIDDEN);
+      if (hidden_temp_for_now || !marker_has_temp[marker]) {
+        lv_obj_add_flag(ctx->detail_temp_point_dots[marker], LV_OBJ_FLAG_HIDDEN);
+      } else {
+        lv_obj_set_pos(ctx->detail_temp_point_dots[marker],
+                       marker_x - (kDetailTempMarkerSize / 2),
+                       marker_y - (kDetailTempMarkerSize / 2));
+        lv_obj_clear_flag(ctx->detail_temp_point_dots[marker], LV_OBJ_FLAG_HIDDEN);
+      }
     }
 
     if (ctx->detail_temp_value_labels[marker]) {
-      if (marker_has_temp[marker]) {
+      if (hidden_temp_for_now) {
+        lv_label_set_text(ctx->detail_temp_value_labels[marker], "");
+        lv_obj_add_flag(ctx->detail_temp_value_labels[marker], LV_OBJ_FLAG_HIDDEN);
+      } else if (marker_has_temp[marker]) {
         String label = format_forecast_chart_temp(marker_temp[marker]);
         lv_label_set_text(ctx->detail_temp_value_labels[marker], label.c_str());
         lv_obj_update_layout(ctx->detail_temp_value_labels[marker]);
-        lv_coord_t lbl_w = lv_obj_get_width(ctx->detail_temp_value_labels[marker]);
         lv_coord_t lbl_h = lv_obj_get_height(ctx->detail_temp_value_labels[marker]);
-        lv_coord_t x = marker_x - (lbl_w / 2);
-        if (x < 0) x = 0;
-        if (x > chart_wrap_w - lbl_w) x = chart_wrap_w - lbl_w;
+        lv_coord_t x = clamp_centered_x(ctx->detail_temp_value_labels[marker], marker_x);
         lv_coord_t y = marker_y - lbl_h - kDetailTempValueGap;
         const lv_coord_t min_y = kDetailIconY + 28;
         const lv_coord_t max_y = kDetailPrecipChartTop - lbl_h - 6;
@@ -1645,56 +1913,138 @@ static bool update_detail_view(WeatherPopupContext* ctx, int day_index) {
     }
 
     if (ctx->detail_precip_amount_labels[marker]) {
-      if (marker_has_precipitation[marker]) {
-        String label = format_precipitation_amount(marker_precipitation[marker], ctx->precipitation_unit);
-        lv_label_set_text(ctx->detail_precip_amount_labels[marker], label.c_str());
-        lv_obj_update_layout(ctx->detail_precip_amount_labels[marker]);
-        lv_coord_t lbl_w = lv_obj_get_width(ctx->detail_precip_amount_labels[marker]);
-        lv_coord_t x = marker_x - (lbl_w / 2);
-        if (x < 0) x = 0;
-        if (x > chart_wrap_w - lbl_w) x = chart_wrap_w - lbl_w;
-        lv_obj_set_pos(ctx->detail_precip_amount_labels[marker], x, kDetailAmountTop);
-        lv_obj_clear_flag(ctx->detail_precip_amount_labels[marker], LV_OBJ_FLAG_HIDDEN);
-      } else {
+      lv_obj_t* au = ctx->detail_precip_amount_unit_labels[marker];
+      if (hidden_precip_for_now || !marker_has_precipitation[marker]) {
         lv_label_set_text(ctx->detail_precip_amount_labels[marker], "");
         lv_obj_add_flag(ctx->detail_precip_amount_labels[marker], LV_OBJ_FLAG_HIDDEN);
+        if (au) { lv_label_set_text(au, ""); lv_obj_add_flag(au, LV_OBJ_FLAG_HIDDEN); }
+      } else {
+        String val = format_precipitation_amount_value(marker_precipitation[marker]);
+        String unit = format_precipitation_amount_unit(ctx->precipitation_unit);
+        lv_label_set_text(ctx->detail_precip_amount_labels[marker], val.c_str());
+        if (au) {
+          lv_label_set_text(au, unit.c_str());
+          position_value_unit_centered(ctx->detail_precip_amount_labels[marker], au,
+                                       marker_x, kDetailAmountTop, chart_wrap_w);
+          lv_obj_clear_flag(au, LV_OBJ_FLAG_HIDDEN);
+        }
+        lv_obj_clear_flag(ctx->detail_precip_amount_labels[marker], LV_OBJ_FLAG_HIDDEN);
       }
     }
 
     if (ctx->detail_probability_labels[marker]) {
-      if (marker_has_probability[marker] && (!clip_today || marker_hours[marker] >= now_hour)) {
-        String label = format_precipitation_probability(marker_probability[marker]);
-        lv_label_set_text(ctx->detail_probability_labels[marker], label.c_str());
-        lv_obj_update_layout(ctx->detail_probability_labels[marker]);
-        lv_coord_t lbl_w = lv_obj_get_width(ctx->detail_probability_labels[marker]);
-        lv_coord_t x = marker_x - (lbl_w / 2);
-        if (x < 0) x = 0;
-        if (x > chart_wrap_w - lbl_w) x = chart_wrap_w - lbl_w;
-        lv_obj_set_pos(ctx->detail_probability_labels[marker], x, kDetailProbabilityTop);
-        lv_obj_clear_flag(ctx->detail_probability_labels[marker], LV_OBJ_FLAG_HIDDEN);
-      } else {
+      lv_obj_t* pu = ctx->detail_probability_unit_labels[marker];
+      if (hidden_probability_for_now || !marker_has_probability[marker] ||
+          (clip_today && marker_hours[marker] < now_hour)) {
         lv_label_set_text(ctx->detail_probability_labels[marker], "");
         lv_obj_add_flag(ctx->detail_probability_labels[marker], LV_OBJ_FLAG_HIDDEN);
+        if (pu) { lv_label_set_text(pu, ""); lv_obj_add_flag(pu, LV_OBJ_FLAG_HIDDEN); }
+      } else {
+        String val = format_precipitation_probability_value(marker_probability[marker]);
+        lv_label_set_text(ctx->detail_probability_labels[marker], val.c_str());
+        if (pu) {
+          lv_label_set_text(pu, "%");
+          position_value_unit_centered(ctx->detail_probability_labels[marker], pu,
+                                       marker_x, kDetailProbabilityTop, chart_wrap_w);
+          lv_obj_clear_flag(pu, LV_OBJ_FLAG_HIDDEN);
+        }
+        lv_obj_clear_flag(ctx->detail_probability_labels[marker], LV_OBJ_FLAG_HIDDEN);
       }
     }
   }
 
-  if (ctx->detail_current_dot) {
-    lv_obj_add_flag(ctx->detail_current_dot, LV_OBJ_FLAG_HIDDEN);
-    if (clip_today && now_hour >= 0 && now_hour < kDetailDataHourCount && point_has_temp[now_hour]) {
+  if (show_now_marker) {
+    lv_coord_t now_y = kDetailTempChartTop + (kDetailTempChartHeight / 2);
+    if (point_has_temp[now_hour]) {
       lv_point_t point;
       lv_chart_get_point_pos_by_id(ctx->detail_temp_chart,
                                    ctx->detail_temp_series,
                                    now_hour,
                                    &point);
-      const lv_coord_t center_x = map_detail_chart_x(ctx, now_hour);
-      const lv_coord_t center_y = lv_obj_get_y(ctx->detail_temp_chart) + point.y;
+      now_y = lv_obj_get_y(ctx->detail_temp_chart) + point.y;
+    } else if (now_marker_has_temp) {
+      now_y = map_detail_chart_y(ctx, scale_forecast_temp(now_marker_temp));
+    }
+
+    if (ctx->detail_now_time_line) {
+      lv_obj_set_pos(ctx->detail_now_time_line, now_x - (kDetailNowGuideWidth / 2), full_guide_top);
+      lv_obj_set_size(ctx->detail_now_time_line, kDetailNowGuideWidth, full_guide_height);
+      lv_obj_clear_flag(ctx->detail_now_time_line, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (ctx->detail_now_precip_guide) {
+      lv_obj_add_flag(ctx->detail_now_precip_guide, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (ctx->detail_now_time_label) {
+      lv_label_set_text(ctx->detail_now_time_label, now_time_text.c_str());
+      lv_obj_set_pos(ctx->detail_now_time_label, now_time_label_x, kDetailTimeLabelY);
+      lv_obj_clear_flag(ctx->detail_now_time_label, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (ctx->detail_now_icon_label) {
+      if (now_marker_has_renderable_icon) {
+        if (now_marker_icon_char.length()) {
+          lv_label_set_text(ctx->detail_now_icon_label, now_marker_icon_char.c_str());
+          lv_obj_set_pos(ctx->detail_now_icon_label,
+                         clamp_centered_x(ctx->detail_now_icon_label, now_x),
+                         kDetailIconY);
+          lv_obj_clear_flag(ctx->detail_now_icon_label, LV_OBJ_FLAG_HIDDEN);
+        }
+      }
+    }
+    if (ctx->detail_now_temp_value_label) {
+      if (now_marker_has_temp) {
+        String label = format_forecast_chart_temp(now_marker_temp);
+        lv_label_set_text(ctx->detail_now_temp_value_label, label.c_str());
+        lv_obj_update_layout(ctx->detail_now_temp_value_label);
+        lv_coord_t lbl_h = lv_obj_get_height(ctx->detail_now_temp_value_label);
+        lv_coord_t y = now_y - lbl_h - kDetailTempValueGap;
+        const lv_coord_t min_y = kDetailIconY + 28;
+        const lv_coord_t max_y = kDetailPrecipChartTop - lbl_h - 6;
+        if (y < min_y) y = min_y;
+        if (y > max_y) y = max_y;
+        lv_obj_set_pos(ctx->detail_now_temp_value_label,
+                       clamp_centered_x(ctx->detail_now_temp_value_label, now_x),
+                       y);
+        lv_obj_clear_flag(ctx->detail_now_temp_value_label, LV_OBJ_FLAG_HIDDEN);
+      }
+    }
+    if (ctx->detail_now_precip_amount_label) {
+      lv_obj_t* nau = ctx->detail_now_precip_amount_unit_label;
+      if (now_marker_has_precipitation) {
+        String val = format_precipitation_amount_value(now_marker_precipitation);
+        String unit = format_precipitation_amount_unit(ctx->precipitation_unit);
+        lv_label_set_text(ctx->detail_now_precip_amount_label, val.c_str());
+        if (nau) {
+          lv_label_set_text(nau, unit.c_str());
+          position_value_unit_centered(ctx->detail_now_precip_amount_label, nau,
+                                       now_x, kDetailAmountTop, chart_wrap_w);
+          lv_obj_clear_flag(nau, LV_OBJ_FLAG_HIDDEN);
+        }
+        lv_obj_clear_flag(ctx->detail_now_precip_amount_label, LV_OBJ_FLAG_HIDDEN);
+      }
+    }
+    if (ctx->detail_now_probability_label) {
+      lv_obj_t* npu = ctx->detail_now_probability_unit_label;
+      if (now_marker_has_probability) {
+        String val = format_precipitation_probability_value(now_marker_probability);
+        lv_label_set_text(ctx->detail_now_probability_label, val.c_str());
+        if (npu) {
+          lv_label_set_text(npu, "%");
+          position_value_unit_centered(ctx->detail_now_probability_label, npu,
+                                       now_x, kDetailProbabilityTop, chart_wrap_w);
+          lv_obj_clear_flag(npu, LV_OBJ_FLAG_HIDDEN);
+        }
+        lv_obj_clear_flag(ctx->detail_now_probability_label, LV_OBJ_FLAG_HIDDEN);
+      }
+    }
+    if (ctx->detail_current_dot && now_marker_has_temp) {
       lv_obj_set_pos(ctx->detail_current_dot,
-                     center_x - (kDetailCurrentHourDotSize / 2),
-                     center_y - (kDetailCurrentHourDotSize / 2));
+                     now_x - (kDetailCurrentHourDotSize / 2),
+                     now_y - (kDetailCurrentHourDotSize / 2));
       lv_obj_clear_flag(ctx->detail_current_dot, LV_OBJ_FLAG_HIDDEN);
       lv_obj_move_foreground(ctx->detail_current_dot);
     }
+  } else if (ctx->detail_current_dot) {
+    lv_obj_add_flag(ctx->detail_current_dot, LV_OBJ_FLAG_HIDDEN);
   }
 
   if ((ctx->detail_past_overlay && !lv_obj_has_flag(ctx->detail_past_overlay, LV_OBJ_FLAG_HIDDEN)) ||
@@ -1704,8 +2054,17 @@ static bool update_detail_view(WeatherPopupContext* ctx, int day_index) {
       if (ctx->detail_icon_labels[i]) lv_obj_move_foreground(ctx->detail_icon_labels[i]);
       if (ctx->detail_temp_value_labels[i]) lv_obj_move_foreground(ctx->detail_temp_value_labels[i]);
       if (ctx->detail_precip_amount_labels[i]) lv_obj_move_foreground(ctx->detail_precip_amount_labels[i]);
+      if (ctx->detail_precip_amount_unit_labels[i]) lv_obj_move_foreground(ctx->detail_precip_amount_unit_labels[i]);
       if (ctx->detail_probability_labels[i]) lv_obj_move_foreground(ctx->detail_probability_labels[i]);
+      if (ctx->detail_probability_unit_labels[i]) lv_obj_move_foreground(ctx->detail_probability_unit_labels[i]);
     }
+    if (ctx->detail_now_time_label) lv_obj_move_foreground(ctx->detail_now_time_label);
+    if (ctx->detail_now_icon_label) lv_obj_move_foreground(ctx->detail_now_icon_label);
+    if (ctx->detail_now_temp_value_label) lv_obj_move_foreground(ctx->detail_now_temp_value_label);
+    if (ctx->detail_now_precip_amount_label) lv_obj_move_foreground(ctx->detail_now_precip_amount_label);
+    if (ctx->detail_now_precip_amount_unit_label) lv_obj_move_foreground(ctx->detail_now_precip_amount_unit_label);
+    if (ctx->detail_now_probability_label) lv_obj_move_foreground(ctx->detail_now_probability_label);
+    if (ctx->detail_now_probability_unit_label) lv_obj_move_foreground(ctx->detail_now_probability_unit_label);
   }
 
   return true;
@@ -1752,6 +2111,9 @@ static void reset_weather_popup_content(WeatherPopupContext* ctx) {
     lv_obj_clear_flag(ctx->temp_label, LV_OBJ_FLAG_HIDDEN);
   }
 
+  ctx->current_has_temp = false;
+  ctx->current_temp = 0.0f;
+  ctx->current_icon = "";
   ctx->selected_day_index = -1;
   clear_hourly(ctx);
   clear_forecast(ctx);
@@ -1779,15 +2141,8 @@ static void apply_weather_payload(WeatherPopupContext* ctx, const char* payload)
   WeatherPopupViewMode previous_mode = ctx->view_mode;
 
   String condition;
-  if (!extract_json_string_field(json, "state", condition)) {
-    extract_json_string_field(json, "condition", condition);
-  }
-
   String icon_name;
-  extract_json_string_field(json, "icon", icon_name);
-  if (!icon_name.length() && condition.length()) {
-    icon_name = weather_icon_from_condition(condition);
-  }
+  resolve_weather_visual_fields(json, condition, icon_name);
 
   float temperature = 0.0f;
   bool has_temp = extract_json_number_or_string_field(json, "temperature", temperature);
@@ -1818,6 +2173,10 @@ static void apply_weather_payload(WeatherPopupContext* ctx, const char* payload)
     precipitation_unit = "mm";
     ctx->precipitation_unit = precipitation_unit;
   }
+
+  ctx->current_has_temp = has_temp;
+  ctx->current_temp = temperature;
+  ctx->current_icon = icon_name;
 
   if (ctx->icon_label) {
     if (icon_name.length()) {
@@ -1907,8 +2266,7 @@ static void apply_weather_payload(WeatherPopupContext* ctx, const char* payload)
       if (!f_has_low && extract_json_number_or_string_field(obj, "temp_low", f_low)) f_has_low = true;
       if (!f_has_low && extract_json_number_or_string_field(obj, "low", f_low)) f_has_low = true;
 
-      extract_json_string_field(obj, "condition", f_condition);
-      extract_json_string_field(obj, "icon", f_icon);
+      resolve_weather_visual_fields(obj, f_condition, f_icon);
       extract_json_string_field(obj, "datetime", f_datetime);
       extract_json_string_field(obj, "date_local", f_date_local);
 
@@ -1920,10 +2278,6 @@ static void apply_weather_payload(WeatherPopupContext* ctx, const char* payload)
       } else if (f_datetime.length()) {
         f_day = weekday_from_iso(f_datetime);
       }
-      if (!f_icon.length() && f_condition.length()) {
-        f_icon = weather_icon_from_condition(f_condition);
-      }
-
       ForecastData& data = ctx->forecast_data[forecast_count];
       data.active = true;
       data.day = f_day.length() ? f_day : String("--");
@@ -1956,14 +2310,7 @@ static void apply_weather_payload(WeatherPopupContext* ctx, const char* payload)
       float h_precipitation = 0.0f;
       float h_probability = 0.0f;
 
-      extract_json_string_field(obj, "condition", h_condition);
-      if (!h_condition.length()) {
-        extract_json_string_field(obj, "c", h_condition);
-      }
-      extract_json_string_field(obj, "icon", h_icon);
-      if (!h_icon.length()) {
-        extract_json_string_field(obj, "i", h_icon);
-      }
+      resolve_weather_visual_fields(obj, h_condition, h_icon);
       extract_json_string_field(obj, "datetime", h_datetime);
       extract_json_string_field(obj, "date_local", h_date_local);
       if (!h_date_local.length()) {
@@ -1973,9 +2320,6 @@ static void apply_weather_payload(WeatherPopupContext* ctx, const char* payload)
         extract_json_number_or_string_field(obj, "h", h_hour_local);
       }
 
-      if (!h_icon.length() && h_condition.length()) {
-        h_icon = weather_icon_from_condition(h_condition);
-      }
       if (!h_date_local.length() && h_datetime.length()) {
         h_date_local = iso_date_part(h_datetime);
       }
@@ -2055,6 +2399,9 @@ static void apply_init_to_context(WeatherPopupContext* ctx, const WeatherPopupIn
     if (ctx->detail_temp_value_labels[i]) {
       lv_obj_set_style_bg_color(ctx->detail_temp_value_labels[i], lv_color_hex(color), 0);
     }
+  }
+  if (ctx->detail_now_temp_value_label) {
+    lv_obj_set_style_bg_color(ctx->detail_now_temp_value_label, lv_color_hex(color), 0);
   }
   for (int i = 0; i < ctx->detail_disabled_separator_count; ++i) {
     if (ctx->detail_disabled_separators[i]) {
@@ -2526,7 +2873,7 @@ static void build_popup_ui(WeatherPopupContext* ctx, const WeatherPopupInit& ini
     lv_obj_set_style_bg_color(btn, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, 0);
     lv_obj_set_style_bg_color(btn, lv_color_hex(0xFFFFFF), LV_STATE_PRESSED);
-    lv_obj_set_style_bg_opa(btn, 12, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_20, LV_STATE_PRESSED);
     lv_obj_set_style_border_color(btn, lv_color_white(), 0);
     lv_obj_set_style_border_width(btn, 0, 0);
     lv_obj_set_style_border_width(btn, 0, LV_STATE_PRESSED);
@@ -2626,6 +2973,10 @@ static void build_popup_ui(WeatherPopupContext* ctx, const WeatherPopupInit& ini
 
   build_detail_overlay(end_overlay);
 
+  constexpr int kLineOverlap = 6;
+  const int line_start = kDetailYAxisWidth - kLineOverlap;
+  const int line_width = (forecast_total_w - kDetailSectionGutter) - line_start;
+
   lv_obj_t* y_max = lv_label_create(chart_wrap);
   ctx->detail_y_max_label = y_max;
   set_label_style(y_max, lv_color_white(), FONT_TITLE);
@@ -2644,9 +2995,6 @@ static void build_popup_ui(WeatherPopupContext* ctx, const WeatherPopupInit& ini
   lv_obj_set_pos(y_min, 0, kDetailTempChartHeight);
   lv_obj_add_flag(y_min, LV_OBJ_FLAG_HIDDEN);
 
-  constexpr int kLineOverlap = 6;
-  const int line_start = kDetailYAxisWidth - kLineOverlap;
-  const int line_width = (forecast_total_w - kDetailSectionGutter) - line_start;
   auto make_guide_line = [&](int16_t y_pos) -> lv_obj_t* {
     lv_obj_t* line = lv_obj_create(chart_wrap);
     lv_obj_remove_style_all(line);
@@ -2727,19 +3075,35 @@ static void build_popup_ui(WeatherPopupContext* ctx, const WeatherPopupInit& ini
 
     lv_obj_t* albl = lv_label_create(chart_wrap);
     set_label_style(albl, lv_color_white(), FONT_TITLE);
-    lv_obj_set_style_text_align(albl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_align(albl, LV_TEXT_ALIGN_LEFT, 0);
     lv_label_set_text(albl, "");
     lv_obj_set_pos(albl, 0, kDetailAmountTop);
     lv_obj_add_flag(albl, LV_OBJ_FLAG_HIDDEN);
     ctx->detail_precip_amount_labels[i] = albl;
 
+    lv_obj_t* au = lv_label_create(chart_wrap);
+    set_label_style(au, lv_color_white(), FONT_SMALL);
+    lv_obj_set_style_text_align(au, LV_TEXT_ALIGN_LEFT, 0);
+    lv_label_set_text(au, "");
+    lv_obj_set_pos(au, 0, kDetailAmountTop);
+    lv_obj_add_flag(au, LV_OBJ_FLAG_HIDDEN);
+    ctx->detail_precip_amount_unit_labels[i] = au;
+
     lv_obj_t* plbl = lv_label_create(chart_wrap);
     set_label_style(plbl, lv_color_white(), FONT_TITLE);
-    lv_obj_set_style_text_align(plbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_align(plbl, LV_TEXT_ALIGN_LEFT, 0);
     lv_label_set_text(plbl, "");
     lv_obj_set_pos(plbl, 0, kDetailProbabilityTop);
     lv_obj_add_flag(plbl, LV_OBJ_FLAG_HIDDEN);
     ctx->detail_probability_labels[i] = plbl;
+
+    lv_obj_t* pu = lv_label_create(chart_wrap);
+    set_label_style(pu, lv_color_white(), FONT_SMALL);
+    lv_obj_set_style_text_align(pu, LV_TEXT_ALIGN_LEFT, 0);
+    lv_label_set_text(pu, "");
+    lv_obj_set_pos(pu, 0, kDetailProbabilityTop);
+    lv_obj_add_flag(pu, LV_OBJ_FLAG_HIDDEN);
+    ctx->detail_probability_unit_labels[i] = pu;
 
     lv_obj_t* precip_line = lv_obj_create(chart_wrap);
     lv_obj_remove_style_all(precip_line);
@@ -2789,6 +3153,88 @@ static void build_popup_ui(WeatherPopupContext* ctx, const WeatherPopupInit& ini
   lv_obj_remove_flag(current_dot, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_remove_flag(current_dot, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_flag(current_dot, LV_OBJ_FLAG_HIDDEN);
+
+  lv_obj_t* now_time_line = lv_obj_create(chart_wrap);
+  ctx->detail_now_time_line = now_time_line;
+  lv_obj_remove_style_all(now_time_line);
+  lv_obj_set_size(now_time_line, kDetailNowGuideWidth, 0);
+  lv_obj_set_style_bg_color(now_time_line, lv_color_white(), 0);
+  lv_obj_set_style_bg_opa(now_time_line, kDetailNowGuideOpa, 0);
+  lv_obj_remove_flag(now_time_line, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_remove_flag(now_time_line, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(now_time_line, LV_OBJ_FLAG_HIDDEN);
+
+  lv_obj_t* now_precip_guide = lv_obj_create(chart_wrap);
+  ctx->detail_now_precip_guide = now_precip_guide;
+  lv_obj_remove_style_all(now_precip_guide);
+  lv_obj_set_size(now_precip_guide, kDetailNowGuideWidth, 0);
+  lv_obj_set_style_bg_color(now_precip_guide, lv_color_white(), 0);
+  lv_obj_set_style_bg_opa(now_precip_guide, kDetailNowGuideOpa, 0);
+  lv_obj_remove_flag(now_precip_guide, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_remove_flag(now_precip_guide, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(now_precip_guide, LV_OBJ_FLAG_HIDDEN);
+
+  lv_obj_t* now_time = lv_label_create(chart_wrap);
+  ctx->detail_now_time_label = now_time;
+  set_label_style(now_time, lv_color_white(), FONT_TITLE);
+  lv_obj_set_style_text_align(now_time, LV_TEXT_ALIGN_CENTER, 0);
+  lv_label_set_text(now_time, "");
+  lv_obj_set_pos(now_time, 0, kDetailTimeLabelY);
+  lv_obj_add_flag(now_time, LV_OBJ_FLAG_HIDDEN);
+
+  lv_obj_t* now_icon = lv_label_create(chart_wrap);
+  ctx->detail_now_icon_label = now_icon;
+  set_label_style(now_icon, lv_color_white(), FONT_MDI_ICONS);
+  lv_obj_set_style_text_align(now_icon, LV_TEXT_ALIGN_CENTER, 0);
+  lv_label_set_text(now_icon, "");
+  lv_obj_set_pos(now_icon, 0, kDetailIconY);
+  lv_obj_add_flag(now_icon, LV_OBJ_FLAG_HIDDEN);
+
+  lv_obj_t* now_temp = lv_label_create(chart_wrap);
+  ctx->detail_now_temp_value_label = now_temp;
+  set_label_style(now_temp, lv_color_white(), FONT_TITLE);
+  lv_obj_set_style_text_align(now_temp, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_bg_color(now_temp, lv_color_hex(ctx->bg_color ? ctx->bg_color : 0x2A2A2A), 0);
+  lv_obj_set_style_bg_opa(now_temp, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(now_temp, 6, 0);
+  lv_obj_set_style_pad_left(now_temp, 4, 0);
+  lv_obj_set_style_pad_right(now_temp, 4, 0);
+  lv_obj_set_style_pad_top(now_temp, 1, 0);
+  lv_obj_set_style_pad_bottom(now_temp, 1, 0);
+  lv_label_set_text(now_temp, "");
+  lv_obj_add_flag(now_temp, LV_OBJ_FLAG_HIDDEN);
+
+  lv_obj_t* now_amount = lv_label_create(chart_wrap);
+  ctx->detail_now_precip_amount_label = now_amount;
+  set_label_style(now_amount, lv_color_white(), FONT_TITLE);
+  lv_obj_set_style_text_align(now_amount, LV_TEXT_ALIGN_LEFT, 0);
+  lv_label_set_text(now_amount, "");
+  lv_obj_set_pos(now_amount, 0, kDetailAmountTop);
+  lv_obj_add_flag(now_amount, LV_OBJ_FLAG_HIDDEN);
+
+  lv_obj_t* now_amount_unit = lv_label_create(chart_wrap);
+  ctx->detail_now_precip_amount_unit_label = now_amount_unit;
+  set_label_style(now_amount_unit, lv_color_white(), FONT_SMALL);
+  lv_obj_set_style_text_align(now_amount_unit, LV_TEXT_ALIGN_LEFT, 0);
+  lv_label_set_text(now_amount_unit, "");
+  lv_obj_set_pos(now_amount_unit, 0, kDetailAmountTop);
+  lv_obj_add_flag(now_amount_unit, LV_OBJ_FLAG_HIDDEN);
+
+  lv_obj_t* now_probability = lv_label_create(chart_wrap);
+  ctx->detail_now_probability_label = now_probability;
+  set_label_style(now_probability, lv_color_white(), FONT_TITLE);
+  lv_obj_set_style_text_align(now_probability, LV_TEXT_ALIGN_LEFT, 0);
+  lv_label_set_text(now_probability, "");
+  lv_obj_set_pos(now_probability, 0, kDetailProbabilityTop);
+  lv_obj_add_flag(now_probability, LV_OBJ_FLAG_HIDDEN);
+
+  lv_obj_t* now_prob_unit = lv_label_create(chart_wrap);
+  ctx->detail_now_probability_unit_label = now_prob_unit;
+  set_label_style(now_prob_unit, lv_color_white(), FONT_SMALL);
+  lv_obj_set_style_text_align(now_prob_unit, LV_TEXT_ALIGN_LEFT, 0);
+  lv_label_set_text(now_prob_unit, "");
+  lv_obj_set_pos(now_prob_unit, 0, kDetailProbabilityTop);
+  lv_obj_add_flag(now_prob_unit, LV_OBJ_FLAG_HIDDEN);
 
   lv_obj_t* detail_precip_chart = lv_chart_create(chart_wrap);
   ctx->detail_precip_chart = detail_precip_chart;
@@ -2847,7 +3293,7 @@ static void build_popup_ui(WeatherPopupContext* ctx, const WeatherPopupInit& ini
   make_detail_section_icon("water-outline",
                            kDetailDisabledPrecipBlockTop,
                            kDetailDisabledPrecipBlockHeight,
-                           -4);
+                           -14);
 
   for (int i = 0; i < kDetailMarkerCount; ++i) {
     if (ctx->detail_time_labels[i]) lv_obj_move_foreground(ctx->detail_time_labels[i]);
@@ -2855,8 +3301,17 @@ static void build_popup_ui(WeatherPopupContext* ctx, const WeatherPopupInit& ini
     if (ctx->detail_temp_point_dots[i]) lv_obj_move_foreground(ctx->detail_temp_point_dots[i]);
     if (ctx->detail_temp_value_labels[i]) lv_obj_move_foreground(ctx->detail_temp_value_labels[i]);
     if (ctx->detail_precip_amount_labels[i]) lv_obj_move_foreground(ctx->detail_precip_amount_labels[i]);
+    if (ctx->detail_precip_amount_unit_labels[i]) lv_obj_move_foreground(ctx->detail_precip_amount_unit_labels[i]);
     if (ctx->detail_probability_labels[i]) lv_obj_move_foreground(ctx->detail_probability_labels[i]);
+    if (ctx->detail_probability_unit_labels[i]) lv_obj_move_foreground(ctx->detail_probability_unit_labels[i]);
   }
+  if (ctx->detail_now_time_label) lv_obj_move_foreground(ctx->detail_now_time_label);
+  if (ctx->detail_now_icon_label) lv_obj_move_foreground(ctx->detail_now_icon_label);
+  if (ctx->detail_now_temp_value_label) lv_obj_move_foreground(ctx->detail_now_temp_value_label);
+  if (ctx->detail_now_precip_amount_label) lv_obj_move_foreground(ctx->detail_now_precip_amount_label);
+  if (ctx->detail_now_precip_amount_unit_label) lv_obj_move_foreground(ctx->detail_now_precip_amount_unit_label);
+  if (ctx->detail_now_probability_label) lv_obj_move_foreground(ctx->detail_now_probability_label);
+  if (ctx->detail_now_probability_unit_label) lv_obj_move_foreground(ctx->detail_now_probability_unit_label);
   if (ctx->detail_past_overlay) lv_obj_move_foreground(ctx->detail_past_overlay);
 
   clear_forecast_chart(ctx);
