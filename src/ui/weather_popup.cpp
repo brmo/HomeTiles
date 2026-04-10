@@ -62,7 +62,7 @@ constexpr int kDetailTitleTop = kDetailHeaderSubrowTop + 6;
 constexpr int kDetailNavButtonSize = 74;
 constexpr int kDetailNavButtonOffsetX = 196;
 constexpr int kDetailNavButtonOffsetY = kDetailHeaderSubrowTop - 18;
-constexpr float kDetailNowCollisionHours = 4.0f;
+constexpr float kDetailNowCollisionHours = 3.0f;
 constexpr int kDetailNowGuideWidth = 1;
 constexpr int kDetailNowGuideOpa = LV_OPA_30;
 constexpr int kDetailChartWrapTop = 0;
@@ -219,11 +219,13 @@ struct WeatherPopupContext {
   lv_obj_t* detail_now_time_label = nullptr;
   lv_obj_t* detail_now_icon_label = nullptr;
   lv_obj_t* detail_now_temp_value_label = nullptr;
+  lv_obj_t* detail_now_temp_unit_label = nullptr;
   lv_obj_t* detail_now_precip_amount_label = nullptr;
   lv_obj_t* detail_now_precip_amount_unit_label = nullptr;
   lv_obj_t* detail_now_probability_label = nullptr;
   lv_obj_t* detail_now_probability_unit_label = nullptr;
   lv_obj_t* detail_temp_value_labels[kDetailMarkerCount] = {};
+  lv_obj_t* detail_temp_unit_labels[kDetailMarkerCount] = {};
   lv_obj_t* detail_precip_amount_labels[kDetailMarkerCount] = {};
   lv_obj_t* detail_precip_amount_unit_labels[kDetailMarkerCount] = {};
   lv_obj_t* detail_probability_labels[kDetailMarkerCount] = {};
@@ -471,6 +473,14 @@ static String format_forecast_chart_temp(float temp) {
     text.remove(text.length() - 2);
   }
   text += "\xC2\xB0";
+  return text;
+}
+
+static String format_forecast_chart_temp_value(float temp) {
+  String text = String(temp, 1);
+  if (text.endsWith(".0")) {
+    text.remove(text.length() - 2);
+  }
   return text;
 }
 
@@ -1364,6 +1374,10 @@ static void clear_detail_view(WeatherPopupContext* ctx) {
       lv_label_set_text(ctx->detail_temp_value_labels[i], "");
       lv_obj_add_flag(ctx->detail_temp_value_labels[i], LV_OBJ_FLAG_HIDDEN);
     }
+    if (ctx->detail_temp_unit_labels[i]) {
+      lv_label_set_text(ctx->detail_temp_unit_labels[i], "");
+      lv_obj_add_flag(ctx->detail_temp_unit_labels[i], LV_OBJ_FLAG_HIDDEN);
+    }
     if (ctx->detail_precip_amount_labels[i]) {
       lv_label_set_text(ctx->detail_precip_amount_labels[i], "");
       lv_obj_add_flag(ctx->detail_precip_amount_labels[i], LV_OBJ_FLAG_HIDDEN);
@@ -1397,6 +1411,10 @@ static void clear_detail_view(WeatherPopupContext* ctx) {
   if (ctx->detail_now_temp_value_label) {
     lv_label_set_text(ctx->detail_now_temp_value_label, "");
     lv_obj_add_flag(ctx->detail_now_temp_value_label, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (ctx->detail_now_temp_unit_label) {
+    lv_label_set_text(ctx->detail_now_temp_unit_label, "");
+    lv_obj_add_flag(ctx->detail_now_temp_unit_label, LV_OBJ_FLAG_HIDDEN);
   }
   if (ctx->detail_now_precip_amount_label) {
     lv_label_set_text(ctx->detail_now_precip_amount_label, "");
@@ -1890,25 +1908,35 @@ static bool update_detail_view(WeatherPopupContext* ctx, int day_index) {
     }
 
     if (ctx->detail_temp_value_labels[marker]) {
-      if (hidden_temp_for_now) {
+      lv_obj_t* tu = ctx->detail_temp_unit_labels[marker];
+      if (hidden_temp_for_now || !marker_has_temp[marker]) {
         lv_label_set_text(ctx->detail_temp_value_labels[marker], "");
         lv_obj_add_flag(ctx->detail_temp_value_labels[marker], LV_OBJ_FLAG_HIDDEN);
-      } else if (marker_has_temp[marker]) {
-        String label = format_forecast_chart_temp(marker_temp[marker]);
-        lv_label_set_text(ctx->detail_temp_value_labels[marker], label.c_str());
-        lv_obj_update_layout(ctx->detail_temp_value_labels[marker]);
-        lv_coord_t lbl_h = lv_obj_get_height(ctx->detail_temp_value_labels[marker]);
-        lv_coord_t x = clamp_centered_x(ctx->detail_temp_value_labels[marker], marker_x);
-        lv_coord_t y = marker_y - lbl_h - kDetailTempValueGap;
-        const lv_coord_t min_y = kDetailIconY + 28;
-        const lv_coord_t max_y = kDetailPrecipChartTop - lbl_h - 6;
-        if (y < min_y) y = min_y;
-        if (y > max_y) y = max_y;
-        lv_obj_set_pos(ctx->detail_temp_value_labels[marker], x, y);
-        lv_obj_clear_flag(ctx->detail_temp_value_labels[marker], LV_OBJ_FLAG_HIDDEN);
+        if (tu) { lv_label_set_text(tu, ""); lv_obj_add_flag(tu, LV_OBJ_FLAG_HIDDEN); }
       } else {
-        lv_label_set_text(ctx->detail_temp_value_labels[marker], "");
-        lv_obj_add_flag(ctx->detail_temp_value_labels[marker], LV_OBJ_FLAG_HIDDEN);
+        String val = format_forecast_chart_temp_value(marker_temp[marker]);
+        lv_label_set_text(ctx->detail_temp_value_labels[marker], val.c_str());
+        if (tu) {
+          lv_label_set_text(tu, "\xE2\x80\x89\xC2\xB0\x43");
+          lv_obj_update_layout(ctx->detail_temp_value_labels[marker]);
+          lv_obj_update_layout(tu);
+          lv_coord_t val_w = lv_obj_get_width(ctx->detail_temp_value_labels[marker]);
+          lv_coord_t unit_w = lv_obj_get_width(tu);
+          lv_coord_t total_w = val_w + unit_w;
+          lv_coord_t lbl_h = lv_obj_get_height(ctx->detail_temp_value_labels[marker]);
+          lv_coord_t cx = marker_x - (total_w / 2);
+          if (cx < 0) cx = 0;
+          if (cx + total_w > chart_wrap_w) cx = chart_wrap_w - total_w;
+          lv_coord_t y = marker_y - lbl_h - kDetailTempValueGap;
+          const lv_coord_t min_y = kDetailIconY + 28;
+          const lv_coord_t max_y = kDetailPrecipChartTop - lbl_h - 6;
+          if (y < min_y) y = min_y;
+          if (y > max_y) y = max_y;
+          lv_obj_set_pos(ctx->detail_temp_value_labels[marker], cx, y);
+          lv_obj_set_pos(tu, cx + val_w, y + 3);
+          lv_obj_clear_flag(tu, LV_OBJ_FLAG_HIDDEN);
+        }
+        lv_obj_clear_flag(ctx->detail_temp_value_labels[marker], LV_OBJ_FLAG_HIDDEN);
       }
     }
 
@@ -1991,19 +2019,30 @@ static bool update_detail_view(WeatherPopupContext* ctx, int day_index) {
       }
     }
     if (ctx->detail_now_temp_value_label) {
+      lv_obj_t* ntu = ctx->detail_now_temp_unit_label;
       if (now_marker_has_temp) {
-        String label = format_forecast_chart_temp(now_marker_temp);
-        lv_label_set_text(ctx->detail_now_temp_value_label, label.c_str());
-        lv_obj_update_layout(ctx->detail_now_temp_value_label);
-        lv_coord_t lbl_h = lv_obj_get_height(ctx->detail_now_temp_value_label);
-        lv_coord_t y = now_y - lbl_h - kDetailTempValueGap;
-        const lv_coord_t min_y = kDetailIconY + 28;
-        const lv_coord_t max_y = kDetailPrecipChartTop - lbl_h - 6;
-        if (y < min_y) y = min_y;
-        if (y > max_y) y = max_y;
-        lv_obj_set_pos(ctx->detail_now_temp_value_label,
-                       clamp_centered_x(ctx->detail_now_temp_value_label, now_x),
-                       y);
+        String val = format_forecast_chart_temp_value(now_marker_temp);
+        lv_label_set_text(ctx->detail_now_temp_value_label, val.c_str());
+        if (ntu) {
+          lv_label_set_text(ntu, "\xE2\x80\x89\xC2\xB0\x43");
+          lv_obj_update_layout(ctx->detail_now_temp_value_label);
+          lv_obj_update_layout(ntu);
+          lv_coord_t val_w = lv_obj_get_width(ctx->detail_now_temp_value_label);
+          lv_coord_t unit_w = lv_obj_get_width(ntu);
+          lv_coord_t total_w = val_w + unit_w;
+          lv_coord_t lbl_h = lv_obj_get_height(ctx->detail_now_temp_value_label);
+          lv_coord_t cx = now_x - (total_w / 2);
+          if (cx < 0) cx = 0;
+          if (cx + total_w > chart_wrap_w) cx = chart_wrap_w - total_w;
+          lv_coord_t y = now_y - lbl_h - kDetailTempValueGap;
+          const lv_coord_t min_y = kDetailIconY + 28;
+          const lv_coord_t max_y = kDetailPrecipChartTop - lbl_h - 6;
+          if (y < min_y) y = min_y;
+          if (y > max_y) y = max_y;
+          lv_obj_set_pos(ctx->detail_now_temp_value_label, cx, y);
+          lv_obj_set_pos(ntu, cx + val_w, y + 3);
+          lv_obj_clear_flag(ntu, LV_OBJ_FLAG_HIDDEN);
+        }
         lv_obj_clear_flag(ctx->detail_now_temp_value_label, LV_OBJ_FLAG_HIDDEN);
       }
     }
@@ -2053,6 +2092,7 @@ static bool update_detail_view(WeatherPopupContext* ctx, int day_index) {
       if (ctx->detail_time_labels[i]) lv_obj_move_foreground(ctx->detail_time_labels[i]);
       if (ctx->detail_icon_labels[i]) lv_obj_move_foreground(ctx->detail_icon_labels[i]);
       if (ctx->detail_temp_value_labels[i]) lv_obj_move_foreground(ctx->detail_temp_value_labels[i]);
+      if (ctx->detail_temp_unit_labels[i]) lv_obj_move_foreground(ctx->detail_temp_unit_labels[i]);
       if (ctx->detail_precip_amount_labels[i]) lv_obj_move_foreground(ctx->detail_precip_amount_labels[i]);
       if (ctx->detail_precip_amount_unit_labels[i]) lv_obj_move_foreground(ctx->detail_precip_amount_unit_labels[i]);
       if (ctx->detail_probability_labels[i]) lv_obj_move_foreground(ctx->detail_probability_labels[i]);
@@ -2061,6 +2101,7 @@ static bool update_detail_view(WeatherPopupContext* ctx, int day_index) {
     if (ctx->detail_now_time_label) lv_obj_move_foreground(ctx->detail_now_time_label);
     if (ctx->detail_now_icon_label) lv_obj_move_foreground(ctx->detail_now_icon_label);
     if (ctx->detail_now_temp_value_label) lv_obj_move_foreground(ctx->detail_now_temp_value_label);
+    if (ctx->detail_now_temp_unit_label) lv_obj_move_foreground(ctx->detail_now_temp_unit_label);
     if (ctx->detail_now_precip_amount_label) lv_obj_move_foreground(ctx->detail_now_precip_amount_label);
     if (ctx->detail_now_precip_amount_unit_label) lv_obj_move_foreground(ctx->detail_now_precip_amount_unit_label);
     if (ctx->detail_now_probability_label) lv_obj_move_foreground(ctx->detail_now_probability_label);
@@ -2394,14 +2435,6 @@ static void apply_init_to_context(WeatherPopupContext* ctx, const WeatherPopupIn
   uint32_t color = ctx->bg_color ? ctx->bg_color : 0x2A2A2A;
   if (ctx->card) {
     lv_obj_set_style_bg_color(ctx->card, lv_color_hex(color), 0);
-  }
-  for (int i = 0; i < kDetailMarkerCount; ++i) {
-    if (ctx->detail_temp_value_labels[i]) {
-      lv_obj_set_style_bg_color(ctx->detail_temp_value_labels[i], lv_color_hex(color), 0);
-    }
-  }
-  if (ctx->detail_now_temp_value_label) {
-    lv_obj_set_style_bg_color(ctx->detail_now_temp_value_label, lv_color_hex(color), 0);
   }
   for (int i = 0; i < ctx->detail_disabled_separator_count; ++i) {
     if (ctx->detail_disabled_separators[i]) {
@@ -3061,17 +3094,17 @@ static void build_popup_ui(WeatherPopupContext* ctx, const WeatherPopupInit& ini
 
     lv_obj_t* vlbl = lv_label_create(chart_wrap);
     set_label_style(vlbl, lv_color_white(), FONT_TITLE);
-    lv_obj_set_style_text_align(vlbl, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_bg_color(vlbl, lv_color_hex(ctx->bg_color ? ctx->bg_color : 0x2A2A2A), 0);
-    lv_obj_set_style_bg_opa(vlbl, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(vlbl, 6, 0);
-    lv_obj_set_style_pad_left(vlbl, 4, 0);
-    lv_obj_set_style_pad_right(vlbl, 4, 0);
-    lv_obj_set_style_pad_top(vlbl, 1, 0);
-    lv_obj_set_style_pad_bottom(vlbl, 1, 0);
+    lv_obj_set_style_text_align(vlbl, LV_TEXT_ALIGN_LEFT, 0);
     lv_label_set_text(vlbl, "");
     lv_obj_add_flag(vlbl, LV_OBJ_FLAG_HIDDEN);
     ctx->detail_temp_value_labels[i] = vlbl;
+
+    lv_obj_t* vu = lv_label_create(chart_wrap);
+    set_label_style(vu, lv_color_white(), FONT_SMALL);
+    lv_obj_set_style_text_align(vu, LV_TEXT_ALIGN_LEFT, 0);
+    lv_label_set_text(vu, "");
+    lv_obj_add_flag(vu, LV_OBJ_FLAG_HIDDEN);
+    ctx->detail_temp_unit_labels[i] = vu;
 
     lv_obj_t* albl = lv_label_create(chart_wrap);
     set_label_style(albl, lv_color_white(), FONT_TITLE);
@@ -3193,16 +3226,16 @@ static void build_popup_ui(WeatherPopupContext* ctx, const WeatherPopupInit& ini
   lv_obj_t* now_temp = lv_label_create(chart_wrap);
   ctx->detail_now_temp_value_label = now_temp;
   set_label_style(now_temp, lv_color_white(), FONT_TITLE);
-  lv_obj_set_style_text_align(now_temp, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_bg_color(now_temp, lv_color_hex(ctx->bg_color ? ctx->bg_color : 0x2A2A2A), 0);
-  lv_obj_set_style_bg_opa(now_temp, LV_OPA_COVER, 0);
-  lv_obj_set_style_radius(now_temp, 6, 0);
-  lv_obj_set_style_pad_left(now_temp, 4, 0);
-  lv_obj_set_style_pad_right(now_temp, 4, 0);
-  lv_obj_set_style_pad_top(now_temp, 1, 0);
-  lv_obj_set_style_pad_bottom(now_temp, 1, 0);
+  lv_obj_set_style_text_align(now_temp, LV_TEXT_ALIGN_LEFT, 0);
   lv_label_set_text(now_temp, "");
   lv_obj_add_flag(now_temp, LV_OBJ_FLAG_HIDDEN);
+
+  lv_obj_t* now_temp_unit = lv_label_create(chart_wrap);
+  ctx->detail_now_temp_unit_label = now_temp_unit;
+  set_label_style(now_temp_unit, lv_color_white(), FONT_SMALL);
+  lv_obj_set_style_text_align(now_temp_unit, LV_TEXT_ALIGN_LEFT, 0);
+  lv_label_set_text(now_temp_unit, "");
+  lv_obj_add_flag(now_temp_unit, LV_OBJ_FLAG_HIDDEN);
 
   lv_obj_t* now_amount = lv_label_create(chart_wrap);
   ctx->detail_now_precip_amount_label = now_amount;
