@@ -261,6 +261,9 @@ struct PendingWeatherUpdate {
   String entity_id;
   String payload;
   bool valid = false;
+  bool build_ui_pending = false;
+  String previous_selected_date;
+  WeatherPopupViewMode previous_mode = WeatherPopupViewMode::Week;
 };
 
 static WeatherPopupContext* g_weather_popup_ctx = nullptr;
@@ -2487,17 +2490,12 @@ static void apply_weather_header(WeatherPopupContext* ctx, const String& json) {
   align_header_row(ctx->card, ctx->location_label, ctx->icon_label);
 }
 
-static void apply_weather_payload(WeatherPopupContext* ctx, const char* payload) {
+// Phase 1: Parse JSON and populate data arrays (no heavy UI work)
+static void parse_weather_data(WeatherPopupContext* ctx, const char* payload) {
   if (!ctx || !payload || !*payload) return;
   String json = payload;
   json.trim();
   if (!json.length()) return;
-
-  String previous_selected_date;
-  if (ctx->selected_day_index >= 0 && ctx->selected_day_index < kCols) {
-    previous_selected_date = ctx->forecast_data[ctx->selected_day_index].date_local;
-  }
-  WeatherPopupViewMode previous_mode = ctx->view_mode;
 
   apply_weather_header(ctx, json);
 
@@ -2650,6 +2648,13 @@ static void apply_weather_payload(WeatherPopupContext* ctx, const char* payload)
       ++hourly_count;
     }
   }
+}
+
+// Phase 2: Build UI from parsed data (heavy LVGL work)
+static void build_weather_ui(WeatherPopupContext* ctx,
+                             const String& previous_selected_date,
+                             WeatherPopupViewMode previous_mode) {
+  if (!ctx) return;
 
   update_forecast_graph(ctx);
   update_week_range_label(ctx);
@@ -3730,6 +3735,7 @@ void show_weather_popup(const WeatherPopupInit& init) {
 
   reset_weather_popup_content(g_weather_popup_ctx);
   g_pending_weather.valid = false;
+  g_pending_weather.build_ui_pending = false;
 
   // Apply header immediately (icon, condition, temp) so popup appears populated
   String cached;
@@ -3737,9 +3743,10 @@ void show_weather_popup(const WeatherPopupInit& init) {
     apply_weather_header(g_weather_popup_ctx, cached);
     // Queue cached content for processing in next loop iteration
     queue_weather_popup_payload(init.entity_id.c_str(), cached.c_str());
+  } else {
+    // No cache — request fresh data via MQTT
+    request_weather_for_context(g_weather_popup_ctx);
   }
-
-  request_weather_for_context(g_weather_popup_ctx);
 }
 
 void preload_weather_popup() {
@@ -3771,15 +3778,39 @@ void queue_weather_popup_payload(const char* entity_id, const char* payload) {
 void process_weather_popup_queue() {
   if (!g_weather_popup_ctx || !g_weather_popup_ctx->card) {
     g_pending_weather.valid = false;
+    g_pending_weather.build_ui_pending = false;
     return;
   }
 
+  // Phase 2: Build UI from previously parsed data
+  if (g_pending_weather.build_ui_pending) {
+    g_pending_weather.build_ui_pending = false;
+    if (is_popup_visible(g_weather_popup_ctx)) {
+      build_weather_ui(g_weather_popup_ctx,
+                       g_pending_weather.previous_selected_date,
+                       g_pending_weather.previous_mode);
+    }
+    return;
+  }
+
+  // Phase 1: Parse JSON data (no heavy UI work)
   if (g_pending_weather.valid) {
+    g_pending_weather.valid = false;
     if (g_weather_popup_ctx->entity_id.equalsIgnoreCase(g_pending_weather.entity_id) &&
         is_popup_visible(g_weather_popup_ctx)) {
-      apply_weather_payload(g_weather_popup_ctx, g_pending_weather.payload.c_str());
+      // Save state before parsing
+      g_pending_weather.previous_selected_date = "";
+      if (g_weather_popup_ctx->selected_day_index >= 0 &&
+          g_weather_popup_ctx->selected_day_index < kCols) {
+        g_pending_weather.previous_selected_date =
+            g_weather_popup_ctx->forecast_data[g_weather_popup_ctx->selected_day_index].date_local;
+      }
+      g_pending_weather.previous_mode = g_weather_popup_ctx->view_mode;
+
+      parse_weather_data(g_weather_popup_ctx, g_pending_weather.payload.c_str());
+      g_pending_weather.payload = "";  // Free memory
+      g_pending_weather.build_ui_pending = true;
     }
-    g_pending_weather.valid = false;
   }
 }
 
