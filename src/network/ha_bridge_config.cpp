@@ -21,6 +21,7 @@ static void parseEnergySection(const String& body,
                                String& units,
                                String& names,
                                String& icons);
+static int findMatchingJsonObjectEnd(const String& body, int object_start);
 static bool extractStringField(const String& object, const char* key, String& out);
 static String lookupKeyValue(const String& text, const String& key);
 static void upsertKeyValueMap(String& text, const String& key, const String& value);
@@ -40,15 +41,15 @@ bool HaBridgeConfig::load() {
     return false;
   }
 
-  data.sensors_text = prefs.getString("ha_sensors", "");
+  data.sensors_text = "";
   data.energy_text = "";
   data.weathers_text = "";
   data.lights_text = "";
   data.switches_text = "";
-  data.scene_alias_text = prefs.getString("ha_scene_alias", "");
-  data.sensor_units_map = prefs.getString("ha_sens_units", "");
-  data.sensor_names_map = prefs.getString("ha_sens_names", "");
-  data.sensor_values_map = prefs.getString("ha_sens_vals", "");
+  data.scene_alias_text = "";
+  data.sensor_units_map = "";
+  data.sensor_names_map = "";
+  data.sensor_values_map = "";
   data.entity_icons_map = "";
   for (size_t i = 0; i < HA_SENSOR_SLOT_COUNT; ++i) {
     char key[12];
@@ -90,6 +91,11 @@ bool HaBridgeConfig::save(const HaBridgeConfigData& incoming) {
   // prefs.putString("ha_sens_vals", incoming.sensor_values_map);
   // HA-Auto-Icons are runtime metadata. Manual tile icons are stored with the
   // tile config, but HA icon changes must not write to flash.
+  prefs.remove("ha_sensors");
+  prefs.remove("ha_scene_alias");
+  prefs.remove("ha_sens_units");
+  prefs.remove("ha_sens_names");
+  prefs.remove("ha_sens_vals");
   for (size_t i = 0; i < HA_SENSOR_SLOT_COUNT; ++i) {
     char key[12];
     snprintf(key, sizeof(key), "slot_s%u", static_cast<unsigned>(i));
@@ -269,7 +275,7 @@ static void parseArraySection(const String& body, String& out) {
 
 static void parseObjectSection(const String& body, String& out) {
   int start = body.indexOf('{');
-  int end = body.lastIndexOf('}');
+  int end = findMatchingJsonObjectEnd(body, start);
   if (start < 0 || end < start) {
     out = "";
     return;
@@ -299,6 +305,43 @@ static void parseObjectSection(const String& body, String& out) {
     pos = v2 + 1;
   }
   out = result;
+}
+
+static int findMatchingJsonObjectEnd(const String& body, int object_start) {
+  if (object_start < 0 || object_start >= body.length() || body.charAt(object_start) != '{') {
+    return -1;
+  }
+
+  int depth = 0;
+  bool in_string = false;
+  bool escaped = false;
+
+  for (int i = object_start; i < body.length(); ++i) {
+    char c = body.charAt(i);
+
+    if (in_string) {
+      if (escaped) {
+        escaped = false;
+      } else if (c == '\\') {
+        escaped = true;
+      } else if (c == '"') {
+        in_string = false;
+      }
+      continue;
+    }
+
+    if (c == '"') {
+      in_string = true;
+    } else if (c == '{') {
+      ++depth;
+    } else if (c == '}') {
+      --depth;
+      if (depth == 0) return i;
+      if (depth < 0) return -1;
+    }
+  }
+
+  return -1;
 }
 
 bool HaBridgeConfig::applyJson(const char* json_payload, bool* out_reload, bool* out_icons_changed) {
