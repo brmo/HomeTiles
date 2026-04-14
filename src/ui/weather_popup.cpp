@@ -1070,43 +1070,6 @@ static int iso_date_day_offset(const String& base_iso, const String& target_iso)
 
 static String weekday_from_iso(const String& iso) {
   return i18n::weather_weekday_short(configManager.getConfig().language, iso);
-  int y = 0, m = 0, d = 0;
-  if (!parse_iso_date(iso, y, m, d)) return "";
-  int mm = m;
-  int yy = y;
-  if (mm < 3) {
-    mm += 12;
-    yy -= 1;
-  }
-  int K = yy % 100;
-  int J = yy / 100;
-  int h = (d + (13 * (mm + 1)) / 5 + K + (K / 4) + (J / 4) + (5 * J)) % 7;
-  int dow = (h + 6) % 7;
-  static const char* kDaysDe[] = {"So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"};
-  if (dow < 0 || dow > 6) return "";
-  return String(kDaysDe[dow]);
-}
-
-static String weekday_long_from_iso(const String& iso) {
-  int y = 0, m = 0, d = 0;
-  if (!parse_iso_date(iso, y, m, d)) return "";
-  int mm = m;
-  int yy = y;
-  if (mm < 3) {
-    mm += 12;
-    yy -= 1;
-  }
-  int K = yy % 100;
-  int J = yy / 100;
-  int h = (d + (13 * (mm + 1)) / 5 + K + (K / 4) + (J / 4) + (5 * J)) % 7;
-  int dow = (h + 6) % 7;
-  const bool is_de = configManager.getConfig().language[0] == 'd';
-  static const char* kDaysDe[] = {
-      "Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"};
-  static const char* kDaysEn[] = {
-      "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
-  if (dow < 0 || dow > 6) return "";
-  return String(is_de ? kDaysDe[dow] : kDaysEn[dow]);
 }
 
 static String format_detail_time_axis_label(int hour24) {
@@ -1122,24 +1085,6 @@ static String format_detail_time_axis_label(int hour24) {
   int hour12 = normalized % 12;
   if (hour12 == 0) hour12 = 12;
   return String(hour12) + (normalized < 12 ? "am" : "pm");
-}
-
-static String format_localized_date_from_iso(const String& iso) {
-  if (iso.length() < 10) return iso;
-  const DeviceConfig& cfg = configManager.getConfig();
-  const uint8_t date_format =
-      clock_tile::resolve_date_format(clock_tile::DATE_FORMAT_AUTO, cfg.global_date_format, cfg.language);
-  const String yyyy = iso.substring(0, 4);
-  const String mm = iso.substring(5, 7);
-  const String dd = iso.substring(8, 10);
-  switch (date_format) {
-    case clock_tile::DATE_FORMAT_MDY:
-      return mm + "/" + dd + "/" + yyyy;
-    case clock_tile::DATE_FORMAT_YMD:
-      return yyyy + "/" + mm + "/" + dd;
-    default:
-      return dd + "." + mm + "." + yyyy;
-  }
 }
 
 static String format_localized_short_date_from_iso(const String& iso) {
@@ -1158,6 +1103,31 @@ static String format_localized_short_date_from_iso(const String& iso) {
     default:
       return dd + "." + mm + ".";
   }
+}
+
+static const char* weather_month_short_name(int month, bool german) {
+  static const char* kMonthsDe[] = {
+      "Jan.", "Feb.", "M\xC3\xA4r.", "Apr.", "Mai", "Jun.",
+      "Jul.", "Aug.", "Sep.", "Okt.", "Nov.", "Dez."};
+  static const char* kMonthsEn[] = {
+      "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+  if (month < 1 || month > 12) return "";
+  return german ? kMonthsDe[month - 1] : kMonthsEn[month - 1];
+}
+
+static String format_weather_popup_date_from_iso(const String& iso) {
+  int y = 0, m = 0, d = 0;
+  if (!parse_iso_date(iso, y, m, d)) return format_localized_short_date_from_iso(iso);
+
+  const bool is_de = configManager.getConfig().language[0] == 'd';
+  const char* month = weather_month_short_name(m, is_de);
+  if (!month || !*month) return format_localized_short_date_from_iso(iso);
+
+  if (is_de) {
+    return String(d) + ". " + month;
+  }
+  return String(month) + " " + d;
 }
 
 static const char* weather_today_button_text() {
@@ -1193,38 +1163,21 @@ static bool get_local_now_parts(String& date_out, int& hour_out, int* minute_out
 static String format_detail_day_title(const ForecastData& data) {
   String today_date;
   int today_hour = 0;
-  int today_minute = 0;
-  const bool has_now = get_local_now_parts(today_date, today_hour, &today_minute);
+  const bool has_now = get_local_now_parts(today_date, today_hour);
   const bool is_today = has_now && data.date_local == today_date;
 
   String title = is_today ? String(weather_today_button_text())
-                          : weekday_long_from_iso(data.date_local);
+                          : weekday_from_iso(data.date_local);
   if (!title.length()) title = data.day;
   if (!data.date_local.length()) return title.length() ? title : String("--");
   if (data.date_local.length() < 10) return title.length() ? title : data.date_local;
 
-  String date_text = format_localized_date_from_iso(data.date_local);
+  String date_text = format_weather_popup_date_from_iso(data.date_local);
 
   if (!title.length()) return date_text;
   if (!date_text.length()) return title;
 
   title += ", ";
-  if (is_today) {
-    const DeviceConfig& cfg = configManager.getConfig();
-    const uint8_t time_format =
-        clock_tile::resolve_time_format(clock_tile::TIME_FORMAT_AUTO, cfg.global_time_format, cfg.language);
-    char time_buf[16];
-    if (time_format == clock_tile::TIME_FORMAT_24H) {
-      snprintf(time_buf, sizeof(time_buf), "%02d:%02d", today_hour, today_minute);
-    } else {
-      int h12 = today_hour % 12;
-      if (h12 == 0) h12 = 12;
-      const char* ampm = (today_hour < 12) ? "am" : "pm";
-      snprintf(time_buf, sizeof(time_buf), "%d:%02d %s", h12, today_minute, ampm);
-    }
-    title += time_buf;
-    title += ", ";
-  }
   title += date_text;
   return title;
 }
@@ -1240,9 +1193,9 @@ static String format_forecast_range_title(const WeatherPopupContext* ctx) {
     }
   }
   if (!start_date.length()) return "";
-  String start_text = format_localized_date_from_iso(start_date);
+  String start_text = format_weather_popup_date_from_iso(start_date);
   if (!end_date.length() || end_date == start_date) return start_text;
-  return start_text + " - " + format_localized_date_from_iso(end_date);
+  return start_text + " - " + format_weather_popup_date_from_iso(end_date);
 }
 
 static void set_label_style(lv_obj_t* lbl, lv_color_t color, const lv_font_t* font) {
