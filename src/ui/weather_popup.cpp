@@ -44,13 +44,14 @@ constexpr int kForecastDayTop = 2;
 constexpr int kForecastDayIconGap = 6;
 constexpr int kForecastIconTop = 30;
 constexpr int kForecastTempChartTop = 102;
-constexpr int kForecastTempChartHeight = 150;
+constexpr int kForecastTempChartHeight = 142;
 constexpr int kForecastHighLabelGap = 6;
 constexpr int kForecastLowLabelGap = 8;
 constexpr int kForecastPrecipChartTop = 288;
-constexpr int kForecastPrecipChartHeight = 15;
+constexpr int kForecastPrecipChartHeight = 12;
 constexpr int kForecastAmountTop = 323;
 constexpr int kForecastProbabilityTop = 355;
+constexpr int kForecastColumnTouchHeight = kForecastProbabilityTop + 44;
 constexpr int kForecastBarWidth = 10;
 constexpr int kForecastBarSideInset = 5;
 constexpr int kForecastChartSideInset = 8;
@@ -64,12 +65,13 @@ constexpr int kForecastLastCenter =
     kForecastSidePad + ((kCols - 1) * (kForecastPlotColW + kForecastColGap)) + (kForecastPlotColW / 2);
 constexpr int kDetailRowTop = kForecastRowTop;
 constexpr int kDetailTitleTop = kDetailHeaderSubrowTop + 6;
-constexpr int kFooterButtonHeight = 74;
-constexpr int kFooterActionButtonWidth = 96;
-constexpr int kFooterButtonRadius = 16;
-constexpr int kFooterButtonGap = 8;
+constexpr int kFooterButtonHeight = 92;
+constexpr int kFooterActionButtonWidth = 92;
+constexpr int kFooterButtonRadius = kFooterButtonHeight / 2;
+constexpr int kFooterButtonGap = 10;
 constexpr int kFooterInsetX = 6;
 constexpr int kFooterOffsetY = -6;
+constexpr lv_opa_t kFooterIndicatorOpa = LV_OPA_20;
 constexpr int kDetailNavButtonSize = kFooterButtonHeight;
 constexpr int kFooterNextButtonX = -kFooterInsetX;
 constexpr int kFooterPrevButtonX = -(kFooterInsetX + kDetailNavButtonSize + kFooterButtonGap);
@@ -1302,11 +1304,13 @@ static void style_header_action_button(WeatherPopupContext* ctx, lv_obj_t* btn, 
   }
 
   auto apply_selector = [&](lv_style_selector_t selector) {
+    const bool pressed = selector == LV_STATE_PRESSED;
     lv_obj_set_style_bg_color(btn, lv_color_white(), selector);
-    lv_obj_set_style_bg_opa(btn, active ? LV_OPA_COVER : LV_OPA_TRANSP, selector);
+    const lv_opa_t bg_opa = active ? LV_OPA_COVER : (pressed ? kFooterIndicatorOpa : LV_OPA_TRANSP);
+    lv_obj_set_style_bg_opa(btn, bg_opa, selector);
     lv_obj_set_style_border_color(btn, lv_color_white(), selector);
-    lv_obj_set_style_border_width(btn, 2, selector);
-    lv_obj_set_style_border_opa(btn, active ? LV_OPA_TRANSP : LV_OPA_COVER, selector);
+    lv_obj_set_style_border_width(btn, 0, selector);
+    lv_obj_set_style_border_opa(btn, LV_OPA_TRANSP, selector);
     lv_obj_set_style_outline_opa(btn, LV_OPA_TRANSP, selector);
     lv_obj_set_style_shadow_opa(btn, LV_OPA_TRANSP, selector);
     lv_obj_set_style_transform_width(btn, 0, selector);
@@ -1388,10 +1392,8 @@ static void update_mode_buttons(WeatherPopupContext* ctx) {
       return;
     }
     lv_obj_clear_flag(btn, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_style_border_color(btn, enabled ? lv_color_white() : nav_inactive_color, 0);
-    lv_obj_set_style_border_opa(btn, enabled ? LV_OPA_COVER : LV_OPA_60, 0);
-    lv_obj_set_style_border_color(btn, enabled ? lv_color_white() : nav_inactive_color, LV_STATE_PRESSED);
-    lv_obj_set_style_border_opa(btn, enabled ? LV_OPA_COVER : LV_OPA_60, LV_STATE_PRESSED);
+    lv_obj_set_style_border_opa(btn, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_opa(btn, LV_OPA_TRANSP, LV_STATE_PRESSED);
     lv_obj_t* icon = lv_obj_get_child(btn, 0);
     if (icon) {
       lv_obj_set_style_text_color(icon, enabled ? lv_color_white() : nav_inactive_color, 0);
@@ -2918,11 +2920,11 @@ static void build_popup_ui(WeatherPopupContext* ctx, const WeatherPopupInit& ini
     lv_obj_set_size(btn, kFooterActionButtonWidth, kFooterButtonHeight);
     lv_obj_set_style_bg_color(btn, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(0xFFFFFF), LV_STATE_PRESSED);
-    lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(btn, lv_color_white(), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(btn, kFooterIndicatorOpa, LV_STATE_PRESSED);
     lv_obj_set_style_border_color(btn, lv_color_white(), 0);
-    lv_obj_set_style_border_width(btn, 2, 0);
-    lv_obj_set_style_border_opa(btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(btn, 0, 0);
+    lv_obj_set_style_border_opa(btn, LV_OPA_TRANSP, 0);
     lv_obj_set_style_outline_opa(btn, LV_OPA_TRANSP, 0);
     lv_obj_set_style_shadow_opa(btn, LV_OPA_TRANSP, 0);
     lv_obj_set_style_radius(btn, kFooterButtonRadius, 0);
@@ -3053,6 +3055,8 @@ static void build_popup_ui(WeatherPopupContext* ctx, const WeatherPopupInit& ini
   lv_obj_set_size(week_range_pill, kFooterDatePillWidth, kFooterButtonHeight);
   lv_obj_set_style_bg_color(week_range_pill, lv_color_white(), 0);
   lv_obj_set_style_bg_opa(week_range_pill, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(week_range_pill, 0, 0);
+  lv_obj_set_style_border_opa(week_range_pill, LV_OPA_TRANSP, 0);
   lv_obj_set_style_radius(week_range_pill, kFooterButtonRadius, 0);
   lv_obj_set_style_pad_all(week_range_pill, 0, 0);
   lv_obj_clear_flag(week_range_pill, LV_OBJ_FLAG_SCROLLABLE);
@@ -3060,7 +3064,7 @@ static void build_popup_ui(WeatherPopupContext* ctx, const WeatherPopupInit& ini
   lv_obj_add_flag(week_range_pill, LV_OBJ_FLAG_HIDDEN);
   lv_obj_t* week_range_label = lv_label_create(week_range_pill);
   ctx->week_range_label = week_range_label;
-  set_label_style(week_range_label, lv_color_hex(popup_tile_bg_color), FONT_UNIT);
+  set_label_style(week_range_label, lv_color_hex(ctx->bg_color), FONT_UNIT);
   lv_label_set_long_mode(week_range_label, LV_LABEL_LONG_DOT);
   lv_obj_set_width(week_range_label, kFooterDatePillWidth - 24);
   lv_obj_set_style_text_align(week_range_label, LV_TEXT_ALIGN_CENTER, 0);
@@ -3179,7 +3183,7 @@ static void build_popup_ui(WeatherPopupContext* ctx, const WeatherPopupInit& ini
     const lv_coord_t forecast_col_w = forecast_col_base_w + ((i < forecast_col_extra) ? 1 : 0);
     lv_obj_t* col = lv_obj_create(forecast_row);
     lv_obj_remove_style_all(col);
-    lv_obj_set_size(col, forecast_col_w, kForecastRowHeight);
+    lv_obj_set_size(col, forecast_col_w, kForecastColumnTouchHeight);
     lv_obj_set_style_bg_opa(col, LV_OPA_TRANSP, 0);
     lv_obj_add_flag(col, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(col, LV_OBJ_FLAG_PRESS_LOCK);
@@ -3301,6 +3305,8 @@ static void build_popup_ui(WeatherPopupContext* ctx, const WeatherPopupInit& ini
   lv_obj_set_size(detail_title_pill, kFooterDatePillWidth, kFooterButtonHeight);
   lv_obj_set_style_bg_color(detail_title_pill, lv_color_white(), 0);
   lv_obj_set_style_bg_opa(detail_title_pill, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(detail_title_pill, 0, 0);
+  lv_obj_set_style_border_opa(detail_title_pill, LV_OPA_TRANSP, 0);
   lv_obj_set_style_radius(detail_title_pill, kFooterButtonRadius, 0);
   lv_obj_set_style_pad_all(detail_title_pill, 0, 0);
   lv_obj_clear_flag(detail_title_pill, LV_OBJ_FLAG_SCROLLABLE);
@@ -3308,7 +3314,7 @@ static void build_popup_ui(WeatherPopupContext* ctx, const WeatherPopupInit& ini
   lv_obj_add_flag(detail_title_pill, LV_OBJ_FLAG_HIDDEN);
   lv_obj_t* detail_title = lv_label_create(detail_title_pill);
   ctx->detail_title_label = detail_title;
-  set_label_style(detail_title, lv_color_hex(popup_tile_bg_color), FONT_UNIT);
+  set_label_style(detail_title, lv_color_hex(ctx->bg_color), FONT_UNIT);
   lv_label_set_long_mode(detail_title, LV_LABEL_LONG_DOT);
   lv_obj_set_width(detail_title, kFooterDatePillWidth - 24);
   lv_obj_set_style_text_align(detail_title, LV_TEXT_ALIGN_CENTER, 0);
@@ -3319,15 +3325,15 @@ static void build_popup_ui(WeatherPopupContext* ctx, const WeatherPopupInit& ini
     lv_obj_t* btn = lv_button_create(card);
     lv_obj_set_size(btn, kDetailNavButtonSize, kDetailNavButtonSize);
     lv_obj_set_style_radius(btn, kFooterButtonRadius, 0);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_color(btn, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(0xFFFFFF), LV_STATE_PRESSED);
-    lv_obj_set_style_bg_opa(btn, LV_OPA_20, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(btn, lv_color_white(), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(btn, kFooterIndicatorOpa, LV_STATE_PRESSED);
     lv_obj_set_style_border_color(btn, lv_color_white(), 0);
-    lv_obj_set_style_border_width(btn, 2, 0);
-    lv_obj_set_style_border_width(btn, 2, LV_STATE_PRESSED);
-    lv_obj_set_style_border_opa(btn, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_opa(btn, LV_OPA_COVER, LV_STATE_PRESSED);
+    lv_obj_set_style_border_width(btn, 0, 0);
+    lv_obj_set_style_border_width(btn, 0, LV_STATE_PRESSED);
+    lv_obj_set_style_border_opa(btn, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_opa(btn, LV_OPA_TRANSP, LV_STATE_PRESSED);
     lv_obj_set_style_outline_opa(btn, LV_OPA_TRANSP, 0);
     lv_obj_set_style_shadow_opa(btn, LV_OPA_TRANSP, 0);
     lv_obj_set_style_shadow_opa(btn, LV_OPA_TRANSP, LV_STATE_PRESSED);
