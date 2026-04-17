@@ -27,6 +27,7 @@ struct Profile {
   uint16_t grid_pad;
   uint16_t grid_cell_w;
   uint16_t grid_cell_h;
+  uint8_t display_flush_bands;
   RotationStepMode rotation_step_mode;
   uint8_t rotation_default;
   uint8_t rotation_flipped;

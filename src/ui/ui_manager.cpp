@@ -318,6 +318,11 @@ void UIManager::switchToTab(uint8_t index) {
   // Label bleibt IMMER weiss - nicht aendern!
 
   active_tab_index = index;
+
+  lv_obj_invalidate(lv_scr_act());
+  if (lv_display_t* disp = displayManager.getDisplay()) {
+    lv_refr_now(disp);
+  }
 }
 
 void UIManager::switchToFolder(uint16_t folder_id) {

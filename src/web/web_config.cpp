@@ -17,6 +17,8 @@ namespace {
 const char* apSsidForDevice() {
 #if defined(DEVICE_M5STACKS_TAB5)
   return "M5Stacks_Tab5_Config";
+#elif defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
+  return "Waveshare_LCD8_Config";
 #elif defined(DEVICE_WAVESHARE_4B)
   return "Waveshare_B4_Config";
 #else

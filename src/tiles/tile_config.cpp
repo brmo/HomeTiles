@@ -188,12 +188,16 @@ struct PackedTileV7 {
   uint8_t reserved[3];
 };
 
-// Split grid into 4 quarters to fit NVS size limit (~2KB per entry)
-// Each quarter holds 4 tiles for the 4x4 layout.
+// Split grid into small fixed-size chunks to fit NVS size limits.
+// The last chunk may be only partially used on non-4x4 layouts.
 static constexpr size_t TILES_PER_QUARTER = 4;
-static constexpr size_t QUARTERS_PER_GRID = TILES_PER_GRID / TILES_PER_QUARTER;
-static_assert(QUARTERS_PER_GRID * TILES_PER_QUARTER == TILES_PER_GRID,
-              "TILES_PER_GRID must be divisible by TILES_PER_QUARTER");
+static constexpr size_t QUARTERS_PER_GRID =
+    (TILES_PER_GRID + TILES_PER_QUARTER - 1) / TILES_PER_QUARTER;
+static_assert(QUARTERS_PER_GRID > 0, "Grid must contain at least one tile");
+
+static constexpr size_t quarterGridIndex(size_t quarter, size_t tile_index) {
+  return quarter * TILES_PER_QUARTER + tile_index;
+}
 
 struct PackedQuarterGridV6 {
   uint8_t version;
@@ -1511,7 +1515,10 @@ bool TileConfig::loadGrid(const char* prefix, TileGridConfig& grid) {
     if (readGridSd(prefix, packed_sd, QUARTERS_PER_GRID)) {
       for (size_t q = 0; q < QUARTERS_PER_GRID; ++q) {
         for (size_t i = 0; i < TILES_PER_QUARTER; ++i) {
-          size_t grid_idx = q * TILES_PER_QUARTER + i;
+          size_t grid_idx = quarterGridIndex(q, i);
+          if (grid_idx >= TILES_PER_GRID) {
+            continue;
+          }
           unpackTileV6(packed_sd[q].tiles[i], grid.tiles[grid_idx]);
         }
       }
@@ -1556,7 +1563,10 @@ bool TileConfig::loadGrid(const char* prefix, TileGridConfig& grid) {
       if (ok) {
         for (size_t q = 0; q < QUARTERS_PER_GRID; ++q) {
           for (size_t i = 0; i < TILES_PER_QUARTER; ++i) {
-            size_t grid_idx = q * TILES_PER_QUARTER + i;
+            size_t grid_idx = quarterGridIndex(q, i);
+            if (grid_idx >= TILES_PER_GRID) {
+              continue;
+            }
             unpackTileV6(packed[q].tiles[i], grid.tiles[grid_idx]);
           }
         }
@@ -1703,7 +1713,11 @@ bool TileConfig::saveGrid(const char* prefix, const TileGridConfig& grid) {
     packed[q].version = PACKED_GRID_VERSION;
     packed[q].quarter_index = static_cast<uint8_t>(q);
     for (size_t i = 0; i < TILES_PER_QUARTER; ++i) {
-      size_t grid_idx = q * TILES_PER_QUARTER + i;
+      size_t grid_idx = quarterGridIndex(q, i);
+      if (grid_idx >= TILES_PER_GRID) {
+        packed[q].tiles[i] = PackedTileV6{};
+        continue;
+      }
       if (grid.tiles[grid_idx].type == TILE_IMAGE || grid.tiles[grid_idx].type == TILE_SCENE) {
         if (!storageReady()) {
           Serial.println("[TileConfig] WARN: Storage nicht verfuegbar, image_path wird nicht gespeichert");
@@ -2097,7 +2111,10 @@ bool TileConfig::loadGrid(uint16_t folder_id, TileGridConfig& grid) {
     ok = true;
     for (size_t q = 0; q < QUARTERS_PER_GRID; ++q) {
       for (size_t i = 0; i < TILES_PER_QUARTER; ++i) {
-        size_t grid_idx = q * TILES_PER_QUARTER + i;
+        size_t grid_idx = quarterGridIndex(q, i);
+        if (grid_idx >= TILES_PER_GRID) {
+          continue;
+        }
         unpackTileV7(packed_v7[q].tiles[i], grid.tiles[grid_idx]);
       }
     }
@@ -2114,7 +2131,10 @@ bool TileConfig::loadGrid(uint16_t folder_id, TileGridConfig& grid) {
       needs_migration_save = true;
       for (size_t q = 0; q < QUARTERS_PER_GRID; ++q) {
         for (size_t i = 0; i < TILES_PER_QUARTER; ++i) {
-          size_t grid_idx = q * TILES_PER_QUARTER + i;
+          size_t grid_idx = quarterGridIndex(q, i);
+          if (grid_idx >= TILES_PER_GRID) {
+            continue;
+          }
           unpackTileV6(packed_v6[q].tiles[i], grid.tiles[grid_idx]);
         }
       }
@@ -2177,7 +2197,11 @@ bool TileConfig::saveGrid(uint16_t folder_id, const TileGridConfig& grid) {
     packed[q].version = PACKED_GRID_VERSION;
     packed[q].quarter_index = static_cast<uint8_t>(q);
     for (size_t i = 0; i < TILES_PER_QUARTER; ++i) {
-      size_t grid_idx = q * TILES_PER_QUARTER + i;
+      size_t grid_idx = quarterGridIndex(q, i);
+      if (grid_idx >= TILES_PER_GRID) {
+        packed[q].tiles[i] = PackedTileV7{};
+        continue;
+      }
       if (working.tiles[grid_idx].type == TILE_IMAGE || working.tiles[grid_idx].type == TILE_SCENE) {
         if (!storageReady()) {
           Serial.println("[TileConfig] WARN: Storage nicht verfuegbar, image_path wird nicht gespeichert");

@@ -309,7 +309,7 @@ void IRAM_ATTR DisplayManager::touch_cb(lv_indev_t* indev_drv, lv_indev_data_t *
   if (BoardHAL::getTouch(&tp)) {
     int16_t mapped_x = tp.x;
     int16_t mapped_y = tp.y;
-#if !defined(DEVICE_M5STACKS_TAB5)
+#if !defined(DEVICE_M5STACKS_TAB5) && !defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
     switch (rotation & 0x03) {
       case 1:
         mapped_x = tp.y;
@@ -377,7 +377,7 @@ bool DisplayManager::init() {
   }
 
   // Kleinere DMA-Puffer fuer mehr verfuegbaren Heap (wichtig bei vielen Kacheln!)
-  static constexpr size_t TARGET_LINES   = SCREEN_HEIGHT / 4;
+  static constexpr size_t TARGET_LINES   = SCREEN_HEIGHT / Device::kDisplayFlushBands;
   static constexpr size_t FALLBACK_LINES = 96;
 
   auto release_buffers = []() {

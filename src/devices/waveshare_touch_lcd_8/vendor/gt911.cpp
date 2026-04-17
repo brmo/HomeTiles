@@ -6,7 +6,7 @@
 
 #include "src/devices/device_select.h"
 
-#if defined(DEVICE_WAVESHARE_4B)
+#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
 
 #include <stdio.h>
 #include <string.h>
@@ -455,4 +455,4 @@ static esp_err_t touch_gt911_i2c_write(esp_lcd_touch_handle_t tp, uint16_t reg, 
     // *INDENT-ON*
 }
 
-#endif  // defined(DEVICE_WAVESHARE_4B)
+#endif  // defined(DEVICE_WAVESHARE_TOUCH_LCD_8)

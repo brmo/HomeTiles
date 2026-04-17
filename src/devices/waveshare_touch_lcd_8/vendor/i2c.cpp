@@ -13,7 +13,7 @@
 
 #include "src/devices/device_select.h"
 
-#if defined(DEVICE_WAVESHARE_4B)
+#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
 
 #include "i2c.h"  // Include I2C driver header for I2C functions
 static const char *TAG = "i2c";  // Define a tag for logging
@@ -157,4 +157,4 @@ void DEV_I2C_Read_Nbyte(i2c_master_dev_handle_t dev_handle, uint8_t Cmd, uint8_t
     ESP_ERROR_CHECK(i2c_master_transmit_receive(dev_handle, &Cmd, 1, pdata, len, 100));  // Send command and receive data
 }
 
-#endif  // defined(DEVICE_WAVESHARE_4B)
+#endif  // defined(DEVICE_WAVESHARE_TOUCH_LCD_8)

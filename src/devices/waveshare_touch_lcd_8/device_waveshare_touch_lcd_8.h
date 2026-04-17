@@ -4,20 +4,20 @@
 
 #include "src/devices/device_types.h"
 
-namespace DeviceM5StacksTab5 {
+namespace DeviceWaveshareTouchLCD8 {
 
 inline constexpr Device::Profile kProfile{
-    "m5stacks_tab5",
-    "M5Stacks Tab5",
+    "waveshare_touch_lcd_8",
+    "Waveshare Touch LCD 8",
     1280,
-    720,
+    800,
     7,
-    4,
+    5,
     16,
     4,
     168,
-    166,
-    4,
+    145,
+    5,
     Device::RotationStepMode::FlipOnly,
     0,
     2,
@@ -57,4 +57,4 @@ fs::FS& sdFS();
 bool initLittleFS();
 void migrateStorageFromSD();
 
-}  // namespace DeviceM5StacksTab5
+}  // namespace DeviceWaveshareTouchLCD8

@@ -16,6 +16,7 @@ inline constexpr uint16_t kGridGap = kProfile.grid_gap;
 inline constexpr uint16_t kGridPad = kProfile.grid_pad;
 inline constexpr uint16_t kGridCellW = kProfile.grid_cell_w;
 inline constexpr uint16_t kGridCellH = kProfile.grid_cell_h;
+inline constexpr uint8_t kDisplayFlushBands = kProfile.display_flush_bands;
 inline constexpr RotationStepMode kRotationStepMode = kProfile.rotation_step_mode;
 inline constexpr uint8_t kRotationDefault = kProfile.rotation_default;
 inline constexpr uint8_t kRotationFlipped = kProfile.rotation_flipped;

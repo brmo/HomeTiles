@@ -31,6 +31,7 @@ function readDeviceSlug() {
   const lines = fs.readFileSync(deviceSelectPath, 'utf8').split(/\r?\n/);
   let hasTab5 = false;
   let hasB4 = false;
+  let hasTouch8 = false;
 
   for (const line of lines) {
     if (/^\s*#if\b/.test(line)) {
@@ -42,12 +43,20 @@ function readDeviceSlug() {
     if (/^\s*#define\s+DEVICE_WAVESHARE_4B\b/.test(line)) {
       hasB4 = true;
     }
+    if (/^\s*#define\s+DEVICE_WAVESHARE_TOUCH_LCD_8\b/.test(line)) {
+      hasTouch8 = true;
+    }
   }
 
-  if (hasTab5 && !hasB4) return 'm5stacks-tab5';
-  if (hasB4 && !hasTab5) return 'waveshare-b4';
-  if (!hasTab5 && !hasB4) return 'waveshare-b4';
-  throw new Error('Multiple device targets are enabled in src/devices/device_select.h');
+  const selected = [hasTab5, hasB4, hasTouch8].filter(Boolean).length;
+  if (selected > 1) {
+    throw new Error('Multiple device targets are enabled in src/devices/device_select.h');
+  }
+
+  if (hasTab5) return 'm5stacks-tab5';
+  if (hasTouch8) return 'waveshare-touch-lcd-8';
+  if (hasB4) return 'waveshare-b4';
+  return 'waveshare-b4';
 }
 
 function getArduinoSketchesPath() {
