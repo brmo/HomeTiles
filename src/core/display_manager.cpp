@@ -2,6 +2,9 @@
 #include "src/core/power_manager.h"
 #include "src/core/board_hal.h"
 #include "src/devices/device_select.h"
+#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
+#include "src/devices/waveshare_touch_lcd_8/device_waveshare_touch_lcd_8.h"
+#endif
 #include "esp_heap_caps.h"
 #include "esp_cache.h"
 #include <Arduino.h>
@@ -32,6 +35,17 @@ static constexpr bool kEnableReverseFlushEffect = true;
 static constexpr uintptr_t kCacheLineSize = 64;
 static bool g_reverse_flush_once = false;
 static volatile uint32_t g_fullscreen_flush_seq = 0;
+
+static inline void commit_display_if_last(lv_display_t* lv_disp) {
+#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
+  if (lv_display_flush_is_last(lv_disp)) {
+    DeviceWaveshareTouchLCD8::displayCommit();
+  }
+#else
+  (void)lv_disp;
+#endif
+}
+
 static inline void flush_cache_for_dma(const void* ptr, size_t size) {
   if (!ptr || size == 0) return;
   const uintptr_t start = reinterpret_cast<uintptr_t>(ptr);
@@ -244,6 +258,7 @@ void IRAM_ATTR DisplayManager::flush_cb(lv_display_t *lv_disp, const lv_area_t *
     if (area->x1 == 0 && area->y1 == 0 && w == SCREEN_WIDTH && h == SCREEN_HEIGHT) {
       g_fullscreen_flush_seq++;
     }
+    commit_display_if_last(lv_disp);
     lv_display_flush_ready(lv_disp);
     return;
   }
@@ -272,6 +287,7 @@ void IRAM_ATTR DisplayManager::flush_cb(lv_display_t *lv_disp, const lv_area_t *
   if (area->x1 == 0 && area->y1 == 0 && w == SCREEN_WIDTH && h == SCREEN_HEIGHT) {
     g_fullscreen_flush_seq++;
   }
+  commit_display_if_last(lv_disp);
   lv_display_flush_ready(lv_disp);
 }
 

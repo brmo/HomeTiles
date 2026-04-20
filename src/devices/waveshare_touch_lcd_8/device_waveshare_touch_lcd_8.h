@@ -32,6 +32,7 @@ void displayPushPixels(int32_t x, int32_t y, int32_t w, int32_t h,
 void displayPushPixelsDMA(int32_t x, int32_t y, int32_t w, int32_t h,
                           const uint16_t* data);
 void displayWaitDMA();
+void displayCommit();
 void displayFillScreen(uint16_t color);
 void displaySetRotation(uint8_t rotation);
 
