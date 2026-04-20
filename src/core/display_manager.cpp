@@ -446,6 +446,12 @@ bool DisplayManager::init() {
   lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
   lv_indev_set_read_cb(indev, touch_cb);
   lv_indev_set_display(indev, disp);
+#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
+  if (lv_timer_t* read_timer = lv_indev_get_read_timer(indev)) {
+    lv_timer_set_period(read_timer, 8);
+    Serial.println("[Display] 8-inch touch poll period set to 8 ms");
+  }
+#endif
 
   Serial.println("[OK] Display Manager initialisiert");
   return true;

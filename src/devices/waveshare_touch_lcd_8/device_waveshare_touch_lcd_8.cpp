@@ -61,6 +61,7 @@ uint16_t* g_panel_fbs[kPanelFrameBufferCount] = {nullptr, nullptr};
 uint8_t g_front_fb = 0;
 uint8_t g_back_fb = 1;
 bool g_triple_fb_ready = false;
+bool g_logged_ppa_mirror_copy = false;
 bool g_frame_dirty = false;
 int32_t g_dirty_x1 = 0;
 int32_t g_dirty_y1 = 0;
@@ -254,7 +255,7 @@ void mark_dirty_rect(int32_t x, int32_t y, int32_t w, int32_t h) {
   if (y2 > g_dirty_y2) g_dirty_y2 = y2;
 }
 
-void flush_framebuffer_rect(uint16_t* fb, int32_t x, int32_t y, int32_t w, int32_t h) {
+void flush_framebuffer_rect(const uint16_t* fb, int32_t x, int32_t y, int32_t w, int32_t h) {
   if (!fb || w <= 0 || h <= 0) {
     return;
   }
@@ -264,6 +265,30 @@ void flush_framebuffer_rect(uint16_t* fb, int32_t x, int32_t y, int32_t w, int32
   for (int32_t row = 0; row < h; ++row) {
     flush_cache_for_dma(fb + (static_cast<size_t>(y + row) * stride) + static_cast<size_t>(x),
                         row_bytes);
+  }
+}
+
+void invalidate_framebuffer_rect(uint16_t* fb, int32_t x, int32_t y, int32_t w, int32_t h) {
+  if (!fb || w <= 0 || h <= 0) {
+    return;
+  }
+
+  const size_t stride = display_cfg.width;
+  const size_t row_bytes = static_cast<size_t>(w) * sizeof(uint16_t);
+  for (int32_t row = 0; row < h; ++row) {
+    uint16_t* row_ptr = fb + (static_cast<size_t>(y + row) * stride) + static_cast<size_t>(x);
+    const uintptr_t start = reinterpret_cast<uintptr_t>(row_ptr);
+    const uintptr_t aligned_start = start & ~(kCacheLineSize - 1);
+    const uintptr_t end = start + row_bytes;
+    const uintptr_t aligned_end = (end + kCacheLineSize - 1) & ~(kCacheLineSize - 1);
+    if (aligned_end <= aligned_start) {
+      continue;
+    }
+    esp_cache_msync(reinterpret_cast<void*>(aligned_start),
+                    aligned_end - aligned_start,
+                    ESP_CACHE_MSYNC_FLAG_DIR_M2C |
+                        ESP_CACHE_MSYNC_FLAG_INVALIDATE |
+                        ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
   }
 }
 
@@ -287,6 +312,50 @@ void copy_rect_between_fbs(uint16_t* dst, const uint16_t* src,
                            int32_t x, int32_t y, int32_t w, int32_t h) {
   if (!dst || !src || w <= 0 || h <= 0) {
     return;
+  }
+
+  if (g_ppa_handle) {
+    flush_framebuffer_rect(src, x, y, w, h);
+
+    ppa_srm_oper_config_t oper = {};
+    oper.in.buffer = src;
+    oper.in.pic_w = display_cfg.width;
+    oper.in.pic_h = display_cfg.height;
+    oper.in.block_w = w;
+    oper.in.block_h = h;
+    oper.in.block_offset_x = x;
+    oper.in.block_offset_y = y;
+    oper.in.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+
+    oper.out.buffer = dst;
+    oper.out.buffer_size = panel_frame_bytes();
+    oper.out.pic_w = display_cfg.width;
+    oper.out.pic_h = display_cfg.height;
+    oper.out.block_offset_x = x;
+    oper.out.block_offset_y = y;
+    oper.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+
+    oper.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;
+    oper.scale_x = 1.0f;
+    oper.scale_y = 1.0f;
+    oper.mirror_x = false;
+    oper.mirror_y = false;
+    oper.rgb_swap = false;
+    oper.byte_swap = false;
+    oper.mode = PPA_TRANS_MODE_BLOCKING;
+
+    const esp_err_t err = ppa_do_scale_rotate_mirror(g_ppa_handle, &oper);
+    if (err == ESP_OK) {
+      if (!g_logged_ppa_mirror_copy) {
+        Serial.println("[Device/WaveshareTouchLCD8] PPA mirror copy active");
+        g_logged_ppa_mirror_copy = true;
+      }
+      invalidate_framebuffer_rect(dst, x, y, w, h);
+      return;
+    }
+
+    Serial.printf("[Device/WaveshareTouchLCD8] PPA mirror copy failed err=%d, falling back to CPU\n",
+                  static_cast<int>(err));
   }
 
   const size_t stride = display_cfg.width;

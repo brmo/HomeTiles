@@ -229,16 +229,17 @@ static esp_err_t esp_lcd_touch_gt911_read_data(esp_lcd_touch_handle_t tp)
         portEXIT_CRITICAL(&tp->data.lock);
 #endif
     } else if ((buf[0] & 0x80) == 0x80) {
-#if (ESP_LCD_TOUCH_MAX_BUTTONS > 0)
         portENTER_CRITICAL(&tp->data.lock);
+        tp->data.points = 0;
+#if (ESP_LCD_TOUCH_MAX_BUTTONS > 0)
         for (i = 0; i < ESP_LCD_TOUCH_MAX_BUTTONS; i++) {
             tp->data.button[i].status = 0;
         }
-        portEXIT_CRITICAL(&tp->data.lock);
 #endif
+        portEXIT_CRITICAL(&tp->data.lock);
         /* Count of touched points */
         touch_cnt = buf[0] & 0x0f;
-        if (touch_cnt > 5 || touch_cnt == 0) {
+        if (touch_cnt > ESP_LCD_TOUCH_MAX_POINTS || touch_cnt == 0) {
             touch_gt911_i2c_write(tp, ESP_LCD_TOUCH_GT911_READ_XY_REG, clear);
             return ESP_OK;
         }
@@ -291,9 +292,6 @@ static bool esp_lcd_touch_gt911_get_xy(esp_lcd_touch_handle_t tp, uint16_t *x, u
             strength[i] = tp->data.coords[i].strength;
         }
     }
-
-    /* Invalidate */
-    tp->data.points = 0;
 
     portEXIT_CRITICAL(&tp->data.lock);
 
@@ -450,6 +448,11 @@ static esp_err_t touch_gt911_read_cfg(esp_lcd_touch_handle_t tp)
 
     ESP_LOGI(TAG, "TouchPad_ID:0x%02x,0x%02x,0x%02x", buf[0], buf[1], buf[2]);
     ESP_LOGI(TAG, "TouchPad_Config_Version:%d", buf[3]);
+    Serial.printf("[Device/WaveshareTouchLCD8] TouchPad_ID:%02X%02X%02X cfg=%u\n",
+                  static_cast<unsigned>(buf[0]),
+                  static_cast<unsigned>(buf[1]),
+                  static_cast<unsigned>(buf[2]),
+                  static_cast<unsigned>(buf[3]));
 
     return ESP_OK;
 }

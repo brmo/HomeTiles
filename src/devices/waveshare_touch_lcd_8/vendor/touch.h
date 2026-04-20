@@ -15,7 +15,7 @@
 #include "freertos/semphr.h"
 
 #define ESP_LCD_TOUCH_MAX_BUTTONS 1
-#define ESP_LCD_TOUCH_MAX_POINTS 5
+#define ESP_LCD_TOUCH_MAX_POINTS 10
 
 /**
  * @brief Touch controller type
