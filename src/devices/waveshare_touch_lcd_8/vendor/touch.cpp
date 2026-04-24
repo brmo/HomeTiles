@@ -104,6 +104,18 @@ bool esp_lcd_touch_get_coordinates(esp_lcd_touch_handle_t tp, uint16_t *x, uint1
     return touched;
 }
 
+esp_err_t esp_lcd_touch_get_track_id(esp_lcd_touch_handle_t tp, uint8_t *track_id, uint8_t point_num)
+{
+    assert(tp != NULL);
+    assert(track_id != NULL);
+
+    if (tp->get_track_id) {
+        return tp->get_track_id(tp, track_id, point_num);
+    }
+
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
 #if (ESP_LCD_TOUCH_MAX_BUTTONS > 0)
 esp_err_t esp_lcd_touch_get_button_state(esp_lcd_touch_handle_t tp, uint8_t n, uint8_t *state)
 {

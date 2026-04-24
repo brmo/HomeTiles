@@ -66,6 +66,7 @@ typedef struct {
     uint8_t points; /*!< Count of touch points saved */
 
     struct {
+        uint8_t track_id; /*!< Track ID */
         uint16_t x; /*!< X coordinate */
         uint16_t y; /*!< Y coordinate */
         uint16_t strength; /*!< Strength */
@@ -138,6 +139,18 @@ struct esp_lcd_touch_s {
      *      - Returns true, when touched and coordinates readed. Otherwise returns false.
      */
     bool (*get_xy)(esp_lcd_touch_handle_t tp, uint16_t *x, uint16_t *y, uint16_t *strength, uint8_t *point_num, uint8_t max_point_num);
+
+    /**
+     * @brief Get track ids of touch points (optional)
+     *
+     * @param tp: Touch handler
+     * @param track_id: Array of track ids
+     * @param point_num: Count of track IDs to return
+     *
+     * @return
+     *      - ESP_OK on success, otherwise returns ESP_ERR_xxx
+     */
+    esp_err_t (*get_track_id)(esp_lcd_touch_handle_t tp, uint8_t *track_id, uint8_t point_num);
 
 
 #if (ESP_LCD_TOUCH_MAX_BUTTONS > 0)
@@ -279,6 +292,19 @@ esp_err_t esp_lcd_touch_read_data(esp_lcd_touch_handle_t tp);
  *      - Returns true, when touched and coordinates readed. Otherwise returns false.
  */
 bool esp_lcd_touch_get_coordinates(esp_lcd_touch_handle_t tp, uint16_t *x, uint16_t *y, uint16_t *strength, uint8_t *point_num, uint8_t max_point_num);
+
+/**
+ * @brief Read track ids from touch controller
+ *
+ * @param tp: Touch handler
+ * @param track_id: Array of track ids
+ * @param point_num: Count of track IDs to return
+ *
+ * @return
+ *      - ESP_OK on success
+ *      - ESP_ERR_NOT_SUPPORTED if this controller does not expose track IDs
+ */
+esp_err_t esp_lcd_touch_get_track_id(esp_lcd_touch_handle_t tp, uint8_t *track_id, uint8_t point_num);
 
 
 #if (ESP_LCD_TOUCH_MAX_BUTTONS > 0)

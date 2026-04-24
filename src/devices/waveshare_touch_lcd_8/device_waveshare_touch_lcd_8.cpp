@@ -39,9 +39,13 @@ constexpr bool kBacklightActiveLow = false;
 constexpr uint8_t kBacklightInputMin = 121;
 constexpr uint8_t kBacklightInputMax = 255;
 constexpr uint32_t kPanelLaneCount = 2;
-constexpr uint32_t kPanelFrameBufferCount = 2;
+constexpr uint32_t kPanelFrameBufferCount = 1;
 constexpr size_t kFillChunkRows = 40;
 constexpr uintptr_t kCacheLineSize = 64;
+constexpr uint8_t kTouchReleaseDebounceReads = 0;
+constexpr int32_t kTouchJitterThresholdPx = 2;
+constexpr uint8_t kTouchSamplePointCount = ESP_LCD_TOUCH_MAX_POINTS;
+constexpr uint8_t kInvalidTouchTrackId = 0xFF;
 
 esp_lcd_dsi_bus_handle_t g_dsi_bus = nullptr;
 esp_lcd_panel_io_handle_t g_panel_io = nullptr;
@@ -57,11 +61,8 @@ bool g_i2c_ready = false;
 bool g_pmic_ready = false;
 uint16_t* g_rotate_buf = nullptr;
 size_t g_rotate_buf_pixels = 0;
-uint16_t* g_panel_fbs[kPanelFrameBufferCount] = {nullptr, nullptr};
-uint8_t g_front_fb = 0;
-uint8_t g_back_fb = 1;
-bool g_triple_fb_ready = false;
-bool g_logged_ppa_mirror_copy = false;
+uint16_t* g_panel_fbs[kPanelFrameBufferCount] = {nullptr};
+bool g_panel_fb_ready = false;
 bool g_frame_dirty = false;
 int32_t g_dirty_x1 = 0;
 int32_t g_dirty_y1 = 0;
@@ -75,6 +76,11 @@ bool g_sd_available = false;
 uint32_t g_sd_retry_tick_ms = 0;
 bool g_littlefs_ready = false;
 uint8_t g_rotation = DeviceWaveshareTouchLCD8::kProfile.rotation_default;
+bool g_touch_active = false;
+uint8_t g_touch_release_reads = 0;
+int32_t g_touch_stable_x = 0;
+int32_t g_touch_stable_y = 0;
+uint8_t g_touch_active_track_id = kInvalidTouchTrackId;
 
 void log_step(const char* message) {
   Serial.print("[Device/WaveshareTouchLCD8] ");
@@ -221,12 +227,8 @@ size_t panel_frame_bytes() {
   return panel_pixel_count() * sizeof(uint16_t);
 }
 
-uint16_t* front_fb() {
-  return g_triple_fb_ready ? g_panel_fbs[g_front_fb] : nullptr;
-}
-
-uint16_t* back_fb() {
-  return g_triple_fb_ready ? g_panel_fbs[g_back_fb] : nullptr;
+uint16_t* panel_fb() {
+  return g_panel_fb_ready ? g_panel_fbs[0] : nullptr;
 }
 
 void reset_dirty_rect() {
@@ -308,112 +310,49 @@ void copy_rect_to_fb(uint16_t* dst, int32_t x, int32_t y, int32_t w, int32_t h,
   flush_framebuffer_rect(dst, x, y, w, h);
 }
 
-void copy_rect_between_fbs(uint16_t* dst, const uint16_t* src,
-                           int32_t x, int32_t y, int32_t w, int32_t h) {
-  if (!dst || !src || w <= 0 || h <= 0) {
-    return;
-  }
-
-  if (g_ppa_handle) {
-    flush_framebuffer_rect(src, x, y, w, h);
-
-    ppa_srm_oper_config_t oper = {};
-    oper.in.buffer = src;
-    oper.in.pic_w = display_cfg.width;
-    oper.in.pic_h = display_cfg.height;
-    oper.in.block_w = w;
-    oper.in.block_h = h;
-    oper.in.block_offset_x = x;
-    oper.in.block_offset_y = y;
-    oper.in.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
-
-    oper.out.buffer = dst;
-    oper.out.buffer_size = panel_frame_bytes();
-    oper.out.pic_w = display_cfg.width;
-    oper.out.pic_h = display_cfg.height;
-    oper.out.block_offset_x = x;
-    oper.out.block_offset_y = y;
-    oper.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
-
-    oper.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;
-    oper.scale_x = 1.0f;
-    oper.scale_y = 1.0f;
-    oper.mirror_x = false;
-    oper.mirror_y = false;
-    oper.rgb_swap = false;
-    oper.byte_swap = false;
-    oper.mode = PPA_TRANS_MODE_BLOCKING;
-
-    const esp_err_t err = ppa_do_scale_rotate_mirror(g_ppa_handle, &oper);
-    if (err == ESP_OK) {
-      if (!g_logged_ppa_mirror_copy) {
-        Serial.println("[Device/WaveshareTouchLCD8] PPA mirror copy active");
-        g_logged_ppa_mirror_copy = true;
-      }
-      invalidate_framebuffer_rect(dst, x, y, w, h);
-      return;
-    }
-
-    Serial.printf("[Device/WaveshareTouchLCD8] PPA mirror copy failed err=%d, falling back to CPU\n",
-                  static_cast<int>(err));
-  }
-
-  const size_t stride = display_cfg.width;
-  const size_t row_bytes = static_cast<size_t>(w) * sizeof(uint16_t);
-  for (int32_t row = 0; row < h; ++row) {
-    const size_t offset = (static_cast<size_t>(y + row) * stride) + static_cast<size_t>(x);
-    std::memcpy(dst + offset, src + offset, row_bytes);
-  }
-  flush_framebuffer_rect(dst, x, y, w, h);
-}
-
-bool init_triple_framebuffers() {
+bool init_panel_framebuffer() {
   if (!g_panel) {
     return false;
   }
 
   void* fb0 = nullptr;
-  void* fb1 = nullptr;
   const esp_err_t err = esp_lcd_dpi_panel_get_frame_buffer(g_panel,
                                                            kPanelFrameBufferCount,
-                                                           &fb0, &fb1);
-  if (err != ESP_OK || !fb0 || !fb1) {
-    Serial.printf("[Device/WaveshareTouchLCD8] Double framebuffer unavailable err=%d fb=%p/%p\n",
-                  static_cast<int>(err), fb0, fb1);
-    g_triple_fb_ready = false;
+                                                           &fb0);
+  if (err != ESP_OK || !fb0) {
+    Serial.printf("[Device/WaveshareTouchLCD8] Panel framebuffer unavailable err=%d fb=%p\n",
+                  static_cast<int>(err), fb0);
+    g_panel_fb_ready = false;
     return false;
   }
 
   g_panel_fbs[0] = static_cast<uint16_t*>(fb0);
-  g_panel_fbs[1] = static_cast<uint16_t*>(fb1);
-  g_front_fb = 0;
-  g_back_fb = 1;
-  g_triple_fb_ready = true;
+  g_panel_fb_ready = true;
   reset_dirty_rect();
-  Serial.printf("[Device/WaveshareTouchLCD8] Double framebuffer OK fb=%p/%p\n", fb0, fb1);
+  Serial.printf("[Device/WaveshareTouchLCD8] Panel framebuffer OK fb=%p\n", fb0);
   return true;
 }
 
-bool write_physical_to_back(int32_t x, int32_t y, int32_t w, int32_t h, const uint16_t* data) {
-  if (!g_triple_fb_ready || !data || w <= 0 || h <= 0) {
+bool write_physical_to_panel(int32_t x, int32_t y, int32_t w, int32_t h, const uint16_t* data) {
+  if (!g_panel_fb_ready || !data || w <= 0 || h <= 0) {
     return false;
   }
 
   const int32_t panel_w = display_cfg.width;
   const int32_t panel_h = display_cfg.height;
   if (x < 0 || y < 0 || (x + w) > panel_w || (y + h) > panel_h) {
-    Serial.printf("[Device/WaveshareTouchLCD8] Reject out-of-range backbuffer draw x=%ld y=%ld w=%ld h=%ld\n",
+    Serial.printf("[Device/WaveshareTouchLCD8] Reject out-of-range framebuffer draw x=%ld y=%ld w=%ld h=%ld\n",
                   static_cast<long>(x), static_cast<long>(y),
                   static_cast<long>(w), static_cast<long>(h));
     return false;
   }
 
-  uint16_t* back = back_fb();
-  if (!back) {
+  uint16_t* fb = panel_fb();
+  if (!fb) {
     return false;
   }
 
-  copy_rect_to_fb(back, x, y, w, h, data);
+  copy_rect_to_fb(fb, x, y, w, h, data);
   mark_dirty_rect(x, y, w, h);
   return true;
 }
@@ -444,9 +383,9 @@ bool draw_landscape_area(int32_t x, int32_t y, int32_t w, int32_t h, const uint1
     dst_y = x;
   }
 
-  if (g_ppa_handle && g_triple_fb_ready) {
-    uint16_t* back = back_fb();
-    if (back) {
+  if (g_ppa_handle && g_panel_fb_ready) {
+    uint16_t* fb = panel_fb();
+    if (fb) {
       flush_cache_for_dma(data, static_cast<size_t>(w) * static_cast<size_t>(h) * sizeof(uint16_t));
 
       ppa_srm_oper_config_t oper = {};
@@ -459,7 +398,7 @@ bool draw_landscape_area(int32_t x, int32_t y, int32_t w, int32_t h, const uint1
       oper.in.block_offset_y = 0;
       oper.in.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
 
-      oper.out.buffer = back;
+      oper.out.buffer = fb;
       oper.out.buffer_size = panel_frame_bytes();
       oper.out.pic_w = display_cfg.width;
       oper.out.pic_h = display_cfg.height;
@@ -506,7 +445,7 @@ bool draw_landscape_area(int32_t x, int32_t y, int32_t w, int32_t h, const uint1
     }
   }
 
-  if (write_physical_to_back(dst_x, dst_y, dst_w, dst_h, g_rotate_buf)) {
+  if (write_physical_to_panel(dst_x, dst_y, dst_w, dst_h, g_rotate_buf)) {
     return true;
   }
 
@@ -702,9 +641,9 @@ bool init_display() {
   dpi_cfg.video_timing.vsync_pulse_width = display_cfg.vsync_pulse_width;
   dpi_cfg.video_timing.vsync_back_porch = display_cfg.vsync_back_porch;
   dpi_cfg.video_timing.vsync_front_porch = display_cfg.vsync_front_porch;
-  // Offload the commit_fb → active panel FB copy to DMA2D. The fallback
-  // draw_physical() path still waits for on_color_trans_done before the
-  // reused rotate buffer is overwritten, so DMA2D is safe here.
+  // Single-FB path: LVGL flushes are rotated directly into the DPI framebuffer.
+  // The fallback draw_physical() path still waits for on_color_trans_done before
+  // the reused rotate buffer is overwritten, so DMA2D is safe here.
   dpi_cfg.flags.use_dma2d = true;
 
   jd9365_vendor_config_t vendor_cfg = {};
@@ -730,7 +669,7 @@ bool init_display() {
   }
   log_step("JD9365 panel create OK");
 
-  init_triple_framebuffers();
+  init_panel_framebuffer();
 
   esp_lcd_dpi_panel_event_callbacks_t cbs = {};
   cbs.on_color_trans_done = on_color_trans_done;
@@ -860,35 +799,11 @@ void DeviceWaveshareTouchLCD8::displayWaitDMA() {
 }
 
 void DeviceWaveshareTouchLCD8::displayCommit() {
-  if (!g_panel || !g_triple_fb_ready || !g_frame_dirty) {
+  if (!g_panel || !g_panel_fb_ready || !g_frame_dirty) {
     return;
   }
 
-  uint16_t* commit_fb = back_fb();
-  if (!commit_fb) {
-    return;
-  }
-
-  const int32_t dirty_w = g_dirty_x2 - g_dirty_x1 + 1;
-  const int32_t dirty_h = g_dirty_y2 - g_dirty_y1 + 1;
-  flush_framebuffer_rect(commit_fb, g_dirty_x1, g_dirty_y1, dirty_w, dirty_h);
-  // Driver swaps FBs on next VSync itself — don't block the LVGL/touch task here.
-  const esp_err_t err = esp_lcd_panel_draw_bitmap(g_panel,
-                                                  0,
-                                                  0,
-                                                  display_cfg.width,
-                                                  display_cfg.height,
-                                                  commit_fb);
-  if (err != ESP_OK) {
-    Serial.printf("[Device/WaveshareTouchLCD8] commit failed: %d\n", static_cast<int>(err));
-    return;
-  }
-
-  std::swap(g_front_fb, g_back_fb);
-
-  // Mirror the just-committed dirty rect from the new front into the new back
-  // so LVGL's next partial flush starts from the currently displayed content.
-  copy_rect_between_fbs(back_fb(), front_fb(), g_dirty_x1, g_dirty_y1, dirty_w, dirty_h);
+  // Dirty pixels were already written into the active DPI framebuffer.
   reset_dirty_rect();
 }
 
@@ -897,28 +812,16 @@ void DeviceWaveshareTouchLCD8::displayFillScreen(uint16_t color) {
     return;
   }
 
-  if (g_triple_fb_ready) {
-    const size_t pixels = panel_pixel_count();
-    for (uint8_t fb = 0; fb < kPanelFrameBufferCount; ++fb) {
-      uint16_t* buf = g_panel_fbs[fb];
-      if (!buf) {
-        continue;
-      }
+  if (g_panel_fb_ready) {
+    uint16_t* buf = panel_fb();
+    if (buf) {
+      const size_t pixels = panel_pixel_count();
       for (size_t i = 0; i < pixels; ++i) {
         buf[i] = color;
       }
       flush_cache_for_dma(buf, panel_frame_bytes());
     }
 
-    const esp_err_t err = esp_lcd_panel_draw_bitmap(g_panel,
-                                                    0,
-                                                    0,
-                                                    display_cfg.width,
-                                                    display_cfg.height,
-                                                    front_fb());
-    if (err != ESP_OK) {
-      Serial.printf("[Device/WaveshareTouchLCD8] triple fill commit failed: %d\n", static_cast<int>(err));
-    }
     reset_dirty_rect();
     return;
   }
@@ -959,26 +862,90 @@ bool DeviceWaveshareTouchLCD8::getTouch(int16_t& x, int16_t& y) {
     return false;
   }
 
-  uint16_t px[1] = {0};
-  uint16_t py[1] = {0};
-  uint16_t strength[1] = {0};
+  uint16_t px[kTouchSamplePointCount] = {0};
+  uint16_t py[kTouchSamplePointCount] = {0};
+  uint16_t strength[kTouchSamplePointCount] = {0};
+  uint8_t track_ids[kTouchSamplePointCount] = {0};
   uint8_t count = 0;
 
   esp_lcd_touch_read_data(g_touch);
-  const bool touched = esp_lcd_touch_get_coordinates(g_touch, px, py, strength, &count, 1);
+  const bool touched = esp_lcd_touch_get_coordinates(g_touch, px, py, strength, &count, kTouchSamplePointCount);
   if (!touched || count == 0) {
+    if (g_touch_active && g_touch_release_reads < kTouchReleaseDebounceReads) {
+      ++g_touch_release_reads;
+      x = static_cast<int16_t>(g_touch_stable_x);
+      y = static_cast<int16_t>(g_touch_stable_y);
+      return true;
+    }
+    g_touch_active = false;
+    g_touch_release_reads = 0;
+    g_touch_active_track_id = kInvalidTouchTrackId;
     return false;
   }
+
+  g_touch_release_reads = 0;
+
+  if (esp_lcd_touch_get_track_id(g_touch, track_ids, count) != ESP_OK) {
+    for (uint8_t i = 0; i < count; ++i) {
+      track_ids[i] = kInvalidTouchTrackId;
+    }
+  }
+
+  uint8_t selected = 0;
+  bool selected_found = false;
+  if (g_touch_active && g_touch_active_track_id != kInvalidTouchTrackId) {
+    for (uint8_t i = 0; i < count; ++i) {
+      if (track_ids[i] == g_touch_active_track_id) {
+        selected = i;
+        selected_found = true;
+        break;
+      }
+    }
+  }
+  if (!selected_found && g_touch_active && count > 1) {
+    uint32_t best_distance = 0xFFFFFFFFu;
+    for (uint8_t i = 0; i < count; ++i) {
+      int32_t candidate_x = 0;
+      int32_t candidate_y = 0;
+      if (g_rotation & 0x02) {
+        candidate_x = static_cast<int32_t>(display_cfg.height) - 1 - static_cast<int32_t>(py[i]);
+        candidate_y = static_cast<int32_t>(px[i]);
+      } else {
+        candidate_x = static_cast<int32_t>(py[i]);
+        candidate_y = static_cast<int32_t>(display_cfg.width) - 1 - static_cast<int32_t>(px[i]);
+      }
+      const int32_t dx = candidate_x - g_touch_stable_x;
+      const int32_t dy = candidate_y - g_touch_stable_y;
+      const uint32_t distance = static_cast<uint32_t>((dx >= 0 ? dx : -dx) + (dy >= 0 ? dy : -dy));
+      if (distance < best_distance) {
+        best_distance = distance;
+        selected = i;
+        selected_found = true;
+      }
+    }
+  }
+  if (!selected_found && count > 1) {
+    uint16_t best_strength = 0;
+    for (uint8_t i = 0; i < count; ++i) {
+      if (strength[i] >= best_strength) {
+        best_strength = strength[i];
+        selected = i;
+        selected_found = true;
+      }
+    }
+  }
+
+  g_touch_active_track_id = track_ids[selected];
 
   int32_t mapped_x = 0;
   int32_t mapped_y = 0;
 
   if (g_rotation & 0x02) {
-    mapped_x = static_cast<int32_t>(display_cfg.height) - 1 - static_cast<int32_t>(py[0]);
-    mapped_y = static_cast<int32_t>(px[0]);
+    mapped_x = static_cast<int32_t>(display_cfg.height) - 1 - static_cast<int32_t>(py[selected]);
+    mapped_y = static_cast<int32_t>(px[selected]);
   } else {
-    mapped_x = static_cast<int32_t>(py[0]);
-    mapped_y = static_cast<int32_t>(display_cfg.width) - 1 - static_cast<int32_t>(px[0]);
+    mapped_x = static_cast<int32_t>(py[selected]);
+    mapped_y = static_cast<int32_t>(display_cfg.width) - 1 - static_cast<int32_t>(px[selected]);
   }
 
   const int32_t logical_w = static_cast<int32_t>(display_cfg.height);
@@ -989,8 +956,28 @@ bool DeviceWaveshareTouchLCD8::getTouch(int16_t& x, int16_t& y) {
   if (mapped_x >= logical_w) mapped_x = logical_w - 1;
   if (mapped_y >= logical_h) mapped_y = logical_h - 1;
 
-  x = static_cast<int16_t>(mapped_x);
-  y = static_cast<int16_t>(mapped_y);
+  if (!g_touch_active) {
+    g_touch_stable_x = mapped_x;
+    g_touch_stable_y = mapped_y;
+    g_touch_active = true;
+  } else {
+    const int32_t dx = mapped_x - g_touch_stable_x;
+    const int32_t dy = mapped_y - g_touch_stable_y;
+    const int32_t adx = dx >= 0 ? dx : -dx;
+    const int32_t ady = dy >= 0 ? dy : -dy;
+
+    if (adx <= kTouchJitterThresholdPx && ady <= kTouchJitterThresholdPx) {
+      // Ignore tiny GT9xx wobble so taps feel more deterministic.
+    } else {
+      // GT9271 already applies its own controller-side debounce/filtering.
+      // Keep the software path direct so the UI does not feel delayed.
+      g_touch_stable_x = mapped_x;
+      g_touch_stable_y = mapped_y;
+    }
+  }
+
+  x = static_cast<int16_t>(g_touch_stable_x);
+  y = static_cast<int16_t>(g_touch_stable_y);
   return true;
 }
 
