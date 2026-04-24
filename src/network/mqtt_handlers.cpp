@@ -25,7 +25,7 @@
 #define TAB5_HAS_ONEWIRE_DS18X20 0
 #endif
 
-#if defined(__has_include)
+#if defined(__has_include) && !defined(CONFIG_IDF_TARGET_ESP32P4)
 #if __has_include(<OneWire.h>) && __has_include(<DallasTemperature.h>)
 #undef TAB5_HAS_ONEWIRE_DS18X20
 #define TAB5_HAS_ONEWIRE_DS18X20 1
