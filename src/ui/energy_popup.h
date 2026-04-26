@@ -13,6 +13,7 @@ struct EnergyPopupInit {
 };
 
 void show_energy_popup(const EnergyPopupInit& init);
+void preload_energy_popup();
 void hide_energy_popup();
 void queue_energy_popup_refresh(const char* period);
 void process_energy_popup_queue();

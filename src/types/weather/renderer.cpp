@@ -5,6 +5,7 @@
 #include "src/types/types_registry.h"
 #include "src/network/ha_bridge_config.h"
 #include "src/ui/weather_popup.h"
+#include "src/devices/device_select.h"
 #include <Arduino.h>
 
 struct WeatherEventData {
@@ -13,6 +14,14 @@ struct WeatherEventData {
   lv_obj_t* location_label = nullptr;
   uint32_t bg_color = 0;
 };
+
+namespace {
+#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
+constexpr lv_coord_t kWeatherTileContentYOffset = -10;
+#else
+constexpr lv_coord_t kWeatherTileContentYOffset = 0;
+#endif
+}  // namespace
 
 lv_obj_t* render_weather_tile(lv_obj_t* parent, int col, int row, const Tile& tile, uint8_t index, GridType grid_type) {
   if (!parent) {
@@ -158,7 +167,7 @@ lv_obj_set_style_bg_grad_dir(card, LV_GRAD_DIR_NONE, LV_PART_MAIN | LV_STATE_PRE
   lv_obj_update_layout(value_row);
   lv_coord_t row_h = lv_obj_get_height(value_row);
   lv_coord_t base_center = ((GRID_CELL_H - 48) / 2) + 28;  // content center + offset (pad_ver=24)
-  lv_coord_t value_row_y = base_center - (row_h / 2);
+  lv_coord_t value_row_y = base_center - (row_h / 2) + kWeatherTileContentYOffset;
   lv_obj_align(value_row, LV_ALIGN_TOP_MID, 0, value_row_y);
 
   lv_obj_t* forecast_row = nullptr;
@@ -176,7 +185,8 @@ lv_obj_set_style_bg_grad_dir(card, LV_GRAD_DIR_NONE, LV_PART_MAIN | LV_STATE_PRE
     lv_obj_add_flag(forecast_row, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     lv_coord_t forecast_x = -pad_hor;
     lv_coord_t forecast_y =
-        ((span_h - 1) * (GRID_CELL_H + GRID_GAP)) - pad_ver - kTileForecastTopHeadroom;
+        ((span_h - 1) * (GRID_CELL_H + GRID_GAP)) - pad_ver - kTileForecastTopHeadroom +
+        kWeatherTileContentYOffset;
     lv_obj_set_pos(forecast_row, forecast_x, forecast_y);
   }
 

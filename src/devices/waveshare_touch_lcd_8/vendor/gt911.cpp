@@ -195,7 +195,7 @@ static esp_err_t esp_lcd_touch_gt911_exit_sleep(esp_lcd_touch_handle_t tp)
 static esp_err_t esp_lcd_touch_gt911_read_data(esp_lcd_touch_handle_t tp)
 {
     esp_err_t err;
-    uint8_t buf[41];
+    uint8_t buf[1 + (ESP_LCD_TOUCH_MAX_POINTS * 8)];
     uint8_t touch_cnt = 0;
     uint8_t clear = 0;
     size_t i = 0;

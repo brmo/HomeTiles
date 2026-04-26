@@ -981,6 +981,27 @@ void show_energy_popup(const EnergyPopupInit& init) {
   refresh_from_cache(g_energy_popup_ctx);
 }
 
+void preload_energy_popup() {
+  if (g_energy_popup_ctx && g_energy_popup_ctx->overlay && g_energy_popup_ctx->card) return;
+
+  EnergyPopupInit init;
+  init.entity_id = "__preload__";
+  init.title = "";
+  init.icon_name = "";
+  init.unit = "";
+  init.decimals = 1;
+  init.bg_color = 0;
+
+  EnergyPopupContext* ctx = new EnergyPopupContext();
+  g_energy_popup_ctx = ctx;
+  build_popup_ui(ctx, init);
+
+  if (g_energy_popup_ctx && g_energy_popup_ctx->card && g_energy_popup_ctx->overlay) {
+    lv_obj_add_flag(g_energy_popup_ctx->card, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(g_energy_popup_ctx->overlay, LV_OBJ_FLAG_CLICKABLE);
+  }
+}
+
 void hide_energy_popup() {
   if (!g_energy_popup_ctx || !g_energy_popup_ctx->card || !g_energy_popup_ctx->overlay) return;
   lv_obj_add_flag(g_energy_popup_ctx->card, LV_OBJ_FLAG_HIDDEN);

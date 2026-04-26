@@ -201,6 +201,7 @@ static lv_obj_t* find_mdi_label_child(lv_obj_t* parent) {
 }
 
 static lv_obj_t* create_tiles_grid(lv_obj_t* parent);
+static void apply_cached_states(GridType grid_type, const TileGridConfig& config);
 
 /* === Deferred image preview loading === */
 static lv_timer_t* g_preview_timer = nullptr;
@@ -396,6 +397,14 @@ static void build_folder_cache_entry(FolderCacheEntry& entry, GridType grid_type
   lv_obj_add_flag(entry.grid, LV_OBJ_FLAG_HIDDEN);
 
   render_tile_grid(entry.grid, config, grid_type, g_tiles_scene_cbs[idx], entry.tile_objs);
+
+  // Warm hidden folder caches with the latest known entity states so the
+  // first visible folder switch behaves much closer to a second open.
+  apply_cached_states(grid_type, config);
+  process_sensor_update_queue();
+  process_switch_update_queue();
+  process_weather_update_queue();
+  lv_obj_update_layout(entry.grid);
 
   tile_renderer_snapshot_tab0(&entry.widgets);
   entry.widgets_valid = true;
