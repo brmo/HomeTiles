@@ -1809,6 +1809,22 @@ static bool is_media_cover_png(const uint8_t* data, size_t len) {
          data[4] == 0x0D && data[5] == 0x0A && data[6] == 0x1A && data[7] == 0x0A;
 }
 
+static bool read_media_cover_png_size(const uint8_t* data, size_t len, uint16_t& w, uint16_t& h) {
+  if (!is_media_cover_png(data, len) || len < 24) return false;
+  uint32_t png_w = (static_cast<uint32_t>(data[16]) << 24) |
+                   (static_cast<uint32_t>(data[17]) << 16) |
+                   (static_cast<uint32_t>(data[18]) << 8) |
+                   static_cast<uint32_t>(data[19]);
+  uint32_t png_h = (static_cast<uint32_t>(data[20]) << 24) |
+                   (static_cast<uint32_t>(data[21]) << 16) |
+                   (static_cast<uint32_t>(data[22]) << 8) |
+                   static_cast<uint32_t>(data[23]);
+  if (png_w == 0 || png_h == 0 || png_w > UINT16_MAX || png_h > UINT16_MAX) return false;
+  w = static_cast<uint16_t>(png_w);
+  h = static_cast<uint16_t>(png_h);
+  return true;
+}
+
 static lv_image_dsc_t* make_media_cover_rgb565_dsc(uint16_t w, uint16_t h, uint16_t* pixels) {
   if (!w || !h || !pixels) return nullptr;
   lv_image_dsc_t* dsc = static_cast<lv_image_dsc_t*>(alloc_media_cover_memory(sizeof(lv_image_dsc_t)));
@@ -1882,6 +1898,10 @@ static lv_image_dsc_t* decode_media_cover_jpeg(const uint8_t* data, size_t len) 
 static lv_image_dsc_t* make_media_cover_raw_dsc(const uint8_t* data, size_t len) {
   if (!data || len < 32) return nullptr;
 
+  uint16_t png_w = 0;
+  uint16_t png_h = 0;
+  const bool is_png = read_media_cover_png_size(data, len, png_w, png_h);
+
   uint8_t* copy = static_cast<uint8_t*>(alloc_media_cover_memory(len, true));
   if (!copy) return nullptr;
   memcpy(copy, data, len);
@@ -1893,7 +1913,10 @@ static lv_image_dsc_t* make_media_cover_raw_dsc(const uint8_t* data, size_t len)
   }
   memset(dsc, 0, sizeof(*dsc));
   dsc->header.magic = LV_IMAGE_HEADER_MAGIC;
-  dsc->header.cf = LV_COLOR_FORMAT_RAW;
+  dsc->header.cf = is_png ? LV_COLOR_FORMAT_RAW_ALPHA : LV_COLOR_FORMAT_RAW;
+  dsc->header.w = png_w;
+  dsc->header.h = png_h;
+  dsc->header.stride = 0;
   dsc->data_size = len;
   dsc->data = copy;
   return dsc;
@@ -2026,7 +2049,9 @@ static lv_image_dsc_t* download_media_cover_jpeg(const String& url, bool* deferr
   } else if (is_media_cover_png(data, total)) {
     dsc = make_media_cover_raw_dsc(data, total);
     if (dsc) {
-      Serial.println("[MediaCover] PNG an LVGL-Decoder uebergeben");
+      Serial.printf("[MediaCover] PNG an LVGL-Decoder uebergeben: %ux%u\n",
+                    static_cast<unsigned>(dsc->header.w),
+                    static_cast<unsigned>(dsc->header.h));
     }
   } else {
     Serial.printf("[MediaCover] unbekanntes Bildformat: %02X %02X %02X %02X\n",
@@ -2063,6 +2088,17 @@ static void set_media_cover_text_layout(MediaTileWidgets& widgets, bool cover_vi
   if (widgets.media_subtitle_label) {
     lv_obj_set_width(widgets.media_subtitle_label, cover_visible ? LV_PCT(58) : LV_PCT(92));
     lv_obj_align(widgets.media_subtitle_label, LV_ALIGN_CENTER, cover_visible ? 46 : 0, 50);
+  }
+}
+
+static void set_media_cover_visible(MediaTileWidgets& widgets, bool visible) {
+  if (widgets.cover_clip) {
+    if (visible) lv_obj_clear_flag(widgets.cover_clip, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(widgets.cover_clip, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (widgets.cover_image) {
+    if (visible) lv_obj_clear_flag(widgets.cover_image, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(widgets.cover_image, LV_OBJ_FLAG_HIDDEN);
   }
 }
 
@@ -2208,7 +2244,7 @@ static void process_media_cover_results() {
     if (!result.ok || !result.dsc) {
       ref->failed_url_hash = result.url_hash;
       if (ref->url_hash != result.url_hash) {
-        lv_obj_add_flag(widgets.cover_image, LV_OBJ_FLAG_HIDDEN);
+        set_media_cover_visible(widgets, false);
         if (widgets.icon_label) lv_obj_clear_flag(widgets.icon_label, LV_OBJ_FLAG_HIDDEN);
         set_media_cover_text_layout(widgets, false);
       }
@@ -2218,7 +2254,7 @@ static void process_media_cover_results() {
 
     lv_image_dsc_t* old = ref->dsc;
     lv_image_set_src(widgets.cover_image, result.dsc);
-    lv_obj_clear_flag(widgets.cover_image, LV_OBJ_FLAG_HIDDEN);
+    set_media_cover_visible(widgets, true);
     if (widgets.icon_label) lv_obj_clear_flag(widgets.icon_label, LV_OBJ_FLAG_HIDDEN);
     set_media_cover_text_layout(widgets, true);
 
@@ -2240,7 +2276,7 @@ static void update_media_cover(GridType grid_type,
 
   if (!url.length()) {
     widgets.cover_ref->requested_url_hash = 0;
-    lv_obj_add_flag(widgets.cover_image, LV_OBJ_FLAG_HIDDEN);
+    set_media_cover_visible(widgets, false);
     if (widgets.icon_label) lv_obj_clear_flag(widgets.icon_label, LV_OBJ_FLAG_HIDDEN);
     set_media_cover_text_layout(widgets, false);
     return;
@@ -2251,7 +2287,7 @@ static void update_media_cover(GridType grid_type,
 
   if (!kMediaCoverDownloadsEnabled) {
     ref->requested_url_hash = 0;
-    lv_obj_add_flag(widgets.cover_image, LV_OBJ_FLAG_HIDDEN);
+    set_media_cover_visible(widgets, false);
     if (widgets.icon_label) lv_obj_clear_flag(widgets.icon_label, LV_OBJ_FLAG_HIDDEN);
     set_media_cover_text_layout(widgets, false);
     return;
@@ -2259,13 +2295,13 @@ static void update_media_cover(GridType grid_type,
 
   if (ref->url_hash == hash && ref->dsc) {
     ref->requested_url_hash = 0;
-    lv_obj_clear_flag(widgets.cover_image, LV_OBJ_FLAG_HIDDEN);
+    set_media_cover_visible(widgets, true);
     if (widgets.icon_label) lv_obj_clear_flag(widgets.icon_label, LV_OBJ_FLAG_HIDDEN);
     set_media_cover_text_layout(widgets, true);
     return;
   }
   if (ref->failed_url_hash == hash) return;
-  if (media_cover_has_hidden_ancestor(widgets.cover_image)) return;
+  if (media_cover_has_hidden_ancestor(widgets.cover_clip ? widgets.cover_clip : widgets.cover_image)) return;
 
   queue_media_cover_request(grid_type, grid_index, ref, url, hash);
 }

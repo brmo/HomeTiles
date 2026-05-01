@@ -74,6 +74,7 @@ struct MediaCoverRef {
 };
 
 struct MediaTileWidgets {
+  lv_obj_t* cover_clip = nullptr;
   lv_obj_t* cover_image = nullptr;
   MediaCoverRef* cover_ref = nullptr;
   lv_obj_t* icon_label = nullptr;

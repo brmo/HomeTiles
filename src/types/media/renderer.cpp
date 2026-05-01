@@ -81,14 +81,32 @@ lv_obj_t* render_media_tile(lv_obj_t* parent,
   MediaCoverRef* cover_ref = new MediaCoverRef();
   lv_obj_add_event_cb(card, cover_ref_delete_cb, LV_EVENT_DELETE, cover_ref);
 
-  lv_obj_t* cover_img = lv_img_create(card);
+  lv_obj_t* cover_clip = nullptr;
+  lv_obj_t* cover_img = nullptr;
+  const lv_coord_t cover_size = (tile.span_w > 1 || tile.span_h > 1) ? 96 : 78;
+  cover_clip = lv_obj_create(card);
+  if (cover_clip) {
+    lv_obj_set_size(cover_clip, cover_size, cover_size);
+    lv_obj_align(cover_clip, LV_ALIGN_LEFT_MID, -2, 8);
+    lv_obj_set_style_bg_opa(cover_clip, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(cover_clip, 0, 0);
+    lv_obj_set_style_shadow_width(cover_clip, 0, 0);
+    lv_obj_set_style_pad_all(cover_clip, 0, 0);
+    lv_obj_set_style_radius(cover_clip, 12, 0);
+    lv_obj_set_style_clip_corner(cover_clip, true, 0);
+    lv_obj_remove_flag(cover_clip, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(cover_clip, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(cover_clip, LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_obj_add_flag(cover_clip, LV_OBJ_FLAG_IGNORE_LAYOUT);
+    lv_obj_add_flag(cover_clip, LV_OBJ_FLAG_HIDDEN);
+
+    cover_img = lv_img_create(cover_clip);
+  }
+
   if (cover_img) {
-    const lv_coord_t cover_size = (tile.span_w > 1 || tile.span_h > 1) ? 96 : 78;
     lv_obj_set_size(cover_img, cover_size, cover_size);
-    lv_obj_align(cover_img, LV_ALIGN_LEFT_MID, -2, 8);
+    lv_obj_align(cover_img, LV_ALIGN_CENTER, 0, 0);
     lv_image_set_inner_align(cover_img, LV_IMAGE_ALIGN_COVER);
-    lv_obj_set_style_radius(cover_img, 12, 0);
-    lv_obj_set_style_clip_corner(cover_img, true, 0);
     lv_obj_set_style_opa(cover_img, LV_OPA_COVER, 0);
     lv_obj_add_flag(cover_img, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(cover_img, LV_OBJ_FLAG_CLICKABLE);
@@ -177,6 +195,7 @@ lv_obj_t* render_media_tile(lv_obj_t* parent,
 
   MediaTileWidgets* target = tile_renderer_get_media_widgets(grid_type);
   if (target && index < TILES_PER_GRID) {
+    target[index].cover_clip = cover_clip;
     target[index].cover_image = cover_img;
     target[index].cover_ref = cover_ref;
     target[index].icon_label = icon_label;
