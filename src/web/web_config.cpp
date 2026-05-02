@@ -1,6 +1,7 @@
 #include "src/web/web_config.h"
 #include "src/devices/device_select.h"
 #include "src/devices/device.h"
+#include "src/web/web_admin_utils.h"
 #include <WiFi.h>
 
 // Globale Instanz
@@ -144,7 +145,7 @@ void WebConfigServer::handle() {
 
 void WebConfigServer::handleRoot() {
   Serial.println("📄 Config-Seite angefordert");
-  server.send(200, "text/html", getConfigPage());
+  sendChunkedResponse(server, 200, "text/html", getConfigPage());
 }
 
 void WebConfigServer::handleCaptivePortal() {
@@ -155,7 +156,7 @@ void WebConfigServer::handleCaptivePortal() {
   // Das ist die robusteste Lösung für moderne Smartphones
   server.sendHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
   server.sendHeader("Pragma", "no-cache");
-  server.send(200, "text/html", getConfigPage());
+  sendChunkedResponse(server, 200, "text/html", getConfigPage());
   Serial.println("  ✓ Config-Seite direkt gesendet");
 }
 
@@ -213,7 +214,7 @@ void WebConfigServer::handleSave() {
   if (configManager.save(cfg)) {
     Serial.println("✓ WiFi-Konfiguration erfolgreich gespeichert");
     config_saved = true;
-    server.send(200, "text/html", getSuccessPage());
+    sendChunkedResponse(server, 200, "text/html", getSuccessPage());
   } else {
     Serial.println("❌ Fehler beim Speichern der Konfiguration");
     server.send(500, "text/html", "<h1>Saving the configuration failed</h1>");
@@ -228,7 +229,7 @@ void WebConfigServer::handleNotFound() {
   // Das sorgt dafür, dass Captive Portal Detection auf jeden Fall funktioniert
   server.sendHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
   server.sendHeader("Pragma", "no-cache");
-  server.send(200, "text/html", getConfigPage());
+  sendChunkedResponse(server, 200, "text/html", getConfigPage());
   Serial.println("  ✓ Config-Seite gesendet (Not Found → Config Page)");
 }
 

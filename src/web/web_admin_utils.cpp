@@ -132,3 +132,31 @@ String lookupKeyValue(const String& text, const String& key) {
   }
   return "";
 }
+
+void sendChunkedResponse(WebServer& server,
+                         int code,
+                         const char* content_type,
+                         const String& body,
+                         size_t chunk_size) {
+  if (chunk_size < 256) chunk_size = 256;
+  if (body.length() <= chunk_size) {
+    server.send(code, content_type, body);
+    return;
+  }
+
+  server.sendHeader("Connection", "close");
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(code, content_type, "");
+
+  const size_t len = body.length();
+  for (size_t offset = 0; offset < len; offset += chunk_size) {
+    const size_t end = std::min(offset + chunk_size, len);
+    server.sendContent(body.substring(offset, end));
+    delay(2);
+    yield();
+  }
+
+  server.sendContent("");
+  delay(2);
+  yield();
+}

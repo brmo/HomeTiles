@@ -2,6 +2,7 @@
 #define WEB_ADMIN_UTILS_H
 
 #include <Arduino.h>
+#include <WebServer.h>
 #include <vector>
 
 // Structure for scene options (alias and entity)
@@ -37,5 +38,13 @@ String normalizeSceneSelection(const String& selection,
 
 // Lookup key-value pair in text (key=value format, one per line)
 String lookupKeyValue(const String& text, const String& key);
+
+// Send larger WebUI payloads in small TCP chunks. This is gentler on ESP32-P4
+// SDIO/esp-hosted WiFi than one large server.send() call.
+void sendChunkedResponse(WebServer& server,
+                         int code,
+                         const char* content_type,
+                         const String& body,
+                         size_t chunk_size = 512);
 
 #endif // WEB_ADMIN_UTILS_H

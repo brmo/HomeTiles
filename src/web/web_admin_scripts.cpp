@@ -1756,12 +1756,6 @@ void appendAdminScripts(String& html) {
       }
     }
 
-    if (previewKind === 'media') {
-      html += '<div class="tile-media-title">--</div>';
-      html += '<div class="tile-media-subtitle">--</div>';
-      html += '<div class="tile-media-state">--</div>';
-    }
-
     if (previewKind === 'clock') {
       const flags = getClockFlagsFromInputs(prefix);
       const clockTimeFont = document.getElementById(prefix + '_clock_time_font')?.value || '40';
@@ -1799,7 +1793,6 @@ void appendAdminScripts(String& html) {
       document.getElementById(settingsId)?.classList.remove('hidden');
     }
     if (type === '5') updateSwitchValuePreview(tab);
-    if (type === '15') updateMediaValuePreview(tab);
     updateLayoutFromInputs(tab);
   }
 
@@ -2484,14 +2477,6 @@ void appendAdminScripts(String& html) {
         if (tile.sensor_entity) value = formatSensorValue(metaValues[tile.sensor_entity] ?? '--', tile.sensor_decimals);
         const unit = resolveUnitValue(tile.sensor_unit || '', tile.sensor_entity || '', metaUnits);
         html += '<div class="tile-value ' + sensorValueClass + '" id="' + tab + '-tile-' + index + '-value">' + value + (unit ? '<span class="tile-unit">' + unit + '</span>' : '') + '</div>';
-      }
-      if (previewKind === 'media') {
-        const parsed = (typeof parseMediaPreviewPayload === 'function')
-          ? parseMediaPreviewPayload(tile.sensor_entity ? (metaValues[tile.sensor_entity] ?? '') : '')
-          : { title: '--', subtitle: '--', state: '--' };
-        html += '<div class="tile-media-title">' + (parsed.title || '--') + '</div>';
-        html += '<div class="tile-media-subtitle">' + (parsed.subtitle || '--') + '</div>';
-        html += '<div class="tile-media-state">' + (parsed.state || '--') + '</div>';
       }
       if (previewKind === 'clock') {
         const flags = normalizeClockFlags(tile.sensor_decimals);

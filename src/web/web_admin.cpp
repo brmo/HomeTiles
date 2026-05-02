@@ -1,4 +1,5 @@
 #include "src/web/web_admin.h"
+#include "src/web/web_admin_utils.h"
 #include <WiFi.h>
 
 WebAdminServer webAdminServer;
@@ -86,6 +87,6 @@ void WebAdminServer::handleRoot() {
   webAdminMarkActivity();
   server.sendHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
   server.sendHeader("Pragma", "no-cache");
-  server.send(200, "text/html; charset=utf-8", getAdminPage());
+  sendChunkedResponse(server, 200, "text/html; charset=utf-8", getAdminPage());
   webAdminMarkActivity();
 }

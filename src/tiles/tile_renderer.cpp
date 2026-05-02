@@ -22,6 +22,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
+#include <libb64/cdecode.h>
 #include <libs/tjpgd/tjpgd.h>
 #include <math.h>
 #include <stdlib.h>
@@ -1742,9 +1743,6 @@ struct MediaCoverDecodeCtx {
   const uint8_t* data = nullptr;
   size_t len = 0;
   size_t pos = 0;
-  uint16_t* pixels = nullptr;
-  uint16_t w = 0;
-  uint16_t h = 0;
 };
 
 static size_t media_cover_jpeg_input(JDEC* jd, uint8_t* buff, size_t ndata) {
@@ -1757,25 +1755,6 @@ static size_t media_cover_jpeg_input(JDEC* jd, uint8_t* buff, size_t ndata) {
   }
   ctx->pos += take;
   return take;
-}
-
-static int media_cover_jpeg_output(JDEC* jd, void* bitmap, JRECT* rect) {
-  MediaCoverDecodeCtx* ctx = static_cast<MediaCoverDecodeCtx*>(jd->device);
-  if (!ctx || !ctx->pixels || !bitmap || !rect) return 0;
-  const uint8_t* src = static_cast<const uint8_t*>(bitmap);
-  const uint16_t rw = rect->right - rect->left + 1;
-  for (uint16_t y = rect->top; y <= rect->bottom && y < ctx->h; ++y) {
-    for (uint16_t x = rect->left; x <= rect->right && x < ctx->w; ++x) {
-      size_t si = (static_cast<size_t>(y - rect->top) * rw + (x - rect->left)) * 3;
-      uint8_t r = src[si];
-      uint8_t g = src[si + 1];
-      uint8_t b = src[si + 2];
-      uint16_t c = static_cast<uint16_t>(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
-      ctx->pixels[static_cast<size_t>(y) * ctx->w + x] =
-          static_cast<uint16_t>((c >> 8) | (c << 8));
-    }
-  }
-  return 1;
 }
 
 static void* alloc_media_cover_memory(size_t bytes, bool prefer_psram = false) {
@@ -1825,30 +1804,11 @@ static bool read_media_cover_png_size(const uint8_t* data, size_t len, uint16_t&
   return true;
 }
 
-static lv_image_dsc_t* make_media_cover_rgb565_dsc(uint16_t w, uint16_t h, uint16_t* pixels) {
-  if (!w || !h || !pixels) return nullptr;
-  lv_image_dsc_t* dsc = static_cast<lv_image_dsc_t*>(alloc_media_cover_memory(sizeof(lv_image_dsc_t)));
-  if (!dsc) {
-    free(pixels);
-    return nullptr;
-  }
-  memset(dsc, 0, sizeof(*dsc));
-  dsc->header.magic = LV_IMAGE_HEADER_MAGIC;
-  dsc->header.cf = LV_COLOR_FORMAT_RGB565_SWAPPED;
-  dsc->header.w = w;
-  dsc->header.h = h;
-  dsc->header.stride = w * 2;
-  dsc->data_size = static_cast<size_t>(w) * h * 2;
-  dsc->data = reinterpret_cast<const uint8_t*>(pixels);
-  return dsc;
-}
-
-static lv_image_dsc_t* decode_media_cover_jpeg(const uint8_t* data, size_t len) {
-  if (!data || len < 32) return nullptr;
-  if (!is_media_cover_jpeg(data, len)) return nullptr;
+static bool read_media_cover_jpeg_size(const uint8_t* data, size_t len, uint16_t& w, uint16_t& h) {
+  if (!is_media_cover_jpeg(data, len) || len < 32) return false;
 
   uint8_t* work = static_cast<uint8_t*>(alloc_media_cover_memory(4096));
-  if (!work) return nullptr;
+  if (!work) return false;
 
   MediaCoverDecodeCtx ctx{};
   ctx.data = data;
@@ -1856,51 +1816,26 @@ static lv_image_dsc_t* decode_media_cover_jpeg(const uint8_t* data, size_t len) 
 
   JDEC jd;
   JRESULT rc = jd_prepare(&jd, media_cover_jpeg_input, work, 4096, &ctx);
-  if (rc != JDR_OK) {
-    Serial.printf("[MediaCover] JPEG prepare fehlgeschlagen: %d\n", static_cast<int>(rc));
-    free(work);
-    return nullptr;
-  }
-
-  uint8_t scale = 0;
-  uint16_t out_w = jd.width;
-  uint16_t out_h = jd.height;
-  constexpr uint16_t kMaxCoverSide = 96;
-  while ((out_w > kMaxCoverSide || out_h > kMaxCoverSide) && scale < 3) {
-    ++scale;
-    out_w = static_cast<uint16_t>((jd.width + ((1U << scale) - 1U)) >> scale);
-    out_h = static_cast<uint16_t>((jd.height + ((1U << scale) - 1U)) >> scale);
-  }
-  if (out_w == 0) out_w = 1;
-  if (out_h == 0) out_h = 1;
-
-  const size_t pixel_bytes = static_cast<size_t>(out_w) * out_h * 2;
-  ctx.pixels = static_cast<uint16_t*>(alloc_media_cover_memory(pixel_bytes, true));
-  if (!ctx.pixels) {
-    free(work);
-    return nullptr;
-  }
-  memset(ctx.pixels, 0, pixel_bytes);
-  ctx.w = out_w;
-  ctx.h = out_h;
-
-  rc = jd_decomp(&jd, media_cover_jpeg_output, scale);
   free(work);
-  if (rc != JDR_OK) {
-    Serial.printf("[MediaCover] JPEG decode fehlgeschlagen: %d\n", static_cast<int>(rc));
-    free(ctx.pixels);
-    return nullptr;
+  if (rc != JDR_OK || jd.width == 0 || jd.height == 0 ||
+      jd.width > UINT16_MAX || jd.height > UINT16_MAX) {
+    Serial.printf("[MediaCover] JPEG info fehlgeschlagen: %d\n", static_cast<int>(rc));
+    return false;
   }
 
-  return make_media_cover_rgb565_dsc(out_w, out_h, ctx.pixels);
+  w = static_cast<uint16_t>(jd.width);
+  h = static_cast<uint16_t>(jd.height);
+  return true;
 }
 
 static lv_image_dsc_t* make_media_cover_raw_dsc(const uint8_t* data, size_t len) {
   if (!data || len < 32) return nullptr;
 
-  uint16_t png_w = 0;
-  uint16_t png_h = 0;
-  const bool is_png = read_media_cover_png_size(data, len, png_w, png_h);
+  uint16_t img_w = 0;
+  uint16_t img_h = 0;
+  const bool is_png = read_media_cover_png_size(data, len, img_w, img_h);
+  const bool is_jpeg = !is_png && read_media_cover_jpeg_size(data, len, img_w, img_h);
+  if (!is_png && !is_jpeg) return nullptr;
 
   uint8_t* copy = static_cast<uint8_t*>(alloc_media_cover_memory(len, true));
   if (!copy) return nullptr;
@@ -1914,11 +1849,66 @@ static lv_image_dsc_t* make_media_cover_raw_dsc(const uint8_t* data, size_t len)
   memset(dsc, 0, sizeof(*dsc));
   dsc->header.magic = LV_IMAGE_HEADER_MAGIC;
   dsc->header.cf = is_png ? LV_COLOR_FORMAT_RAW_ALPHA : LV_COLOR_FORMAT_RAW;
-  dsc->header.w = png_w;
-  dsc->header.h = png_h;
+  dsc->header.w = img_w;
+  dsc->header.h = img_h;
   dsc->header.stride = 0;
   dsc->data_size = len;
   dsc->data = copy;
+  return dsc;
+}
+
+static lv_image_dsc_t* make_media_cover_dsc_from_bytes(const uint8_t* data, size_t len) {
+  if (!data || len < 32) return nullptr;
+  if (is_media_cover_jpeg(data, len)) {
+    lv_image_dsc_t* dsc = make_media_cover_raw_dsc(data, len);
+    if (dsc) {
+      Serial.printf("[MediaCover] MQTT JPEG an LVGL-Decoder uebergeben: %u Bytes\n",
+                    static_cast<unsigned>(len));
+    }
+    return dsc;
+  }
+  if (is_media_cover_png(data, len)) {
+    lv_image_dsc_t* dsc = make_media_cover_raw_dsc(data, len);
+    if (dsc) {
+      Serial.printf("[MediaCover] MQTT PNG an LVGL-Decoder uebergeben: %ux%u\n",
+                    static_cast<unsigned>(dsc->header.w),
+                    static_cast<unsigned>(dsc->header.h));
+    }
+    return dsc;
+  }
+  Serial.printf("[MediaCover] MQTT Bildformat unbekannt: %02X %02X %02X %02X\n",
+                data[0], data[1], data[2], data[3]);
+  return nullptr;
+}
+
+static lv_image_dsc_t* make_media_cover_dsc_from_base64(const String& encoded) {
+  if (!encoded.length()) return nullptr;
+  const size_t cap = base64_decode_expected_len(encoded.length()) + 4;
+  if (cap < 32 || cap > (96U * 1024U)) return nullptr;
+
+  uint8_t* decoded = static_cast<uint8_t*>(alloc_media_cover_memory(cap, true));
+  if (!decoded) return nullptr;
+
+  base64_decodestate state;
+  base64_init_decodestate(&state);
+  const int decoded_len = base64_decode_block(
+      encoded.c_str(),
+      static_cast<int>(encoded.length()),
+      reinterpret_cast<char*>(decoded),
+      &state);
+
+  if (decoded_len < 32) {
+    free(decoded);
+    return nullptr;
+  }
+
+  Serial.printf("[MediaCover] MQTT Cover Base64: encoded=%u decoded=%d bytes magic=%02X %02X %02X %02X\n",
+                static_cast<unsigned>(encoded.length()),
+                decoded_len,
+                decoded[0], decoded[1], decoded[2], decoded[3]);
+
+  lv_image_dsc_t* dsc = make_media_cover_dsc_from_bytes(decoded, static_cast<size_t>(decoded_len));
+  free(decoded);
   return dsc;
 }
 
@@ -1934,9 +1924,28 @@ static bool media_cover_network_budget_ok() {
   return free_internal >= kMinInternalFree && largest_internal >= kMinInternalLargest;
 }
 
+static bool media_cover_download_allowed(const String& url) {
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+  if (url.startsWith("https://")) return false;
+#endif
+  return true;
+}
+
+static void log_media_cover_download_blocked() {
+  static uint32_t last_log_ms = 0;
+  const uint32_t now = millis();
+  if (last_log_ms != 0 && static_cast<uint32_t>(now - last_log_ms) < 30000) return;
+  last_log_ms = now;
+  Serial.println("[MediaCover] HTTPS Cover Download auf ESP32-P4 uebersprungen (WiFi-SDIO Stabilitaet)");
+}
+
 static lv_image_dsc_t* download_media_cover_jpeg(const String& url, bool* deferred) {
   if (deferred) *deferred = false;
   if (!url.startsWith("http://") && !url.startsWith("https://")) return nullptr;
+  if (!media_cover_download_allowed(url)) {
+    log_media_cover_download_blocked();
+    return nullptr;
+  }
   if (webAdminRecentlyActive(3500) || !media_cover_network_budget_ok()) {
     if (deferred) *deferred = true;
     return nullptr;
@@ -2045,7 +2054,7 @@ static lv_image_dsc_t* download_media_cover_jpeg(const String& url, bool* deferr
 
   lv_image_dsc_t* dsc = nullptr;
   if (is_media_cover_jpeg(data, total)) {
-    dsc = decode_media_cover_jpeg(data, total);
+    dsc = make_media_cover_raw_dsc(data, total);
   } else if (is_media_cover_png(data, total)) {
     dsc = make_media_cover_raw_dsc(data, total);
     if (dsc) {
@@ -2113,6 +2122,7 @@ struct MediaCoverResult {
   GridType grid_type;
   uint8_t grid_index = 0;
   uint32_t url_hash = 0;
+  char url[512] = {};
   lv_image_dsc_t* dsc = nullptr;
   bool ok = false;
   bool deferred = false;
@@ -2125,6 +2135,7 @@ static uint32_t g_media_cover_request_full_count = 0;
 static uint32_t g_media_cover_result_full_count = 0;
 static uint32_t g_media_cover_last_download_ms = 0;
 static constexpr bool kMediaCoverDownloadsEnabled = true;
+static constexpr uint32_t kMediaCoverRetryCooldownMs = 10000;
 
 static void media_cover_worker_task(void*) {
   for (;;) {
@@ -2137,6 +2148,8 @@ static void media_cover_worker_task(void*) {
     result.grid_type = req.grid_type;
     result.grid_index = req.grid_index;
     result.url_hash = req.url_hash;
+    strncpy(result.url, req.url, sizeof(result.url) - 1);
+    result.url[sizeof(result.url) - 1] = '\0';
     while (webAdminRecentlyActive(3500)) {
       vTaskDelay(pdMS_TO_TICKS(250));
     }
@@ -2238,11 +2251,15 @@ static void process_media_cover_results() {
 
     ref->requested_url_hash = 0;
     if (result.deferred) {
+      if (result.url[0]) {
+        queue_media_cover_request(result.grid_type, result.grid_index, ref, String(result.url), result.url_hash);
+      }
       free_media_cover_dsc(result.dsc);
       continue;
     }
     if (!result.ok || !result.dsc) {
       ref->failed_url_hash = result.url_hash;
+      ref->failed_at_ms = millis();
       if (ref->url_hash != result.url_hash) {
         set_media_cover_visible(widgets, false);
         if (widgets.icon_label) lv_obj_clear_flag(widgets.icon_label, LV_OBJ_FLAG_HIDDEN);
@@ -2261,6 +2278,7 @@ static void process_media_cover_results() {
     ref->dsc = result.dsc;
     ref->url_hash = result.url_hash;
     ref->failed_url_hash = 0;
+    ref->failed_at_ms = 0;
     result.dsc = nullptr;
     free_media_cover_dsc(old);
   }
@@ -2273,9 +2291,13 @@ static void update_media_cover(GridType grid_type,
   String url = raw_url;
   url.trim();
   if (!widgets.cover_image || !widgets.cover_ref) return;
+  MediaCoverRef* ref = widgets.cover_ref;
 
   if (!url.length()) {
-    widgets.cover_ref->requested_url_hash = 0;
+    ref->source_url = "";
+    ref->requested_url_hash = 0;
+    ref->failed_url_hash = 0;
+    ref->failed_at_ms = 0;
     set_media_cover_visible(widgets, false);
     if (widgets.icon_label) lv_obj_clear_flag(widgets.icon_label, LV_OBJ_FLAG_HIDDEN);
     set_media_cover_text_layout(widgets, false);
@@ -2283,7 +2305,11 @@ static void update_media_cover(GridType grid_type,
   }
 
   uint32_t hash = fnv1a_hash(url.c_str());
-  MediaCoverRef* ref = widgets.cover_ref;
+  if (ref->source_url != url) {
+    ref->source_url = url;
+    ref->failed_url_hash = 0;
+    ref->failed_at_ms = 0;
+  }
 
   if (!kMediaCoverDownloadsEnabled) {
     ref->requested_url_hash = 0;
@@ -2300,10 +2326,94 @@ static void update_media_cover(GridType grid_type,
     set_media_cover_text_layout(widgets, true);
     return;
   }
-  if (ref->failed_url_hash == hash) return;
+  if (!media_cover_download_allowed(url)) {
+    ref->requested_url_hash = 0;
+    ref->failed_url_hash = 0;
+    ref->failed_at_ms = 0;
+    set_media_cover_visible(widgets, false);
+    if (widgets.icon_label) lv_obj_clear_flag(widgets.icon_label, LV_OBJ_FLAG_HIDDEN);
+    set_media_cover_text_layout(widgets, false);
+    log_media_cover_download_blocked();
+    return;
+  }
+  if (ref->failed_url_hash == hash) {
+    const uint32_t failed_age = static_cast<uint32_t>(millis() - ref->failed_at_ms);
+    if (ref->failed_at_ms != 0 && failed_age < kMediaCoverRetryCooldownMs) return;
+    ref->failed_url_hash = 0;
+    ref->failed_at_ms = 0;
+  }
   if (media_cover_has_hidden_ancestor(widgets.cover_clip ? widgets.cover_clip : widgets.cover_image)) return;
 
   queue_media_cover_request(grid_type, grid_index, ref, url, hash);
+}
+
+static bool update_media_cover_from_base64(MediaTileWidgets& widgets, const String& raw_data) {
+  String encoded = raw_data;
+  encoded.trim();
+  if (!widgets.cover_image || !widgets.cover_ref || !encoded.length()) return false;
+
+  MediaCoverRef* ref = widgets.cover_ref;
+  const uint32_t hash = fnv1a_hash(encoded.c_str());
+  if (ref->url_hash == hash && ref->dsc) {
+    ref->requested_url_hash = 0;
+    set_media_cover_visible(widgets, true);
+    if (widgets.icon_label) lv_obj_clear_flag(widgets.icon_label, LV_OBJ_FLAG_HIDDEN);
+    set_media_cover_text_layout(widgets, true);
+    return true;
+  }
+
+  lv_image_dsc_t* dsc = make_media_cover_dsc_from_base64(encoded);
+  if (!dsc) {
+    Serial.println("[MediaCover] MQTT Cover konnte nicht dekodiert werden");
+    return false;
+  }
+
+  lv_image_dsc_t* old = ref->dsc;
+  lv_image_set_src(widgets.cover_image, dsc);
+  set_media_cover_visible(widgets, true);
+  if (widgets.icon_label) lv_obj_clear_flag(widgets.icon_label, LV_OBJ_FLAG_HIDDEN);
+  set_media_cover_text_layout(widgets, true);
+
+  ref->dsc = dsc;
+  ref->source_url = "mqtt";
+  ref->url_hash = hash;
+  ref->requested_url_hash = 0;
+  ref->failed_url_hash = 0;
+  ref->failed_at_ms = 0;
+  free_media_cover_dsc(old);
+  Serial.println("[MediaCover] MQTT Cover geladen");
+  return true;
+}
+
+static void retry_failed_media_covers_for_grid(GridType grid_type, MediaTileWidgets* target) {
+  if (!target) return;
+  for (uint8_t i = 0; i < TILES_PER_GRID; ++i) {
+    MediaTileWidgets& widgets = target[i];
+    MediaCoverRef* ref = widgets.cover_ref;
+    if (!ref || !widgets.cover_image || ref->requested_url_hash != 0) continue;
+    if (ref->failed_url_hash == 0 || ref->failed_at_ms == 0 || !ref->source_url.length()) continue;
+
+    const uint32_t failed_age = static_cast<uint32_t>(millis() - ref->failed_at_ms);
+    if (failed_age < kMediaCoverRetryCooldownMs) continue;
+    if (media_cover_has_hidden_ancestor(widgets.cover_clip ? widgets.cover_clip : widgets.cover_image)) continue;
+    if (!media_cover_download_allowed(ref->source_url)) {
+      ref->failed_url_hash = 0;
+      ref->failed_at_ms = 0;
+      log_media_cover_download_blocked();
+      continue;
+    }
+
+    const uint32_t hash = fnv1a_hash(ref->source_url.c_str());
+    ref->failed_url_hash = 0;
+    ref->failed_at_ms = 0;
+    queue_media_cover_request(grid_type, i, ref, ref->source_url, hash);
+  }
+}
+
+static void process_pending_media_cover_retries() {
+  retry_failed_media_covers_for_grid(GridType::TAB0, g_tab0_media);
+  retry_failed_media_covers_for_grid(GridType::TAB1, g_tab1_media);
+  retry_failed_media_covers_for_grid(GridType::TAB2, g_tab2_media);
 }
 
 void update_media_tile_state(GridType grid_type, uint8_t grid_index, const char* payload) {
@@ -2334,6 +2444,7 @@ void update_media_tile_state(GridType grid_type, uint8_t grid_index, const char*
   String source;
   String channel;
   String cover_url;
+  String cover_data;
   float volume = -1.0f;
 
   if (text.startsWith("{")) {
@@ -2347,6 +2458,7 @@ void update_media_tile_state(GridType grid_type, uint8_t grid_index, const char*
     if (!extract_json_string_field(text, "entity_picture", cover_url)) {
       extract_json_string_field(text, "media_image_url", cover_url);
     }
+    extract_json_string_field(text, "entity_picture_data", cover_data);
     extract_json_number_or_string_field(text, "volume_level", volume);
   } else {
     state = text;
@@ -2360,9 +2472,14 @@ void update_media_tile_state(GridType grid_type, uint8_t grid_index, const char*
   decode_basic_json_escapes(source);
   decode_basic_json_escapes(channel);
   decode_basic_json_escapes(cover_url);
+  decode_basic_json_escapes(cover_data);
 
-  update_media_cover(grid_type, grid_index, widgets, cover_url);
-  if (!cover_url.length()) {
+  if (cover_data.length()) {
+    update_media_cover_from_base64(widgets, cover_data);
+  } else {
+    update_media_cover(grid_type, grid_index, widgets, cover_url);
+  }
+  if (!cover_url.length() && !cover_data.length()) {
     Serial.println("[MediaCover] keine Cover-URL im Media-Payload");
   }
 
@@ -2438,6 +2555,7 @@ void process_media_update_queue() {
     g_media_tail = (g_media_tail + 1) % MEDIA_QUEUE_SIZE;
   }
   process_media_cover_results();
+  process_pending_media_cover_retries();
 }
 
 /* === Thread-Safe Queue fuer Tile Graph History (MQTT -> Main Loop) === */

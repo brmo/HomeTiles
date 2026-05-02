@@ -33,27 +33,8 @@ void append_media_scripts(String& html) {
   }
 
   function updateMediaValuePreview(tab) {
-    if (currentTileIndex === -1) return;
-    const prefix = tab;
-    const entitySelect = document.getElementById(prefix + '_media_entity');
-    if (!entitySelect) return;
-    const entity = entitySelect.value;
-    const tileElem = document.getElementById(tab + '-tile-' + currentTileIndex);
-    if (!tileElem) return;
-    const applyMeta = (meta) => {
-      const values = (meta && meta.values) || {};
-      const parsed = parseMediaPreviewPayload(entity ? (values[entity] ?? '') : '');
-      const titleEl = tileElem.querySelector('.tile-media-title');
-      const subEl = tileElem.querySelector('.tile-media-subtitle');
-      const stateEl = tileElem.querySelector('.tile-media-state');
-      if (titleEl) titleEl.textContent = parsed.title || '--';
-      if (subEl) subEl.textContent = parsed.subtitle || '--';
-      if (stateEl) stateEl.textContent = parsed.state || '--';
-    };
-    const metaPromise = isSensorMetaCacheLoaded() ? Promise.resolve(sensorMetaCache) : fetchSensorMetaCache();
-    metaPromise
-      .then(meta => applyMeta(meta))
-      .catch(err => console.error('Fehler beim Laden des Media-Status:', err));
+    // Media tiles stay intentionally simple in the WebUI preview:
+    // only icon and configured tile title are shown.
   }
 
   function loadMediaFields(tab, data) {

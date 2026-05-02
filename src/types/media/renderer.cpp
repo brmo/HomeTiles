@@ -23,9 +23,11 @@ static void free_cover_dsc(MediaCoverRef* ref) {
   }
   free(ref->dsc);
   ref->dsc = nullptr;
+  ref->source_url = "";
   ref->url_hash = 0;
   ref->requested_url_hash = 0;
   ref->failed_url_hash = 0;
+  ref->failed_at_ms = 0;
 }
 
 static void cover_ref_delete_cb(lv_event_t* e) {

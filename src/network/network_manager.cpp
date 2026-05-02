@@ -81,7 +81,7 @@ void Tab5NetworkManager::init() {
     // MQTT-Setup
     mqtt_client.setClient(net_client);
     mqtt_client.setServer(cfg.mqtt_host, cfg.mqtt_port);
-    mqtt_client.setBufferSize(16384);  // Groessere Config-Payloads (viele Entities)
+    mqtt_client.setBufferSize(32768);  // Groessere Config-/Media-Cover-Payloads
     mqtt_client.setCallback(mqttCallback);
   } else {
     Serial.println("MQTT: keine Konfiguration vorhanden - ueberspringe Verbindung");
@@ -357,6 +357,12 @@ void Tab5NetworkManager::setWifiPowerSaving(bool enable) {
     wifi_ps_state_known = false;
     return;
   }
+
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+  // ESP32-P4 uses an SDIO/esp-hosted WiFi transport. Modem sleep can trigger
+  // transport TX asserts under WebUI, MQTT, or media-cover traffic.
+  enable = false;
+#endif
 
   if (wifi_ps_state_known && wifi_ps_enabled == enable) {
     return;

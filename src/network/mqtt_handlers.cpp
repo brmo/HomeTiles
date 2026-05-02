@@ -1182,7 +1182,7 @@ static bool tryHandleDynamicWeather(const char* topic, const char* payload) {
 }
 
 static constexpr size_t SMALL_BUF = 96;
-static constexpr size_t LARGE_BUF = 16384;
+static constexpr size_t LARGE_BUF = 32768;
 static char small_buf[SMALL_BUF];
 static char large_buf[LARGE_BUF];
 

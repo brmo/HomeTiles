@@ -1326,7 +1326,7 @@ void WebAdminServer::handleBridgeRefresh() {
 
 void WebAdminServer::handleStatus() {
   webAdminMarkActivity();
-  server.send(200, "application/json", getStatusJSON());
+  sendChunkedResponse(server, 200, "application/json", getStatusJSON());
 }
 
 void WebAdminServer::handleRestart() {
@@ -1422,7 +1422,7 @@ void WebAdminServer::handleGetTiles() {
 
     String json;
     appendTileJson(json, grid.tiles[index]);
-    server.send(200, "application/json", json);
+    sendChunkedResponse(server, 200, "application/json", json);
     return;
   }
 
@@ -1433,7 +1433,7 @@ void WebAdminServer::handleGetTiles() {
   }
   json += "]";
 
-  server.send(200, "application/json", json);
+  sendChunkedResponse(server, 200, "application/json", json);
 }
 
 
@@ -1617,7 +1617,7 @@ void WebAdminServer::handleSaveTiles() {
       response += String(getNavigateTargetId(tile));
     }
     response += "}";
-    server.send(200, "application/json", response);
+    sendChunkedResponse(server, 200, "application/json", response);
   } else {
     Serial.printf("[WebAdmin] Fehler beim Speichern von Tile folder %u[%d]\n", static_cast<unsigned>(folder_id), index);
     server.send(500, "application/json", "{\"success\":false,\"error\":\"Save failed\"}");
@@ -1695,7 +1695,7 @@ void WebAdminServer::handleGetSensorValues() {
   appendKeyValueMapJson(json, ha.sensor_names_map);
   json += "}";
 
-  server.send(200, "application/json", json);
+  sendChunkedResponse(server, 200, "application/json", json);
 }
 
 void WebAdminServer::handleGetSdImages() {
@@ -1710,7 +1710,7 @@ void WebAdminServer::handleGetSdImages() {
     json += "\"";
   }
   json += "]";
-  server.send(200, "application/json", json);
+  sendChunkedResponse(server, 200, "application/json", json);
 }
 
 void WebAdminServer::handleGetSdIcons() {
@@ -1752,7 +1752,7 @@ void WebAdminServer::handleGetSdIcons() {
     json += "}";
   }
   json += "]";
-  server.send(200, "application/json", json);
+  sendChunkedResponse(server, 200, "application/json", json);
 }
 
 void WebAdminServer::handleUploadIcon() {
@@ -1788,7 +1788,7 @@ void WebAdminServer::handleUploadIconDone() {
   String json = "{\"ok\":true,\"path\":\"";
   appendJsonEscaped(json, path);
   json += "\"}";
-  server.send(200, "application/json", json);
+  sendChunkedResponse(server, 200, "application/json", json);
 }
 
 void WebAdminServer::handleFileManagerList() {
@@ -1866,7 +1866,7 @@ void WebAdminServer::handleFileManagerList() {
     json += "}";
   }
   json += "]}";
-  server.send(200, "application/json", json);
+  sendChunkedResponse(server, 200, "application/json", json);
 }
 
 void WebAdminServer::handleFileManagerDownload() {
@@ -1972,7 +1972,7 @@ void WebAdminServer::handleFileManagerRename() {
   String json = "{\"success\":true,\"path\":\"";
   appendJsonEscaped(json, target);
   json += "\"}";
-  server.send(200, "application/json", json);
+  sendChunkedResponse(server, 200, "application/json", json);
 }
 
 void WebAdminServer::handleFileManagerMkdir() {
@@ -2150,7 +2150,7 @@ void WebAdminServer::handleFileManagerUploadDone() {
   json += String(static_cast<unsigned long>(g_file_manager_upload_bytes));
   json += "}";
   resetFileManagerUploadState();
-  server.send(200, "application/json", json);
+  sendChunkedResponse(server, 200, "application/json", json);
 }
 
 void WebAdminServer::handleOtaUpdate() {
@@ -2316,7 +2316,7 @@ void WebAdminServer::handleOtaUploadDone() {
   }
 
   String json = "{\"success\":true}";
-  server.send(200, "application/json", json);
+  sendChunkedResponse(server, 200, "application/json", json);
 }
 
 void WebAdminServer::handleStartOtaInstall() {
@@ -2350,7 +2350,7 @@ void WebAdminServer::handleGetOtaStatus() {
   json += ",\"error\":\"";
   appendJsonEscaped(json, g_ota_upload_state.error);
   json += "\"}";
-  server.send(200, "application/json", json);
+  sendChunkedResponse(server, 200, "application/json", json);
 }
 
 bool webAdminOtaInProgress() {
@@ -2384,7 +2384,7 @@ void WebAdminServer::handleCreateScreenshot() {
   String json = "{\"success\":true,\"path\":\"";
   appendJsonEscaped(json, kScreenshotPath);
   json += "\"}";
-  server.send(200, "application/json", json);
+  sendChunkedResponse(server, 200, "application/json", json);
 }
 
 void WebAdminServer::handleDownloadScreenshot() {
@@ -2430,7 +2430,7 @@ void WebAdminServer::handleGetFolders() {
     json += "\"}";
   }
   json += "]";
-  server.send(200, "application/json", json);
+  sendChunkedResponse(server, 200, "application/json", json);
 }
 
 void WebAdminServer::handleGetFolderTab() {
@@ -2462,7 +2462,7 @@ void WebAdminServer::handleGetFolderTab() {
   json += "\",\"tab_html\":\"";
   appendJsonEscaped(json, tab_html);
   json += "\"}";
-  server.send(200, "application/json", json);
+  sendChunkedResponse(server, 200, "application/json", json);
 }
 
 void WebAdminServer::handleDeleteFolder() {
