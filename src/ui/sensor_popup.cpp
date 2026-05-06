@@ -1,6 +1,7 @@
 #include "src/ui/sensor_popup.h"
 #include "src/ui/light_popup.h"
 #include "src/ui/weather_popup.h"
+#include "src/ui/media_popup.h"
 #include "src/core/config_manager.h"
 #include "src/core/display_manager.h"
 #include "src/fonts/ui_fonts.h"
@@ -1093,6 +1094,7 @@ void show_sensor_popup(const SensorPopupInit& init) {
   // Hide other popups if visible
   hide_light_popup();
   hide_weather_popup();
+  hide_media_popup();
 
   if (g_sensor_popup_ctx && g_sensor_popup_ctx->overlay && g_sensor_popup_ctx->card) {
     apply_init_to_context(g_sensor_popup_ctx, init);

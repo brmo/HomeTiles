@@ -8,8 +8,10 @@
 #include "src/tiles/mdi_icons.h"
 #include "src/tiles/tile_renderer_fonts.h"
 #include "src/tiles/tile_renderer_shared.h"
+#include "src/ui/media_popup.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 namespace {
 
@@ -31,6 +33,15 @@ struct MediaEventData {
   lv_obj_t* media_title_label = nullptr;
   lv_obj_t* media_subtitle_label = nullptr;
   bool reset_text_scroll = false;
+};
+
+struct MediaPopupEventData {
+  String entity_id;
+  String title;
+  String icon_name;
+  uint32_t bg_color = 0x2A2A2A;
+  GridType grid_type = GridType::TAB0;
+  uint8_t grid_index = 0;
 };
 
 static void free_cover_dsc(MediaCoverRef* ref) {
@@ -83,6 +94,56 @@ static void media_command_event_cb(lv_event_t* e) {
 static void media_event_data_delete_cb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_DELETE) return;
   MediaEventData* data = static_cast<MediaEventData*>(lv_event_get_user_data(e));
+  delete data;
+}
+
+static String media_label_text(lv_obj_t* label) {
+  if (!label || lv_obj_has_flag(label, LV_OBJ_FLAG_HIDDEN)) return "";
+  const char* text = lv_label_get_text(label);
+  return text ? String(text) : String();
+}
+
+static bool media_widget_is_playing(const MediaTileWidgets& widgets) {
+  if (!widgets.play_pause_label) return false;
+  const char* current = lv_label_get_text(widgets.play_pause_label);
+  String pause_icon = getMdiChar("pause");
+  return current && pause_icon.length() && strcmp(current, pause_icon.c_str()) == 0;
+}
+
+static void show_media_popup_event_cb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_SHORT_CLICKED) return;
+  MediaPopupEventData* data = static_cast<MediaPopupEventData*>(lv_event_get_user_data(e));
+  if (!data || !data->entity_id.length()) return;
+
+  MediaTileWidgets* target = tile_renderer_get_media_widgets(data->grid_type);
+  if (!target || data->grid_index >= TILES_PER_GRID) return;
+  MediaTileWidgets& widgets = target[data->grid_index];
+
+  MediaPopupInit init;
+  init.entity_id = data->entity_id;
+  init.title = data->title;
+  init.icon_name = data->icon_name;
+  init.bg_color = data->bg_color;
+  init.media_title = media_label_text(widgets.media_title_label);
+  init.media_subtitle = media_label_text(widgets.media_subtitle_label);
+  init.is_playing = media_widget_is_playing(widgets);
+  init.has_volume = widgets.has_media_volume;
+  init.volume_level = widgets.media_volume_level;
+  init.is_muted = widgets.media_is_muted;
+  const bool cover_visible = widgets.cover_ref &&
+                             widgets.cover_ref->dsc &&
+                             widgets.cover_clip &&
+                             !lv_obj_has_flag(widgets.cover_clip, LV_OBJ_FLAG_HIDDEN);
+  if (cover_visible) {
+    init.cover_dsc = widgets.cover_ref->dsc;
+    init.cover_hash = widgets.cover_ref->url_hash;
+  }
+  show_media_popup(init);
+}
+
+static void media_popup_event_data_delete_cb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_DELETE) return;
+  MediaPopupEventData* data = static_cast<MediaPopupEventData*>(lv_event_get_user_data(e));
   delete data;
 }
 
@@ -388,9 +449,23 @@ lv_obj_t* render_media_tile(lv_obj_t* parent,
     target[index].state_label = state_label;
     target[index].last_payload_hash = 0;
     target[index].dynamic_icon = false;
+    target[index].has_media_volume = false;
+    target[index].media_volume_level = 0.0f;
+    target[index].media_is_muted = false;
   }
 
   if (tile.sensor_entity.length()) {
+    MediaPopupEventData* popup_data = new MediaPopupEventData{
+      tile.sensor_entity,
+      title_text,
+      icon_name,
+      card_color,
+      grid_type,
+      index
+    };
+    lv_obj_add_event_cb(card, show_media_popup_event_cb, LV_EVENT_SHORT_CLICKED, popup_data);
+    lv_obj_add_event_cb(card, media_popup_event_data_delete_cb, LV_EVENT_DELETE, popup_data);
+
     String initial = haBridgeConfig.findSensorInitialValue(tile.sensor_entity);
     if (initial.length()) {
       update_media_tile_state(grid_type, index, initial.c_str());

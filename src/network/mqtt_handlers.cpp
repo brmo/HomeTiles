@@ -1431,6 +1431,58 @@ void mqttPublishMediaCommand(const char* entity_id, const char* command) {
   Serial.printf("Media command -> MQTT '%s' (%s)\n", topic, ok ? "ok" : "fail");
 }
 
+void mqttPublishMediaVolume(const char* entity_id, float volume_level) {
+  if (!entity_id || !*entity_id) return;
+  if (volume_level < 0.0f) volume_level = 0.0f;
+  if (volume_level > 1.0f) volume_level = 1.0f;
+
+  PubSubClient& mqtt = networkManager.getMqttClient();
+  if (!mqtt.connected()) {
+    Serial.printf("Media volume skipped (MQTT offline): %s\n", entity_id);
+    return;
+  }
+
+  const char* topic = mqttTopics.topic(TopicKey::MEDIA_CMND);
+  if (!topic || !*topic) {
+    Serial.printf("Media volume skipped (no topic): %s\n", entity_id);
+    return;
+  }
+
+  char payload[288];
+  snprintf(payload,
+           sizeof(payload),
+           "{\"entity_id\":\"%s\",\"command\":\"volume_set\",\"volume_level\":%.3f}",
+           entity_id,
+           volume_level);
+  bool ok = mqtt.publish(topic, payload, false);
+  Serial.printf("Media volume -> MQTT '%s' %.0f%% (%s)\n", topic, volume_level * 100.0f, ok ? "ok" : "fail");
+}
+
+void mqttPublishMediaMute(const char* entity_id, bool muted) {
+  if (!entity_id || !*entity_id) return;
+
+  PubSubClient& mqtt = networkManager.getMqttClient();
+  if (!mqtt.connected()) {
+    Serial.printf("Media mute skipped (MQTT offline): %s\n", entity_id);
+    return;
+  }
+
+  const char* topic = mqttTopics.topic(TopicKey::MEDIA_CMND);
+  if (!topic || !*topic) {
+    Serial.printf("Media mute skipped (no topic): %s\n", entity_id);
+    return;
+  }
+
+  char payload[288];
+  snprintf(payload,
+           sizeof(payload),
+           "{\"entity_id\":\"%s\",\"command\":\"volume_mute\",\"is_volume_muted\":%s}",
+           entity_id,
+           muted ? "true" : "false");
+  bool ok = mqtt.publish(topic, payload, false);
+  Serial.printf("Media mute -> MQTT '%s' %s (%s)\n", topic, muted ? "on" : "off", ok ? "ok" : "fail");
+}
+
 void mqttPublishLightCommand(const char* entity_id,
                              const char* state,
                              int brightness_pct,

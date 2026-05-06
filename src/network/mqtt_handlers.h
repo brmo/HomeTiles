@@ -10,6 +10,8 @@ void mqttPublishDiscovery();
 void mqttPublishScene(const char* scene_name);
 void mqttPublishSwitchCommand(const char* entity_id, const char* state);
 void mqttPublishMediaCommand(const char* entity_id, const char* command);
+void mqttPublishMediaVolume(const char* entity_id, float volume_level);
+void mqttPublishMediaMute(const char* entity_id, bool muted);
 void mqttPublishLightCommand(const char* entity_id,
                              const char* state,
                              int brightness_pct,

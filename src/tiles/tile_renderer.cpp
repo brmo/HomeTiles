@@ -7,6 +7,7 @@
 #include "src/ui/ui_manager.h"
 #include "src/ui/light_popup.h"
 #include "src/ui/sensor_popup.h"
+#include "src/ui/media_popup.h"
 #include "src/types/types_registry.h"
 #include "src/tiles/tile_renderer_fonts.h"
 #include "src/tiles/tile_renderer_shared.h"
@@ -525,6 +526,57 @@ static bool extract_json_number_field(const String& src, const char* key, float&
   if (!end || end == start) return false;
   out = val;
   return true;
+}
+
+static bool extract_json_number_field_cstr(const char* src, const char* key, float& out) {
+  if (!src || !key || !*key) return false;
+  String pattern = String("\"") + key + "\"";
+  const char* idx = strstr(src, pattern.c_str());
+  if (!idx) return false;
+  const char* colon = strchr(idx + pattern.length(), ':');
+  if (!colon) return false;
+  const char* start = colon + 1;
+  while (*start == ' ' || *start == '\t' || *start == '\r' || *start == '\n') {
+    ++start;
+  }
+  bool quoted = *start == '"';
+  if (quoted) ++start;
+  char* end = nullptr;
+  float val = strtof(start, &end);
+  if (!end || end == start) return false;
+  if (quoted && *end != '"') return false;
+  out = val;
+  return true;
+}
+
+static bool extract_json_bool_field_cstr(const char* src, const char* key, bool& out) {
+  if (!src || !key || !*key) return false;
+  String pattern = String("\"") + key + "\"";
+  const char* idx = strstr(src, pattern.c_str());
+  if (!idx) return false;
+  const char* colon = strchr(idx + pattern.length(), ':');
+  if (!colon) return false;
+  const char* start = colon + 1;
+  while (*start == ' ' || *start == '\t' || *start == '\r' || *start == '\n') {
+    ++start;
+  }
+  if (strncmp(start, "true", 4) == 0) {
+    out = true;
+    return true;
+  }
+  if (strncmp(start, "false", 5) == 0) {
+    out = false;
+    return true;
+  }
+  if (*start == '"' && strncmp(start + 1, "true", 4) == 0) {
+    out = true;
+    return true;
+  }
+  if (*start == '"' && strncmp(start + 1, "false", 5) == 0) {
+    out = false;
+    return true;
+  }
+  return false;
 }
 
 static bool extract_json_object_field(const String& src, const char* key, String& out) {
@@ -1883,6 +1935,114 @@ static String media_icon_for_state(const String& state) {
   return "play";
 }
 
+static bool media_is_playing_state(const String& state) {
+  String lower = state;
+  lower.trim();
+  lower.toLowerCase();
+  return lower == "playing";
+}
+
+static String media_label_text(lv_obj_t* label) {
+  if (!label || lv_obj_has_flag(label, LV_OBJ_FLAG_HIDDEN)) return "";
+  const char* text = lv_label_get_text(label);
+  return text ? String(text) : String();
+}
+
+static bool media_widget_is_playing(const MediaTileWidgets& widgets) {
+  if (!widgets.play_pause_label) return false;
+  const char* current = lv_label_get_text(widgets.play_pause_label);
+  String pause_icon = getMdiChar("pause");
+  return current && pause_icon.length() && strcmp(current, pause_icon.c_str()) == 0;
+}
+
+static String media_friendly_name_from_entity_id(const String& entity_id) {
+  int dot = entity_id.indexOf('.');
+  String name = dot >= 0 ? entity_id.substring(dot + 1) : entity_id;
+  name.replace('_', ' ');
+  name.trim();
+  bool capitalize_next = true;
+  for (size_t i = 0; i < name.length(); ++i) {
+    char c = name.charAt(i);
+    if (capitalize_next && c >= 'a' && c <= 'z') {
+      name.setCharAt(i, static_cast<char>(c - 32));
+    }
+    capitalize_next = (c == ' ');
+  }
+  return name;
+}
+
+static String media_popup_title_for_tile(const Tile& tile) {
+  String title;
+  if (tile.sensor_entity.length()) {
+    title = haBridgeConfig.findSensorName(tile.sensor_entity);
+  }
+  if (!title.length()) title = tile.title;
+  title.trim();
+  if (!title.length() && tile.sensor_entity.length()) {
+    title = media_friendly_name_from_entity_id(tile.sensor_entity);
+  }
+  return title;
+}
+
+static String media_popup_icon_for_tile(const Tile& tile) {
+  String icon_name;
+  if (tile.sensor_entity.length()) {
+    icon_name = normalizeMdiIconName(haBridgeConfig.findEntityIcon(tile.sensor_entity));
+  }
+  if (!icon_name.length()) {
+    String custom_icon = tile.icon_name;
+    bool custom_icon_disabled = isMdiIconDisabled(custom_icon);
+    custom_icon = normalizeMdiIconName(custom_icon);
+    if (!custom_icon_disabled && custom_icon.length()) {
+      icon_name = custom_icon;
+    }
+  }
+  if (!icon_name.length()) icon_name = "television";
+  return icon_name;
+}
+
+static String media_entity_for_grid_index(GridType grid_type, uint8_t grid_index) {
+  (void)grid_type;
+  if (grid_index >= TILES_PER_GRID) return "";
+  const TileGridConfig& grid = tileConfig.getActiveGrid();
+  const Tile& tile = grid.tiles[grid_index];
+  if (tile.type != TILE_MEDIA) return "";
+  return tile.sensor_entity;
+}
+
+static void update_media_popup_from_widgets(GridType grid_type,
+                                            uint8_t grid_index,
+                                            MediaTileWidgets& widgets,
+                                            const String& state_override = String()) {
+  (void)grid_type;
+  if (grid_index >= TILES_PER_GRID) return;
+  const TileGridConfig& grid = tileConfig.getActiveGrid();
+  const Tile& tile = grid.tiles[grid_index];
+  if (tile.type != TILE_MEDIA || !tile.sensor_entity.length()) return;
+
+  MediaPopupInit init;
+  init.entity_id = tile.sensor_entity;
+  init.title = media_popup_title_for_tile(tile);
+  init.icon_name = media_popup_icon_for_tile(tile);
+  init.bg_color = tile.bg_color != 0 ? tile.bg_color : 0x2A2A2A;
+  init.media_title = media_label_text(widgets.media_title_label);
+  init.media_subtitle = media_label_text(widgets.media_subtitle_label);
+  init.is_playing = state_override.length() ? media_is_playing_state(state_override)
+                                            : media_widget_is_playing(widgets);
+  init.has_volume = widgets.has_media_volume;
+  init.volume_level = widgets.media_volume_level;
+  init.is_muted = widgets.media_is_muted;
+  const bool cover_visible = widgets.cover_ref &&
+                             widgets.cover_ref->dsc &&
+                             widgets.cover_clip &&
+                             !lv_obj_has_flag(widgets.cover_clip, LV_OBJ_FLAG_HIDDEN);
+  if (cover_visible) {
+    init.cover_dsc = widgets.cover_ref->dsc;
+    init.cover_hash = widgets.cover_ref->url_hash;
+  }
+  update_media_popup(init);
+}
+
 struct MediaCoverDecodeCtx {
   const uint8_t* data = nullptr;
   size_t len = 0;
@@ -2479,6 +2639,10 @@ static void process_media_cover_results() {
         if (cover_visibility_changed) {
           set_media_cover_text_layout(widgets, false);
         }
+        String entity_id = media_entity_for_grid_index(result.grid_type, result.grid_index);
+        if (entity_id.length()) {
+          update_media_popup_cover(entity_id.c_str(), nullptr, 0);
+        }
       }
       free_media_cover_dsc(result.dsc);
       continue;
@@ -2496,6 +2660,12 @@ static void process_media_cover_results() {
     ref->url_hash = result.url_hash;
     ref->failed_url_hash = 0;
     ref->failed_at_ms = 0;
+    {
+      String entity_id = media_entity_for_grid_index(result.grid_type, result.grid_index);
+      if (entity_id.length()) {
+        update_media_popup_cover(entity_id.c_str(), ref->dsc, ref->url_hash);
+      }
+    }
     result.dsc = nullptr;
     free_media_cover_dsc(old);
   }
@@ -2680,6 +2850,10 @@ void update_media_tile_state(GridType grid_type, uint8_t grid_index, const char*
   String app;
   String source;
   String channel;
+  float volume_level = 0.0f;
+  bool has_volume_level = false;
+  bool is_muted = false;
+  bool has_muted = false;
 
   const bool is_json_payload = *payload_start == '{';
   if (is_json_payload) {
@@ -2690,6 +2864,14 @@ void update_media_tile_state(GridType grid_type, uint8_t grid_index, const char*
     extract_json_string_field_cstr(payload_start, "app_name", app);
     extract_json_string_field_cstr(payload_start, "source", source);
     extract_json_string_field_cstr(payload_start, "media_channel", channel);
+    has_volume_level = extract_json_number_field_cstr(payload_start, "volume_level", volume_level);
+    if (!has_volume_level) {
+      has_volume_level = extract_json_number_field_cstr(payload_start, "volume", volume_level);
+    }
+    has_muted = extract_json_bool_field_cstr(payload_start, "is_volume_muted", is_muted);
+    if (!has_muted) {
+      has_muted = extract_json_bool_field_cstr(payload_start, "muted", is_muted);
+    }
   } else {
     state = payload_start;
     state.trim();
@@ -2708,6 +2890,17 @@ void update_media_tile_state(GridType grid_type, uint8_t grid_index, const char*
   sanitize_media_display_text(app);
   sanitize_media_display_text(source);
   sanitize_media_display_text(channel);
+
+  if (has_volume_level) {
+    if (volume_level > 1.0f && volume_level <= 100.0f) {
+      volume_level /= 100.0f;
+    }
+    if (volume_level < 0.0f) volume_level = 0.0f;
+    if (volume_level > 1.0f) volume_level = 1.0f;
+  }
+  widgets.has_media_volume = has_volume_level;
+  widgets.media_volume_level = has_volume_level ? volume_level : 0.0f;
+  if (has_muted) widgets.media_is_muted = is_muted;
 
   String main_text = media_first_non_empty(title, channel);
   const bool has_real_media_title = main_text.length() > 0;
@@ -2788,6 +2981,8 @@ void update_media_tile_state(GridType grid_type, uint8_t grid_index, const char*
       Serial.println("[MediaCover] keine Cover-URL im Media-Payload");
     }
   }
+
+  update_media_popup_from_widgets(grid_type, grid_index, widgets, state);
 }
 
 void queue_media_tile_update(GridType grid_type, uint8_t grid_index, const char* payload) {

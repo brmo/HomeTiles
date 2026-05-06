@@ -15,6 +15,7 @@
 #include "src/ui/light_popup.h"
 #include "src/ui/sensor_popup.h"
 #include "src/ui/weather_popup.h"
+#include "src/ui/media_popup.h"
 
 namespace {
 
@@ -966,6 +967,7 @@ void show_energy_popup(const EnergyPopupInit& init) {
   hide_light_popup();
   hide_sensor_popup();
   hide_weather_popup();
+  hide_media_popup();
 
   if (g_energy_popup_ctx && g_energy_popup_ctx->overlay && g_energy_popup_ctx->card) {
     apply_init_to_context(g_energy_popup_ctx, init);

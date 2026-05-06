@@ -1,6 +1,7 @@
 #include "src/ui/weather_popup.h"
 #include "src/ui/light_popup.h"
 #include "src/ui/sensor_popup.h"
+#include "src/ui/media_popup.h"
 #include "src/network/mqtt_handlers.h"
 #include "src/core/display_manager.h"
 #include "src/ui/tab_tiles_unified.h"
@@ -3808,6 +3809,7 @@ void show_weather_popup(const WeatherPopupInit& init) {
 
   hide_light_popup();
   hide_sensor_popup();
+  hide_media_popup();
 
   if (g_weather_popup_ctx && g_weather_popup_ctx->overlay && g_weather_popup_ctx->card) {
     apply_init_to_context(g_weather_popup_ctx, init);

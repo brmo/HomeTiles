@@ -1,6 +1,7 @@
 #include "src/ui/light_popup.h"
 #include "src/ui/sensor_popup.h"
 #include "src/ui/weather_popup.h"
+#include "src/ui/media_popup.h"
 #include "src/core/config_manager.h"
 #include "src/core/display_manager.h"
 #include "src/core/i18n.h"
@@ -24,8 +25,8 @@ constexpr int kCardPad = 20;
 constexpr int kContentPadTop = 94;
 constexpr int kHeaderIconOffsetX = 0;
 constexpr int kHeaderIconOffsetY = 0;
-constexpr int kTopValueHeight = 60;
-constexpr int kTopValueBottomPad = 16;
+constexpr int kTopValueHeight = 74;
+constexpr int kTopValueBottomPad = 0;
 constexpr int kMainPanelHeight = 384;
 constexpr int kControlsRowTopPad = 12;
 constexpr int kControlsRowHeight = 104;
@@ -1562,6 +1563,7 @@ void show_light_popup(const LightPopupInit& init) {
   if (!init.entity_id.length()) return;
   hide_sensor_popup();
   hide_weather_popup();
+  hide_media_popup();
 
   if (g_light_popup_ctx && g_light_popup_ctx->overlay && g_light_popup_ctx->card) {
     apply_init_to_context(g_light_popup_ctx, init);
