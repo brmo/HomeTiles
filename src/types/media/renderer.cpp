@@ -4,6 +4,7 @@
 
 #include "src/network/ha_bridge_config.h"
 #include "src/network/mqtt_handlers.h"
+#include "src/devices/device_select.h"
 #include "src/tiles/mdi_icons.h"
 #include "src/tiles/tile_renderer_fonts.h"
 #include "src/tiles/tile_renderer_shared.h"
@@ -11,6 +12,16 @@
 #include <stdlib.h>
 
 namespace {
+
+#if defined(DEVICE_WAVESHARE_4B)
+static constexpr lv_coord_t kMediaControlButtonSize = 72;
+static constexpr lv_coord_t kMediaControlSideOffset = 96;
+static constexpr lv_coord_t kMediaControlBottomOffset = -8;
+#else
+static constexpr lv_coord_t kMediaControlButtonSize = 56;
+static constexpr lv_coord_t kMediaControlSideOffset = 76;
+static constexpr lv_coord_t kMediaControlBottomOffset = 0;
+#endif
 
 struct MediaEventData {
   String entity_id;
@@ -108,8 +119,8 @@ static lv_obj_t* create_media_control_button(lv_obj_t* parent,
 
   lv_obj_t* btn = lv_button_create(parent);
   if (!btn) return nullptr;
-  lv_obj_set_size(btn, 56, 56);
-  lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, x_ofs, 0);
+  lv_obj_set_size(btn, kMediaControlButtonSize, kMediaControlButtonSize);
+  lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, x_ofs, kMediaControlBottomOffset);
   lv_obj_set_style_bg_color(btn, primary ? lv_color_white() : lv_color_black(), LV_PART_MAIN | LV_STATE_DEFAULT);
   lv_obj_set_style_bg_opa(btn, primary ? LV_OPA_COVER : LV_OPA_TRANSP, LV_PART_MAIN | LV_STATE_DEFAULT);
   lv_obj_set_style_bg_color(btn, primary ? lv_color_hex(0xD8D8D8) : lv_color_white(), LV_PART_MAIN | LV_STATE_PRESSED);
@@ -291,7 +302,13 @@ lv_obj_t* render_media_tile(lv_obj_t* parent,
     enable_event_bubble(title_label);
   }
 
+#if defined(DEVICE_WAVESHARE_4B)
+  const lv_font_t* media_font = (tile.span_w > 1 || tile.span_h > 1) ? &ui_font_28 : &ui_font_24;
+  const lv_font_t* media_subtitle_font = &ui_font_20;
+#else
   const lv_font_t* media_font = (tile.span_w > 1 || tile.span_h > 1) ? &ui_font_24 : &ui_font_20;
+  const lv_font_t* media_subtitle_font = FONT_SMALL;
+#endif
 
   lv_obj_t* media_title = lv_label_create(card);
   if (media_title) {
@@ -307,7 +324,7 @@ lv_obj_t* render_media_tile(lv_obj_t* parent,
 
   lv_obj_t* subtitle = lv_label_create(card);
   if (subtitle) {
-    set_label_style(subtitle, lv_color_hex(0xD8DEE9), FONT_SMALL);
+    set_label_style(subtitle, lv_color_hex(0xD8DEE9), media_subtitle_font);
     lv_label_set_long_mode(subtitle, LV_LABEL_LONG_SCROLL);
     apply_media_text_scroll_style(subtitle);
     lv_obj_set_width(subtitle, LV_PCT(82));
@@ -335,7 +352,7 @@ lv_obj_t* render_media_tile(lv_obj_t* parent,
                                                  tile.sensor_entity,
                                                  "previous",
                                                  "skip-previous",
-                                                 -76,
+                                                 -kMediaControlSideOffset,
                                                  card_color,
                                                  false,
                                                  media_title,
@@ -346,7 +363,7 @@ lv_obj_t* render_media_tile(lv_obj_t* parent,
                                              tile.sensor_entity,
                                              "next",
                                              "skip-next",
-                                             76,
+                                             kMediaControlSideOffset,
                                              card_color,
                                              false,
                                              media_title,

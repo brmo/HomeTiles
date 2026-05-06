@@ -283,7 +283,7 @@ void setup() {
   ui_hotspot_cb = set_hotspot_mode;
   ui_build_waiter = xTaskGetCurrentTaskHandle();
   xTaskCreatePinnedToCore(build_ui_task, "buildUI", 24576, nullptr, 2, nullptr, ARDUINO_RUNNING_CORE);
-  if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(10000)) == 0) {
+  if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(30000)) == 0) {
     Serial.println("[Setup] WARNUNG: UI Build Timeout!");
   }
   ui_build_waiter = nullptr;
