@@ -7,6 +7,7 @@
 #include <nvs_flash.h>
 #include <esp_err.h>
 #include <esp_ota_ops.h>
+#include <esp_heap_caps.h>
 
 #include "src/core/board_hal.h"
 #include "src/core/display_manager.h"
@@ -49,12 +50,26 @@ static scene_publish_cb_t ui_scene_cb = nullptr;
 static hotspot_start_cb_t ui_hotspot_cb = nullptr;
 
 static void log_memory_status(const char* tag) {
-  Serial.printf("[Mem] %s | Heap free=%u KB | Heap min=%u KB | PSRAM free=%u KB | PSRAM total=%u KB\n",
+  const uint32_t heap_free = ESP.getFreeHeap();
+  const uint32_t heap_min = ESP.getMinFreeHeap();
+  const uint32_t int_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+  const uint32_t int_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+  const uint32_t dma_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+  const uint32_t dma_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+  const uint32_t psram_free = ESP.getFreePsram();
+  const uint32_t psram_largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+  Serial.printf("[Mem] %s | Heap free=%u KB | Heap min=%u KB | Int free=%u KB | Int largest=%u KB | DMA free=%u KB | DMA largest=%u KB | PSRAM free=%u KB | PSRAM largest=%u KB | PSRAM total=%u KB\n",
                 tag ? tag : "?",
-                ESP.getFreeHeap() / 1024,
-                ESP.getMinFreeHeap() / 1024,
-                ESP.getFreePsram() / 1024,
+                heap_free / 1024,
+                heap_min / 1024,
+                int_free / 1024,
+                int_largest / 1024,
+                dma_free / 1024,
+                dma_largest / 1024,
+                psram_free / 1024,
+                psram_largest / 1024,
                 ESP.getPsramSize() / 1024);
+  Serial.flush();
 }
 
 static void confirm_running_ota_if_needed() {
@@ -207,6 +222,7 @@ void setup() {
     while(1) delay(1000);
   }
   Serial.println("[Setup] BoardHAL OK");
+  log_memory_status("after-boardhal");
   Serial.flush();
 
   // LittleFS (primary storage on flash)
@@ -217,18 +233,22 @@ void setup() {
     while(1) delay(1000);
   }
   Serial.println("[Setup] LittleFS OK");
+  log_memory_status("after-littlefs");
   Serial.flush();
 
   // SD Card (optional, for screenshots)
   Serial.println("[Setup] SD Card init...");
   Serial.flush();
+  log_memory_status("before-sd");
   BoardHAL::initSDCard();
+  log_memory_status("after-sd");
   Serial.flush();
 
   // Migrate tile data from SD to LittleFS on first boot
   Serial.println("[Setup] Storage migration check...");
   Serial.flush();
   Device::migrateStorageFromSD();
+  log_memory_status("after-storage-migration");
   Serial.flush();
 
   Serial.println("[Setup] displayManager.init()...");
@@ -238,17 +258,20 @@ void setup() {
     while(1) delay(1000);
   }
   Serial.println("[Setup] Display OK");
+  log_memory_status("after-display");
   Serial.flush();
 
   Serial.println("[Setup] powerManager.init()...");
   Serial.flush();
   powerManager.init();
   Serial.println("[Setup] Power OK");
+  log_memory_status("after-power");
   Serial.flush();
 
   Serial.println("[Setup] NVS init...");
   Serial.flush();
   init_nvs();
+  log_memory_status("after-nvs");
   Serial.flush();
 
   Serial.println("[Setup] Loading configs...");
@@ -261,6 +284,7 @@ void setup() {
     displayManager.setRotation(configManager.getConfig().display_rotation_quarters);
   }
   Serial.println("[Setup] Configs OK");
+  log_memory_status("after-configs");
   Serial.flush();
 
   // Waveshare 720×720: Square display, no rotation needed.
@@ -324,6 +348,7 @@ void setup() {
     networkManager.init();
     if (WiFi.status() == WL_CONNECTED) uiManager.scheduleNtpSync(0);
     Serial.println("[Setup] Network OK");
+    log_memory_status("after-network-init");
     Serial.flush();
 
     Serial.println("[Setup] Game WebSocket Server...");
@@ -346,6 +371,9 @@ void loop() {
   static bool wake_cache_refresh_pending = false;
   static bool wake_bridge_request_pending = false;
   static uint32_t wake_bridge_request_until_ms = 0;
+  static bool logged_wifi_connected = false;
+  static bool logged_mqtt_connected = false;
+  static uint32_t last_mem_log_ms = 0;
   if (first_run) {
     Serial.println("[Loop] ERSTE ITERATION!");
     Serial.flush();
@@ -541,6 +569,19 @@ void loop() {
       if (first_run) Serial.println("[Loop] networkManager.update()...");
       networkManager.update();
     }
+    if (!logged_wifi_connected && networkManager.isWifiConnected()) {
+      logged_wifi_connected = true;
+      log_memory_status("wifi-connected");
+    }
+    if (!logged_mqtt_connected && networkManager.isMqttConnected()) {
+      logged_mqtt_connected = true;
+      log_memory_status("mqtt-connected");
+    }
+  }
+
+  if (now - last_mem_log_ms >= 60000UL) {
+    last_mem_log_ms = now;
+    log_memory_status("runtime-60s");
   }
 
 

@@ -43,6 +43,10 @@ private:
 
   static void flush_cb(lv_display_t* lv_disp, const lv_area_t* area, uint8_t* px_map);
   static void touch_cb(lv_indev_t* indev_drv, lv_indev_data_t* data);
+
+  // Allocates LVGL draw buffers, preferring a small fast internal-SRAM band and
+  // falling back to the previous PSRAM double buffer when internal RAM is scarce.
+  static bool allocDrawBuffers(size_t requested_lines, lv_display_render_mode_t mode);
 };
 
 extern DisplayManager displayManager;

@@ -35,6 +35,19 @@ static constexpr bool kEnableReverseFlushEffect = true;
 static constexpr uintptr_t kCacheLineSize = 64;
 static bool g_reverse_flush_once = false;
 static volatile uint32_t g_fullscreen_flush_seq = 0;
+static size_t g_requested_buffer_lines = 0;
+
+// --- Draw buffer placement --------------------------------------------------
+// The 8-inch panel renders 1280x800 = 1.0 Mpx. Software-rasterising every frame
+// into PSRAM is the dominant cost on this board (PSRAM write bandwidth). We try
+// to place a small LVGL draw band into fast internal SRAM instead. A single
+// buffer is enough here: the flush is fully synchronous (blocking PPA rotate),
+// so a second buffer would bring no render/flush overlap anyway. If internal RAM
+// is too scarce we fall back to the previous PSRAM double buffer, so behaviour
+// is never worse than before.
+static constexpr size_t kInternalDrawReserveBytes = 150 * 1024;  // keep free for WiFi/SDIO/lwIP
+static constexpr size_t kInternalDrawMaxBytes     = 72 * 1024;   // cap one SRAM band
+static constexpr size_t kInternalDrawMinLines     = 16;          // below this SRAM isn't worth it
 
 static inline void commit_display_if_last(lv_display_t* lv_disp) {
 #if defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
@@ -119,6 +132,82 @@ void DisplayManager::setReverseFlushOnce() {
   g_reverse_flush_once = true;
 }
 
+bool DisplayManager::allocDrawBuffers(size_t requested_lines, lv_display_render_mode_t mode) {
+  if (!disp || requested_lines == 0) return false;
+  if (g_bytes_per_pixel == 0) {
+    g_bytes_per_pixel = lv_color_format_get_size(lv_display_get_color_format(disp));
+    if (g_bytes_per_pixel == 0) g_bytes_per_pixel = 2;
+  }
+  const size_t line_bytes = (size_t)SCREEN_WIDTH * g_bytes_per_pixel;
+  if (line_bytes == 0) return false;
+
+  lv_color_t* nb1 = nullptr;
+  lv_color_t* nb2 = nullptr;
+  size_t use_lines = requested_lines;
+  bool single = false;
+  bool psram = false;
+
+  // 1) Preferred: one small band in fast internal SRAM.
+  const size_t free_internal =
+      heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+  const size_t budget =
+      (free_internal > kInternalDrawReserveBytes) ? (free_internal - kInternalDrawReserveBytes) : 0;
+  size_t cap_bytes = budget < kInternalDrawMaxBytes ? budget : kInternalDrawMaxBytes;
+  size_t sram_lines = cap_bytes / line_bytes;
+  if (sram_lines > requested_lines) sram_lines = requested_lines;
+  if (sram_lines >= kInternalDrawMinLines) {
+    nb1 = (lv_color_t*)heap_caps_aligned_alloc(64, line_bytes * sram_lines,
+                                               MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+    if (nb1) {
+      use_lines = sram_lines;
+      single = true;
+    }
+  }
+
+  // 2) Fallback: PSRAM double buffer at the requested size (previous behaviour).
+  if (!nb1) {
+    const size_t bytes = line_bytes * requested_lines;
+    nb1 = (lv_color_t*)heap_caps_aligned_alloc(64, bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
+    nb2 = (lv_color_t*)heap_caps_aligned_alloc(64, bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
+    if (nb1 && nb2) {
+      psram = true;
+    } else {
+      if (nb1) heap_caps_free(nb1);
+      if (nb2) heap_caps_free(nb2);
+      // 3) Last resort: internal double buffer.
+      nb1 = (lv_color_t*)heap_caps_aligned_alloc(64, bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+      nb2 = (lv_color_t*)heap_caps_aligned_alloc(64, bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+      if (!nb1 || !nb2) {
+        if (nb1) heap_caps_free(nb1);
+        if (nb2) heap_caps_free(nb2);
+        return false;
+      }
+    }
+    use_lines = requested_lines;
+    single = false;
+  }
+
+  const size_t buf_bytes = line_bytes * use_lines;
+  lv_display_set_buffers(disp, nb1, nb2, buf_bytes, mode);
+
+  if (buf1) heap_caps_free(buf1);
+  if (buf2) heap_caps_free(buf2);
+  buf1 = nb1;
+  buf2 = nb2;
+  g_buffer_lines = use_lines;
+  g_requested_buffer_lines = requested_lines;
+  g_render_mode = mode;
+
+  Serial.printf("[Display] Draw-Puffer: %s %s, %u Zeilen, %u Bytes/Puffer | int frei=%u KB | dma frei=%u KB | dma largest=%u KB\n",
+                single ? "1x" : "2x",
+                single ? "SRAM(schnell)" : (psram ? "PSRAM" : "SRAM"),
+                (unsigned)use_lines, (unsigned)buf_bytes,
+                (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+                (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) / 1024),
+                (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) / 1024));
+  return true;
+}
+
 bool DisplayManager::setBufferLines(size_t lines) {
   return setBufferLines(lines, LV_DISPLAY_RENDER_MODE_PARTIAL);
 }
@@ -133,48 +222,21 @@ bool DisplayManager::setBufferLines(size_t lines, lv_display_render_mode_t rende
       g_bytes_per_pixel = 2;
     }
   }
-  if (g_buffer_lines == lines && g_render_mode == render_mode) {
+  if (g_requested_buffer_lines == lines && g_render_mode == render_mode) {
     return true;
   }
 
   lv_refr_now(disp);
 
-  const size_t bytes = SCREEN_WIDTH * lines * g_bytes_per_pixel;
-  if (g_buffer_lines == lines && g_render_mode != render_mode) {
-    if (!buf1 || !buf2) return false;
+  if (g_requested_buffer_lines == lines && g_render_mode != render_mode && buf1) {
+    const size_t bytes = (size_t)SCREEN_WIDTH * g_buffer_lines * g_bytes_per_pixel;
     lv_display_set_buffers(disp, buf1, buf2, bytes, render_mode);
     g_render_mode = render_mode;
-    Serial.printf("[Display] Render-Mode umgestellt: %d (Zeilen=%d)\n", (int)render_mode, (int)lines);
+    Serial.printf("[Display] Render-Mode umgestellt: %d (Zeilen=%d)\n", (int)render_mode, (int)g_buffer_lines);
     return true;
   }
-  lv_color_t* new_buf1 = (lv_color_t*)heap_caps_aligned_alloc(64, bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
-  lv_color_t* new_buf2 = (lv_color_t*)heap_caps_aligned_alloc(64, bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
-  bool using_psram = true;
-  if (!new_buf1 || !new_buf2) {
-    if (new_buf1) heap_caps_free(new_buf1);
-    if (new_buf2) heap_caps_free(new_buf2);
-    new_buf1 = (lv_color_t*)heap_caps_aligned_alloc(64, bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
-    new_buf2 = (lv_color_t*)heap_caps_aligned_alloc(64, bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
-    using_psram = false;
-  }
-  if (!new_buf1 || !new_buf2) {
-    if (new_buf1) heap_caps_free(new_buf1);
-    if (new_buf2) heap_caps_free(new_buf2);
-    return false;
-  }
 
-  lv_display_set_buffers(disp, new_buf1, new_buf2, bytes, render_mode);
-
-  if (buf1) heap_caps_free(buf1);
-  if (buf2) heap_caps_free(buf2);
-  buf1 = new_buf1;
-  buf2 = new_buf2;
-  g_buffer_lines = lines;
-  g_render_mode = render_mode;
-
-  Serial.printf("[Display] DMA-Puffer umgestellt: 2x %d Bytes (je %d Zeilen, %s, %u Bpp)\n",
-                bytes, (int)lines, using_psram ? "PSRAM" : "SRAM", g_bytes_per_pixel);
-  return true;
+  return allocDrawBuffers(lines, render_mode);
 }
 
 size_t DisplayManager::getBufferLines() const {
@@ -393,53 +455,11 @@ bool DisplayManager::init() {
   }
 
   // Kleinere DMA-Puffer fuer mehr verfuegbaren Heap (wichtig bei vielen Kacheln!)
-  static constexpr size_t TARGET_LINES   = SCREEN_HEIGHT / Device::kDisplayFlushBands;
-  static constexpr size_t FALLBACK_LINES = 96;
-
-  auto release_buffers = []() {
-    if (buf1) heap_caps_free(buf1);
-    if (buf2) heap_caps_free(buf2);
-    buf1 = nullptr;
-    buf2 = nullptr;
-  };
-
-  auto allocate_buffers = [](size_t lines, uint32_t caps) -> bool {
-    size_t bytes = SCREEN_WIDTH * lines * g_bytes_per_pixel;
-    buf1 = (lv_color_t*)heap_caps_aligned_alloc(64, bytes, caps);
-    buf2 = (lv_color_t*)heap_caps_aligned_alloc(64, bytes, caps);
-    if (!buf1 || !buf2) {
-      if (buf1) heap_caps_free(buf1);
-      if (buf2) heap_caps_free(buf2);
-      buf1 = buf2 = nullptr;
-      return false;
-    }
-    return true;
-  };
-
-  size_t buffer_lines = TARGET_LINES;
-  bool using_psram = false;
-
-  if (!allocate_buffers(buffer_lines, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA)) {
-    release_buffers();
-    buffer_lines = FALLBACK_LINES;
-    if (!allocate_buffers(buffer_lines, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA)) {
-      release_buffers();
-      buffer_lines = TARGET_LINES;
-      if (!allocate_buffers(buffer_lines, MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA)) {
-        Serial.println("[Display] DMA-Buffer-Allokation fehlgeschlagen!");
-        return false;
-      }
-      using_psram = true;
-    }
+  static constexpr size_t TARGET_LINES = SCREEN_HEIGHT / Device::kDisplayFlushBands;
+  if (!allocDrawBuffers(TARGET_LINES, LV_DISPLAY_RENDER_MODE_PARTIAL)) {
+    Serial.println("[Display] DMA-Buffer-Allokation fehlgeschlagen!");
+    return false;
   }
-
-  const size_t buf_bytes = SCREEN_WIDTH * buffer_lines * g_bytes_per_pixel;
-
-  lv_display_set_buffers(disp, buf1, buf2, buf_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
-  g_buffer_lines = buffer_lines;
-  g_render_mode = LV_DISPLAY_RENDER_MODE_PARTIAL;
-  Serial.printf("[OK] DMA-Puffer: 2x %d Bytes (je %d Zeilen, %s, %u Bpp)\n",
-                buf_bytes, buffer_lines, using_psram ? "PSRAM" : "SRAM", g_bytes_per_pixel);
 
   // Touch-Input
   indev = lv_indev_create();
