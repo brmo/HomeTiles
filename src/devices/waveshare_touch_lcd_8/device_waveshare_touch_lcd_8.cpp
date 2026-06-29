@@ -50,6 +50,13 @@ constexpr uint8_t kInvalidTouchTrackId = 0xFF;
 // few ms (full screen); if it ever blocks longer than this the engine is stuck,
 // so we bail out and rotate that band on the CPU instead of freezing forever.
 constexpr uint32_t kPpaRotateTimeoutMs = 200;
+// The PPA SRM engine stalls (and then permanently jams its single pending slot)
+// when asked to rotate a narrow cover-sized block out of the fast SRAM draw
+// buffer. Wide bands (full-screen paint, tab switches) rotate fine and are where
+// the speed matters, so only those go through the PPA; narrower partial flushes
+// (covers, small text/sensor updates) take the CPU rotate, which is cheap for
+// such small areas and never jams the engine.
+constexpr int32_t kPpaMinRotateWidth = 256;
 
 esp_lcd_dsi_bus_handle_t g_dsi_bus = nullptr;
 esp_lcd_panel_io_handle_t g_panel_io = nullptr;
@@ -61,6 +68,7 @@ SemaphoreHandle_t g_transfer_done = nullptr;
 SemaphoreHandle_t g_refresh_done = nullptr;
 SemaphoreHandle_t g_ppa_done = nullptr;   // PPA rotate completion (non-blocking mode)
 bool g_ppa_async_ready = false;           // true once the PPA done-callback is armed
+bool g_ppa_disabled = false;              // set after a stall so we stop feeding the jammed engine
 
 DEV_I2C_Port g_i2c = {};
 bool g_i2c_ready = false;
@@ -402,7 +410,7 @@ bool draw_landscape_area(int32_t x, int32_t y, int32_t w, int32_t h, const uint1
     dst_y = x;
   }
 
-  if (g_ppa_handle && g_panel_fb_ready) {
+  if (g_ppa_handle && g_panel_fb_ready && !g_ppa_disabled && w >= kPpaMinRotateWidth) {
     uint16_t* fb = panel_fb();
     if (fb) {
       flush_cache_for_dma(data, static_cast<size_t>(w) * static_cast<size_t>(h) * sizeof(uint16_t));
@@ -448,11 +456,18 @@ bool draw_landscape_area(int32_t x, int32_t y, int32_t w, int32_t h, const uint1
           if (xSemaphoreTake(g_ppa_done, pdMS_TO_TICKS(kPpaRotateTimeoutMs)) == pdTRUE) {
             ppa_ok = true;
           } else {
-            Serial.println("[Device/WaveshareTouchLCD8] PPA rotate timeout -> CPU fallback");
+            // A stalled transaction keeps occupying the single pending slot, so
+            // the engine is jammed from here on: stop using it (CPU rotate only)
+            // to avoid an endless flood of failed submits.
+            Serial.printf("[Device/WaveshareTouchLCD8] PPA rotate timeout x=%ld y=%ld w=%ld h=%ld -> CPU; disabling PPA for session\n",
+                          static_cast<long>(x), static_cast<long>(y),
+                          static_cast<long>(w), static_cast<long>(h));
+            g_ppa_disabled = true;
           }
         } else {
-          Serial.printf("[Device/WaveshareTouchLCD8] PPA rotate submit failed err=%d -> CPU fallback\n",
+          Serial.printf("[Device/WaveshareTouchLCD8] PPA rotate submit failed err=%d -> CPU; disabling PPA for session\n",
                         static_cast<int>(err));
+          g_ppa_disabled = true;
         }
       } else {
         oper.mode = PPA_TRANS_MODE_BLOCKING;
