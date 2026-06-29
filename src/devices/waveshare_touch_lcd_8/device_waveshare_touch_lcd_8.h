@@ -35,6 +35,7 @@ void displayWaitDMA();
 void displayCommit();
 void displayFillScreen(uint16_t color);
 void displaySetRotation(uint8_t rotation);
+void pausePpaFor(uint32_t duration_ms);
 
 void setBrightness(uint8_t value);
 uint8_t getBrightness();
