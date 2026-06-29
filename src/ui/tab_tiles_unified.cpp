@@ -890,16 +890,16 @@ void tiles_process_reload_requests() {
         if (!tileConfig.setActiveFolderCached(folder_id, target->grid_config)) {
           return;
         }
-        if (previous && previous != target && previous->grid) {
-          lv_obj_add_flag(previous->grid, LV_OBJ_FLAG_HIDDEN);
-        }
         restore_active_cache(*target);
-        lv_obj_clear_flag(target->grid, LV_OBJ_FLAG_HIDDEN);
         apply_cached_states(GridType::TAB0, target->grid_config);
         process_sensor_update_queue();
         process_switch_update_queue();
         process_weather_update_queue();
         process_media_update_queue();
+        if (previous && previous != target && previous->grid) {
+          lv_obj_add_flag(previous->grid, LV_OBJ_FLAG_HIDDEN);
+        }
+        lv_obj_clear_flag(target->grid, LV_OBJ_FLAG_HIDDEN);
         lv_display_t* disp = lv_obj_get_display(target->grid);
         if (disp) {
           lv_obj_invalidate(target->grid);
@@ -930,18 +930,17 @@ void tiles_process_reload_requests() {
         return;
       }
 
-      if (previous && previous != target && previous->grid) {
-        lv_obj_add_flag(previous->grid, LV_OBJ_FLAG_HIDDEN);
-      }
-
       restore_active_cache(*target);
       if (target->grid) {
-        lv_obj_clear_flag(target->grid, LV_OBJ_FLAG_HIDDEN);
         apply_cached_states(GridType::TAB0, target->grid_config);
         process_sensor_update_queue();
         process_switch_update_queue();
         process_weather_update_queue();
         process_media_update_queue();
+        if (previous && previous != target && previous->grid) {
+          lv_obj_add_flag(previous->grid, LV_OBJ_FLAG_HIDDEN);
+        }
+        lv_obj_clear_flag(target->grid, LV_OBJ_FLAG_HIDDEN);
         lv_display_t* disp = lv_obj_get_display(target->grid);
         if (disp) {
           lv_obj_invalidate(target->grid);

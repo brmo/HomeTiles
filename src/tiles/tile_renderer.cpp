@@ -2530,6 +2530,20 @@ static bool media_cover_has_hidden_ancestor(lv_obj_t* obj) {
   return false;
 }
 
+static bool media_obj_is_visible(lv_obj_t* obj) {
+  return obj &&
+         !lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN) &&
+         !media_cover_has_hidden_ancestor(obj);
+}
+
+static bool media_widgets_are_visible(const MediaTileWidgets& widgets) {
+  return media_obj_is_visible(widgets.cover_clip) ||
+         media_obj_is_visible(widgets.cover_image) ||
+         media_obj_is_visible(widgets.media_title_label) ||
+         media_obj_is_visible(widgets.media_subtitle_label) ||
+         media_obj_is_visible(widgets.play_pause_label);
+}
+
 static void set_media_cover_text_layout(MediaTileWidgets& widgets, bool cover_visible) {
   const bool has_subtitle = widgets.media_subtitle_label &&
                             !lv_obj_has_flag(widgets.media_subtitle_label, LV_OBJ_FLAG_HIDDEN);
@@ -2785,7 +2799,9 @@ static void process_media_cover_results() {
       continue;
     }
 
-    pause_display_ppa_for_media_update();
+    if (media_widgets_are_visible(widgets)) {
+      pause_display_ppa_for_media_update();
+    }
     lv_image_dsc_t* old = ref->dsc;
     lv_image_set_src(widgets.cover_image, result.dsc);
     const bool cover_visibility_changed = set_media_cover_visible(widgets, true);
@@ -2903,7 +2919,9 @@ static bool update_media_cover_from_base64(MediaTileWidgets& widgets, const Stri
     return false;
   }
 
-  pause_display_ppa_for_media_update();
+  if (media_widgets_are_visible(widgets)) {
+    pause_display_ppa_for_media_update();
+  }
   lv_image_dsc_t* old = ref->dsc;
   lv_image_set_src(widgets.cover_image, dsc);
   const bool cover_visibility_changed = set_media_cover_visible(widgets, true);
@@ -3057,7 +3075,7 @@ void update_media_tile_state(GridType grid_type, uint8_t grid_index, const char*
                                       (cover_ref->dsc || cover_ref->requested_url_hash != 0);
   const bool should_update_cover = is_json_payload &&
                                    (media_text_changed || !cover_ready_or_pending);
-  if (media_text_changed || should_update_cover) {
+  if ((media_text_changed || should_update_cover) && media_widgets_are_visible(widgets)) {
     pause_display_ppa_for_media_update();
   }
 
