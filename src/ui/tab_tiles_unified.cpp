@@ -45,6 +45,10 @@ struct FolderCacheEntry {
 
 static std::deque<FolderCacheEntry> g_folder_cache;
 static FolderCacheEntry* g_active_cache = nullptr;
+// Set from the web-server task, drained in the render loop: dropping cached
+// folder grids touches g_folder_cache (a deque) and LVGL (lv_obj_del_async),
+// neither of which is safe to do off the loop thread.
+static volatile bool g_folder_cache_invalidate_requested = false;
 static TileWidgetCache g_cache_build_saved_widgets;
 static bool g_folder_switch_pending = false;
 static uint16_t g_pending_folder_id = kInvalidFolderId;
@@ -853,17 +857,32 @@ void tiles_switch_to_folder(uint16_t folder_id) {
 }
 
 void tiles_invalidate_folder(uint16_t folder_id) {
-  FolderCacheEntry* entry = find_folder_cache(folder_id);
-  if (!entry) return;
-  entry->dirty = true;
-  entry->grid_loaded = false;
-  if (entry != g_active_cache) {
-    clear_cache_entry(*entry);
+  // Called from the web-server task. Do NOT touch g_folder_cache or LVGL here:
+  // iterating the deque and calling lv_obj_del_async would race the render loop
+  // (and previously crashed). Just flag it; the loop drops the stale caches in
+  // process_folder_cache_invalidation(). Coarse (all non-active caches) is fine
+  // -- they simply reload from NVS the next time they are opened.
+  (void)folder_id;
+  g_folder_cache_invalidate_requested = true;
+}
+
+// Loop-only: actually drop the cached folder grids so they rebuild from NVS.
+static void process_folder_cache_invalidation() {
+  if (!g_folder_cache_invalidate_requested) return;
+  g_folder_cache_invalidate_requested = false;
+  for (auto& entry : g_folder_cache) {
+    entry.dirty = true;
+    entry.grid_loaded = false;
+    if (&entry != g_active_cache) {
+      clear_cache_entry(entry);
+    }
   }
 }
 
 void tiles_process_reload_requests() {
   bool did_reload = false;
+
+  process_folder_cache_invalidation();
 
   if (g_folder_switch_pending) {
     g_folder_switch_pending = false;

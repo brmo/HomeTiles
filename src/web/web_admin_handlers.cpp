@@ -1497,7 +1497,13 @@ void WebAdminServer::handleSaveTiles() {
     server.send(500, "application/json", "{\"success\":false,\"error\":\"Out of memory\"}");
     return;
   }
-  tileConfig.loadFolderGrid(folder_id, *grid);
+  // Never overwrite a folder from a failed load: a single tile edit rewrites the
+  // whole grid, so if the existing grid can't be read we must abort instead of
+  // persisting an (empty) grid over every tile in the folder.
+  if (!tileConfig.loadFolderGrid(folder_id, *grid)) {
+    server.send(500, "application/json", "{\"success\":false,\"error\":\"Folder load failed\"}");
+    return;
+  }
 
   Tile& tile = grid->tiles[index];
   Tile previous_tile = tile;
@@ -1680,7 +1686,11 @@ void WebAdminServer::handleReorderTiles() {
   }
 
   TileGridConfig grid{};
-  tileConfig.loadFolderGrid(folder_id, grid);
+  // Abort rather than overwrite the whole folder if the current grid can't be loaded.
+  if (!tileConfig.loadFolderGrid(folder_id, grid)) {
+    server.send(500, "application/json", "{\"success\":false,\"error\":\"Folder load failed\"}");
+    return;
+  }
 
   Tile& tile_to = grid.tiles[to];
 
