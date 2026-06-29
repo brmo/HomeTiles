@@ -689,6 +689,30 @@ void appendAdminScripts(String& html) {
     setOtaUi(t('otaUploading') + ' 0%', 'busy', '', 0);
     showNotification(t('otaUploading'));
 
+    try {
+      const prepRes = await fetch('/api/ota/prepare?size=' + encodeURIComponent(String(file.size || 0)), {
+        method: 'POST',
+        cache: 'no-store',
+        credentials: 'same-origin'
+      });
+      const prepData = await prepRes.json().catch(() => ({}));
+      if (!prepRes.ok || !prepData.success) {
+        throw new Error(prepData.error || t('otaFailed'));
+      }
+      await new Promise(resolve => window.setTimeout(resolve, 250));
+    } catch (err) {
+      const message = err?.message || t('otaFailed');
+      setOtaUi(message, 'idle', 'error');
+      showNotification(message, false);
+      if (button) {
+        button.disabled = false;
+        button.textContent = button.dataset.defaultLabel || 'Update';
+      }
+      if (chooseBtn) chooseBtn.disabled = false;
+      input.disabled = false;
+      return;
+    }
+
     const formData = new FormData();
     formData.append('firmware', file);
 

@@ -14,6 +14,7 @@
 #include "src/core/power_manager.h"
 #include "src/core/battery_state.h"
 #include "src/core/board_hal.h"
+#include <esp_heap_caps.h>
 #include <PubSubClient.h>
 #include <algorithm>
 #include <cmath>
@@ -1183,8 +1184,39 @@ static bool tryHandleDynamicWeather(const char* topic, const char* payload) {
 
 static constexpr size_t SMALL_BUF = 96;
 static constexpr size_t LARGE_BUF = 32768;
+static constexpr size_t CFG_BUF = 32768;
 static char small_buf[SMALL_BUF];
-static char large_buf[LARGE_BUF];
+static char* g_large_buf = nullptr;
+static char* g_cfg_buf = nullptr;
+
+static char* mqttScratchBuffer(char*& slot, size_t bytes, const char* name) {
+  if (slot) return slot;
+  slot = static_cast<char*>(heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  const char* where = "PSRAM";
+  if (!slot) {
+    slot = static_cast<char*>(heap_caps_malloc(bytes, MALLOC_CAP_8BIT));
+    where = "internal";
+  }
+  if (!slot) {
+    Serial.printf("[MQTT] Scratch buffer alloc failed: %s %u bytes\n",
+                  name ? name : "?",
+                  static_cast<unsigned>(bytes));
+    return nullptr;
+  }
+  Serial.printf("[MQTT] Scratch buffer %s: %u bytes in %s\n",
+                name ? name : "?",
+                static_cast<unsigned>(bytes),
+                where);
+  return slot;
+}
+
+static char* mqttLargeBuffer() {
+  return mqttScratchBuffer(g_large_buf, LARGE_BUF, "large");
+}
+
+static char* mqttConfigBuffer() {
+  return mqttScratchBuffer(g_cfg_buf, CFG_BUF, "config");
+}
 
 // ========== MQTT Callback (Topic-Routing) ==========
 void mqttCallback(char* topic, uint8_t* payload, unsigned int length) {
@@ -1192,11 +1224,12 @@ void mqttCallback(char* topic, uint8_t* payload, unsigned int length) {
 
   const char* apply_topic = networkManager.getBridgeApplyTopic();
   if (apply_topic && strcmp(topic, apply_topic) == 0) {
-    static char cfg_buf[16384];  // Groesser fuer lange Config-Payloads
-    if (length >= sizeof(cfg_buf)) {
+    char* cfg_buf = mqttConfigBuffer();
+    if (!cfg_buf) return;
+    if (length >= CFG_BUF) {
       Serial.printf("[Bridge] WARNUNG: Payload zu gross (%u bytes), wird abgeschnitten!\n", length);
     }
-    size_t copy_len = length < sizeof(cfg_buf) - 1 ? length : sizeof(cfg_buf) - 1;
+    size_t copy_len = length < CFG_BUF - 1 ? length : CFG_BUF - 1;
     memcpy(cfg_buf, payload, copy_len);
     cfg_buf[copy_len] = '\0';
     yield();  // Nach großem Copy
@@ -1224,7 +1257,9 @@ void mqttCallback(char* topic, uint8_t* payload, unsigned int length) {
 
   const char* icons_topic = networkManager.getBridgeIconsTopic();
   if (icons_topic && strcmp(topic, icons_topic) == 0) {
-    size_t copy_len = length < sizeof(large_buf) - 1 ? length : sizeof(large_buf) - 1;
+    char* large_buf = mqttLargeBuffer();
+    if (!large_buf) return;
+    size_t copy_len = length < LARGE_BUF - 1 ? length : LARGE_BUF - 1;
     memcpy(large_buf, payload, copy_len);
     large_buf[copy_len] = '\0';
     if (haBridgeConfig.applyIconUpdate(large_buf)) {
@@ -1240,8 +1275,9 @@ void mqttCallback(char* topic, uint8_t* payload, unsigned int length) {
       continue;
     }
 
-    char* buf = route.use_large_buffer ? large_buf : small_buf;
-    size_t buf_len = route.use_large_buffer ? sizeof(large_buf) : sizeof(small_buf);
+    char* buf = route.use_large_buffer ? mqttLargeBuffer() : small_buf;
+    if (!buf) return;
+    size_t buf_len = route.use_large_buffer ? LARGE_BUF : sizeof(small_buf);
     size_t copy_len = length < (buf_len - 1) ? length : (buf_len - 1);
     memcpy(buf, payload, copy_len);
     buf[copy_len] = '\0';
@@ -1256,8 +1292,9 @@ void mqttCallback(char* topic, uint8_t* payload, unsigned int length) {
   }
 
   // Dynamische Sensor-Slots pruefen (JSON kann groesser sein -> ggf. Large Buffer)
-  char* dyn_buf = (length < SMALL_BUF) ? small_buf : large_buf;
-  size_t dyn_len = (length < SMALL_BUF) ? sizeof(small_buf) : sizeof(large_buf);
+  char* dyn_buf = (length < SMALL_BUF) ? small_buf : mqttLargeBuffer();
+  if (!dyn_buf) return;
+  size_t dyn_len = (length < SMALL_BUF) ? sizeof(small_buf) : LARGE_BUF;
   size_t copy_len = length < (dyn_len - 1) ? length : (dyn_len - 1);
   memcpy(dyn_buf, payload, copy_len);
   dyn_buf[copy_len] = '\0';
@@ -1272,6 +1309,8 @@ void mqttCallback(char* topic, uint8_t* payload, unsigned int length) {
 
   const char* history_topic = networkManager.getHistoryResponseTopic();
   if (history_topic && strcmp(topic, history_topic) == 0) {
+    char* large_buf = mqttLargeBuffer();
+    if (!large_buf) return;
     size_t copy_len = length < (LARGE_BUF - 1) ? length : (LARGE_BUF - 1);
     memcpy(large_buf, payload, copy_len);
     large_buf[copy_len] = '\0';
@@ -1286,6 +1325,8 @@ void mqttCallback(char* topic, uint8_t* payload, unsigned int length) {
 
   const char* energy_topic = networkManager.getEnergyResponseTopic();
   if (energy_topic && strcmp(topic, energy_topic) == 0) {
+    char* large_buf = mqttLargeBuffer();
+    if (!large_buf) return;
     size_t copy_len = length < (LARGE_BUF - 1) ? length : (LARGE_BUF - 1);
     memcpy(large_buf, payload, copy_len);
     large_buf[copy_len] = '\0';
@@ -1568,6 +1609,7 @@ void mqttPublishHistoryRequest(const char* entity_id,
 
   // HA hat Prioritaet: wenn erreichbar, zuerst dort Historie holen.
   if (can_request_ha) {
+    networkManager.requestLargeMqttBuffer(20000);
     if (!time_valid && is_internal_tab5_entity(entity_id)) {
       Serial.printf("[History] Zeit lokal ungueltig, fordere HA-Historie fuer %s an\n", entity_id);
     }
@@ -1643,6 +1685,7 @@ bool mqttPublishEnergyRequest(const char* period) {
   payload += p;
   payload += "\"}";
 
+  networkManager.requestLargeMqttBuffer(12000);
   bool ok = mqtt.publish(energy_topic, payload.c_str(), false);
   Serial.printf("Energy request -> MQTT '%s' period=%s (%s)\n",
                 energy_topic,

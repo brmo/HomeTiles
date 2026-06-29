@@ -50,6 +50,7 @@ public:
   void handleGetSdIcons();
   void handleCreateScreenshot();
   void handleDownloadScreenshot();
+  void handlePrepareOtaUpload();
   void handleOtaUpdate();
   void handleOtaUploadDone();
   void handleStartOtaInstall();

@@ -18,6 +18,7 @@
 #include "src/core/display_manager.h"
 #include "src/core/firmware_metadata.h"
 #include <Update.h>
+#include <esp_heap_caps.h>
 #include <lvgl.h>
 #include <algorithm>
 #include <vector>
@@ -281,11 +282,13 @@ constexpr const char* kScreenshotPath = "/ui_screenshot.bmp";
 struct OtaUploadState {
   bool upload_started = false;
   bool upload_success = false;
+  bool upload_prepared = false;
   bool image_validated = false;
   bool install_started = false;
   bool install_success = false;
   bool restart_pending = false;
   uint32_t restart_at_ms = 0;
+  uint32_t prepared_at_ms = 0;
   size_t buffered_len = 0;
   size_t upload_total_bytes = 0;
   size_t install_total_bytes = 0;
@@ -296,6 +299,18 @@ struct OtaUploadState {
 };
 
 OtaUploadState g_ota_upload_state;
+bool g_ota_display_reduced = false;
+
+void logOtaMemory(const char* tag) {
+  Serial.printf("[OTA/Mem] %s | Int free=%u KB | DMA free=%u KB | DMA largest=%u KB | PSRAM free=%u KB | MQTT buf=%u B\n",
+                tag ? tag : "?",
+                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) / 1024),
+                static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) / 1024),
+                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
+                static_cast<unsigned>(networkManager.getMqttBufferSize()));
+  Serial.flush();
+}
 
 void prepareDisplayForRestart() {
   displayManager.setInputEnabled(false);
@@ -303,12 +318,29 @@ void prepareDisplayForRestart() {
 }
 
 void prepareDisplayForOtaInstall() {
+  logOtaMemory("before-ota-prep");
   displayManager.setInputEnabled(false);
   BoardHAL::displayPowerSaveOn();
+
+  // OTA is heavy SDIO/WiFi RX traffic. The fast 8-inch SRAM draw band can hold
+  // ~70 KB of internal DMA RAM, exactly the pool esp-hosted needs for RX
+  // buffers. During OTA, trade UI redraw speed for transport stability.
+  if (!g_ota_display_reduced) {
+    displayManager.setBufferLines(8);  // below SRAM minimum -> PSRAM draw buffers
+    g_ota_display_reduced = true;
+  }
+
+  networkManager.prepareMqttForOta();
+  logOtaMemory("after-ota-prep");
 }
 
 void restoreDisplayAfterOtaFailure() {
+  networkManager.restoreMqttBufferNormal();
   BoardHAL::displayPowerSaveOff();
+  if (g_ota_display_reduced) {
+    displayManager.setBufferLines(SCREEN_HEIGHT / Device::kDisplayFlushBands);
+    g_ota_display_reduced = false;
+  }
   displayManager.setInputEnabled(true);
   lv_display_t* disp = displayManager.getDisplay();
   if (disp) {
@@ -323,11 +355,13 @@ void resetOtaUploadState() {
   }
   g_ota_upload_state.upload_started = false;
   g_ota_upload_state.upload_success = false;
+  g_ota_upload_state.upload_prepared = false;
   g_ota_upload_state.image_validated = false;
   g_ota_upload_state.install_started = false;
   g_ota_upload_state.install_success = false;
   g_ota_upload_state.restart_pending = false;
   g_ota_upload_state.restart_at_ms = 0;
+  g_ota_upload_state.prepared_at_ms = 0;
   g_ota_upload_state.buffered_len = 0;
   g_ota_upload_state.upload_total_bytes = 0;
   g_ota_upload_state.install_total_bytes = 0;
@@ -2153,12 +2187,33 @@ void WebAdminServer::handleFileManagerUploadDone() {
   sendChunkedResponse(server, 200, "application/json", json);
 }
 
+void WebAdminServer::handlePrepareOtaUpload() {
+  resetOtaUploadState();
+  g_ota_upload_state.upload_prepared = true;
+  g_ota_upload_state.prepared_at_ms = millis();
+  g_ota_upload_state.upload_total_bytes = parseOtaExpectedSize(server);
+  g_ota_upload_state.install_total_bytes = g_ota_upload_state.upload_total_bytes;
+
+  Serial.println("[OTA] Preparing receiver before upload");
+  prepareDisplayForOtaInstall();
+
+  String json = "{\"success\":true";
+  json += ",\"size\":";
+  json += String(g_ota_upload_state.upload_total_bytes);
+  json += "}";
+  server.send(200, "application/json", json);
+}
+
 void WebAdminServer::handleOtaUpdate() {
   HTTPUpload& upload = server.upload();
 
   if (upload.status == UPLOAD_FILE_START) {
-    resetOtaUploadState();
+    const bool was_prepared = g_ota_upload_state.upload_prepared;
+    if (!was_prepared) {
+      resetOtaUploadState();
+    }
     g_ota_upload_state.upload_started = true;
+    g_ota_upload_state.upload_prepared = false;
     g_ota_upload_state.upload_total_bytes = parseOtaExpectedSize(server);
     g_ota_upload_state.install_total_bytes = g_ota_upload_state.upload_total_bytes;
 
@@ -2179,7 +2234,11 @@ void WebAdminServer::handleOtaUpdate() {
       g_ota_upload_state.error = "Please upload the update.bin, not the factory.bin";
       return;
     }
+    if (!was_prepared) {
+      prepareDisplayForOtaInstall();
+    }
     Serial.printf("[OTA] Upload started: %s\n", upload.filename.c_str());
+    Serial.flush();
     return;
   }
 
@@ -2253,7 +2312,7 @@ void WebAdminServer::handleOtaUpdate() {
     if (Update.isRunning()) {
       Update.abort();
     }
-    if (g_ota_upload_state.install_started) {
+    if (g_ota_upload_state.install_started || g_ota_display_reduced) {
       restoreDisplayAfterOtaFailure();
       g_ota_upload_state.install_started = false;
     }
@@ -2304,12 +2363,14 @@ void WebAdminServer::handleOtaUploadDone() {
     String json = "{\"success\":false,\"error\":\"";
     appendJsonEscaped(json, g_ota_upload_state.error);
     json += "\"}";
+    restoreDisplayAfterOtaFailure();
     resetOtaUploadState();
     server.send(500, "application/json", json);
     return;
   }
 
   if (!g_ota_upload_state.upload_success || !g_ota_upload_state.install_success) {
+    restoreDisplayAfterOtaFailure();
     resetOtaUploadState();
     server.send(500, "application/json", "{\"success\":false,\"error\":\"OTA update failed\"}");
     return;
@@ -2354,12 +2415,22 @@ void WebAdminServer::handleGetOtaStatus() {
 }
 
 bool webAdminOtaInProgress() {
-  return g_ota_upload_state.install_started &&
-         g_ota_upload_state.error.length() == 0 &&
-         (!g_ota_upload_state.install_success || g_ota_upload_state.restart_pending);
+  return g_ota_upload_state.error.length() == 0 &&
+         ((g_ota_upload_state.upload_prepared && !g_ota_upload_state.upload_started) ||
+          (g_ota_upload_state.upload_started &&
+           (!g_ota_upload_state.install_success || g_ota_upload_state.restart_pending)));
 }
 
 void webAdminServiceOta() {
+  if (g_ota_upload_state.upload_prepared && !g_ota_upload_state.upload_started) {
+    const uint32_t prepared_at = g_ota_upload_state.prepared_at_ms;
+    if (prepared_at != 0 && static_cast<uint32_t>(millis() - prepared_at) > 120000UL) {
+      Serial.println("[OTA] Prepare timed out, restoring display");
+      restoreDisplayAfterOtaFailure();
+      resetOtaUploadState();
+    }
+  }
+
   if (!g_ota_upload_state.restart_pending || g_ota_upload_state.restart_at_ms == 0) {
     return;
   }

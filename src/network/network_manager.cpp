@@ -10,6 +10,10 @@
 // Globale Instanz
 Tab5NetworkManager networkManager;
 
+static constexpr uint16_t kMqttBufferOta = 1024;
+static constexpr uint16_t kMqttBufferNormal = 16 * 1024;
+static constexpr uint16_t kMqttBufferLarge = 32 * 1024;
+
 static void buildDeviceId(char* buffer, size_t len) {
   if (!buffer || !len) return;
   uint64_t mac = ESP.getEfuseMac();
@@ -81,7 +85,7 @@ void Tab5NetworkManager::init() {
     // MQTT-Setup
     mqtt_client.setClient(net_client);
     mqtt_client.setServer(cfg.mqtt_host, cfg.mqtt_port);
-    mqtt_client.setBufferSize(32768);  // Groessere Config-/Media-Cover-Payloads
+    setMqttBufferSize(kMqttBufferNormal, "init");
     mqtt_client.setCallback(mqttCallback);
   } else {
     Serial.println("MQTT: keine Konfiguration vorhanden - ueberspringe Verbindung");
@@ -113,6 +117,9 @@ void Tab5NetworkManager::connectMqtt() {
   mqtt_retry_at = millis() + 3000UL;  // Retry in 3s
 
   if (WiFi.status() != WL_CONNECTED) return;
+  if (mqtt_large_until == 0 && mqtt_client.getBufferSize() < kMqttBufferNormal) {
+    setMqttBufferSize(kMqttBufferNormal, "connect");
+  }
 
   if (!configManager.isConfigured()) {
     Serial.println("MQTT: Keine Konfiguration vorhanden");
@@ -185,6 +192,7 @@ void Tab5NetworkManager::connectMqtt() {
   }
 
   Serial.println("✓ MQTT verbunden");
+  mqtt_connected_at = millis();
 
   // Connected - Status publizieren und Topics subscriben
   mqtt_client.publish(stat_topic, "1", true);
@@ -208,8 +216,9 @@ void Tab5NetworkManager::connectMqtt() {
   mqttPublishDiscovery();
   mqttPublishDeviceSettings();
   mqttPublishHomeSnapshot();
-  publishBridgeConfig();
-  publishBridgeRequest();
+  // Bridge refresh is handled by the background refresh after startup.
+  // Doing it here collides with retained media/weather payloads and forces
+  // the MQTT buffer to 32 KB during the tightest internal-RAM window.
 }
 
 // ========== WiFi-Status ==========
@@ -224,6 +233,67 @@ bool Tab5NetworkManager::isMqttConnected() {
 
 PubSubClient& Tab5NetworkManager::getMqttClient() {
   return mqtt_client;
+}
+
+uint16_t Tab5NetworkManager::getMqttBufferSize() const {
+  return mqtt_buffer_size;
+}
+
+bool Tab5NetworkManager::setMqttBufferSize(uint16_t size, const char* reason) {
+  if (size == 0) return false;
+  const uint16_t before = mqtt_client.getBufferSize();
+  if (before == size) {
+    mqtt_buffer_size = size;
+    return true;
+  }
+
+  if (!mqtt_client.setBufferSize(size)) {
+    Serial.printf("[MQTT] Buffer resize failed: %u -> %u bytes (%s)\n",
+                  static_cast<unsigned>(before),
+                  static_cast<unsigned>(size),
+                  reason ? reason : "?");
+    return false;
+  }
+
+  mqtt_buffer_size = mqtt_client.getBufferSize();
+  Serial.printf("[MQTT] Buffer: %u -> %u bytes (%s)\n",
+                static_cast<unsigned>(before),
+                static_cast<unsigned>(mqtt_buffer_size),
+                reason ? reason : "?");
+  return true;
+}
+
+// Waehrend dieses Fensters direkt nach dem Connect bleibt der MQTT-Empfangs-
+// puffer klein (16 KB). Der PubSubClient-Puffer liegt im internen RAM; ihn
+// mitten im retained-Message-Sturm auf 32 KB zu vergroessern nimmt dem
+// C6/SDIO-WLAN genau im RX-Peak das DMA-RAM weg -> Freeze beim Start.
+static constexpr uint32_t kMqttStormWindowMs = 8000;
+
+void Tab5NetworkManager::requestLargeMqttBuffer(uint32_t hold_ms) {
+  if (hold_ms == 0) hold_ms = 15000;
+  mqtt_large_until = millis() + hold_ms;
+  if (mqtt_connected_at != 0 &&
+      (uint32_t)(millis() - mqtt_connected_at) < kMqttStormWindowMs) {
+    // Im Startup-Sturm NICHT vergroessern; update() holt das spaeter nach,
+    // sobald der Sturm vorbei ist und genug internes RAM frei ist.
+    Serial.println("[MQTT] Large buffer deferred (startup storm window)");
+    return;
+  }
+  setMqttBufferSize(kMqttBufferLarge, "large-payload");
+}
+
+void Tab5NetworkManager::restoreMqttBufferNormal() {
+  mqtt_large_until = 0;
+  setMqttBufferSize(kMqttBufferNormal, "normal");
+}
+
+void Tab5NetworkManager::prepareMqttForOta() {
+  mqtt_large_until = 0;
+  if (mqtt_client.connected()) {
+    mqtt_client.disconnect();
+    Serial.println("[OTA] MQTT disconnected for OTA");
+  }
+  setMqttBufferSize(kMqttBufferOta, "ota");
 }
 
 // ========== Telemetrie senden ==========
@@ -256,6 +326,13 @@ void Tab5NetworkManager::publishBridgeConfig() {
   String topic = "tab5_lvgl/config/";
   topic += did;
   topic += "/bridge";
+  requestLargeMqttBuffer(15000);
+  const size_t packet_estimate = payload.length() + topic.length() + 16;
+  if (packet_estimate > mqtt_client.getBufferSize()) {
+    Serial.printf("[Network] Bridge config too large for MQTT buffer: %u > %u bytes\n",
+                  static_cast<unsigned>(packet_estimate),
+                  static_cast<unsigned>(mqtt_client.getBufferSize()));
+  }
   mqtt_client.publish(topic.c_str(), payload.c_str(), true);
   Serial.println("[Network] Home Assistant Bridge-Konfiguration publiziert");
 }
@@ -267,6 +344,7 @@ const char* Tab5NetworkManager::getBridgeApplyTopic() const {
 void Tab5NetworkManager::publishBridgeRequest() {
   if (!mqtt_client.connected()) return;
   if (bridge_request_topic_.isEmpty()) return;
+  requestLargeMqttBuffer(30000);
   mqtt_client.publish(bridge_request_topic_.c_str(), "", false);
   Serial.println("[Network] Home Assistant Bridge-Aktualisierung angefordert");
 }
@@ -343,6 +421,15 @@ void Tab5NetworkManager::update() {
       } else {
         mqtt_client.loop();
         publishTelemetry();
+      }
+      if (mqtt_large_until != 0 && (int32_t)(now_ms - mqtt_large_until) >= 0) {
+        restoreMqttBufferNormal();
+      } else if (mqtt_large_until != 0 &&
+                 mqtt_buffer_size < kMqttBufferLarge &&
+                 mqtt_connected_at != 0 &&
+                 (uint32_t)(now_ms - mqtt_connected_at) >= kMqttStormWindowMs) {
+        // Im Sturm aufgeschobenen Grow jetzt nachholen (Sturm ist vorbei).
+        setMqttBufferSize(kMqttBufferLarge, "large-deferred");
       }
     }
   }

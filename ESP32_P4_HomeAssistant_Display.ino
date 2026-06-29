@@ -72,6 +72,7 @@ static void log_memory_status(const char* tag) {
   Serial.flush();
 }
 
+
 static void confirm_running_ota_if_needed() {
   const esp_partition_t* running = esp_ota_get_running_partition();
   if (!running) {
@@ -533,7 +534,7 @@ void loop() {
       process_sensor_update_queue();  // WICHTIG: VOR lv_timer_handler()!
       process_switch_update_queue();
       process_weather_update_queue();
-      process_media_update_queue();
+      process_media_update_queue(2);
       process_tile_graph_queue();
       if (idle) energy_service_periodic();
       last_queue_ms = millis();

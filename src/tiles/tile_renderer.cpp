@@ -2051,6 +2051,9 @@ struct MediaCoverDecodeCtx {
   const uint8_t* data = nullptr;
   size_t len = 0;
   size_t pos = 0;
+  uint16_t* pixels = nullptr;
+  uint16_t w = 0;
+  uint16_t h = 0;
 };
 
 static size_t media_cover_jpeg_input(JDEC* jd, uint8_t* buff, size_t ndata) {
@@ -2063,6 +2066,26 @@ static size_t media_cover_jpeg_input(JDEC* jd, uint8_t* buff, size_t ndata) {
   }
   ctx->pos += take;
   return take;
+}
+
+static int media_cover_jpeg_output(JDEC* jd, void* bitmap, JRECT* rect) {
+  MediaCoverDecodeCtx* ctx = static_cast<MediaCoverDecodeCtx*>(jd->device);
+  if (!ctx || !ctx->pixels || !bitmap) return 0;
+
+  const uint8_t* src = static_cast<const uint8_t*>(bitmap);
+  const uint16_t rw = rect->right - rect->left + 1;
+  for (uint16_t y = rect->top; y <= rect->bottom && y < ctx->h; ++y) {
+    for (uint16_t x = rect->left; x <= rect->right && x < ctx->w; ++x) {
+      const size_t si = ((y - rect->top) * rw + (x - rect->left)) * 3;
+      const uint8_t b = src[si];
+      const uint8_t g = src[si + 1];
+      const uint8_t r = src[si + 2];
+      const uint16_t c = static_cast<uint16_t>(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+      ctx->pixels[static_cast<size_t>(y) * ctx->w + x] =
+          static_cast<uint16_t>((c >> 8) | (c << 8));
+    }
+  }
+  return 1;
 }
 
 static void* alloc_media_cover_memory(size_t bytes, bool prefer_psram = false) {
@@ -2136,6 +2159,112 @@ static bool read_media_cover_jpeg_size(const uint8_t* data, size_t len, uint16_t
   return true;
 }
 
+static lv_image_dsc_t* make_media_cover_decoded_jpeg_dsc(const uint8_t* data, size_t len) {
+  if (!is_media_cover_jpeg(data, len) || len < 32) return nullptr;
+
+  uint8_t* work = static_cast<uint8_t*>(alloc_media_cover_memory(4096));
+  if (!work) return nullptr;
+
+  MediaCoverDecodeCtx ctx{};
+  ctx.data = data;
+  ctx.len = len;
+
+  JDEC jd;
+  JRESULT rc = jd_prepare(&jd, media_cover_jpeg_input, work, 4096, &ctx);
+  if (rc != JDR_OK || jd.width == 0 || jd.height == 0 ||
+      jd.width > UINT16_MAX || jd.height > UINT16_MAX) {
+    Serial.printf("[MediaCover] MQTT JPEG prepare fehlgeschlagen: %d\n", static_cast<int>(rc));
+    free(work);
+    return nullptr;
+  }
+
+  const size_t full_pixels = static_cast<size_t>(jd.width) * jd.height;
+  if (full_pixels == 0 || full_pixels > (512U * 512U)) {
+    Serial.printf("[MediaCover] MQTT JPEG zu gross: %ux%u\n",
+                  static_cast<unsigned>(jd.width),
+                  static_cast<unsigned>(jd.height));
+    free(work);
+    return nullptr;
+  }
+
+  const size_t full_bytes = full_pixels * sizeof(uint16_t);
+  uint16_t* full = static_cast<uint16_t*>(alloc_media_cover_memory(full_bytes, true));
+  if (!full) {
+    free(work);
+    return nullptr;
+  }
+  memset(full, 0, full_bytes);
+
+  ctx.pixels = full;
+  ctx.w = static_cast<uint16_t>(jd.width);
+  ctx.h = static_cast<uint16_t>(jd.height);
+  rc = jd_decomp(&jd, media_cover_jpeg_output, 0);
+  free(work);
+  if (rc != JDR_OK) {
+    Serial.printf("[MediaCover] MQTT JPEG decode fehlgeschlagen: %d\n", static_cast<int>(rc));
+    free(full);
+    return nullptr;
+  }
+
+  constexpr uint16_t kMaxCoverSide = 160;
+  uint16_t dst_w = ctx.w;
+  uint16_t dst_h = ctx.h;
+  if (dst_w > kMaxCoverSide || dst_h > kMaxCoverSide) {
+    if (dst_w >= dst_h) {
+      dst_w = kMaxCoverSide;
+      dst_h = static_cast<uint16_t>((static_cast<uint32_t>(ctx.h) * dst_w) / ctx.w);
+    } else {
+      dst_h = kMaxCoverSide;
+      dst_w = static_cast<uint16_t>((static_cast<uint32_t>(ctx.w) * dst_h) / ctx.h);
+    }
+    if (dst_w == 0) dst_w = 1;
+    if (dst_h == 0) dst_h = 1;
+  }
+
+  uint16_t* final_pixels = full;
+  size_t final_bytes = full_bytes;
+  if (dst_w != ctx.w || dst_h != ctx.h) {
+    final_bytes = static_cast<size_t>(dst_w) * dst_h * sizeof(uint16_t);
+    final_pixels = static_cast<uint16_t*>(alloc_media_cover_memory(final_bytes, true));
+    if (!final_pixels) {
+      free(full);
+      return nullptr;
+    }
+    for (uint16_t y = 0; y < dst_h; ++y) {
+      const uint16_t sy = static_cast<uint16_t>((static_cast<uint32_t>(y) * ctx.h) / dst_h);
+      for (uint16_t x = 0; x < dst_w; ++x) {
+        const uint16_t sx = static_cast<uint16_t>((static_cast<uint32_t>(x) * ctx.w) / dst_w);
+        final_pixels[static_cast<size_t>(y) * dst_w + x] =
+            full[static_cast<size_t>(sy) * ctx.w + sx];
+      }
+    }
+    free(full);
+  }
+
+  lv_image_dsc_t* dsc = static_cast<lv_image_dsc_t*>(alloc_media_cover_memory(sizeof(lv_image_dsc_t)));
+  if (!dsc) {
+    free(final_pixels);
+    return nullptr;
+  }
+
+  memset(dsc, 0, sizeof(*dsc));
+  dsc->header.magic = LV_IMAGE_HEADER_MAGIC;
+  dsc->header.cf = LV_COLOR_FORMAT_RGB565_SWAPPED;
+  dsc->header.w = dst_w;
+  dsc->header.h = dst_h;
+  dsc->header.stride = dst_w * 2;
+  dsc->data_size = final_bytes;
+  dsc->data = reinterpret_cast<const uint8_t*>(final_pixels);
+
+  Serial.printf("[MediaCover] MQTT JPEG dekodiert: %ux%u -> %ux%u, %u Bytes\n",
+                static_cast<unsigned>(ctx.w),
+                static_cast<unsigned>(ctx.h),
+                static_cast<unsigned>(dst_w),
+                static_cast<unsigned>(dst_h),
+                static_cast<unsigned>(final_bytes));
+  return dsc;
+}
+
 static lv_image_dsc_t* make_media_cover_raw_dsc(const uint8_t* data, size_t len) {
   if (!data || len < 32) return nullptr;
 
@@ -2168,12 +2297,7 @@ static lv_image_dsc_t* make_media_cover_raw_dsc(const uint8_t* data, size_t len)
 static lv_image_dsc_t* make_media_cover_dsc_from_bytes(const uint8_t* data, size_t len) {
   if (!data || len < 32) return nullptr;
   if (is_media_cover_jpeg(data, len)) {
-    lv_image_dsc_t* dsc = make_media_cover_raw_dsc(data, len);
-    if (dsc) {
-      Serial.printf("[MediaCover] MQTT JPEG an LVGL-Decoder uebergeben: %u Bytes\n",
-                    static_cast<unsigned>(len));
-    }
-    return dsc;
+    return make_media_cover_decoded_jpeg_dsc(data, len);
   }
   if (is_media_cover_png(data, len)) {
     lv_image_dsc_t* dsc = make_media_cover_raw_dsc(data, len);

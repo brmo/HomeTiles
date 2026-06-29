@@ -984,14 +984,12 @@ bool DeviceWaveshareTouchLCD8::getTouch(int16_t& x, int16_t& y) {
 void DeviceWaveshareTouchLCD8::displaySleep() {
   if (g_panel) {
     esp_lcd_panel_disp_on_off(g_panel, false);
-    esp_lcd_panel_disp_sleep(g_panel, true);
   }
   apply_backlight(0);
 }
 
 void DeviceWaveshareTouchLCD8::displayWake() {
   if (g_panel) {
-    esp_lcd_panel_disp_sleep(g_panel, false);
     esp_lcd_panel_disp_on_off(g_panel, true);
   }
   apply_backlight(g_brightness);

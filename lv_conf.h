@@ -389,8 +389,13 @@
     #define LV_DRAW_OPENGLES_TEXTURE_CACHE_COUNT 64
 #endif
 
-/** Draw using espressif PPA accelerator */
-#define LV_USE_PPA  1
+/** Draw using espressif PPA accelerator.
+ *  MUSS AUS bleiben: Der Display-Treiber (device_waveshare_touch_lcd_8.cpp) nutzt
+ *  die PPA bereits exklusiv fuer den Flush-Rotate (g_ppa_handle). LVGLs interner
+ *  PPA-Draw-Unit waere ein ZWEITER Client auf derselben PPA-Engine -> beide im
+ *  Blocking-Mode kollidieren beim Zeichnen eines (neuen) Bildes -> Deadlock/Freeze.
+ *  Bild-Blits laufen jetzt per CPU (Software-Renderer), Flush-Rotate bleibt PPA. */
+#define LV_USE_PPA  0
 #if LV_USE_PPA
     #define LV_USE_PPA_IMG 1
     #define LV_PPA_BURST_LENGTH 64

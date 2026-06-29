@@ -21,10 +21,14 @@ public:
   // MQTT-Status
   bool isMqttConnected();
   PubSubClient& getMqttClient();
+  uint16_t getMqttBufferSize() const;
 
   // Verbindung herstellen
   void connectWifi();
   void connectMqtt();
+  void requestLargeMqttBuffer(uint32_t hold_ms = 15000);
+  void restoreMqttBufferNormal();
+  void prepareMqttForOta();
 
   // Telemetrie
   void publishTelemetry();
@@ -56,6 +60,9 @@ private:
   bool wifi_ps_state_known = false;
   bool wifi_ps_enabled = false;
   bool wifi_sleep_profile = false;
+  uint16_t mqtt_buffer_size = 0;
+  uint32_t mqtt_large_until = 0;
+  uint32_t mqtt_connected_at = 0;  // millis() des letzten erfolgreichen Connects
   String bridge_apply_topic_;
   String bridge_request_topic_;
   String history_request_topic_;
@@ -65,6 +72,7 @@ private:
   String energy_response_topic_;
   String bridge_icons_topic_;
 
+  bool setMqttBufferSize(uint16_t size, const char* reason);
 };
 
 // Globale Instanz
