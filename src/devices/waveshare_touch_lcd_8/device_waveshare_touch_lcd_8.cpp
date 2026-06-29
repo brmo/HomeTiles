@@ -46,6 +46,10 @@ constexpr uint8_t kTouchReleaseDebounceReads = 0;
 constexpr int32_t kTouchJitterThresholdPx = 2;
 constexpr uint8_t kTouchSamplePointCount = ESP_LCD_TOUCH_MAX_POINTS;
 constexpr uint8_t kInvalidTouchTrackId = 0xFF;
+// Upper bound for one PPA rotate. A real rotate is microseconds (a band) up to a
+// few ms (full screen); if it ever blocks longer than this the engine is stuck,
+// so we bail out and rotate that band on the CPU instead of freezing forever.
+constexpr uint32_t kPpaRotateTimeoutMs = 200;
 
 esp_lcd_dsi_bus_handle_t g_dsi_bus = nullptr;
 esp_lcd_panel_io_handle_t g_panel_io = nullptr;
@@ -55,6 +59,8 @@ esp_ldo_channel_handle_t g_mipi_phy_ldo = nullptr;
 ppa_client_handle_t g_ppa_handle = nullptr;
 SemaphoreHandle_t g_transfer_done = nullptr;
 SemaphoreHandle_t g_refresh_done = nullptr;
+SemaphoreHandle_t g_ppa_done = nullptr;   // PPA rotate completion (non-blocking mode)
+bool g_ppa_async_ready = false;           // true once the PPA done-callback is armed
 
 DEV_I2C_Port g_i2c = {};
 bool g_i2c_ready = false;
@@ -106,6 +112,19 @@ bool IRAM_ATTR on_refresh_done(esp_lcd_panel_handle_t, esp_lcd_dpi_panel_event_d
 
   BaseType_t high_task_woken = pdFALSE;
   xSemaphoreGiveFromISR(g_refresh_done, &high_task_woken);
+  return high_task_woken == pdTRUE;
+}
+
+// Fired from the PPA ISR when a non-blocking rotate finishes. user_ctx is the
+// semaphore we passed via oper.user_data so draw_landscape_area can wake up.
+bool IRAM_ATTR on_ppa_trans_done(ppa_client_handle_t, ppa_event_data_t*, void* user_ctx) {
+  SemaphoreHandle_t sem = static_cast<SemaphoreHandle_t>(user_ctx);
+  if (!sem) {
+    return false;
+  }
+
+  BaseType_t high_task_woken = pdFALSE;
+  xSemaphoreGiveFromISR(sem, &high_task_woken);
   return high_task_woken == pdTRUE;
 }
 
@@ -412,15 +431,44 @@ bool draw_landscape_area(int32_t x, int32_t y, int32_t w, int32_t h, const uint1
       oper.scale_y = 1.0f;
       oper.rgb_swap = false;
       oper.byte_swap = false;
-      oper.mode = PPA_TRANS_MODE_BLOCKING;
 
-      const esp_err_t err = ppa_do_scale_rotate_mirror(g_ppa_handle, &oper);
-      if (err == ESP_OK) {
+      // Default is PPA_TRANS_MODE_BLOCKING, but that waits portMAX_DELAY with no
+      // timeout: if the PPA ever stalls rotating a band out of the fast internal
+      // SRAM draw buffer (seen when a new media cover is flushed) the whole UI
+      // freezes forever. To stay fast *and* unfreezable we submit NON_BLOCKING
+      // and wait on our own done-semaphore with a bounded timeout; on timeout we
+      // drop through to the CPU rotate below. The happy path is unchanged.
+      bool ppa_ok = false;
+      if (g_ppa_async_ready && g_ppa_done) {
+        oper.mode = PPA_TRANS_MODE_NON_BLOCKING;
+        oper.user_data = g_ppa_done;
+        xSemaphoreTake(g_ppa_done, 0);  // drop any late give from a previous timeout
+        const esp_err_t err = ppa_do_scale_rotate_mirror(g_ppa_handle, &oper);
+        if (err == ESP_OK) {
+          if (xSemaphoreTake(g_ppa_done, pdMS_TO_TICKS(kPpaRotateTimeoutMs)) == pdTRUE) {
+            ppa_ok = true;
+          } else {
+            Serial.println("[Device/WaveshareTouchLCD8] PPA rotate timeout -> CPU fallback");
+          }
+        } else {
+          Serial.printf("[Device/WaveshareTouchLCD8] PPA rotate submit failed err=%d -> CPU fallback\n",
+                        static_cast<int>(err));
+        }
+      } else {
+        oper.mode = PPA_TRANS_MODE_BLOCKING;
+        const esp_err_t err = ppa_do_scale_rotate_mirror(g_ppa_handle, &oper);
+        if (err == ESP_OK) {
+          ppa_ok = true;
+        } else {
+          Serial.printf("[Device/WaveshareTouchLCD8] PPA rotate failed err=%d, falling back to CPU\n",
+                        static_cast<int>(err));
+        }
+      }
+
+      if (ppa_ok) {
         mark_dirty_rect(dst_x, dst_y, dst_w, dst_h);
         return true;
       }
-      Serial.printf("[Device/WaveshareTouchLCD8] PPA rotate failed err=%d, falling back to CPU\n",
-                    static_cast<int>(err));
     }
   }
 
@@ -715,6 +763,20 @@ bool init_display() {
     g_ppa_handle = nullptr;
   } else {
     log_step("PPA client registered");
+    // Arm the done-callback so draw_landscape_area can use the timeout-safe
+    // non-blocking path. If anything here fails we simply keep the old blocking
+    // behaviour (no worse than before).
+    g_ppa_done = xSemaphoreCreateBinary();
+    if (g_ppa_done) {
+      ppa_event_callbacks_t ppa_cbs = {};
+      ppa_cbs.on_trans_done = on_ppa_trans_done;
+      if (ppa_client_register_event_callbacks(g_ppa_handle, &ppa_cbs) == ESP_OK) {
+        g_ppa_async_ready = true;
+        log_step("PPA timeout-safe mode ready");
+      } else {
+        Serial.println("[Device/WaveshareTouchLCD8] PPA event cb register failed, using blocking PPA");
+      }
+    }
   }
 
   return true;
