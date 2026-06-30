@@ -180,6 +180,19 @@ void reset_weather_widgets(GridType grid_type) {
   clear_weather_widgets(grid_type);
 }
 
+// Drop only the cached payload hashes, keeping the widget pointers intact.
+// Used when a grid is restored from a folder cache: the widgets are reused, so
+// without this the hash short-circuit in update_weather_tile_state() would skip
+// re-applying the cached payload and the tile could stay blank ("--").
+void tile_renderer_invalidate_weather_payload(GridType grid_type) {
+  WeatherTileWidgets* target = g_tab0_weather;
+  if (grid_type == GridType::TAB1) target = g_tab1_weather;
+  else if (grid_type == GridType::TAB2) target = g_tab2_weather;
+  for (size_t i = 0; i < TILES_PER_GRID; ++i) {
+    target[i].last_payload_hash = 0;
+  }
+}
+
 static void clear_media_widgets(GridType grid_type) {
   MediaTileWidgets* target = g_tab0_media;
   if (grid_type == GridType::TAB1) target = g_tab1_media;

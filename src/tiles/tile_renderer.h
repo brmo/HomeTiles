@@ -163,6 +163,7 @@ void process_switch_update_queue(uint8_t max_updates = 0);  // 0 = Queue komplet
 
 void reset_weather_widget(GridType grid_type, uint8_t grid_index);
 void reset_weather_widgets(GridType grid_type);
+void tile_renderer_invalidate_weather_payload(GridType grid_type);
 void queue_weather_tile_update(GridType grid_type, uint8_t grid_index, const char* payload);
 void process_weather_update_queue(uint8_t max_updates = 0);  // 0 = Queue komplett leeren
 

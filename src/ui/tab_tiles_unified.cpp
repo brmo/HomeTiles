@@ -910,6 +910,9 @@ void tiles_process_reload_requests() {
           return;
         }
         restore_active_cache(*target);
+        // Restored widgets carry their old payload hash; without clearing it the
+        // weather tile's hash short-circuit skips the re-apply and can stay blank.
+        tile_renderer_invalidate_weather_payload(GridType::TAB0);
         apply_cached_states(GridType::TAB0, target->grid_config);
         process_sensor_update_queue();
         process_switch_update_queue();
@@ -951,6 +954,7 @@ void tiles_process_reload_requests() {
 
       restore_active_cache(*target);
       if (target->grid) {
+        tile_renderer_invalidate_weather_payload(GridType::TAB0);
         apply_cached_states(GridType::TAB0, target->grid_config);
         process_sensor_update_queue();
         process_switch_update_queue();
