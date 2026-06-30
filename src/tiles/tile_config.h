@@ -34,6 +34,20 @@ enum TileType : uint8_t {
   TILE_MEDIA = 15
 };
 
+// A media tile renders its (often long) title as a horizontally scrolling band the
+// full width of the tile. On the 8-inch device every flush is PPA-rotated, and a
+// band wider than the safe rotate width jams the single-slot SRM engine (see
+// kPpaMinRotateWidth in the Waveshare 8" driver) -> the whole UI drops onto the slow
+// CPU rotate until a power cycle. Capping a media tile to a small square keeps its
+// title band well under that limit (3 cells ~= 540 px on the 8" 7-col grid).
+static constexpr uint8_t MEDIA_TILE_MAX_SPAN = 3;
+
+static inline void clamp_media_tile_span(TileType type, uint8_t& span_w, uint8_t& span_h) {
+  if (type != TILE_MEDIA) return;
+  if (span_w > MEDIA_TILE_MAX_SPAN) span_w = MEDIA_TILE_MAX_SPAN;
+  if (span_h > MEDIA_TILE_MAX_SPAN) span_h = MEDIA_TILE_MAX_SPAN;
+}
+
 enum TilePopupOpenMode : uint8_t {
   TILE_POPUP_OPEN_LONG_PRESS = 0,
   TILE_POPUP_OPEN_SHORT_PRESS = 1

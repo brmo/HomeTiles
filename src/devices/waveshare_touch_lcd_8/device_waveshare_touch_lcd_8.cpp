@@ -51,13 +51,18 @@ constexpr uint8_t kInvalidTouchTrackId = 0xFF;
 // so we bail out and rotate that band on the CPU instead of freezing forever.
 constexpr uint32_t kPpaRotateTimeoutMs = 200;
 constexpr uint32_t kPpaFaultCooldownMs = 1200;
-// The PPA SRM engine stalls (and then permanently jams its single pending slot)
-// when asked to rotate a narrow cover-sized block out of the fast SRAM draw
-// buffer. Wide bands (full-screen paint, tab switches) rotate fine and are where
-// the speed matters, so only those go through the PPA; narrower partial flushes
-// (covers, small text/sensor updates) take the CPU rotate, which is cheap for
-// such small areas and never jams the engine.
-constexpr int32_t kPpaMinRotateWidth = 256;
+// The PPA SRM engine can only rotate WIDE bands out of the fast SRAM draw buffer.
+// A narrower partial flush stalls it, and a stalled non-blocking rotate then holds
+// the engine's single pending slot forever ("ppa_srm: exceed maximum pending
+// transactions"), which drops the whole UI onto the slow CPU rotate until a power
+// cycle. The only flushes that are both wide enough to need the PPA and rotate
+// cleanly are full-screen repaints (folder/tab switch, 1280 px) and the popup
+// cards (792 px) — everything tile-level is small and rotates in well under a
+// millisecond on the CPU. The gate therefore sits just below the 792 px popup but
+// far above any tile-sized band. NOTE: this used to be 256, which let the ~370 px
+// scrolling media-title band reach the PPA and jam it permanently — that is the
+// "long title makes the whole display slow forever" bug. Do not lower it.
+constexpr int32_t kPpaMinRotateWidth = 768;
 
 esp_lcd_dsi_bus_handle_t g_dsi_bus = nullptr;
 esp_lcd_panel_io_handle_t g_panel_io = nullptr;

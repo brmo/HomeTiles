@@ -1585,6 +1585,7 @@ void WebAdminServer::handleSaveTiles() {
     span_h = static_cast<uint8_t>(raw);
   }
 
+  clamp_media_tile_span(static_cast<TileType>(type), span_w, span_h);
   if (span_w > GRID_COLS - col) span_w = GRID_COLS - col;
   if (span_h > GRID_ROWS - row) span_h = GRID_ROWS - row;
 
