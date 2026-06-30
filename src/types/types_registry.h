@@ -23,6 +23,10 @@ struct TileTypeApplyContext {
   uint16_t folder_id = 0;
   TileConfig* tile_config = nullptr;
   String* error_message = nullptr;
+  // Folder this tile already pointed to before the edit (0 if it was not a
+  // folder tile). Lets the navigate apply reuse the existing folder on a
+  // rename instead of orphaning it and creating a duplicate.
+  uint16_t previous_navigate_target = 0;
 };
 
 using TileRenderFn = lv_obj_t* (*)(lv_obj_t* parent,

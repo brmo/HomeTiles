@@ -1599,6 +1599,12 @@ void WebAdminServer::handleSaveTiles() {
   apply_ctx.folder_id = folder_id;
   apply_ctx.tile_config = &tileConfig;
   apply_ctx.error_message = &error_message;
+  // Preserve the folder a folder tile already points to so a rename reuses it
+  // instead of spawning a duplicate. Only trust the stored id when the tile was
+  // actually a folder before (otherwise key_code/key_modifier hold key data).
+  if (previous_tile.type == TILE_FOLDER) {
+    apply_ctx.previous_navigate_target = getNavigateTargetId(previous_tile);
+  }
   const TileTypeDescriptor* desc = get_tile_type_descriptor(tile.type);
   if (desc && desc->apply) {
     if (!desc->apply(server, tile, apply_ctx)) {

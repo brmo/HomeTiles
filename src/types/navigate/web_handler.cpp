@@ -6,11 +6,18 @@ bool apply_navigate_fields_from_request(
     Tile& tile,
     uint16_t folder_id,
     TileConfig& tileConfig,
-    String& error_message) {
-  int raw = server.hasArg("navigate_target") ? server.arg("navigate_target").toInt() : -1;
+    String& error_message,
+    uint16_t previous_target) {
+  const bool has_arg = server.hasArg("navigate_target");
+  int raw = has_arg ? server.arg("navigate_target").toInt() : -1;
   uint16_t target_id = 0;
   if (raw > 0 && tileConfig.folderExists(static_cast<uint16_t>(raw))) {
     target_id = static_cast<uint16_t>(raw);
+  } else if (!has_arg && previous_target != 0 && tileConfig.folderExists(previous_target)) {
+    // The web editor has no target picker and never re-sends navigate_target,
+    // so a rename arrives with the arg absent. Keep the folder this tile
+    // already points to instead of orphaning it and creating a duplicate.
+    target_id = previous_target;
   }
 
   if (target_id == 0 || !tileConfig.folderExists(target_id)) {

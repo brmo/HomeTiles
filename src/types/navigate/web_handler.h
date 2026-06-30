@@ -8,4 +8,5 @@ bool apply_navigate_fields_from_request(
     Tile& tile,
     uint16_t folder_id,
     TileConfig& tileConfig,
-    String& error_message);
+    String& error_message,
+    uint16_t previous_target = 0);
