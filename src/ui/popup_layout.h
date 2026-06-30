@@ -33,12 +33,17 @@ constexpr int extra_gap_before_body() {
   return extra_gap(0) / 2;
 }
 
+constexpr int kCompactHeightLift = (kExtraHeight == 0) ? 1 : 0;
+constexpr int kCompactValueLiftY = kCompactHeightLift * 24;
+constexpr int kCompactBodyLiftY = kCompactHeightLift * 28;
+constexpr int kLargeValueTextOffsetY = kCompactHeightLift * 6;
+
 constexpr int kHeaderY = 0;
 constexpr int kHeaderHeight = 96;
-constexpr int kValueBaseY = 104;
+constexpr int kValueBaseY = 104 - kCompactValueLiftY;
 constexpr int kValueY = kValueBaseY + extra_gap_before_value();
 constexpr int kValueHeight = 74;
-constexpr int kBodyBaseY = 186;
+constexpr int kBodyBaseY = 186 - kCompactBodyLiftY;
 constexpr int kBodyY = kBodyBaseY + extra_gap_before_body();
 constexpr int kBodyHeight = 408;
 constexpr int kNavHeight = 92;

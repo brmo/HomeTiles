@@ -968,6 +968,7 @@ static void build_popup_ui(SensorPopupContext* ctx, const SensorPopupInit& init)
   ctx->value_label = value;
   set_label_style(value, lv_color_white(), get_value_font());
   lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_translate_y(value, popup_layout::kLargeValueTextOffsetY, 0);
   lv_obj_set_width(value, LV_PCT(100));
 
   lv_obj_t* body_box = lv_obj_create(card);

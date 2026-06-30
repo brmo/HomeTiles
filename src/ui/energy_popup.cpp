@@ -842,6 +842,7 @@ void build_popup_ui(EnergyPopupContext* ctx, const EnergyPopupInit& init) {
   ctx->value_label = value;
   set_label_style(value, lv_color_white(), &ui_font_40);
   lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_translate_y(value, popup_layout::kLargeValueTextOffsetY, 0);
   lv_obj_set_width(value, LV_PCT(100));
 
   lv_obj_t* subtitle = lv_label_create(value_box);
