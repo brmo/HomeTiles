@@ -51,18 +51,23 @@ constexpr uint8_t kInvalidTouchTrackId = 0xFF;
 // so we bail out and rotate that band on the CPU instead of freezing forever.
 constexpr uint32_t kPpaRotateTimeoutMs = 200;
 constexpr uint32_t kPpaFaultCooldownMs = 1200;
+// A single stray fault just cools the engine down; this many consecutive faults
+// proves the pending slot is wedged and triggers a full client reset (self-heal).
+constexpr uint8_t kPpaFaultsBeforeReset = 2;
 // The PPA SRM engine can only rotate WIDE bands out of the fast SRAM draw buffer.
 // A narrower partial flush stalls it, and a stalled non-blocking rotate then holds
-// the engine's single pending slot forever ("ppa_srm: exceed maximum pending
-// transactions"), which drops the whole UI onto the slow CPU rotate until a power
-// cycle. The only flushes that are both wide enough to need the PPA and rotate
-// cleanly are full-screen repaints (folder/tab switch, 1280 px) and the popup
-// cards (792 px) — everything tile-level is small and rotates in well under a
-// millisecond on the CPU. The gate therefore sits just below the 792 px popup but
-// far above any tile-sized band. NOTE: this used to be 256, which let the ~370 px
-// scrolling media-title band reach the PPA and jam it permanently — that is the
-// "long title makes the whole display slow forever" bug. Do not lower it.
-constexpr int32_t kPpaMinRotateWidth = 768;
+// the engine's single pending slot ("ppa_srm: exceed maximum pending transactions");
+// note_ppa_fault() now heals that, but it still costs a cooldown, so we keep the
+// known jammer off the PPA entirely. That jammer is the scrolling media-title band:
+// a media tile is capped to 3x3 cells, so its widest possible title is 3*168 + 2*16
+// = 536 px (see MEDIA_TILE_MAX_SPAN). The popup interaction bands that DO want the
+// PPA are wider — forecast/energy charts are 752 px, popup cards 792 px, full-screen
+// repaints 1280 px. So the gate sits between them: above the 536 px capped title
+// (keep it on the CPU, it rotates in <1 ms there) and below the 752 px charts (keep
+// those on the PPA so popups stay snappy). 600 leaves margin on both sides. History:
+// 256 let the title jam the engine (display slow forever); 768 over-corrected and
+// pushed the 752 px charts onto the CPU (popups felt sluggish).
+constexpr int32_t kPpaMinRotateWidth = 600;
 
 esp_lcd_dsi_bus_handle_t g_dsi_bus = nullptr;
 esp_lcd_panel_io_handle_t g_panel_io = nullptr;
@@ -75,6 +80,7 @@ SemaphoreHandle_t g_refresh_done = nullptr;
 SemaphoreHandle_t g_ppa_done = nullptr;   // PPA rotate completion (non-blocking mode)
 bool g_ppa_async_ready = false;           // true once the PPA done-callback is armed
 uint32_t g_ppa_cooldown_until_ms = 0;     // while active, flushes use CPU rotate
+uint8_t g_ppa_consecutive_faults = 0;     // resets to 0 on any successful rotate
 
 DEV_I2C_Port g_i2c = {};
 bool g_i2c_ready = false;
@@ -156,6 +162,51 @@ bool IRAM_ATTR on_ppa_trans_done(ppa_client_handle_t, ppa_event_data_t*, void* u
   BaseType_t high_task_woken = pdFALSE;
   xSemaphoreGiveFromISR(sem, &high_task_woken);
   return high_task_woken == pdTRUE;
+}
+
+// Tear down a wedged PPA client and bring up a fresh one so the UI heals itself
+// instead of staying on the slow CPU rotate until a power cycle. A stalled
+// non-blocking rotate keeps its transaction in the client's single pending slot;
+// ppa_unregister_client() is non-blocking and just refuses (without freeing) while
+// that slot is busy, so we never block here. If the unregister was refused we still
+// spin up a fresh client (the old one is leaked, but faults are rare). Anything that
+// ultimately fails leaves g_ppa_handle == nullptr -> CPU-only rotate: slow for full
+// repaints, but never a freeze or a crash.
+void reset_ppa_client() {
+  g_ppa_async_ready = false;
+  ppa_client_handle_t old = g_ppa_handle;
+  g_ppa_handle = nullptr;  // stop draw_landscape_area from submitting mid-reset
+  if (old) {
+    ppa_unregister_client(old);
+  }
+
+  ppa_client_config_t ppa_cfg = {};
+  ppa_cfg.oper_type = PPA_OPERATION_SRM;
+  ppa_client_handle_t fresh = nullptr;
+  if (ppa_register_client(&ppa_cfg, &fresh) != ESP_OK || !fresh) {
+    Serial.println("[Device/WaveshareTouchLCD8] PPA reset: re-register failed -> CPU-only rotate");
+    return;
+  }
+  if (g_ppa_done) {
+    ppa_event_callbacks_t ppa_cbs = {};
+    ppa_cbs.on_trans_done = on_ppa_trans_done;
+    g_ppa_async_ready =
+        (ppa_client_register_event_callbacks(fresh, &ppa_cbs) == ESP_OK);
+  }
+  g_ppa_handle = fresh;
+  Serial.println("[Device/WaveshareTouchLCD8] PPA client reset after fault");
+}
+
+// Called when a PPA rotate stalls or is rejected. The first stray fault only cools
+// the engine down (a stuck transaction may still drain on its own); the next fault
+// in a row proves the slot is wedged and resets the client. The caller always falls
+// through to the CPU rotate, so the frame still lands.
+void note_ppa_fault() {
+  if (++g_ppa_consecutive_faults >= kPpaFaultsBeforeReset) {
+    reset_ppa_client();
+    g_ppa_consecutive_faults = 0;
+  }
+  pause_ppa_for(kPpaFaultCooldownMs);
 }
 
 void drain_transfer_signal() {
@@ -477,16 +528,17 @@ bool draw_landscape_area(int32_t x, int32_t y, int32_t w, int32_t h, const uint1
         if (err == ESP_OK) {
           if (xSemaphoreTake(g_ppa_done, pdMS_TO_TICKS(kPpaRotateTimeoutMs)) == pdTRUE) {
             ppa_ok = true;
+            g_ppa_consecutive_faults = 0;
           } else {
             Serial.printf("[Device/WaveshareTouchLCD8] PPA rotate timeout x=%ld y=%ld w=%ld h=%ld -> CPU cooldown\n",
                           static_cast<long>(x), static_cast<long>(y),
                           static_cast<long>(w), static_cast<long>(h));
-            pause_ppa_for(kPpaFaultCooldownMs);
+            note_ppa_fault();
           }
         } else {
           Serial.printf("[Device/WaveshareTouchLCD8] PPA rotate submit failed err=%d -> CPU cooldown\n",
                         static_cast<int>(err));
-          pause_ppa_for(kPpaFaultCooldownMs);
+          note_ppa_fault();
         }
       } else {
         oper.mode = PPA_TRANS_MODE_BLOCKING;
