@@ -2,6 +2,7 @@
 #include "src/ui/sensor_popup.h"
 #include "src/ui/weather_popup.h"
 #include "src/ui/media_popup.h"
+#include "src/ui/popup_layout.h"
 #include "src/core/config_manager.h"
 #include "src/core/display_manager.h"
 #include "src/core/i18n.h"
@@ -22,19 +23,16 @@ constexpr int kCardWidth =
         : (SCREEN_WIDTH - (kCardMargin * 2));
 constexpr int kCardHeight = SCREEN_HEIGHT - (kCardMargin * 2);
 constexpr int kCardPad = 20;
-constexpr int kContentPadTop = 80;
 constexpr int kHeaderIconOffsetX = 0;
 constexpr int kHeaderIconOffsetY = 0;
-constexpr int kTopValueHeight = 74;
+constexpr int kTopValueHeight = popup_layout::kValueHeight;
 constexpr int kTopValueBottomPad = 0;
-constexpr int kMainPanelHeight = 384;
-constexpr int kControlsRowTopPad = 12;
-constexpr int kControlsRowHeight = 104;
+constexpr int kMainPanelHeight = popup_layout::kBodyHeight;
 constexpr int kControlsRowPadX = 12;
 constexpr int kControlsRowGap = 12;
 constexpr int kControlButtonSize = 92;
 constexpr int kControlButtonTouchWidth = kControlButtonSize;
-constexpr int kControlButtonTouchHeight = 132;
+constexpr int kControlButtonTouchHeight = popup_layout::kNavHeight;
 constexpr int kControlButtonTopInset = 0;
 constexpr int kControlButtonTouchPadX = 10;
 constexpr int kVerticalSliderWidth = 160;
@@ -1635,23 +1633,18 @@ void show_light_popup(const LightPopupInit& init) {
   lv_label_set_text(close_label, getMdiChar("window-close").c_str());
   lv_obj_center(close_label);
 
-  lv_obj_t* content = lv_obj_create(card);
-  lv_obj_set_size(content, LV_PCT(100), LV_PCT(100));
-  lv_obj_align(content, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-  lv_obj_set_style_bg_opa(content, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(content, 0, 0);
-  lv_obj_set_style_pad_left(content, 0, 0);
-  lv_obj_set_style_pad_right(content, 0, 0);
-  lv_obj_set_style_pad_top(content, kContentPadTop, 0);
-  lv_obj_set_style_pad_bottom(content, 24, 0);
-  lv_obj_set_style_pad_row(content, 0, 0);
-  lv_obj_set_layout(content, LV_LAYOUT_FLEX);
-  lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_clear_flag(content, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t* value_box = lv_obj_create(card);
+  lv_obj_remove_style_all(value_box);
+  lv_obj_set_size(value_box, LV_PCT(100), popup_layout::kValueHeight);
+  lv_obj_align(value_box, LV_ALIGN_TOP_MID, 0, popup_layout::kValueY);
+  lv_obj_set_style_bg_opa(value_box, LV_OPA_TRANSP, 0);
+  lv_obj_set_layout(value_box, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(value_box, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(value_box, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_clear_flag(value_box, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_clear_flag(value_box, LV_OBJ_FLAG_SCROLLABLE);
 
-  ctx->top_value_label = lv_label_create(content);
+  ctx->top_value_label = lv_label_create(value_box);
   lv_obj_set_width(ctx->top_value_label, LV_PCT(100));
   lv_obj_set_height(ctx->top_value_label, kTopValueHeight);
   lv_obj_set_style_text_align(ctx->top_value_label, LV_TEXT_ALIGN_CENTER, 0);
@@ -1660,8 +1653,9 @@ void show_light_popup(const LightPopupInit& init) {
   lv_obj_set_style_pad_bottom(ctx->top_value_label, kTopValueBottomPad, 0);
   lv_label_set_text(ctx->top_value_label, "");
 
-  ctx->main_panel = lv_obj_create(content);
+  ctx->main_panel = lv_obj_create(card);
   lv_obj_set_size(ctx->main_panel, LV_PCT(100), kMainPanelHeight);
+  lv_obj_align(ctx->main_panel, LV_ALIGN_TOP_MID, 0, popup_layout::kBodyY);
   lv_obj_set_style_bg_opa(ctx->main_panel, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(ctx->main_panel, 0, 0);
   lv_obj_set_style_pad_all(ctx->main_panel, 0, 0);
@@ -1687,18 +1681,18 @@ void show_light_popup(const LightPopupInit& init) {
                                                     &ctx->temp_value_label);
   render_color_field(ctx);
 
-  ctx->controls_row = lv_obj_create(content);
+  ctx->controls_row = lv_obj_create(card);
   lv_obj_set_height(ctx->controls_row, kControlButtonTouchHeight);
   lv_obj_set_width(ctx->controls_row, LV_SIZE_CONTENT);
+  lv_obj_align(ctx->controls_row, LV_ALIGN_BOTTOM_MID, 0, -popup_layout::kNavBottomInset);
   lv_obj_set_style_bg_opa(ctx->controls_row, LV_OPA_TRANSP, 0);
   lv_obj_set_style_radius(ctx->controls_row, 0, 0);
   lv_obj_set_style_border_width(ctx->controls_row, 0, 0);
   lv_obj_set_style_pad_left(ctx->controls_row, kControlsRowPadX, 0);
   lv_obj_set_style_pad_right(ctx->controls_row, kControlsRowPadX, 0);
-  lv_obj_set_style_pad_top(ctx->controls_row, 6, 0);
-  lv_obj_set_style_pad_bottom(ctx->controls_row, 6, 0);
+  lv_obj_set_style_pad_top(ctx->controls_row, 0, 0);
+  lv_obj_set_style_pad_bottom(ctx->controls_row, 0, 0);
   lv_obj_set_style_pad_column(ctx->controls_row, kControlsRowGap, 0);
-  lv_obj_set_style_margin_top(ctx->controls_row, kControlsRowTopPad, 0);
   lv_obj_set_layout(ctx->controls_row, LV_LAYOUT_FLEX);
   lv_obj_set_flex_flow(ctx->controls_row, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(ctx->controls_row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);

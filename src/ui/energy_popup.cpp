@@ -16,6 +16,7 @@
 #include "src/ui/sensor_popup.h"
 #include "src/ui/weather_popup.h"
 #include "src/ui/media_popup.h"
+#include "src/ui/popup_layout.h"
 
 namespace {
 
@@ -26,16 +27,12 @@ constexpr int kCardWidth =
         : (SCREEN_WIDTH - (kCardMargin * 2));
 constexpr int kCardHeight = SCREEN_HEIGHT - (kCardMargin * 2);
 constexpr int kCardPad = 20;
-constexpr int kContentPadTop = 76;
-constexpr int kContentRowGap = 15;
 constexpr int kChartHeight = 325;
 constexpr int kTimeAxisHeight = 20;
-constexpr int kChartGroupOffsetY = 63;
 constexpr int kTimeAxisGap = 14;
-constexpr int kValueOffsetY = 31;
-constexpr int kRangeButtonWidth = 96;
-constexpr int kRangeButtonHeight = 58;
-constexpr int kRangeButtonGap = 12;
+constexpr int kRangeButtonWidth = 92;
+constexpr int kRangeButtonHeight = popup_layout::kNavHeight;
+constexpr int kRangeButtonGap = 10;
 constexpr uint8_t kDaySlotCount = 24;
 constexpr uint8_t kWeekSlotCount = 7;
 constexpr int kLabelOverhang = 12;
@@ -123,11 +120,12 @@ void style_period_button(lv_obj_t* btn, lv_obj_t* label, bool active) {
   }
 
   auto apply_selector = [&](lv_style_selector_t selector) {
+    const bool pressed = selector == LV_STATE_PRESSED;
     lv_obj_set_style_bg_color(btn, lv_color_white(), selector);
-    lv_obj_set_style_bg_opa(btn, active ? LV_OPA_COVER : LV_OPA_TRANSP, selector);
+    lv_obj_set_style_bg_opa(btn, active ? LV_OPA_COVER : (pressed ? LV_OPA_20 : LV_OPA_TRANSP), selector);
     lv_obj_set_style_border_color(btn, lv_color_white(), selector);
-    lv_obj_set_style_border_width(btn, 2, selector);
-    lv_obj_set_style_border_opa(btn, active ? LV_OPA_TRANSP : LV_OPA_COVER, selector);
+    lv_obj_set_style_border_width(btn, 0, selector);
+    lv_obj_set_style_border_opa(btn, LV_OPA_TRANSP, selector);
     lv_obj_set_style_outline_opa(btn, LV_OPA_TRANSP, selector);
     lv_obj_set_style_shadow_opa(btn, LV_OPA_TRANSP, selector);
     lv_obj_set_style_transform_width(btn, 0, selector);
@@ -732,7 +730,7 @@ lv_obj_t* make_button_label(lv_obj_t* parent, const char* text, lv_obj_t** out_l
   lv_obj_t* btn = lv_button_create(parent);
   disable_pressed_button_animation(btn);
   lv_obj_set_size(btn, kRangeButtonWidth, kRangeButtonHeight);
-  lv_obj_set_style_radius(btn, 16, 0);
+  lv_obj_set_style_radius(btn, kRangeButtonHeight / 2, 0);
   lv_obj_set_style_pad_all(btn, 0, 0);
   lv_obj_set_style_anim_time(btn, 0, 0);
   lv_obj_set_style_anim_time(btn, 0, LV_STATE_PRESSED);
@@ -815,8 +813,8 @@ void build_popup_ui(EnergyPopupContext* ctx, const EnergyPopupInit& init) {
   lv_obj_t* period_row = lv_obj_create(card);
   ctx->range_row = period_row;
   lv_obj_remove_style_all(period_row);
-  lv_obj_set_size(period_row, (kRangeButtonWidth * 2) + kRangeButtonGap, kRangeButtonHeight);
-  lv_obj_align(period_row, LV_ALIGN_TOP_RIGHT, -106, 13);
+  lv_obj_set_size(period_row, (kRangeButtonWidth * 2) + kRangeButtonGap, popup_layout::kNavHeight);
+  lv_obj_align(period_row, LV_ALIGN_BOTTOM_MID, 0, -popup_layout::kNavBottomInset);
   lv_obj_set_style_bg_opa(period_row, LV_OPA_TRANSP, 0);
   lv_obj_set_layout(period_row, LV_LAYOUT_FLEX);
   lv_obj_set_flex_flow(period_row, LV_FLEX_FLOW_ROW);
@@ -829,40 +827,44 @@ void build_popup_ui(EnergyPopupContext* ctx, const EnergyPopupInit& init) {
   lv_obj_add_event_cb(ctx->day_btn, on_period_click, LV_EVENT_CLICKED, ctx);
   lv_obj_add_event_cb(ctx->week_btn, on_period_click, LV_EVENT_CLICKED, ctx);
 
-  lv_obj_t* content = lv_obj_create(card);
-  lv_obj_set_size(content, LV_PCT(100), LV_PCT(100));
-  lv_obj_align(content, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-  lv_obj_set_style_bg_opa(content, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(content, 0, 0);
-  lv_obj_set_style_pad_all(content, 0, 0);
-  lv_obj_set_style_pad_top(content, kContentPadTop, 0);
-  lv_obj_set_layout(content, LV_LAYOUT_FLEX);
-  lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(content, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_bottom(content, 24, 0);
-  lv_obj_set_style_pad_row(content, kContentRowGap, 0);
-  lv_obj_clear_flag(content, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_t* value_box = lv_obj_create(card);
+  lv_obj_remove_style_all(value_box);
+  lv_obj_set_size(value_box, LV_PCT(100), popup_layout::kValueHeight);
+  lv_obj_align(value_box, LV_ALIGN_TOP_MID, 0, popup_layout::kValueY);
+  lv_obj_set_style_bg_opa(value_box, LV_OPA_TRANSP, 0);
+  lv_obj_set_layout(value_box, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(value_box, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(value_box, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_clear_flag(value_box, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_clear_flag(value_box, LV_OBJ_FLAG_SCROLLABLE);
 
-  lv_obj_t* value = lv_label_create(content);
+  lv_obj_t* value = lv_label_create(value_box);
   ctx->value_label = value;
   set_label_style(value, lv_color_white(), &ui_font_40);
   lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_width(value, LV_PCT(100));
-  lv_obj_set_style_translate_y(value, kValueOffsetY, 0);
 
-  lv_obj_t* subtitle = lv_label_create(content);
+  lv_obj_t* subtitle = lv_label_create(value_box);
   ctx->subtitle_label = subtitle;
   set_label_style(subtitle, lv_color_hex(0xD9D9D9), FONT_TITLE);
   lv_obj_set_style_text_align(subtitle, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_width(subtitle, LV_PCT(100));
-  lv_obj_set_style_translate_y(subtitle, kValueOffsetY, 0);
   lv_obj_add_flag(subtitle, LV_OBJ_FLAG_HIDDEN);
 
-  lv_obj_t* chart_wrap = lv_obj_create(content);
+  lv_obj_t* body_box = lv_obj_create(card);
+  lv_obj_remove_style_all(body_box);
+  lv_obj_set_size(body_box, LV_PCT(100), popup_layout::kBodyHeight);
+  lv_obj_align(body_box, LV_ALIGN_TOP_MID, 0, popup_layout::kBodyY);
+  lv_obj_set_style_bg_opa(body_box, LV_OPA_TRANSP, 0);
+  lv_obj_add_flag(body_box, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+  lv_obj_clear_flag(body_box, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_clear_flag(body_box, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* chart_wrap = lv_obj_create(body_box);
   ctx->chart_wrap = chart_wrap;
   lv_obj_remove_style_all(chart_wrap);
   lv_obj_set_size(chart_wrap, LV_PCT(100), kLabelOverhang + kChartHeight + kTimeAxisGap + kTimeAxisHeight);
-  lv_obj_set_style_margin_top(chart_wrap, kChartGroupOffsetY, 0);
+  lv_obj_center(chart_wrap);
   lv_obj_set_style_bg_opa(chart_wrap, LV_OPA_TRANSP, 0);
   lv_obj_remove_flag(chart_wrap, LV_OBJ_FLAG_SCROLLABLE);
 

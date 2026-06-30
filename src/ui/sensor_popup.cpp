@@ -2,6 +2,7 @@
 #include "src/ui/light_popup.h"
 #include "src/ui/weather_popup.h"
 #include "src/ui/media_popup.h"
+#include "src/ui/popup_layout.h"
 #include "src/core/config_manager.h"
 #include "src/core/display_manager.h"
 #include "src/fonts/ui_fonts.h"
@@ -27,24 +28,19 @@ constexpr int kCardPad = 20;
 constexpr int kHeaderPadTop = 4;
 constexpr int kHeaderIconOffsetX = 4;
 constexpr int kHeaderIconOffsetY = -8;
-constexpr int kContentPadTop = 76;
-constexpr int kContentRowGap = 15;
 constexpr int kChartHeight = 325;
 constexpr int kTimeAxisHeight = 20;  // space for time labels below chart
 constexpr int kTimeAxisMarkerCount = 8;
 constexpr int kChartLineWidth = 4;
-constexpr int kChartGroupOffsetY = 63;
-constexpr int kRangeRowOffsetY = 136;
-constexpr int kValueOffsetY = 31;
 constexpr uint16_t kHistoryHours24h = 24;
 constexpr uint16_t kHistoryPeriodMinutes24h = 5;
 constexpr uint16_t kHistoryPoints24h = 288;
 constexpr uint16_t kHistoryHours7d = 168;
 constexpr uint16_t kHistoryPeriodMinutes7d = 60;
 constexpr uint16_t kHistoryPoints7d = 168;
-constexpr int kRangeButtonWidth = 96;
-constexpr int kRangeButtonHeight = 58;
-constexpr int kRangeButtonGap = 12;
+constexpr int kRangeButtonWidth = 92;
+constexpr int kRangeButtonHeight = popup_layout::kNavHeight;
+constexpr int kRangeButtonGap = 10;
 
 enum class SensorHistoryRange : uint8_t {
   Day24,
@@ -183,11 +179,12 @@ static void style_range_button(lv_obj_t* btn, bool active) {
     active_text_color = lv_obj_get_style_bg_color(card, LV_PART_MAIN);
   }
   auto apply_selector = [&](lv_style_selector_t selector) {
+    const bool pressed = selector == LV_STATE_PRESSED;
     lv_obj_set_style_bg_color(btn, lv_color_white(), selector);
-    lv_obj_set_style_bg_opa(btn, active ? LV_OPA_COVER : LV_OPA_TRANSP, selector);
+    lv_obj_set_style_bg_opa(btn, active ? LV_OPA_COVER : (pressed ? LV_OPA_20 : LV_OPA_TRANSP), selector);
     lv_obj_set_style_border_color(btn, lv_color_white(), selector);
-    lv_obj_set_style_border_width(btn, 2, selector);
-    lv_obj_set_style_border_opa(btn, active ? LV_OPA_TRANSP : LV_OPA_COVER, selector);
+    lv_obj_set_style_border_width(btn, 0, selector);
+    lv_obj_set_style_border_opa(btn, LV_OPA_TRANSP, selector);
     lv_obj_set_style_outline_opa(btn, LV_OPA_TRANSP, selector);
     lv_obj_set_style_shadow_opa(btn, LV_OPA_TRANSP, selector);
     lv_obj_set_style_transform_width(btn, 0, selector);
@@ -916,8 +913,8 @@ static void build_popup_ui(SensorPopupContext* ctx, const SensorPopupInit& init)
   lv_obj_t* range_row = lv_obj_create(card);
   ctx->range_row = range_row;
   lv_obj_remove_style_all(range_row);
-  lv_obj_set_size(range_row, (kRangeButtonWidth * 2) + kRangeButtonGap, kRangeButtonHeight);
-  lv_obj_align(range_row, LV_ALIGN_TOP_RIGHT, -106, 13);
+  lv_obj_set_size(range_row, (kRangeButtonWidth * 2) + kRangeButtonGap, popup_layout::kNavHeight);
+  lv_obj_align(range_row, LV_ALIGN_BOTTOM_MID, 0, -popup_layout::kNavBottomInset);
   lv_obj_set_style_bg_opa(range_row, LV_OPA_TRANSP, 0);
   lv_obj_set_layout(range_row, LV_LAYOUT_FLEX);
   lv_obj_set_flex_flow(range_row, LV_FLEX_FLOW_ROW);
@@ -928,7 +925,7 @@ static void build_popup_ui(SensorPopupContext* ctx, const SensorPopupInit& init)
   auto make_range_button = [&](const char* text) -> lv_obj_t* {
     lv_obj_t* btn = lv_button_create(range_row);
     lv_obj_set_size(btn, kRangeButtonWidth, kRangeButtonHeight);
-    lv_obj_set_style_radius(btn, 16, 0);
+    lv_obj_set_style_radius(btn, kRangeButtonHeight / 2, 0);
     lv_obj_set_style_pad_all(btn, 0, 0);
     lv_obj_set_style_anim_time(btn, 0, 0);
     lv_obj_set_style_anim_time(btn, 0, LV_STATE_PRESSED);
@@ -956,35 +953,40 @@ static void build_popup_ui(SensorPopupContext* ctx, const SensorPopupInit& init)
   update_range_buttons(ctx);
   set_range_buttons_visible(ctx, false);
 
-  lv_obj_t* content = lv_obj_create(card);
-  lv_obj_set_size(content, LV_PCT(100), LV_PCT(100));
-  lv_obj_align(content, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-  lv_obj_set_style_bg_opa(content, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(content, 0, 0);
-  lv_obj_set_style_pad_all(content, 0, 0);
-  lv_obj_set_style_pad_top(content, kContentPadTop, 0);
-  lv_obj_set_layout(content, LV_LAYOUT_FLEX);
-  lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(content, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_bottom(content, 24, 0);
-  lv_obj_set_style_pad_row(content, kContentRowGap, 0);
-  lv_obj_clear_flag(content, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_t* value_box = lv_obj_create(card);
+  lv_obj_remove_style_all(value_box);
+  lv_obj_set_size(value_box, LV_PCT(100), popup_layout::kValueHeight);
+  lv_obj_align(value_box, LV_ALIGN_TOP_MID, 0, popup_layout::kValueY);
+  lv_obj_set_style_bg_opa(value_box, LV_OPA_TRANSP, 0);
+  lv_obj_set_layout(value_box, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(value_box, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(value_box, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_clear_flag(value_box, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_clear_flag(value_box, LV_OBJ_FLAG_SCROLLABLE);
 
-  lv_obj_t* value = lv_label_create(content);
+  lv_obj_t* value = lv_label_create(value_box);
   ctx->value_label = value;
   set_label_style(value, lv_color_white(), get_value_font());
   lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_width(value, LV_PCT(100));
-  lv_obj_set_style_translate_y(value, kValueOffsetY, 0);
+
+  lv_obj_t* body_box = lv_obj_create(card);
+  lv_obj_remove_style_all(body_box);
+  lv_obj_set_size(body_box, LV_PCT(100), popup_layout::kBodyHeight);
+  lv_obj_align(body_box, LV_ALIGN_TOP_MID, 0, popup_layout::kBodyY);
+  lv_obj_set_style_bg_opa(body_box, LV_OPA_TRANSP, 0);
+  lv_obj_add_flag(body_box, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+  lv_obj_clear_flag(body_box, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_clear_flag(body_box, LV_OBJ_FLAG_SCROLLABLE);
 
   // Chart wrapper: Y-axis labels on the left, chart on the right, time labels below.
   // Extra vertical space (kLabelOverhang) at top/bottom so labels don't get clipped.
   constexpr int kLabelOverhang = 12;  // half of ui_font_20 line height + margin
-  lv_obj_t* chart_wrap = lv_obj_create(content);
+  lv_obj_t* chart_wrap = lv_obj_create(body_box);
   ctx->chart_wrap = chart_wrap;
   lv_obj_remove_style_all(chart_wrap);
   lv_obj_set_size(chart_wrap, LV_PCT(100), kChartHeight + 2 * kLabelOverhang + kTimeAxisHeight);
-  lv_obj_set_style_margin_top(chart_wrap, kChartGroupOffsetY, 0);
+  lv_obj_center(chart_wrap);
   lv_obj_set_style_bg_opa(chart_wrap, LV_OPA_TRANSP, 0);
   lv_obj_remove_flag(chart_wrap, LV_OBJ_FLAG_SCROLLABLE);
 

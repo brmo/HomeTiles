@@ -2,6 +2,7 @@
 #include "src/ui/light_popup.h"
 #include "src/ui/sensor_popup.h"
 #include "src/ui/media_popup.h"
+#include "src/ui/popup_layout.h"
 #include "src/network/mqtt_handlers.h"
 #include "src/core/display_manager.h"
 #include "src/ui/tab_tiles_unified.h"
@@ -31,14 +32,15 @@ constexpr int kForecastTempPointCount = (kCols * kForecastHoursPerDay) + 1;
 constexpr int kHourlyForecastMax = 168;
 constexpr int kDetailMarkerCount = 5;
 constexpr int kDetailChartPointCount = 25;
-constexpr int kModeRowOffsetY = 124;
 constexpr int kModeButtonWidth = 96;
 constexpr int kModeButtonHeight = 54;
 constexpr int kModeButtonGap = 12;
-constexpr int kSummaryRowTop = 108;
-constexpr int kDetailHeaderSubrowTop = 170;
-constexpr int kForecastRowTop = 170;
-constexpr int kForecastRowHeight = kCardHeight - kForecastRowTop - kCardPad - 10;
+constexpr int kModeRowOffsetY =
+    popup_layout::kValueY + ((popup_layout::kValueHeight - kModeButtonHeight) / 2);
+constexpr int kSummaryRowTop = popup_layout::kValueY;
+constexpr int kForecastRowTop = popup_layout::kBodyY;
+constexpr int kDetailHeaderSubrowTop = kForecastRowTop;
+constexpr int kForecastRowHeight = popup_layout::kBodyHeight;
 constexpr int kForecastSidePad = 4;
 constexpr int kForecastColGap = 4;
 constexpr int kForecastDayTop = 2;
@@ -66,7 +68,7 @@ constexpr int kForecastLastCenter =
     kForecastSidePad + ((kCols - 1) * (kForecastPlotColW + kForecastColGap)) + (kForecastPlotColW / 2);
 constexpr int kDetailRowTop = kForecastRowTop;
 constexpr int kDetailTitleTop = kDetailHeaderSubrowTop + 6;
-constexpr int kFooterButtonHeight = 92;
+constexpr int kFooterButtonHeight = popup_layout::kNavHeight;
 constexpr int kFooterActionButtonWidth = 92;
 constexpr int kFooterButtonRadius = kFooterButtonHeight / 2;
 constexpr int kFooterButtonGap = 10;
@@ -3021,7 +3023,7 @@ static void build_popup_ui(WeatherPopupContext* ctx, const WeatherPopupInit& ini
   lv_obj_t* value_row = lv_obj_create(card);
   ctx->value_row = value_row;
   lv_obj_remove_style_all(value_row);
-  lv_obj_set_size(value_row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_size(value_row, popup_layout::kContentWidth, popup_layout::kValueHeight);
   lv_obj_set_flex_flow(value_row, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(value_row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_gap(value_row, 14, 0);
