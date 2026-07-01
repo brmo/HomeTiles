@@ -164,12 +164,22 @@ struct FolderEntry {
   char icon_name[32];
 };
 
+// Lightweight per-tile projection used by background scans (cache refresh,
+// MQTT dynamic-route rebuild) that only need type + entity id, not the full
+// Tile (title/icon/scene/macro/image_path). Skips ~5 of 6 per-tile String
+// allocations that a full TileGridConfig load pays for every tile.
+struct TileEntitySlot {
+  TileType type = TILE_EMPTY;
+  String sensor_entity;
+};
+
 class TileConfig {
 public:
   TileConfig();
 
   bool load();
   bool loadFolderGrid(uint16_t folder_id, TileGridConfig& out);
+  bool loadFolderGridEntitiesOnly(uint16_t folder_id, TileEntitySlot* out, size_t count);
   bool saveFolderGrid(uint16_t folder_id, const TileGridConfig& grid);
 
   bool setActiveFolder(uint16_t folder_id);

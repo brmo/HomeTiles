@@ -419,7 +419,10 @@ void Tab5NetworkManager::update() {
           connectMqtt();
         }
       } else {
-        mqtt_client.loop();
+        // mqtt_client.loop() itself now runs every main-loop iteration via
+        // serviceMqttLoop() (see .ino) instead of only here -- update() is
+        // throttled to every 5th iteration, which used to delay reassembly
+        // of any large multi-segment MQTT payload by up to ~5 iterations.
         publishTelemetry();
       }
       if (mqtt_large_until != 0 && (int32_t)(now_ms - mqtt_large_until) >= 0) {
@@ -436,6 +439,14 @@ void Tab5NetworkManager::update() {
 
   // WiFi-Status für nächste Runde merken
   was_connected = is_connected;
+}
+
+void Tab5NetworkManager::serviceMqttLoop() {
+  if (!configManager.isConfigured()) return;
+  if (!mqtt_enabled) return;
+  if (WiFi.status() != WL_CONNECTED) return;
+  if (!mqtt_client.connected()) return;
+  mqtt_client.loop();
 }
 
 // ========== WiFi Power Management ==========

@@ -14,6 +14,7 @@
 #include "src/core/power_manager.h"
 #include "src/core/config_manager.h"
 #include "src/core/firmware_version.h"
+#include "src/core/lvgl_tick_service.h"
 #include "src/ui/ui_manager.h"
 #include "src/ui/sensor_popup.h"
 #include "src/ui/weather_popup.h"
@@ -207,6 +208,7 @@ static void service_background_state_refresh(bool allow_now) {
 }
 
 void setup() {
+  g_lvgl_tick_last_ms = millis();
   Serial.begin(115200);
   delay(2000);
   Serial.println("\n\n=== WAVESHARE P4 STARTUP ===");
@@ -381,12 +383,11 @@ void loop() {
   }
 
   if (first_run) Serial.println("[Loop] millis()...");
-  static uint32_t last = millis();
   uint32_t now = millis();
 
   if (first_run) Serial.println("[Loop] lv_tick_inc()...");
-  lv_tick_inc(now - last);
-  last = now;
+  lv_tick_inc(now - g_lvgl_tick_last_ms);
+  g_lvgl_tick_last_ms = now;
 
   if (hotspot_mode_change_pending) {
     hotspot_mode_change_pending = false;
@@ -496,6 +497,13 @@ void loop() {
   // Zurück im aktiven Modus
   was_asleep = false;
 
+  // Diagnostic: bracket every major step between here and the lv_timer_handler()
+  // call below, so a slow segment shows up by name instead of having to guess
+  // and instrument one function at a time (see project memory: repeated rounds
+  // of "found one cost, animation still hitches" -- this covers the whole gap
+  // in one pass). Only prints if the total exceeds 80ms.
+  uint32_t t_loop0 = millis();
+
   if (wake_cache_refresh_pending) {
     wake_cache_refresh_pending = false;
     tiles_refresh_visible_from_cache();
@@ -510,14 +518,20 @@ void loop() {
       wake_bridge_request_pending = false;
     }
   }
+  uint32_t t_wake = millis();
+
   const bool ui_idle_for_background_refresh = !powerManager.isHighPerformance();
   service_background_state_refresh(ui_idle_for_background_refresh);
+  uint32_t t_bg_refresh = millis();
   tiles_process_bridge_cache_refresh(ui_idle_for_background_refresh);
+  uint32_t t_bridge_cache = millis();
   tiles_process_visible_cache_refresh(ui_idle_for_background_refresh);
+  uint32_t t_visible_cache = millis();
 
   // --- ACTIVE ---
   // Lokale Sensoren (z. B. externer OneWire-Temperatursensor)
   mqttServiceLocalSensors();
+  uint32_t t_local_sensors = millis();
 
   if (first_run) Serial.println("[Loop] process_sensor_update_queue()...");
   // Popup-Queues immer sofort verarbeiten (User wartet auf Inhalt)
@@ -525,6 +539,7 @@ void loop() {
   process_weather_popup_queue();
   process_energy_response_queue();
   process_energy_popup_queue();
+  uint32_t t_popup_queues = millis();
 
   // Im Idle nur alle 2s tile/sensor Queues verarbeiten (spart CPU bei 10 FPS)
   {
@@ -548,7 +563,20 @@ void loop() {
       last_queue_ms = millis();
     }
   }
+  uint32_t t_update_queues = millis();
   tiles_process_reload_requests();
+  uint32_t t_reload_requests = millis();
+
+  if ((t_reload_requests - t_loop0) >= 80) {
+    Serial.printf(
+        "[LoopGap] total=%ums wake=%u bg_refresh=%u bridge_cache=%u visible_cache=%u "
+        "local_sensors=%u popup_queues=%u update_queues=%u reload_requests=%u\n",
+        (unsigned)(t_reload_requests - t_loop0), (unsigned)(t_wake - t_loop0),
+        (unsigned)(t_bg_refresh - t_wake), (unsigned)(t_bridge_cache - t_bg_refresh),
+        (unsigned)(t_visible_cache - t_bridge_cache), (unsigned)(t_local_sensors - t_visible_cache),
+        (unsigned)(t_popup_queues - t_local_sensors), (unsigned)(t_update_queues - t_popup_queues),
+        (unsigned)(t_reload_requests - t_update_queues));
+  }
 
   if (first_run) {
     Serial.println("[Loop] lv_timer_handler()...");
@@ -573,6 +601,14 @@ void loop() {
 
   if (first_run) Serial.println("[Loop] Network check...");
   if (configManager.isConfigured()) {
+    // mqtt_client.loop() (socket read + dispatch to mqttCallback) every
+    // iteration -- an incoming multi-KB payload can need several TCP
+    // segments to fully arrive, and only polling the socket once every 5
+    // iterations (the networkManager.update() throttle below) stretched
+    // that reassembly by up to ~5 loop iterations before processing could
+    // even start. WiFi reconnect/telemetry/buffer housekeeping don't need
+    // that granularity and stay on the throttle.
+    networkManager.serviceMqttLoop();
     static uint8_t net_tick = 0;
     if (++net_tick % 5 == 0) {
       if (first_run) Serial.println("[Loop] networkManager.update()...");

@@ -51,14 +51,29 @@ struct PixelAnimState {
 void pixelanim_timer_cb(lv_timer_t* t) {
   PixelAnimState* st = static_cast<PixelAnimState*>(lv_timer_get_user_data(t));
   if (!st || !st->img || !st->dscs || st->frame_count < 2) return;
+  // Diagnostic: track the actual gap between ticks so a stall shows up as a
+  // large delta regardless of cause (blocked lv_timer_handler(), PPA hold,
+  // whatever) -- lets us correlate against the bridge-reload log window.
+  static uint32_t s_last_tick_ms = 0;
+  uint32_t now_ms = millis();
+  uint32_t gap_ms = s_last_tick_ms ? (now_ms - s_last_tick_ms) : 0;
+  s_last_tick_ms = now_ms;
 #if defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
   // A media-tile update briefly forces every flush onto the slow CPU-rotate
   // path (see pausePpaFor in tile_renderer.cpp). Swapping our frame into that
   // window would visibly hitch and adds more work to an already-loaded
   // pipeline. Hold the current frame instead; it resumes smoothly once the
   // cooldown clears, which reads better than an uneven stutter.
-  if (DeviceWaveshareTouchLCD8::ppaCooldownActive()) return;
+  if (DeviceWaveshareTouchLCD8::ppaCooldownActive()) {
+    if (gap_ms >= 150) {
+      Serial.printf("[PixelAnim] tick HELD (ppa cooldown) gap=%ums\n", (unsigned)gap_ms);
+    }
+    return;
+  }
 #endif
+  if (gap_ms >= 150) {
+    Serial.printf("[PixelAnim] tick gap=%ums (advancing anyway)\n", (unsigned)gap_ms);
+  }
   st->cur_frame = (st->cur_frame + 1) % st->frame_count;
   // Distinct descriptor per frame -> distinct image-cache key -> no stale frame,
   // using only public API.

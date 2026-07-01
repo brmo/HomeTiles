@@ -14,6 +14,7 @@
 #include "src/core/power_manager.h"
 #include "src/core/battery_state.h"
 #include "src/core/board_hal.h"
+#include "src/core/lvgl_tick_service.h"
 #include <esp_heap_caps.h>
 #include <PubSubClient.h>
 #include <algorithm>
@@ -1100,29 +1101,33 @@ static void rebuildDynamicRoutes(std::vector<DynamicSensorRoute>& routes) {
     add_route(cfg.sensor_slots[slot], slot);
   }
 
-  // Sensor tiles from ALL folders (no slot index, entity-based update)
-  auto add_grid_entities = [&](const TileGridConfig& grid) {
-    for (uint8_t i = 0; i < TILES_PER_GRID; ++i) {
-      const Tile& tile = grid.tiles[i];
-      if ((tile.type == TILE_SENSOR || tile.type == TILE_SWITCH || tile.type == TILE_MEDIA) &&
-          tile.sensor_entity.length()) {
-        add_route(tile.sensor_entity, -1);
+  // Sensor tiles from ALL folders (no slot index, entity-based update). Uses
+  // the lightweight TileEntitySlot projection (type + sensor_entity only) --
+  // this scan never touches title/icon/scene/macro/image_path, so there is no
+  // reason to pay for a full per-tile Tile unpack (see
+  // TileConfig::loadFolderGridEntitiesOnly).
+  auto add_grid_entities = [&](const TileEntitySlot* slots, size_t count) {
+    for (size_t i = 0; i < count; ++i) {
+      const TileEntitySlot& slot = slots[i];
+      if ((slot.type == TILE_SENSOR || slot.type == TILE_SWITCH || slot.type == TILE_MEDIA) &&
+          slot.sensor_entity.length()) {
+        add_route(slot.sensor_entity, -1);
       }
     }
   };
 
   // Scan all folders, not just the active one
   const std::vector<FolderEntry>& folders = tileConfig.getFolders();
+  TileEntitySlot slots[TILES_PER_GRID];
   for (const auto& folder : folders) {
     uint32_t t_load0 = millis();
-    TileGridConfig grid;
-    bool loaded = tileConfig.loadFolderGrid(folder.id, grid);
+    bool loaded = tileConfig.loadFolderGridEntitiesOnly(folder.id, slots, TILES_PER_GRID);
     uint32_t load_ms = millis() - t_load0;
     if (load_ms >= 5) {
-      Serial.printf("[Bridge]   loadFolderGrid(%u): %u ms\n", folder.id, (unsigned)load_ms);
+      Serial.printf("[Bridge]   loadFolderGridEntitiesOnly(%u): %u ms\n", folder.id, (unsigned)load_ms);
     }
     if (loaded) {
-      add_grid_entities(grid);
+      add_grid_entities(slots, TILES_PER_GRID);
     }
     // This runs synchronously inside mqttCallback (via mqtt_client.loop() in the
     // main loop task), before lv_timer_handler() gets its turn at the end of
@@ -1130,9 +1135,7 @@ static void rebuildDynamicRoutes(std::vector<DynamicSensorRoute>& routes) {
     // screen (running animation tiles included). Servicing LVGL between folders
     // keeps the UI breathing during the reload instead of stalling for its
     // full duration.
-    yield();
-    lv_timer_handler();
-    yield();
+    lvglServiceDuringBlockingWork();
   }
 }
 
@@ -1161,27 +1164,25 @@ static void rebuildDynamicWeatherRoutes(std::vector<DynamicWeatherRoute>& routes
   };
 
   const std::vector<FolderEntry>& folders = tileConfig.getFolders();
+  TileEntitySlot slots[TILES_PER_GRID];
   for (const auto& folder : folders) {
     uint32_t t_load0 = millis();
-    TileGridConfig grid;
-    bool loaded = tileConfig.loadFolderGrid(folder.id, grid);
+    bool loaded = tileConfig.loadFolderGridEntitiesOnly(folder.id, slots, TILES_PER_GRID);
     uint32_t load_ms = millis() - t_load0;
     if (load_ms >= 5) {
-      Serial.printf("[Bridge]   loadFolderGrid(%u): %u ms\n", folder.id, (unsigned)load_ms);
+      Serial.printf("[Bridge]   loadFolderGridEntitiesOnly(%u): %u ms\n", folder.id, (unsigned)load_ms);
     }
     if (loaded) {
-      for (uint8_t i = 0; i < TILES_PER_GRID; ++i) {
-        const Tile& tile = grid.tiles[i];
-        if (tile.type == TILE_WEATHER && tile.sensor_entity.length()) {
-          add_route(tile.sensor_entity);
+      for (size_t i = 0; i < TILES_PER_GRID; ++i) {
+        const TileEntitySlot& slot = slots[i];
+        if (slot.type == TILE_WEATHER && slot.sensor_entity.length()) {
+          add_route(slot.sensor_entity);
         }
       }
     }
     // Same reasoning as rebuildDynamicRoutes() above: give LVGL a turn between
     // folders so this synchronous MQTT-callback reload doesn't stall the screen.
-    yield();
-    lv_timer_handler();
-    yield();
+    lvglServiceDuringBlockingWork();
   }
 }
 
@@ -1246,6 +1247,17 @@ static char* mqttConfigBuffer() {
 
 // ========== MQTT Callback (Topic-Routing) ==========
 void mqttCallback(char* topic, uint8_t* payload, unsigned int length) {
+  // How much real time passed since the LVGL tick was last serviced, before
+  // this callback (invoked synchronously from PubSubClient::loop(), itself
+  // called from inside networkManager.serviceMqttLoop()/update()) does
+  // anything at all. If this is already large, the delay is in getting here
+  // (loop cadence / socket read for a large multi-segment payload) -- not in
+  // any of our own parsing code below, all of which is already yield-covered.
+  uint32_t entry_since_tick = millis() - g_lvgl_tick_last_ms;
+  if (entry_since_tick >= 50) {
+    Serial.printf("[Bridge] mqttCallback entry: %ums since last LVGL tick service\n",
+                  (unsigned)entry_since_tick);
+  }
   yield();  // Webserver atmen lassen!
 
   const char* apply_topic = networkManager.getBridgeApplyTopic();
@@ -1791,28 +1803,43 @@ void mqttPublishDiscovery() {
 
 void mqttReloadDynamicSlots() {
   PubSubClient& mqtt = networkManager.getMqttClient();
+  uint32_t t_unsub0 = millis();
   if (mqtt.connected()) {
+    // mqtt.unsubscribe()/subscribe() each write an MQTT control packet over
+    // the TCP/SDIO link -- real network I/O, not flash. With ~20-30 dynamic
+    // routes (sensors+weather) this loop (and the subscribe loop below) can
+    // add up to hundreds of ms with zero yields, on top of the grid-reload
+    // cost already fixed above. Give LVGL a turn between each one.
     for (const auto& route : g_dynamic_routes) {
       mqtt.unsubscribe(route.topic.c_str());
+      lvglServiceDuringBlockingWork();
     }
     for (const auto& route : g_dynamic_weather_routes) {
       mqtt.unsubscribe(route.topic.c_str());
+      lvglServiceDuringBlockingWork();
     }
   }
+  Serial.printf("[Bridge] mqttReloadDynamicSlots unsubscribe: %u ms\n", (unsigned)(millis() - t_unsub0));
+
   uint32_t t_sensor0 = millis();
   rebuildDynamicRoutes(g_dynamic_routes);
   Serial.printf("[Bridge] rebuildDynamicRoutes: %u ms\n", (unsigned)(millis() - t_sensor0));
   uint32_t t_weather0 = millis();
   rebuildDynamicWeatherRoutes(g_dynamic_weather_routes);
   Serial.printf("[Bridge] rebuildDynamicWeatherRoutes: %u ms\n", (unsigned)(millis() - t_weather0));
+
+  uint32_t t_sub0 = millis();
   if (mqtt.connected()) {
     for (const auto& route : g_dynamic_routes) {
       mqtt.subscribe(route.topic.c_str());
       Serial.printf("MQTT: subscribed %s\n", route.topic.c_str());
+      lvglServiceDuringBlockingWork();
     }
     for (const auto& route : g_dynamic_weather_routes) {
       mqtt.subscribe(route.topic.c_str());
       Serial.printf("MQTT: subscribed %s\n", route.topic.c_str());
+      lvglServiceDuringBlockingWork();
     }
   }
+  Serial.printf("[Bridge] mqttReloadDynamicSlots subscribe: %u ms\n", (unsigned)(millis() - t_sub0));
 }

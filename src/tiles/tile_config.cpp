@@ -440,7 +440,10 @@ static bool writeGridSd(uint16_t folder_id, const PackedQuarterGridV7* packed, s
 }
 
 static bool readPackedGridFileV7(const String& filePath, PackedQuarterGridV7* packed, size_t count) {
-  if (!storageFS().exists(filePath)) return false;
+  // No separate exists() pre-check: open() already returns a falsy File when
+  // the path doesn't exist (checked right below), and exists()+open() were
+  // each doing a full LittleFS directory lookup -- measured at ~30ms combined
+  // per grid, now ~half that with just the one open() lookup.
   File f = storageFS().open(filePath, FILE_READ);
   if (!f) return false;
   const size_t expected = count * sizeof(PackedQuarterGridV7);
@@ -460,7 +463,7 @@ static bool readPackedGridFileV7(const String& filePath, PackedQuarterGridV7* pa
 }
 
 static bool readPackedGridFileV6(const String& filePath, PackedQuarterGridV6* packed, size_t count) {
-  if (!storageFS().exists(filePath)) return false;
+  // See readPackedGridFileV7() above: open() alone already handles "doesn't exist".
   File f = storageFS().open(filePath, FILE_READ);
   if (!f) return false;
   const size_t expected = count * sizeof(PackedQuarterGridV6);
@@ -810,6 +813,24 @@ static void unpackTileV7(const PackedTileV7& in, Tile& out) {
   } else {
     out.image_path = "";
   }
+}
+
+// Subset of unpackTileV7() for callers that only need type + entity id (see
+// TileConfig::loadFolderGridEntitiesOnly). Skips title/icon_name/sensor_unit/
+// scene_alias/key_macro/image_path -- the String allocations that dominate a
+// full per-tile unpack (measured: ~44ms/grid across 35 tiles on this device's
+// fragmented internal heap).
+static void unpackTileEntityOnlyV7(const PackedTileV7& in, TileType& type, String& sensor_entity) {
+  TileType t = static_cast<TileType>(in.type);
+  if (t == TILE_FOLDER) {
+    if (in.sensor_decimals == LEGACY_NAV_KIND_SETTINGS) {
+      t = TILE_SETTINGS;
+    } else if (in.sensor_decimals == LEGACY_NAV_KIND_BACK) {
+      t = TILE_BACK;
+    }
+  }
+  type = t;
+  sensor_entity = String(in.sensor_entity);
 }
 
 static void unpackTileV6(const PackedTileV6& in, Tile& out) {
@@ -1958,6 +1979,56 @@ bool TileConfig::loadFolderGrid(uint16_t folder_id, TileGridConfig& out) {
     active_grid = out;
   }
   return ok;
+}
+
+bool TileConfig::loadFolderGridEntitiesOnly(uint16_t folder_id, TileEntitySlot* out, size_t count) {
+  if (!folderExists(folder_id)) return false;
+  if (count < TILES_PER_GRID) return false;
+
+  static PackedQuarterGridV7 packed_v7[QUARTERS_PER_GRID];
+  memset(packed_v7, 0, sizeof(packed_v7));
+  uint32_t t_read0 = millis();
+  bool read_ok = readGridSd(folder_id, packed_v7, QUARTERS_PER_GRID);
+  uint32_t read_ms = millis() - t_read0;
+  if (!read_ok) {
+    // Legacy/older grid version: fall back to the full loader. Rare in
+    // practice (grids migrate to v7 on first save) -- correctness over
+    // speed for this edge case.
+    TileGridConfig full;
+    if (!loadGrid(folder_id, full)) return false;
+    for (size_t i = 0; i < TILES_PER_GRID; ++i) {
+      out[i].type = full.tiles[i].type;
+      out[i].sensor_entity = full.tiles[i].sensor_entity;
+    }
+    return true;
+  }
+
+  uint32_t t_unpack0 = millis();
+  for (size_t i = 0; i < TILES_PER_GRID; ++i) {
+    out[i] = TileEntitySlot{};
+  }
+  for (size_t q = 0; q < QUARTERS_PER_GRID; ++q) {
+    for (size_t i = 0; i < TILES_PER_QUARTER; ++i) {
+      size_t grid_idx = quarterGridIndex(q, i);
+      if (grid_idx >= TILES_PER_GRID) continue;
+      unpackTileEntityOnlyV7(packed_v7[q].tiles[i], out[grid_idx].type, out[grid_idx].sensor_entity);
+    }
+  }
+  uint32_t unpack_ms = millis() - t_unpack0;
+  uint32_t t_sidecar0 = millis();
+  for (size_t i = 0; i < TILES_PER_GRID; ++i) {
+    if (!entityTileStoresSensorEntity(out[i].type)) continue;
+    String full_entity;
+    if (readLongEntityIdSd(folder_id, i, full_entity)) {
+      out[i].sensor_entity = full_entity;
+    }
+  }
+  uint32_t sidecar_ms = millis() - t_sidecar0;
+  if (read_ms + unpack_ms + sidecar_ms >= 5) {
+    Serial.printf("[Bridge]     loadFolderGridEntitiesOnly(%u) split: read=%ums unpack=%ums sidecar=%ums\n",
+                  static_cast<unsigned>(folder_id), (unsigned)read_ms, (unsigned)unpack_ms, (unsigned)sidecar_ms);
+  }
+  return true;
 }
 
 bool TileConfig::saveFolderGrid(uint16_t folder_id, const TileGridConfig& grid) {

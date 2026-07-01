@@ -1,6 +1,7 @@
 #include "src/ui/tab_tiles_unified.h"
 #include "src/core/display_manager.h"
 #include "src/core/power_manager.h"
+#include "src/core/lvgl_tick_service.h"
 #include "src/tiles/tile_config.h"
 #include "src/tiles/tile_renderer.h"
 #include "src/ui/sensor_popup.h"
@@ -507,15 +508,18 @@ void tiles_refresh_visible_from_cache() {
 
   const TileGridConfig& config = getGridConfig(grid_type);
   apply_cached_states(grid_type, config, false);
+  // update_sensor_tile_value()/update_switch_tile_state()/update_weather_tile_state()
+  // (called from these three queues) all update a specific tile's widgets via
+  // lv_label_set_text()/lv_arc_set_value()/etc., which already mark just that
+  // widget's own small area dirty -- no other code in tile_renderer.cpp calls
+  // lv_obj_invalidate() directly. The blanket lv_obj_invalidate(whole grid)
+  // that used to sit here forced a full 35-tile redraw+flush on every single
+  // bridge value update, even when only 1-2 tiles actually changed -- visible
+  // as the whole screen "blocking with all the tiles" every time a bridge
+  // update landed. Let each widget's own targeted invalidate do its job.
   process_sensor_update_queue();
   process_switch_update_queue();
   process_weather_update_queue();
-
-  lv_display_t* disp = lv_obj_get_display(g_tiles_grids[idx]);
-  if (disp) {
-    lv_obj_invalidate(g_tiles_grids[idx]);
-    lv_refr_now(disp);
-  }
 }
 
 void tiles_request_visible_cache_refresh() {
@@ -527,6 +531,15 @@ void tiles_process_visible_cache_refresh(bool allow_now) {
   tiles_refresh_visible_from_cache();
 }
 
+// findSensorInitialValue() linearly scans the whole "entity=value\n..."
+// sensor_values_map text blob, and cache_entity_payload_from_bridge() then
+// linearly scans the kEntityCacheSize=280-slot cache array -- two O(n) scans
+// per tile. Across ~150 entity tiles (all folders) this measured as the
+// single largest unaccounted chunk of the bridge-reload freeze (see
+// [LoopGap] bridge_cache=342ms vs. ~211ms actually spent in the grid file
+// reads it wraps). Rewriting the map/cache into real data structures would be
+// the proper fix but touches shared, widely-used helpers; yielding between
+// tiles is the same low-risk pattern used everywhere else in this reload path.
 static void refresh_cache_from_grid_config(const TileGridConfig& config, uint32_t snapshot_ms) {
   for (uint8_t i = 0; i < TILES_PER_GRID; ++i) {
     const Tile& tile = config.tiles[i];
@@ -536,8 +549,29 @@ static void refresh_cache_from_grid_config(const TileGridConfig& config, uint32_
     if (!tile.sensor_entity.length()) continue;
 
     String payload = haBridgeConfig.findSensorInitialValue(tile.sensor_entity);
+    lvglServiceDuringBlockingWork();
     if (!payload.length()) continue;
     cache_entity_payload_from_bridge(tile.sensor_entity.c_str(), payload.c_str(), snapshot_ms);
+  }
+}
+
+// Same as refresh_cache_from_grid_config(), but for background folders where we
+// only ever read tile.type/tile.sensor_entity -- takes the lightweight
+// TileEntitySlot projection instead of a full TileGridConfig so the folder scan
+// below doesn't pay for title/icon/scene/macro/image_path String allocations
+// it never uses (see TileConfig::loadFolderGridEntitiesOnly).
+static void refresh_cache_from_entity_slots(const TileEntitySlot* slots, size_t count, uint32_t snapshot_ms) {
+  for (size_t i = 0; i < count; ++i) {
+    const TileEntitySlot& slot = slots[i];
+    if (slot.type != TILE_SENSOR && slot.type != TILE_SWITCH &&
+        slot.type != TILE_WEATHER && slot.type != TILE_ENERGY &&
+        slot.type != TILE_MEDIA) continue;
+    if (!slot.sensor_entity.length()) continue;
+
+    String payload = haBridgeConfig.findSensorInitialValue(slot.sensor_entity);
+    lvglServiceDuringBlockingWork();
+    if (!payload.length()) continue;
+    cache_entity_payload_from_bridge(slot.sensor_entity.c_str(), payload.c_str(), snapshot_ms);
   }
 }
 
@@ -545,27 +579,25 @@ void tiles_refresh_cache_from_bridge_values() {
   const uint32_t snapshot_ms = g_bridge_cache_refresh_snapshot_ms ? g_bridge_cache_refresh_snapshot_ms : millis();
   refresh_cache_from_grid_config(tileConfig.getActiveGrid(), snapshot_ms);
 
-  TileGridConfig folder_config;
+  TileEntitySlot slots[TILES_PER_GRID];
   for (const auto& folder : tileConfig.getFolders()) {
     if (folder.id == tileConfig.getActiveFolderId()) continue;
     uint32_t t_load0 = millis();
-    bool loaded = tileConfig.loadFolderGrid(folder.id, folder_config);
+    bool loaded = tileConfig.loadFolderGridEntitiesOnly(folder.id, slots, TILES_PER_GRID);
     uint32_t load_ms = millis() - t_load0;
     if (load_ms >= 5) {
-      Serial.printf("[Bridge]   (cache) loadFolderGrid(%u): %u ms\n", folder.id, (unsigned)load_ms);
+      Serial.printf("[Bridge]   (cache) loadFolderGridEntitiesOnly(%u): %u ms\n", folder.id, (unsigned)load_ms);
     }
     if (!loaded) continue;
-    refresh_cache_from_grid_config(folder_config, snapshot_ms);
-    // loadFolderGrid() is a synchronous storage read+parse per folder. With many
-    // folders (each logged as "Grid N geladen") this loop can run long enough to
-    // visibly freeze the screen, since only yield() (feeds the watchdog) ran
-    // between folders -- lv_timer_handler() never got a turn, so nothing on
-    // screen (including running animation tiles) could redraw meanwhile.
-    // Servicing LVGL here lets the UI keep breathing during the refresh instead
-    // of stalling for its full duration.
-    yield();
-    lv_timer_handler();
-    yield();
+    refresh_cache_from_entity_slots(slots, TILES_PER_GRID, snapshot_ms);
+    // loadFolderGridEntitiesOnly() is still a synchronous storage read+parse per
+    // folder. With many folders (each logged as "Grid N geladen") this loop can
+    // run long enough to visibly freeze the screen, since only yield() (feeds
+    // the watchdog) ran between folders -- lv_timer_handler() never got a turn,
+    // so nothing on screen (including running animation tiles) could redraw
+    // meanwhile. Servicing LVGL here lets the UI keep breathing during the
+    // refresh instead of stalling for its full duration.
+    lvglServiceDuringBlockingWork();
   }
 }
 

@@ -3,6 +3,11 @@
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <stdio.h>
+#include <lvgl.h>
+#include <strings.h>
+#include <ctype.h>
+#include "src/core/lvgl_tick_service.h"
+#include <vector>
 
 static const char* PREF_NAMESPACE = "tab5_config";
 static void logList(const char* label, const String& text);
@@ -26,6 +31,11 @@ static int findMatchingJsonObjectEnd(const String& body, int object_start);
 static bool extractStringField(const String& object, const char* key, String& out);
 static String lookupKeyValue(const String& text, const String& key);
 static void upsertKeyValueMap(String& text, const String& key, const String& value);
+struct KeyValueUpdate {
+  String key;
+  String value;
+};
+static void upsertKeyValueMapBatch(String& text, const std::vector<KeyValueUpdate>& updates);
 static bool removeKeyValueMapEntry(String& text, const String& key);
 static String decodeJsonEscapes(const String& value);
 static void appendUtf8(String& out, uint32_t codepoint);
@@ -358,8 +368,18 @@ bool HaBridgeConfig::applyJson(const char* json_payload, bool* out_reload, bool*
     return false;
   }
 
+  uint32_t t_copy0 = millis();
   String json = json_payload;
   HaBridgeConfigData merged = data;
+  uint32_t t_start = millis();
+  // merged = data deep-copies every String field of HaBridgeConfigData (7 text
+  // blobs + 4 growing "key=value" maps) BEFORE any of the split-timed sections
+  // below even start -- none of the "arrays=/meta=/energy=" numbers printed
+  // further down include this. If it's ever the dominant cost, splitting it
+  // out here is what will show it.
+  if (t_start - t_copy0 >= 5) {
+    Serial.printf("[Bridge] applyJson copy: %ums\n", (unsigned)(t_start - t_copy0));
+  }
 
   int sensors_idx = json.indexOf("\"sensors\"");
   if (sensors_idx >= 0) {
@@ -398,6 +418,17 @@ bool HaBridgeConfig::applyJson(const char* json_payload, bool* out_reload, bool*
     parseObjectSection(json.substring(scene_idx), merged.scene_alias_text);
   }
 
+  // applyJson() runs synchronously inside mqttCallback on the main loop task,
+  // before lv_timer_handler() gets its turn at the end of loop() -- measured
+  // at 146-160ms for an 11.6KB bridge payload with zero yields inside, which
+  // showed up as a short visible freeze even after the grid-reload loops that
+  // follow it were fixed. Give LVGL a couple of turns between the heavier
+  // parse sections so this one call doesn't block the UI for its full,
+  // uninterrupted duration.
+  uint32_t t_arrays = millis();
+
+  lvglServiceDuringBlockingWork();
+
   const String prev_icons = data.entity_icons_map;
   parseSensorMetaSection(json, merged.sensor_units_map, merged.sensor_names_map, merged.sensor_values_map);
   parseEntityNameSection(json, "media_player_meta", merged.sensor_names_map);
@@ -405,6 +436,11 @@ bool HaBridgeConfig::applyJson(const char* json_payload, bool* out_reload, bool*
   if (!merged.entity_icons_map.length() && prev_icons.length()) {
     merged.entity_icons_map = prev_icons;
   }
+
+  uint32_t t_meta = millis();
+
+  lvglServiceDuringBlockingWork();
+
   if (energy_idx >= 0) {
     parseEnergySection(json.substring(energy_idx),
                        merged.energy_text,
@@ -416,6 +452,10 @@ bool HaBridgeConfig::applyJson(const char* json_payload, bool* out_reload, bool*
   if (out_icons_changed) {
     *out_icons_changed = icon_map_changed;
   }
+
+  uint32_t t_energy = millis();
+  Serial.printf("[Bridge] applyJson split: arrays=%ums meta=%ums energy=%ums\n",
+                (unsigned)(t_arrays - t_start), (unsigned)(t_meta - t_arrays), (unsigned)(t_energy - t_meta));
 
   for (size_t i = 0; i < HA_SENSOR_SLOT_COUNT; ++i) {
     if (merged.sensor_slots[i].length() &&
@@ -437,6 +477,7 @@ bool HaBridgeConfig::applyJson(const char* json_payload, bool* out_reload, bool*
   if (needs_reload) {
     bool ok = save(merged);
     if (ok) {
+      uint32_t t_log0 = millis();
       Serial.println("[Bridge] Konfiguration aus Home Assistant uebernommen");
       logList("Sensoren", data.sensors_text);
       logList("Energy", data.energy_text);
@@ -445,6 +486,7 @@ bool HaBridgeConfig::applyJson(const char* json_payload, bool* out_reload, bool*
       logList("Schalter", data.switches_text);
       logList("Media Player", data.media_players_text);
       logList("Szenen", data.scene_alias_text);
+      Serial.printf("[Bridge] logList dump: %u ms\n", (unsigned)(millis() - t_log0));
       if (out_reload) {
         *out_reload = true;
       }
@@ -516,6 +558,12 @@ static void logList(const char* label, const String& text) {
       Serial.printf("  %d) %s\n", idx++, line.c_str());
     }
     start = end + 1;
+    // Each Serial.printf() blocks until the UART/USB TX buffer has room --
+    // with 7 lists x up to ~25 entries this debug dump alone measured as a
+    // single ~200-500ms uninterrupted block on a reload (matches the leftover
+    // gap after the grid-reload/JSON-parse fixes above). Give LVGL a turn
+    // between lines so this pure logging output doesn't stall the UI.
+    lvglServiceDuringBlockingWork();
   }
 }
 
@@ -856,6 +904,17 @@ static void parseEnergySection(const String& body,
     return;
   }
 
+  // Collect all per-entry updates first and apply each map (names/units/
+  // icons) in a single combined pass afterwards (upsertKeyValueMapBatch)
+  // instead of calling upsertKeyValueMap() up to 3x per entry -- with ~20-30
+  // energy entries that used to rebuild the whole map up to 90 times,
+  // measured at 600+ms once the persistent map had grown over a session's
+  // uptime (see upsertKeyValueMapBatch's comment for why the combined pass
+  // is so much cheaper).
+  std::vector<KeyValueUpdate> name_updates;
+  std::vector<KeyValueUpdate> unit_updates;
+  std::vector<KeyValueUpdate> icon_updates;
+
   String segment = body.substring(array_start + 1, array_end);
   int obj_start = segment.indexOf('{');
   while (obj_start >= 0) {
@@ -869,21 +928,27 @@ static void parseEnergySection(const String& body,
 
       String name;
       if (extractStringField(object, "name", name)) {
-        upsertKeyValueMap(names, id, name);
+        name_updates.push_back({id, name});
       }
 
       String unit;
       if (extractStringField(object, "unit", unit)) {
-        upsertKeyValueMap(units, id, unit);
+        unit_updates.push_back({id, unit});
       }
 
       String category;
       extractStringField(object, "category", category);
-      upsertKeyValueMap(icons, id, energyIconForCategory(category, id, unit));
+      icon_updates.push_back({id, energyIconForCategory(category, id, unit)});
     }
+
+    lvglServiceDuringBlockingWork();
 
     obj_start = segment.indexOf('{', obj_end + 1);
   }
+
+  upsertKeyValueMapBatch(names, name_updates);
+  upsertKeyValueMapBatch(units, unit_updates);
+  upsertKeyValueMapBatch(icons, icon_updates);
 }
 
 static void parseSensorMetaSection(const String& body, String& units, String& names, String& values) {
@@ -998,22 +1063,42 @@ static void parseIconMetaSections(const String& body, String& icons) {
 
 static String lookupKeyValue(const String& text, const String& key) {
   if (!key.length()) return "";
-  int start = 0;
-  while (start < text.length()) {
-    int end = text.indexOf('\n', start);
-    if (end < 0) end = text.length();
-    String line = text.substring(start, end);
-    int eq = line.indexOf('=');
-    if (eq > 0) {
-      String lhs = line.substring(0, eq);
-      lhs.trim();
-      if (lhs.equalsIgnoreCase(key)) {
-        String rhs = line.substring(eq + 1);
-        rhs.trim();
-        return rhs;
+  // The old version allocated 2-3 new String objects (substring()) PER LINE
+  // scanned. sensor_values_map etc. can hold every sensor HA exposes, not
+  // just the ones on tiles -- with a bridge-cache refresh calling this once
+  // per tile across every folder, a single call landing on a match near the
+  // end of a long map measured as a multi-hundred-ms block by itself, which
+  // no amount of yielding between calls can fix (the block IS one call).
+  // Scan the underlying buffer directly instead; only the winning line's
+  // value gets allocated (one substring() call, at the very end).
+  const char* buf = text.c_str();
+  const int len = static_cast<int>(text.length());
+  const char* key_buf = key.c_str();
+  const int key_len = static_cast<int>(key.length());
+
+  int line_start = 0;
+  while (line_start < len) {
+    int line_end = line_start;
+    while (line_end < len && buf[line_end] != '\n') ++line_end;
+
+    int eq = line_start;
+    while (eq < line_end && buf[eq] != '=') ++eq;
+
+    if (eq > line_start && eq < line_end) {
+      int lhs_start = line_start;
+      int lhs_end = eq;
+      while (lhs_start < lhs_end && isspace(static_cast<unsigned char>(buf[lhs_start]))) ++lhs_start;
+      while (lhs_end > lhs_start && isspace(static_cast<unsigned char>(buf[lhs_end - 1]))) --lhs_end;
+
+      if (lhs_end - lhs_start == key_len && strncasecmp(buf + lhs_start, key_buf, key_len) == 0) {
+        int rhs_start = eq + 1;
+        int rhs_end = line_end;
+        while (rhs_start < rhs_end && isspace(static_cast<unsigned char>(buf[rhs_start]))) ++rhs_start;
+        while (rhs_end > rhs_start && isspace(static_cast<unsigned char>(buf[rhs_end - 1]))) --rhs_end;
+        return text.substring(rhs_start, rhs_end);
       }
     }
-    start = end + 1;
+    line_start = line_end + 1;
   }
   return "";
 }
@@ -1021,40 +1106,133 @@ static String lookupKeyValue(const String& text, const String& key) {
 static void upsertKeyValueMap(String& text, const String& key, const String& value) {
   if (!key.length() || !value.length()) return;
 
-  String newMap = "";
+  // Same allocation-per-line problem as lookupKeyValue() above (2 substring()
+  // calls per scanned line), except this one also rebuilds the whole map on
+  // every call -- parseEnergySection() calls this up to 3x per entry, so with
+  // sensor_values_map-sized maps a single call could itself be a large block.
+  // Scan the raw buffer for the matching line; only allocate a substring for
+  // lines that get copied through unchanged (one call per kept line instead
+  // of two), and reserve the output buffer once instead of growing it
+  // incrementally.
+  const char* buf = text.c_str();
+  const int len = static_cast<int>(text.length());
+  const char* key_buf = key.c_str();
+  const int key_len = static_cast<int>(key.length());
+
+  String newMap;
+  newMap.reserve(static_cast<unsigned int>(len) + key.length() + value.length() + 2);
   bool found = false;
 
-  int start = 0;
-  while (start < text.length()) {
-    int end = text.indexOf('\n', start);
-    if (end < 0) end = text.length();
+  int line_start = 0;
+  while (line_start < len) {
+    int line_end = line_start;
+    while (line_end < len && buf[line_end] != '\n') ++line_end;
 
-    String line = text.substring(start, end);
-    int eq = line.indexOf('=');
+    int eq = line_start;
+    while (eq < line_end && buf[eq] != '=') ++eq;
 
-    if (eq > 0) {
-      String entity = line.substring(0, eq);
-      entity.trim();
-
-      if (entity.equalsIgnoreCase(key)) {
-        if (newMap.length()) newMap += '\n';
-        newMap += key + "=" + value;
-        found = true;
-      } else {
-        if (newMap.length()) newMap += '\n';
-        newMap += line;
-      }
-    } else if (line.length() > 0) {
-      if (newMap.length()) newMap += '\n';
-      newMap += line;
+    bool is_match = false;
+    if (eq > line_start && eq < line_end) {
+      int lhs_start = line_start;
+      int lhs_end = eq;
+      while (lhs_start < lhs_end && isspace(static_cast<unsigned char>(buf[lhs_start]))) ++lhs_start;
+      while (lhs_end > lhs_start && isspace(static_cast<unsigned char>(buf[lhs_end - 1]))) --lhs_end;
+      is_match = (lhs_end - lhs_start == key_len && strncasecmp(buf + lhs_start, key_buf, key_len) == 0);
     }
 
-    start = end + 1;
+    if (is_match) {
+      if (newMap.length()) newMap += '\n';
+      newMap += key;
+      newMap += '=';
+      newMap += value;
+      found = true;
+    } else if (line_end > line_start) {
+      if (newMap.length()) newMap += '\n';
+      newMap += text.substring(line_start, line_end);
+    }
+
+    line_start = line_end + 1;
   }
 
   if (!found) {
     if (newMap.length()) newMap += '\n';
-    newMap += key + "=" + value;
+    newMap += key;
+    newMap += '=';
+    newMap += value;
+  }
+
+  text = newMap;
+}
+
+// upsertKeyValueMap() rebuilds (copies) the WHOLE map on every call. Callers
+// that update many keys from a loop (parseEnergySection: up to 3 maps x
+// ~20-30 entries; parseEntityNameSection: 1 map x N media players) used to
+// call it once per key -- against an already-large persistent map (grows
+// over a session's uptime as more distinct entities get merged in) that is
+// O(N * map_size) total copying, measured at 600+ms for a single applyJson()
+// once the map had grown. Collecting all updates first and doing ONE
+// combined pass drops the copy volume to O(map_size) (each line gets copied
+// at most once); matching a line against the pending updates is still O(N)
+// per line, but that's cheap key comparisons, not full-map memcpy, so it
+// stays negligible even for map_size in the thousands.
+static void upsertKeyValueMapBatch(String& text, const std::vector<KeyValueUpdate>& updates) {
+  if (updates.empty()) return;
+
+  const char* buf = text.c_str();
+  const int len = static_cast<int>(text.length());
+  std::vector<bool> applied(updates.size(), false);
+
+  String newMap;
+  size_t extra = 0;
+  for (const auto& u : updates) extra += u.key.length() + u.value.length() + 2;
+  newMap.reserve(static_cast<unsigned int>(len) + extra);
+
+  int line_start = 0;
+  while (line_start < len) {
+    int line_end = line_start;
+    while (line_end < len && buf[line_end] != '\n') ++line_end;
+
+    int eq = line_start;
+    while (eq < line_end && buf[eq] != '=') ++eq;
+
+    int match_idx = -1;
+    if (eq > line_start && eq < line_end) {
+      int lhs_start = line_start;
+      int lhs_end = eq;
+      while (lhs_start < lhs_end && isspace(static_cast<unsigned char>(buf[lhs_start]))) ++lhs_start;
+      while (lhs_end > lhs_start && isspace(static_cast<unsigned char>(buf[lhs_end - 1]))) --lhs_end;
+      const int lhs_len = lhs_end - lhs_start;
+      // Don't stop at the first match: if the same key appears more than
+      // once in updates, the LAST one should win (matches calling
+      // upsertKeyValueMap() once per entry in original list order).
+      for (size_t i = 0; i < updates.size(); ++i) {
+        if (updates[i].key.length() == (unsigned)lhs_len &&
+            strncasecmp(buf + lhs_start, updates[i].key.c_str(), lhs_len) == 0) {
+          match_idx = static_cast<int>(i);
+        }
+      }
+    }
+
+    if (match_idx >= 0) {
+      if (newMap.length()) newMap += '\n';
+      newMap += updates[match_idx].key;
+      newMap += '=';
+      newMap += updates[match_idx].value;
+      applied[match_idx] = true;
+    } else if (line_end > line_start) {
+      if (newMap.length()) newMap += '\n';
+      newMap += text.substring(line_start, line_end);
+    }
+
+    line_start = line_end + 1;
+  }
+
+  for (size_t i = 0; i < updates.size(); ++i) {
+    if (applied[i] || !updates[i].key.length() || !updates[i].value.length()) continue;
+    if (newMap.length()) newMap += '\n';
+    newMap += updates[i].key;
+    newMap += '=';
+    newMap += updates[i].value;
   }
 
   text = newMap;

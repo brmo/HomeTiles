@@ -13,6 +13,14 @@ public:
 
   // Update-Schleife
   void update();
+  // Pumps PubSubClient::loop() only (socket read + dispatch to mqttCallback).
+  // update() itself is throttled to every 5th main-loop iteration (WiFi
+  // reconnect polling doesn't need per-iteration granularity) -- but that
+  // throttle meant the MQTT socket, including mid-message reassembly of a
+  // large multi-segment payload, was also only serviced 1-in-5 iterations.
+  // Call this every iteration instead so incoming MQTT never waits on the
+  // throttle; update() keeps handling WiFi/telemetry/buffer housekeeping.
+  void serviceMqttLoop();
 
   // WiFi-Status
   bool isWifiConnected() const;
