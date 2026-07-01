@@ -3,7 +3,13 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
-#include <PubSubClient.h>
+// Vendored (not the global Arduino library): patched to insert a real
+// vTaskDelay() periodically inside the packet-read loop, since
+// readByte()/readPacket() otherwise only yield while WAITING for the next
+// byte -- once a whole TCP segment is already buffered, they can walk
+// through thousands of bytes with zero scheduling points. See
+// src/network/vendor/pubsubclient/PubSubClient.cpp for details.
+#include "src/network/vendor/pubsubclient/PubSubClient.h"
 
 // Tab5 Network Manager - Verwaltet WiFi und MQTT
 class Tab5NetworkManager {

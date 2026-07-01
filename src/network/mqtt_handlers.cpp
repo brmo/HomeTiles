@@ -18,7 +18,7 @@
 #include <esp_heap_caps.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
-#include <PubSubClient.h>
+#include "src/network/vendor/pubsubclient/PubSubClient.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
