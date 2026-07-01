@@ -16,6 +16,7 @@
 #include "src/types/energy/renderer.h"
 #include "src/types/weather/renderer.h"
 #include "src/types/media/renderer.h"
+#include "src/types/pixelanim/renderer.h"
 
 #include "src/types/clock/web_handler.h"
 #include "src/types/key/web_handler.h"
@@ -28,6 +29,7 @@
 #include "src/types/energy/web_handler.h"
 #include "src/types/weather/web_handler.h"
 #include "src/types/media/web_handler.h"
+#include "src/types/pixelanim/web_handler.h"
 
 #include "src/types/clock/web_html.h"
 #include "src/types/key/web_html.h"
@@ -40,6 +42,7 @@
 #include "src/types/energy/web_html.h"
 #include "src/types/weather/web_html.h"
 #include "src/types/media/web_html.h"
+#include "src/types/pixelanim/web_html.h"
 
 #include "src/types/clock/web_scripts.h"
 #include "src/types/key/web_scripts.h"
@@ -52,6 +55,7 @@
 #include "src/types/energy/web_scripts.h"
 #include "src/types/weather/web_scripts.h"
 #include "src/types/media/web_scripts.h"
+#include "src/types/pixelanim/web_scripts.h"
 
 #include "src/types/clock/web_styles.h"
 #include "src/types/key/web_styles.h"
@@ -64,6 +68,7 @@
 #include "src/types/energy/web_styles.h"
 #include "src/types/weather/web_styles.h"
 #include "src/types/media/web_styles.h"
+#include "src/types/pixelanim/web_styles.h"
 
 #include "src/core/config_manager.h"
 #include "src/core/i18n.h"
@@ -207,6 +212,16 @@ lv_obj_t* render_empty_wrapper(lv_obj_t* parent,
   return render_empty_tile(parent, col, row);
 }
 
+lv_obj_t* render_pixelanim_wrapper(lv_obj_t* parent,
+                                   int col,
+                                   int row,
+                                   const Tile& tile,
+                                   uint8_t index,
+                                   GridType,
+                                   scene_publish_cb_t) {
+  return render_pixelanim_tile(parent, col, row, tile, index);
+}
+
 bool apply_sensor_wrapper(WebServer& server, Tile& tile, const TileTypeApplyContext&) {
   apply_sensor_fields_from_request(server, tile);
   return true;
@@ -261,6 +276,11 @@ bool apply_energy_wrapper(WebServer& server, Tile& tile, const TileTypeApplyCont
 
 bool apply_media_wrapper(WebServer& server, Tile& tile, const TileTypeApplyContext&) {
   apply_media_fields_from_request(server, tile);
+  return true;
+}
+
+bool apply_pixelanim_wrapper(WebServer& server, Tile& tile, const TileTypeApplyContext&) {
+  apply_pixelanim_fields_from_request(server, tile);
   return true;
 }
 
@@ -331,6 +351,10 @@ void append_energy_fields_wrapper(String& html, const TileTypeWebContext& ctx) {
 
 void append_media_fields_wrapper(String& html, const TileTypeWebContext& ctx) {
   append_media_fields_html(html, safeString(ctx.tab_id), safeStrings(ctx.media_options));
+}
+
+void append_pixelanim_fields_wrapper(String& html, const TileTypeWebContext& ctx) {
+  append_pixelanim_fields_html(html, safeString(ctx.tab_id));
 }
 
 const TileTypeDescriptor kTileTypes[] = {
@@ -495,6 +519,24 @@ const TileTypeDescriptor kTileTypes[] = {
     append_media_fields_wrapper,
     append_media_styles,
     append_media_scripts
+  },
+  {
+    TILE_PIXELANIM,
+    "Animation",
+    "animation",
+    "animation",
+    "none",
+    nullptr,
+    "loadAnimationFields",
+    "saveAnimationFields",
+    "resetAnimationFields",
+    0x000000,
+    false,
+    render_pixelanim_wrapper,
+    apply_pixelanim_wrapper,
+    append_pixelanim_fields_wrapper,
+    append_pixelanim_styles,
+    append_pixelanim_scripts
   },
   {
     TILE_CLOCK,
@@ -735,7 +777,11 @@ void append_tile_type_registry_js(String& html) {
       html += entry.js_reset;
       html += "\",";
     }
-    if (entry.default_bg_color) {
+    // Emit defaultBg even when the colour is pure black (0x000000): the animation
+    // tile uses black/transparent as its default, and without an explicit
+    // defaultBg the WebUI falls back to a grey (#353535) and keeps resetting the
+    // tile to grey on edit.
+    if (entry.default_bg_color || entry.type == TILE_PIXELANIM) {
       char color_hex[10] = {0};
       const uint32_t color24 = static_cast<uint32_t>(entry.default_bg_color) & 0x00FFFFFFu;
       snprintf(color_hex, sizeof(color_hex), "#%06" PRIX32, color24);

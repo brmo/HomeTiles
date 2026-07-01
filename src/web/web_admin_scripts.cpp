@@ -1582,6 +1582,8 @@ void appendAdminScripts(String& html) {
     const switchStyleSelect = document.getElementById(prefix + '_switch_style');
     const switchPopupModeSelect = document.getElementById(prefix + '_switch_popup_open_mode');
     const mediaSelect = document.getElementById(prefix + '_media_entity');
+    const animationSelect = document.getElementById(prefix + '_animation_file');
+    const animationFpsInput = document.getElementById(prefix + '_animation_fps');
     const clockTimeCheck = document.getElementById(prefix + '_clock_show_time');
     const clockDateCheck = document.getElementById(prefix + '_clock_show_date');
     const clockTimeFontSelect = document.getElementById(prefix + '_clock_time_font');
@@ -1630,6 +1632,8 @@ void appendAdminScripts(String& html) {
     bindLive(switchStyleSelect, 'change', 'switchStyle', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(switchPopupModeSelect, 'change', 'switchPopupMode', () => { updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(mediaSelect, 'change', 'mediaEntity', () => { maybeFillTitleFromMedia(tab); updateTilePreview(tab); updateMediaValuePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
+    bindLive(animationSelect, 'change', 'animationFile', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
+    bindLive(animationFpsInput, 'input', 'animationFps', () => { updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(clockTimeCheck, 'change', 'clockShowTime', () => {
       ensureClockSelection(prefix);
       updateTilePreview(tab);

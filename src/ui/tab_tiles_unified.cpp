@@ -550,6 +550,15 @@ void tiles_refresh_cache_from_bridge_values() {
     if (folder.id == tileConfig.getActiveFolderId()) continue;
     if (!tileConfig.loadFolderGrid(folder.id, folder_config)) continue;
     refresh_cache_from_grid_config(folder_config, snapshot_ms);
+    // loadFolderGrid() is a synchronous storage read+parse per folder. With many
+    // folders (each logged as "Grid N geladen") this loop can run long enough to
+    // visibly freeze the screen, since only yield() (feeds the watchdog) ran
+    // between folders -- lv_timer_handler() never got a turn, so nothing on
+    // screen (including running animation tiles) could redraw meanwhile.
+    // Servicing LVGL here lets the UI keep breathing during the refresh instead
+    // of stalling for its full duration.
+    yield();
+    lv_timer_handler();
     yield();
   }
 }

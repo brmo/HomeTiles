@@ -1430,6 +1430,8 @@ void WebAdminServer::handleGetTiles() {
     out += String(tile.sensor_value_y_offset);
     out += ",\"sensor_graph_height\":";
     out += String(tile.sensor_graph_height);
+    out += ",\"image_slideshow_sec\":";
+    out += String(tile.image_slideshow_sec);
     out += ",\"scene_alias\":\"";
     appendJsonEscaped(out, tile.scene_alias);
     out += "\",\"key_macro\":\"";

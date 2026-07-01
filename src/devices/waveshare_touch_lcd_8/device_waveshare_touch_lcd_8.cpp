@@ -937,6 +937,10 @@ void DeviceWaveshareTouchLCD8::pausePpaFor(uint32_t duration_ms) {
   pause_ppa_for(duration_ms);
 }
 
+bool DeviceWaveshareTouchLCD8::ppaCooldownActive() {
+  return ppa_cooldown_active();
+}
+
 void DeviceWaveshareTouchLCD8::displayPushPixels(int32_t x, int32_t y, int32_t w, int32_t h,
                                                  const uint16_t* data) {
   draw_landscape_area(x, y, w, h, data);

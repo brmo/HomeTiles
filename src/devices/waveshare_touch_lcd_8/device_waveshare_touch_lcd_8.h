@@ -36,6 +36,11 @@ void displayCommit();
 void displayFillScreen(uint16_t color);
 void displaySetRotation(uint8_t rotation);
 void pausePpaFor(uint32_t duration_ms);
+// Read-only: true while a pausePpaFor() cooldown is still active (all flushes
+// fall back to slow CPU rotate during this window). Lets callers that redraw
+// frequently (e.g. the pixel-animation tile) hold their current frame instead
+// of fighting the cooldown for the CPU-rotate path.
+bool ppaCooldownActive();
 
 void setBrightness(uint8_t value);
 uint8_t getBrightness();

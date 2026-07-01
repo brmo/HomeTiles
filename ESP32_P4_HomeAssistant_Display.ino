@@ -531,9 +531,17 @@ void loop() {
     static uint32_t last_queue_ms = 0;
     bool idle = !powerManager.isHighPerformance();
     if (!idle || (millis() - last_queue_ms >= 2000)) {
-      process_sensor_update_queue();  // WICHTIG: VOR lv_timer_handler()!
-      process_switch_update_queue();
-      process_weather_update_queue();
+      // Im Idle-Fall koennen sich bis zu 32 Sensor-/Switch- bzw. 16 Wetter-Updates
+      // in den 2s angesammelt haben. Alle auf einmal synchron abzuarbeiten kann
+      // den Frame direkt vor lv_timer_handler() spuerbar verzoegern (sichtbares
+      // kurzes Hakeln z.B. bei laufenden Animation-Tiles). Wie beim Media-Limit
+      // (2) wird hier pro Loop-Durchlauf nur ein Haeppchen verarbeitet; der Rest
+      // folgt in den naechsten Iterationen, die im Idle-Fall ebenfalls durch
+      // dieses 2s-Fenster laufen -- bei normalem MQTT-Aufkommen bleibt die Queue
+      // dadurch praktisch nie lange gefuellt.
+      process_sensor_update_queue(6);  // WICHTIG: VOR lv_timer_handler()!
+      process_switch_update_queue(6);
+      process_weather_update_queue(4);
       process_media_update_queue(2);
       process_tile_graph_queue();
       if (idle) energy_service_periodic();

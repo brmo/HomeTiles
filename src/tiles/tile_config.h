@@ -31,7 +31,8 @@ enum TileType : uint8_t {
   TILE_WEATHER = 12,
   TILE_RADAR = 13,
   TILE_ENERGY = 14,
-  TILE_MEDIA = 15
+  TILE_MEDIA = 15,
+  TILE_PIXELANIM = 16
 };
 
 // A media tile renders its (often long) title as a horizontally scrolling band the
