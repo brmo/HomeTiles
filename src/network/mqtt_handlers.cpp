@@ -1114,10 +1114,25 @@ static void rebuildDynamicRoutes(std::vector<DynamicSensorRoute>& routes) {
   // Scan all folders, not just the active one
   const std::vector<FolderEntry>& folders = tileConfig.getFolders();
   for (const auto& folder : folders) {
+    uint32_t t_load0 = millis();
     TileGridConfig grid;
-    if (tileConfig.loadFolderGrid(folder.id, grid)) {
+    bool loaded = tileConfig.loadFolderGrid(folder.id, grid);
+    uint32_t load_ms = millis() - t_load0;
+    if (load_ms >= 5) {
+      Serial.printf("[Bridge]   loadFolderGrid(%u): %u ms\n", folder.id, (unsigned)load_ms);
+    }
+    if (loaded) {
       add_grid_entities(grid);
     }
+    // This runs synchronously inside mqttCallback (via mqtt_client.loop() in the
+    // main loop task), before lv_timer_handler() gets its turn at the end of
+    // loop(). With several folders this loop can run long enough to freeze the
+    // screen (running animation tiles included). Servicing LVGL between folders
+    // keeps the UI breathing during the reload instead of stalling for its
+    // full duration.
+    yield();
+    lv_timer_handler();
+    yield();
   }
 }
 
@@ -1147,8 +1162,14 @@ static void rebuildDynamicWeatherRoutes(std::vector<DynamicWeatherRoute>& routes
 
   const std::vector<FolderEntry>& folders = tileConfig.getFolders();
   for (const auto& folder : folders) {
+    uint32_t t_load0 = millis();
     TileGridConfig grid;
-    if (tileConfig.loadFolderGrid(folder.id, grid)) {
+    bool loaded = tileConfig.loadFolderGrid(folder.id, grid);
+    uint32_t load_ms = millis() - t_load0;
+    if (load_ms >= 5) {
+      Serial.printf("[Bridge]   loadFolderGrid(%u): %u ms\n", folder.id, (unsigned)load_ms);
+    }
+    if (loaded) {
       for (uint8_t i = 0; i < TILES_PER_GRID; ++i) {
         const Tile& tile = grid.tiles[i];
         if (tile.type == TILE_WEATHER && tile.sensor_entity.length()) {
@@ -1156,6 +1177,11 @@ static void rebuildDynamicWeatherRoutes(std::vector<DynamicWeatherRoute>& routes
         }
       }
     }
+    // Same reasoning as rebuildDynamicRoutes() above: give LVGL a turn between
+    // folders so this synchronous MQTT-callback reload doesn't stall the screen.
+    yield();
+    lv_timer_handler();
+    yield();
   }
 }
 
@@ -1236,14 +1262,21 @@ void mqttCallback(char* topic, uint8_t* payload, unsigned int length) {
     Serial.printf("[Bridge] apply-topic hit (%u bytes)\n", (unsigned)copy_len);
     bool reload = false;
     bool icons_changed = false;
-    if (haBridgeConfig.applyJson(cfg_buf, &reload, &icons_changed)) {
+    uint32_t t_parse0 = millis();
+    bool applied = haBridgeConfig.applyJson(cfg_buf, &reload, &icons_changed);
+    Serial.printf("[Bridge] applyJson: %u ms\n", (unsigned)(millis() - t_parse0));
+    if (applied) {
       Serial.println("[Bridge] Konfiguration von HA empfangen");
       tiles_request_bridge_cache_refresh();
       if (reload) {
         yield();  // Nach JSON Parse
+        uint32_t t_pub0 = millis();
         networkManager.publishBridgeConfig();
+        Serial.printf("[Bridge] publishBridgeConfig: %u ms\n", (unsigned)(millis() - t_pub0));
         yield();  // Nach Publish
+        uint32_t t_slots0 = millis();
         mqttReloadDynamicSlots();
+        Serial.printf("[Bridge] mqttReloadDynamicSlots: %u ms\n", (unsigned)(millis() - t_slots0));
       }
       if (icons_changed) {
         tiles_request_icon_refresh();
@@ -1766,8 +1799,12 @@ void mqttReloadDynamicSlots() {
       mqtt.unsubscribe(route.topic.c_str());
     }
   }
+  uint32_t t_sensor0 = millis();
   rebuildDynamicRoutes(g_dynamic_routes);
+  Serial.printf("[Bridge] rebuildDynamicRoutes: %u ms\n", (unsigned)(millis() - t_sensor0));
+  uint32_t t_weather0 = millis();
   rebuildDynamicWeatherRoutes(g_dynamic_weather_routes);
+  Serial.printf("[Bridge] rebuildDynamicWeatherRoutes: %u ms\n", (unsigned)(millis() - t_weather0));
   if (mqtt.connected()) {
     for (const auto& route : g_dynamic_routes) {
       mqtt.subscribe(route.topic.c_str());

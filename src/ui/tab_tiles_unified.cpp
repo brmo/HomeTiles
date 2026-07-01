@@ -548,7 +548,13 @@ void tiles_refresh_cache_from_bridge_values() {
   TileGridConfig folder_config;
   for (const auto& folder : tileConfig.getFolders()) {
     if (folder.id == tileConfig.getActiveFolderId()) continue;
-    if (!tileConfig.loadFolderGrid(folder.id, folder_config)) continue;
+    uint32_t t_load0 = millis();
+    bool loaded = tileConfig.loadFolderGrid(folder.id, folder_config);
+    uint32_t load_ms = millis() - t_load0;
+    if (load_ms >= 5) {
+      Serial.printf("[Bridge]   (cache) loadFolderGrid(%u): %u ms\n", folder.id, (unsigned)load_ms);
+    }
+    if (!loaded) continue;
     refresh_cache_from_grid_config(folder_config, snapshot_ms);
     // loadFolderGrid() is a synchronous storage read+parse per folder. With many
     // folders (each logged as "Grid N geladen") this loop can run long enough to

@@ -334,6 +334,57 @@ static String entityPathFile(uint16_t folder_id, size_t index) {
   return String(buf);
 }
 
+// Per-tile sidecar files hold entity IDs / image paths too long for the packed
+// binary tile struct (ENTITY_MAX=64 bytes -- real HA entity ids never get
+// close). Almost no tile actually has one, but readLongEntityIdSd()/
+// readImagePathSd() used to do a storageFS().exists() flash lookup for EVERY
+// entity-storing tile on EVERY grid load. With ~9 folders x ~15 entity tiles
+// reloaded on each HA bridge update, that measured out to 40-140ms of blocking
+// flash I/O per grid (visible UI freeze). Build the "which folder/index pairs
+// actually have an override" list once via directory listing, then just check
+// this in-memory list instead of hitting flash for tiles that never have one.
+static bool g_sidecar_index_built = false;
+static std::vector<uint32_t> g_image_sidecar_keys;
+static std::vector<uint32_t> g_entity_sidecar_keys;
+
+static uint32_t sidecarKey(uint16_t folder_id, size_t index) {
+  return (static_cast<uint32_t>(folder_id) << 8) | static_cast<uint8_t>(index);
+}
+
+static bool sidecarKeyPresent(const std::vector<uint32_t>& keys, uint32_t key) {
+  return std::find(keys.begin(), keys.end(), key) != keys.end();
+}
+
+static void sidecarKeyAdd(std::vector<uint32_t>& keys, uint32_t key) {
+  if (!sidecarKeyPresent(keys, key)) keys.push_back(key);
+}
+
+static void sidecarKeyRemove(std::vector<uint32_t>& keys, uint32_t key) {
+  keys.erase(std::remove(keys.begin(), keys.end(), key), keys.end());
+}
+
+static void scanSidecarDir(const char* dir, std::vector<uint32_t>& out) {
+  File root = storageFS().open(dir);
+  if (!root) return;
+  for (File file = root.openNextFile(); file; file = root.openNextFile()) {
+    if (file.isDirectory()) continue;
+    const char* name_c = file.name();
+    if (!name_c) continue;
+    unsigned folder_id = 0, index = 0;
+    if (sscanf(name_c, "f%u_%u.", &folder_id, &index) == 2) {
+      out.push_back(sidecarKey(static_cast<uint16_t>(folder_id), index));
+    }
+  }
+}
+
+static void ensureSidecarIndexBuilt() {
+  if (g_sidecar_index_built) return;
+  g_sidecar_index_built = true;
+  if (!storageReady()) return;
+  scanSidecarDir(kImagePathDir, g_image_sidecar_keys);
+  scanSidecarDir(kEntityPathDir, g_entity_sidecar_keys);
+}
+
 static String entityPathFileLegacy(const char* prefix, size_t index) {
   char buf[64];
   snprintf(buf, sizeof(buf), "%s/%s_%02u.ent", kEntityPathDir, prefix, static_cast<unsigned>(index));
@@ -440,9 +491,12 @@ static bool readGridSdV6(uint16_t folder_id, PackedQuarterGridV6* packed, size_t
 
 static bool writeImagePathSd(uint16_t folder_id, size_t index, const String& path) {
   if (!ensureImagePathDir()) return false;
+  ensureSidecarIndexBuilt();
+  uint32_t key = sidecarKey(folder_id, index);
   String filePath = imagePathFile(folder_id, index);
   if (path.length() == 0) {
     if (storageFS().exists(filePath)) storageFS().remove(filePath);
+    sidecarKeyRemove(g_image_sidecar_keys, key);
     return true;
   }
   if (storageFS().exists(filePath)) storageFS().remove(filePath);
@@ -450,23 +504,36 @@ static bool writeImagePathSd(uint16_t folder_id, size_t index, const String& pat
   if (!f) return false;
   f.print(path);
   f.close();
+  sidecarKeyAdd(g_image_sidecar_keys, key);
   return true;
 }
 
 static bool readImagePathSd(uint16_t folder_id, size_t index, String& out) {
   out = "";
   if (!storageReady()) return false;
-  String filePath = imagePathFile(folder_id, index);
-  if (!storageFS().exists(filePath) && folder_id == 0) {
-    filePath = imagePathFileLegacy("tab0", index);
+  ensureSidecarIndexBuilt();
+  if (sidecarKeyPresent(g_image_sidecar_keys, sidecarKey(folder_id, index))) {
+    File f = storageFS().open(imagePathFile(folder_id, index), FILE_READ);
+    if (f) {
+      out = f.readString();
+      f.close();
+      out.trim();
+      if (out.length() > 0) return true;
+    }
   }
-  if (!storageFS().exists(filePath)) return false;
-  File f = storageFS().open(filePath, FILE_READ);
-  if (!f) return false;
-  out = f.readString();
-  f.close();
-  out.trim();
-  return out.length() > 0;
+  if (folder_id == 0) {
+    String legacyPath = imagePathFileLegacy("tab0", index);
+    if (storageFS().exists(legacyPath)) {
+      File f = storageFS().open(legacyPath, FILE_READ);
+      if (f) {
+        out = f.readString();
+        f.close();
+        out.trim();
+        return out.length() > 0;
+      }
+    }
+  }
+  return false;
 }
 
 static bool entityTileStoresSensorEntity(TileType type) {
@@ -476,9 +543,12 @@ static bool entityTileStoresSensorEntity(TileType type) {
 
 static bool writeLongEntityIdSd(uint16_t folder_id, size_t index, const String& entity) {
   if (!storageReady()) return false;
+  ensureSidecarIndexBuilt();
+  uint32_t key = sidecarKey(folder_id, index);
   String filePath = entityPathFile(folder_id, index);
   if (entity.length() < ENTITY_MAX) {
     if (storageFS().exists(filePath)) storageFS().remove(filePath);
+    sidecarKeyRemove(g_entity_sidecar_keys, key);
     return true;
   }
   if (!ensureEntityPathDir()) return false;
@@ -487,23 +557,36 @@ static bool writeLongEntityIdSd(uint16_t folder_id, size_t index, const String& 
   if (!f) return false;
   f.print(entity);
   f.close();
+  sidecarKeyAdd(g_entity_sidecar_keys, key);
   return true;
 }
 
 static bool readLongEntityIdSd(uint16_t folder_id, size_t index, String& out) {
   out = "";
   if (!storageReady()) return false;
-  String filePath = entityPathFile(folder_id, index);
-  if (!storageFS().exists(filePath) && folder_id == 0) {
-    filePath = entityPathFileLegacy("tab0", index);
+  ensureSidecarIndexBuilt();
+  if (sidecarKeyPresent(g_entity_sidecar_keys, sidecarKey(folder_id, index))) {
+    File f = storageFS().open(entityPathFile(folder_id, index), FILE_READ);
+    if (f) {
+      out = f.readString();
+      f.close();
+      out.trim();
+      if (out.length() > 0) return true;
+    }
   }
-  if (!storageFS().exists(filePath)) return false;
-  File f = storageFS().open(filePath, FILE_READ);
-  if (!f) return false;
-  out = f.readString();
-  f.close();
-  out.trim();
-  return out.length() > 0;
+  if (folder_id == 0) {
+    String legacyPath = entityPathFileLegacy("tab0", index);
+    if (storageFS().exists(legacyPath)) {
+      File f = storageFS().open(legacyPath, FILE_READ);
+      if (f) {
+        out = f.readString();
+        f.close();
+        out.trim();
+        return out.length() > 0;
+      }
+    }
+  }
+  return false;
 }
 
 static void packTile(const Tile& in, PackedTileV7& out) {
@@ -2080,14 +2163,17 @@ bool TileConfig::deleteFolder(uint16_t folder_id) {
     return false;
   }
 
+  ensureSidecarIndexBuilt();
   for (uint16_t id : to_delete) {
     String grid_path = tileGridFile(id);
     if (storageFS().exists(grid_path)) storageFS().remove(grid_path);
     for (size_t i = 0; i < TILES_PER_GRID; ++i) {
       String link_path = imagePathFile(id, i);
       if (storageFS().exists(link_path)) storageFS().remove(link_path);
+      sidecarKeyRemove(g_image_sidecar_keys, sidecarKey(id, i));
       String entity_path = entityPathFile(id, i);
       if (storageFS().exists(entity_path)) storageFS().remove(entity_path);
+      sidecarKeyRemove(g_entity_sidecar_keys, sidecarKey(id, i));
     }
   }
 
