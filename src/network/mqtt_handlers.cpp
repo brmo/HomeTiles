@@ -16,6 +16,8 @@
 #include "src/core/board_hal.h"
 #include "src/core/lvgl_tick_service.h"
 #include <esp_heap_caps.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
 #include <PubSubClient.h>
 #include <algorithm>
 #include <cmath>
@@ -1245,19 +1247,105 @@ static char* mqttConfigBuffer() {
   return mqttScratchBuffer(g_cfg_buf, CFG_BUF, "config");
 }
 
-// ========== MQTT Callback (Topic-Routing) ==========
+// ---------------------------------------------------------------------------
+// Inbound MQTT decoupling (Etappe 1 von 3)
+//
+// PubSubClient::loop() reassembles a whole incoming message (an ~11.6KB bridge
+// payload can take ~170ms over several TCP segments) and then calls mqttCallback
+// synchronously on whatever task ran loop(). Doing the heavy per-topic work
+// right there is what stalls the render loop. Split it: mqttCallback() only
+// copies the raw (topic,payload) into a PSRAM-backed message and pushes a
+// pointer onto a FreeRTOS queue; mqtt_process_inbound_queue() (called from the
+// main loop) drains it and runs the real processing, processMqttMessage(),
+// entirely on the loop task. That keeps ALL existing flash / LVGL / shared-state
+// access single-threaded on the loop -- so Etappe 2 (moving loop() onto a
+// second-core worker) needs no locks on any of it: the worker only ever runs
+// the thin enqueue path (socket read + one PSRAM alloc + queue send).
+// ---------------------------------------------------------------------------
+struct MqttInboundMsg {
+  char* topic;       // -> into the same backing allocation
+  uint8_t* payload;  // -> into the same backing allocation
+  unsigned int length;
+};
+
+static constexpr size_t kMqttInboundQueueDepth = 16;
+static QueueHandle_t g_mqtt_inbound_queue = nullptr;
+
+static void processMqttMessage(char* topic, uint8_t* payload, unsigned int length);
+
+static QueueHandle_t mqttInboundQueue() {
+  if (!g_mqtt_inbound_queue) {
+    g_mqtt_inbound_queue = xQueueCreate(kMqttInboundQueueDepth, sizeof(MqttInboundMsg*));
+    if (!g_mqtt_inbound_queue) {
+      Serial.println("[MQTT] Inbound-Queue konnte nicht erstellt werden");
+    }
+  }
+  return g_mqtt_inbound_queue;
+}
+
+// One allocation per message, laid out as [MqttInboundMsg][topic\0][payload].
+// PSRAM preferred (freed by the drainer after processMqttMessage()).
+static MqttInboundMsg* mqttAllocInbound(const char* topic, const uint8_t* payload, unsigned int length) {
+  const size_t topic_len = topic ? strlen(topic) : 0;
+  const size_t total = sizeof(MqttInboundMsg) + topic_len + 1 + length;
+  uint8_t* block = static_cast<uint8_t*>(heap_caps_malloc(total, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!block) block = static_cast<uint8_t*>(heap_caps_malloc(total, MALLOC_CAP_8BIT));
+  if (!block) return nullptr;
+  MqttInboundMsg* msg = reinterpret_cast<MqttInboundMsg*>(block);
+  msg->topic = reinterpret_cast<char*>(block + sizeof(MqttInboundMsg));
+  msg->payload = reinterpret_cast<uint8_t*>(msg->topic + topic_len + 1);
+  msg->length = length;
+  if (topic_len) memcpy(msg->topic, topic, topic_len);
+  msg->topic[topic_len] = '\0';
+  if (length) memcpy(msg->payload, payload, length);
+  return msg;
+}
+
+void mqtt_process_inbound_queue(uint8_t max_msgs) {
+  QueueHandle_t q = g_mqtt_inbound_queue;  // do NOT lazily create here -- nothing to drain if never used
+  if (!q) return;
+  uint8_t processed = 0;
+  MqttInboundMsg* msg = nullptr;
+  while ((max_msgs == 0 || processed < max_msgs) && xQueueReceive(q, &msg, 0) == pdTRUE) {
+    if (msg) {
+      processMqttMessage(msg->topic, msg->payload, msg->length);
+      heap_caps_free(msg);
+      ++processed;
+    }
+  }
+}
+
+// ========== MQTT Callback (thin: enqueue only) ==========
 void mqttCallback(char* topic, uint8_t* payload, unsigned int length) {
-  // How much real time passed since the LVGL tick was last serviced, before
-  // this callback (invoked synchronously from PubSubClient::loop(), itself
-  // called from inside networkManager.serviceMqttLoop()/update()) does
-  // anything at all. If this is already large, the delay is in getting here
-  // (loop cadence / socket read for a large multi-segment payload) -- not in
-  // any of our own parsing code below, all of which is already yield-covered.
+  // How much real time passed since the LVGL tick was last serviced, before we
+  // even get here. This is the pure socket-read / loop-cadence latency (the
+  // reassembly of a large multi-segment payload), independent of our own
+  // processing -- which now runs later, on the loop drainer.
   uint32_t entry_since_tick = millis() - g_lvgl_tick_last_ms;
   if (entry_since_tick >= 50) {
     Serial.printf("[Bridge] mqttCallback entry: %ums since last LVGL tick service\n",
                   (unsigned)entry_since_tick);
   }
+
+  QueueHandle_t q = mqttInboundQueue();
+  MqttInboundMsg* msg = q ? mqttAllocInbound(topic, payload, length) : nullptr;
+  if (msg) {
+    if (xQueueSend(q, &msg, 0) == pdTRUE) {
+      return;  // handed off to the loop drainer
+    }
+    heap_caps_free(msg);  // queue full
+  }
+
+  // Fallback (queue missing / alloc failed / queue full): process inline so a
+  // message is never silently dropped. In Etappe 1 mqttCallback still runs on
+  // the loop task, so this is safe. NOTE for Etappe 2: the second-core worker
+  // must NOT run processMqttMessage() (flash/LVGL) -- change this fallback to a
+  // bounded xQueueSend timeout + drop there.
+  processMqttMessage(topic, payload, length);
+}
+
+// ========== MQTT message processing (Topic-Routing, runs on the loop) ==========
+static void processMqttMessage(char* topic, uint8_t* payload, unsigned int length) {
   yield();  // Webserver atmen lassen!
 
   const char* apply_topic = networkManager.getBridgeApplyTopic();

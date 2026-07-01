@@ -609,6 +609,12 @@ void loop() {
     // even start. WiFi reconnect/telemetry/buffer housekeeping don't need
     // that granularity and stay on the throttle.
     networkManager.serviceMqttLoop();
+    // serviceMqttLoop() now only enqueues received messages (mqttCallback ->
+    // FreeRTOS queue); run the actual per-topic processing here on the loop.
+    // Same task, same point in loop() as the old inline callback -> identical
+    // timing. (Etappe 2 moves serviceMqttLoop() onto a worker; this drain stays
+    // here on the loop.)
+    mqtt_process_inbound_queue();
     static uint8_t net_tick = 0;
     if (++net_tick % 5 == 0) {
       if (first_run) Serial.println("[Loop] networkManager.update()...");

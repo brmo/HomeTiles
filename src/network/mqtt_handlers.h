@@ -5,6 +5,10 @@
 
 // MQTT Callback-Funktionen
 void mqttCallback(char* topic, uint8_t* payload, unsigned int length);
+// Drains inbound MQTT messages that mqttCallback() queued (see mqtt_handlers.cpp
+// header comment) and runs the real per-topic processing on the caller's task.
+// Call from the main loop(). max_msgs=0 drains everything currently queued.
+void mqtt_process_inbound_queue(uint8_t max_msgs = 0);
 void mqttSubscribeTopics();
 void mqttPublishDiscovery();
 void mqttPublishScene(const char* scene_name);
