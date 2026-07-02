@@ -451,16 +451,16 @@ bool HaBridgeConfig::applyJson(const char* json_payload, bool* out_reload, bool*
     parseObjectSection(json.substring(scene_idx), merged.scene_alias_text);
   }
 
-  // applyJson() runs synchronously inside mqttCallback on the main loop task,
-  // before lv_timer_handler() gets its turn at the end of loop() -- measured
-  // at 146-160ms for an 11.6KB bridge payload with zero yields inside, which
-  // showed up as a short visible freeze even after the grid-reload loops that
-  // follow it were fixed. Give LVGL a couple of turns between the heavier
-  // parse sections so this one call doesn't block the UI for its full,
-  // uninterrupted duration.
+  // BEWUSST kein lvglServiceDuringBlockingWork() mehr innerhalb von
+  // applyJson(): Zwischenrendern verarbeitet auch Touch-Input, d.h.
+  // Button-Handler (Ordnerwechsel, Grid-Reload!) laufen dann VERSCHACHTELT
+  // mitten in diesem Parser -- gemessen als meta=3930ms-Explosion inkl.
+  // zweier mittendrin verarbeiteter Navigation-Klicks. Die echte Arbeit
+  // ist inzwischen klein (arrays+meta+energy zusammen ~80-100ms): die
+  // Animation pausiert dafuer EINMAL kurz (wie bei jedem Ordnerwechsel
+  // auch), und Touch wird direkt danach im normalen Loop verarbeitet --
+  // deterministisch statt sekundenlang verzerrt.
   uint32_t t_arrays = millis();
-
-  lvglServiceDuringBlockingWork();
 
   const String prev_icons = data.entity_icons_map;
   parseSensorMetaSection(json, merged.sensor_units_map, merged.sensor_names_map, merged.sensor_values_map);
@@ -471,8 +471,6 @@ bool HaBridgeConfig::applyJson(const char* json_payload, bool* out_reload, bool*
   }
 
   uint32_t t_meta = millis();
-
-  lvglServiceDuringBlockingWork();
 
   if (energy_idx >= 0) {
     parseEnergySection(json.substring(energy_idx),
@@ -951,12 +949,15 @@ static void parseEnergySection(const String& body,
   std::vector<KeyValueUpdate> unit_updates;
   std::vector<KeyValueUpdate> icon_updates;
 
-  // Split-Zaehler: der "energy="-Anteil des applyJson-Logs ist ueber die
-  // Laufzeit auf 175-207ms gewachsen -- dieser Log trennt, ob das echte
-  // Parse-Arbeit, die LVGL-Pumps pro Eintrag (= legitime Renderzeit) oder
-  // die Map-Batch-Updates am Ende sind.
+  // KEIN lvglServiceDuringBlockingWork() mehr in dieser Schleife (frueher pro
+  // Eintrag): die echte Arbeit ist seit dem Batch-Umbau winzig (gemessen
+  // parse=14ms, batch=2ms), aber jeder Pump renderte einen ~42ms-Frame der
+  // laufenden Animation UND verarbeitete Touch -- Button-Handler (z.B.
+  // Ordnerwechsel) liefen dadurch VERSCHACHTELT mitten im Bridge-Parsing,
+  // gemessen als energy=827ms Pump-Anteil und "Buttons reagieren nicht".
+  // Lieber ~100ms Animation-Pause am Stueck als sekundenlanges, verzerrtes
+  // Zwischenrendern mit Reentranz.
   const uint32_t t_total0 = millis();
-  uint32_t pump_ms = 0;
   unsigned entry_count = 0;
 
   String segment = body.substring(array_start + 1, array_end);
@@ -986,10 +987,6 @@ static void parseEnergySection(const String& body,
       icon_updates.push_back({id, energyIconForCategory(category, id, unit)});
     }
 
-    uint32_t t_pump0 = millis();
-    lvglServiceDuringBlockingWork();
-    pump_ms += millis() - t_pump0;
-
     obj_start = segment.indexOf('{', obj_end + 1);
   }
 
@@ -1000,10 +997,9 @@ static void parseEnergySection(const String& body,
 
   const uint32_t t_end = millis();
   if (t_end - t_total0 >= 10) {
-    Serial.printf("[Bridge]   energy split: total=%ums parse=%ums pump=%ums batch=%ums entries=%u\n",
+    Serial.printf("[Bridge]   energy split: total=%ums parse=%ums batch=%ums entries=%u\n",
                   (unsigned)(t_end - t_total0),
-                  (unsigned)((t_batch0 - t_total0) - pump_ms),
-                  (unsigned)pump_ms,
+                  (unsigned)(t_batch0 - t_total0),
                   (unsigned)(t_end - t_batch0),
                   entry_count);
   }
@@ -1048,10 +1044,6 @@ static void parseSensorMetaSection(const String& body, String& units, String& na
       if (values.length()) values += '\n';
       values += entity + "=" + value;
     }
-    // Gedrosselt (siehe lvgl_tick_service.cpp) -- rendert hoechstens alle
-    // 15ms, haelt den meta=-Block des applyJson-Splits unter einer
-    // Frame-Periode pro Stueck.
-    lvglServiceDuringBlockingWork();
     obj_start = segment.indexOf('{', obj_end + 1);
   }
 }
@@ -1109,7 +1101,6 @@ static void parseEntityIconSection(const String& body, const char* key, String& 
       if (icons.length()) icons += '\n';
       icons += entity + "=" + icon;
     }
-    lvglServiceDuringBlockingWork();  // gedrosselt, max. 1 Render pro 15ms
     obj_start = segment.indexOf('{', obj_end + 1);
   }
 }
