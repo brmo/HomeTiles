@@ -4,16 +4,60 @@
 #include <Arduino.h>
 #include <strings.h>
 #include <map>
+#include <string>
+#include <utility>
+#include <esp_heap_caps.h>
+
+// Allocator, der alles in den PSRAM legt (MALLOC_CAP_SPIRAM). Der Standard-
+// malloc routet kleine Allokationen IMMER in den internen Heap -- std::map-
+// Knoten und String-Puffer des Entity-Index wuerden sonst die knappen ~236KB
+// internes SRAM belegen, die fuer UI-Renderband und WiFi reserviert sind.
+template <typename T>
+struct PsramAllocator {
+  using value_type = T;
+  PsramAllocator() noexcept = default;
+  template <typename U>
+  PsramAllocator(const PsramAllocator<U>&) noexcept {}
+  T* allocate(size_t n) {
+    void* p = heap_caps_malloc(n * sizeof(T), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    // Notnagel interner Heap: ein Allocator darf nie nullptr liefern, der
+    // Container wuerde sonst an Adresse 0 schreiben.
+    if (!p) p = heap_caps_malloc(n * sizeof(T), MALLOC_CAP_8BIT);
+    if (!p) abort();
+    return static_cast<T*>(p);
+  }
+  void deallocate(T* p, size_t) noexcept { heap_caps_free(p); }
+  template <typename U>
+  bool operator==(const PsramAllocator<U>&) const noexcept { return true; }
+  template <typename U>
+  bool operator!=(const PsramAllocator<U>&) const noexcept { return false; }
+};
+
+// std::string mit PSRAM-Allocator: kurze Werte (<=15 Zeichen, SSO) leben
+// direkt im Map-Knoten (der selbst im PSRAM liegt), laengere Puffer holt der
+// Allocator ebenfalls aus dem PSRAM. Arduino String kann das nicht -- seine
+// Puffer kommen immer aus dem internen Heap.
+using PsString = std::basic_string<char, std::char_traits<char>, PsramAllocator<char>>;
 
 // Case-insensitive geordnete Map fuer Entity-Keys -- die Text-Blob-Maps
 // unten matchen Keys ueberall mit strncasecmp/equalsIgnoreCase, der Index
-// muss sich identisch verhalten.
+// muss sich identisch verhalten. is_transparent erlaubt find(const char*)
+// ohne temporaere Key-Kopie.
 struct HaEntityKeyLess {
-  bool operator()(const String& a, const String& b) const {
+  using is_transparent = void;
+  bool operator()(const PsString& a, const PsString& b) const {
     return strcasecmp(a.c_str(), b.c_str()) < 0;
   }
+  bool operator()(const PsString& a, const char* b) const {
+    return strcasecmp(a.c_str(), b) < 0;
+  }
+  bool operator()(const char* a, const PsString& b) const {
+    return strcasecmp(a, b.c_str()) < 0;
+  }
 };
-using HaEntityKeyMap = std::map<String, String, HaEntityKeyLess>;
+using HaEntityKeyMap =
+    std::map<PsString, PsString, HaEntityKeyLess,
+             PsramAllocator<std::pair<const PsString, PsString>>>;
 
 static constexpr size_t HA_SENSOR_SLOT_COUNT = 6;
 static constexpr size_t HA_SCENE_SLOT_COUNT = 6;
@@ -53,6 +97,13 @@ public:
   String findSensorName(const String& entity_id) const;
   String findSensorInitialValue(const String& entity_id) const;
   String findEntityIcon(const String& entity_id) const;
+  // const char*-Varianten fuer Aufrufer, die selbst keine Arduino Strings
+  // halten (z.B. der PSRAM-Ordner-Entity-Cache) -- dank is_transparent
+  // komplett allokationsfrei bis auf den Rueckgabewert.
+  String findSensorUnit(const char* entity_id) const;
+  String findSensorName(const char* entity_id) const;
+  String findSensorInitialValue(const char* entity_id) const;
+  String findEntityIcon(const char* entity_id) const;
   String findSceneEntity(const String& alias) const;
 
   // Update live sensor value (for web interface)

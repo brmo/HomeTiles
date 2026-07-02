@@ -37,6 +37,8 @@ struct KeyValueUpdate {
 };
 static void upsertKeyValueMapBatch(String& text, const std::vector<KeyValueUpdate>& updates);
 static bool removeKeyValueMapEntry(String& text, const String& key);
+static void indexPut(HaEntityKeyMap& map, const String& key, const String& value);
+static void indexErase(HaEntityKeyMap& map, const String& key);
 static String decodeJsonEscapes(const String& value);
 static void appendUtf8(String& out, uint32_t codepoint);
 static bool isHexDigit(char c);
@@ -152,23 +154,43 @@ bool HaBridgeConfig::hasData() const {
 // alle Ordner auf (~150x am Stueck), und ein einzelner Scan eines ueber die
 // Laufzeit gewachsenen Blobs war fuer sich schon ein mehrere-ms-Block.
 String HaBridgeConfig::findSensorUnit(const String& entity_id) const {
-  auto it = units_index_.find(entity_id);
-  return (it != units_index_.end()) ? it->second : String();
+  return findSensorUnit(entity_id.c_str());
 }
 
 String HaBridgeConfig::findSensorName(const String& entity_id) const {
-  auto it = names_index_.find(entity_id);
-  return (it != names_index_.end()) ? it->second : String();
+  return findSensorName(entity_id.c_str());
 }
 
 String HaBridgeConfig::findSensorInitialValue(const String& entity_id) const {
-  auto it = values_index_.find(entity_id);
-  return (it != values_index_.end()) ? it->second : String();
+  return findSensorInitialValue(entity_id.c_str());
 }
 
 String HaBridgeConfig::findEntityIcon(const String& entity_id) const {
+  return findEntityIcon(entity_id.c_str());
+}
+
+String HaBridgeConfig::findSensorUnit(const char* entity_id) const {
+  if (!entity_id || !entity_id[0]) return String();
+  auto it = units_index_.find(entity_id);
+  return (it != units_index_.end()) ? String(it->second.c_str()) : String();
+}
+
+String HaBridgeConfig::findSensorName(const char* entity_id) const {
+  if (!entity_id || !entity_id[0]) return String();
+  auto it = names_index_.find(entity_id);
+  return (it != names_index_.end()) ? String(it->second.c_str()) : String();
+}
+
+String HaBridgeConfig::findSensorInitialValue(const char* entity_id) const {
+  if (!entity_id || !entity_id[0]) return String();
+  auto it = values_index_.find(entity_id);
+  return (it != values_index_.end()) ? String(it->second.c_str()) : String();
+}
+
+String HaBridgeConfig::findEntityIcon(const char* entity_id) const {
+  if (!entity_id || !entity_id[0]) return String();
   auto it = icons_index_.find(entity_id);
-  return (it != icons_index_.end()) ? it->second : String();
+  return (it != icons_index_.end()) ? String(it->second.c_str()) : String();
 }
 
 String HaBridgeConfig::findSceneEntity(const String& alias) const {
@@ -539,7 +561,7 @@ bool HaBridgeConfig::applyIconUpdate(const char* json_payload) {
     String current_icon = findEntityIcon(entity_id);
     if (!next_icon.length()) {
       if (current_icon.length() && removeKeyValueMapEntry(data.entity_icons_map, entity_id)) {
-        icons_index_.erase(entity_id);
+        indexErase(icons_index_, entity_id);
         changed = true;
       }
       continue;
@@ -547,7 +569,7 @@ bool HaBridgeConfig::applyIconUpdate(const char* json_payload) {
 
     if (!current_icon.equals(next_icon)) {
       upsertKeyValueMap(data.entity_icons_map, entity_id, next_icon);
-      icons_index_[entity_id] = next_icon;
+      indexPut(icons_index_, entity_id, next_icon);
       changed = true;
     }
   }
@@ -929,6 +951,14 @@ static void parseEnergySection(const String& body,
   std::vector<KeyValueUpdate> unit_updates;
   std::vector<KeyValueUpdate> icon_updates;
 
+  // Split-Zaehler: der "energy="-Anteil des applyJson-Logs ist ueber die
+  // Laufzeit auf 175-207ms gewachsen -- dieser Log trennt, ob das echte
+  // Parse-Arbeit, die LVGL-Pumps pro Eintrag (= legitime Renderzeit) oder
+  // die Map-Batch-Updates am Ende sind.
+  const uint32_t t_total0 = millis();
+  uint32_t pump_ms = 0;
+  unsigned entry_count = 0;
+
   String segment = body.substring(array_start + 1, array_end);
   int obj_start = segment.indexOf('{');
   while (obj_start >= 0) {
@@ -939,6 +969,7 @@ static void parseEnergySection(const String& body,
     String id;
     if (extractStringField(object, "id", id)) {
       appendUniqueListEntry(energy, id);
+      ++entry_count;
 
       String name;
       if (extractStringField(object, "name", name)) {
@@ -955,14 +986,27 @@ static void parseEnergySection(const String& body,
       icon_updates.push_back({id, energyIconForCategory(category, id, unit)});
     }
 
+    uint32_t t_pump0 = millis();
     lvglServiceDuringBlockingWork();
+    pump_ms += millis() - t_pump0;
 
     obj_start = segment.indexOf('{', obj_end + 1);
   }
 
+  const uint32_t t_batch0 = millis();
   upsertKeyValueMapBatch(names, name_updates);
   upsertKeyValueMapBatch(units, unit_updates);
   upsertKeyValueMapBatch(icons, icon_updates);
+
+  const uint32_t t_end = millis();
+  if (t_end - t_total0 >= 10) {
+    Serial.printf("[Bridge]   energy split: total=%ums parse=%ums pump=%ums batch=%ums entries=%u\n",
+                  (unsigned)(t_end - t_total0),
+                  (unsigned)((t_batch0 - t_total0) - pump_ms),
+                  (unsigned)pump_ms,
+                  (unsigned)(t_end - t_batch0),
+                  entry_count);
+  }
 }
 
 static void parseSensorMetaSection(const String& body, String& units, String& names, String& values) {
@@ -1284,6 +1328,25 @@ static bool removeKeyValueMapEntry(String& text, const String& key) {
   return removed;
 }
 
+// Einzelpflege des Index: die Blob-Update-Pfade (registerSensorMeta etc.)
+// rufen das parallel zu upsertKeyValueMap()/removeKeyValueMapEntry() auf.
+// find(key.c_str()) nutzt den transparenten Komparator -- kein temporaerer
+// PsString fuer den Lookup, allokiert wird nur bei einem echten Neueintrag.
+static void indexPut(HaEntityKeyMap& map, const String& key, const String& value) {
+  auto it = map.find(key.c_str());
+  if (it != map.end()) {
+    it->second.assign(value.c_str(), value.length());
+  } else {
+    map.emplace(PsString(key.c_str(), key.length()),
+                PsString(value.c_str(), value.length()));
+  }
+}
+
+static void indexErase(HaEntityKeyMap& map, const String& key) {
+  auto it = map.find(key.c_str());
+  if (it != map.end()) map.erase(it);
+}
+
 // Parst einen "key=value\n"-Blob in eine Index-Map. Trim-Verhalten identisch
 // zu lookupKeyValue(); emplace() = erster Treffer gewinnt, wie beim
 // Blob-Scan (relevant nur bei pathologischen Key-Dubletten im Blob).
@@ -1312,11 +1375,27 @@ static void rebuildIndexFromBlob(const String& text, HaEntityKeyMap& out) {
       while (rhs_end > rhs_start && isspace(static_cast<unsigned char>(buf[rhs_end - 1]))) --rhs_end;
 
       if (lhs_end > lhs_start) {
-        out.emplace(text.substring(lhs_start, lhs_end), text.substring(rhs_start, rhs_end));
+        // Direkt aus dem Blob-Puffer in PSRAM-Strings -- keine Arduino-String-
+        // Zwischenkopien (deren Puffer im internen Heap laegen).
+        out.emplace(PsString(buf + lhs_start, static_cast<size_t>(lhs_end - lhs_start)),
+                    PsString(buf + rhs_start, static_cast<size_t>(rhs_end - rhs_start)));
       }
     }
     line_start = line_end + 1;
   }
+}
+
+// Grobe Byte-Schaetzung eines Index: Rot-Schwarz-Knoten (3 Zeiger + Farbwort
+// = 16B auf 32-bit) + das pair aus zwei PsString-Objekten; Puffer oberhalb
+// der SSO-Grenze (15 Zeichen) kommen als eigene PSRAM-Allokation dazu.
+static size_t indexApproxBytes(const HaEntityKeyMap& m) {
+  size_t bytes = 0;
+  for (const auto& kv : m) {
+    bytes += 16 + sizeof(kv);
+    if (kv.first.capacity() > 15) bytes += kv.first.capacity() + 1;
+    if (kv.second.capacity() > 15) bytes += kv.second.capacity() + 1;
+  }
+  return bytes;
 }
 
 void HaBridgeConfig::rebuildEntityIndexes() {
@@ -1324,6 +1403,15 @@ void HaBridgeConfig::rebuildEntityIndexes() {
   rebuildIndexFromBlob(data.sensor_names_map, names_index_);
   rebuildIndexFromBlob(data.sensor_values_map, values_index_);
   rebuildIndexFromBlob(data.entity_icons_map, icons_index_);
+  // Belegt schwarz auf weiss, dass der Index im PSRAM liegt und wie gross er
+  // wirklich ist -- "intern frei" darf durch einen Rebuild nicht mehr sinken.
+  const size_t total_bytes = indexApproxBytes(units_index_) + indexApproxBytes(names_index_) +
+                             indexApproxBytes(values_index_) + indexApproxBytes(icons_index_);
+  Serial.printf("[Bridge] Entity-Index neu aufgebaut: units=%u names=%u values=%u icons=%u (~%u KB PSRAM) | intern frei: %u KB\n",
+                (unsigned)units_index_.size(), (unsigned)names_index_.size(),
+                (unsigned)values_index_.size(), (unsigned)icons_index_.size(),
+                (unsigned)((total_bytes + 1023) / 1024),
+                (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
 }
 
 void HaBridgeConfig::registerSensorMeta(const String& entity_id, const String& name, const String& unit) {
@@ -1339,23 +1427,23 @@ void HaBridgeConfig::registerSensorMeta(const String& entity_id, const String& n
   // Index parallel pflegen. upsertKeyValueMap() ignoriert leere Werte --
   // der Index muss sich identisch verhalten, sonst laufen Blob und Index
   // auseinander.
-  if (name.length()) names_index_[entity_id] = name;
-  if (unit.length()) units_index_[entity_id] = unit;
+  if (name.length()) indexPut(names_index_, entity_id, name);
+  if (unit.length()) indexPut(units_index_, entity_id, unit);
 }
 
 void HaBridgeConfig::updateEntityMeta(const String& entity_id, const String& name, const String& unit, const String& icon) {
   if (entity_id.length() == 0) return;
   if (name.length()) {
     upsertKeyValueMap(data.sensor_names_map, entity_id, name);
-    names_index_[entity_id] = name;
+    indexPut(names_index_, entity_id, name);
   }
   if (unit.length()) {
     upsertKeyValueMap(data.sensor_units_map, entity_id, unit);
-    units_index_[entity_id] = unit;
+    indexPut(units_index_, entity_id, unit);
   }
   if (icon.length()) {
     upsertKeyValueMap(data.entity_icons_map, entity_id, icon);
-    icons_index_[entity_id] = icon;
+    indexPut(icons_index_, entity_id, icon);
   }
 }
 
@@ -1405,5 +1493,5 @@ void HaBridgeConfig::updateSensorValue(const String& entity_id, const String& va
   }
 
   valuesMap = newMap;
-  values_index_[entity_id] = value;
+  indexPut(values_index_, entity_id, value);
 }
