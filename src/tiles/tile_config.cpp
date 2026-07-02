@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <memory>
 #include <new>
+#include <esp_heap_caps.h>
 
 static const char* PREF_NAMESPACE = "tab5_tiles";
 static constexpr uint8_t PACKED_GRID_VERSION = 7;
@@ -2031,6 +2032,114 @@ bool TileConfig::loadFolderGridEntitiesOnly(uint16_t folder_id, TileEntitySlot* 
   return true;
 }
 
+// === Ordner-Entity-Cache (PSRAM) ===
+// Haelt pro Ordner die TileEntitySlot-Projektion (Typ + Entity-ID) als
+// PSRAM-Kopie, damit Hintergrund-Scans (Bridge-Cache-Refresh, MQTT-Route-
+// Rebuild) nicht bei JEDEM Durchlauf alle Ordner-Grids vom Flash lesen
+// (~20ms pro Ordner, gemessen als load=199ms pro Refresh). Bewusst KEIN
+// Arduino String und kein interner Heap: Eintraege, Zeiger-Arrays und
+// Entity-Strings liegen alle im PSRAM.
+struct FolderEntityCacheEntry {
+  uint16_t folder_id;
+  uint32_t built_gen;
+  TileType types[TILES_PER_GRID];
+  char* entities[TILES_PER_GRID];  // PSRAM-Kopien, nullptr = leer
+};
+
+// 128 Eintraege x ~184B = ~24KB PSRAM. Mehr als 128 gleichzeitig lebende
+// Ordner werden nicht gecacht (getFolderEntitiesCached liefert dann false,
+// Aufrufer behandeln das wie einen fehlgeschlagenen Ordner-Load).
+static constexpr size_t kFolderEntityCacheMax = 128;
+
+static char* psramStrdupLocal(const String& s) {
+  if (!s.length()) return nullptr;
+  char* p = static_cast<char*>(heap_caps_malloc(s.length() + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!p) return nullptr;
+  memcpy(p, s.c_str(), s.length() + 1);
+  return p;
+}
+
+FolderEntityCacheEntry* TileConfig::findFolderEntityCacheEntry(uint16_t folder_id) {
+  for (size_t i = 0; i < folder_entity_cache_count_; ++i) {
+    if (folder_entity_cache_[i].folder_id == folder_id) return &folder_entity_cache_[i];
+  }
+  return nullptr;
+}
+
+FolderEntityCacheEntry* TileConfig::storeFolderEntityCache(uint16_t folder_id,
+                                                           const TileEntitySlot* slots,
+                                                           uint32_t built_gen) {
+  if (!folder_entity_cache_) {
+    folder_entity_cache_ = static_cast<FolderEntityCacheEntry*>(heap_caps_calloc(
+        kFolderEntityCacheMax, sizeof(FolderEntityCacheEntry), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!folder_entity_cache_) {
+      Serial.println("[TileConfig] WARN: Ordner-Entity-Cache: PSRAM-Allokation fehlgeschlagen");
+      return nullptr;
+    }
+    folder_entity_cache_count_ = 0;
+  }
+
+  FolderEntityCacheEntry* e = findFolderEntityCacheEntry(folder_id);
+  if (!e) {
+    if (folder_entity_cache_count_ < kFolderEntityCacheMax) {
+      e = &folder_entity_cache_[folder_entity_cache_count_];
+      e->folder_id = folder_id;
+      ++folder_entity_cache_count_;
+    } else {
+      // Voll: Eintrag eines inzwischen geloeschten Ordners wiederverwenden.
+      for (size_t i = 0; i < folder_entity_cache_count_ && !e; ++i) {
+        if (!folderExists(folder_entity_cache_[i].folder_id)) e = &folder_entity_cache_[i];
+      }
+      if (!e) {
+        Serial.println("[TileConfig] WARN: Ordner-Entity-Cache voll, Ordner bleibt ungecacht");
+        return nullptr;
+      }
+      e->folder_id = folder_id;
+    }
+  }
+
+  for (size_t i = 0; i < TILES_PER_GRID; ++i) {
+    if (e->entities[i]) {
+      heap_caps_free(e->entities[i]);
+      e->entities[i] = nullptr;
+    }
+    e->types[i] = slots[i].type;
+    e->entities[i] = psramStrdupLocal(slots[i].sensor_entity);
+  }
+  e->built_gen = built_gen;
+  return e;
+}
+
+bool TileConfig::getFolderEntitiesCached(uint16_t folder_id, FolderEntitySlotView* out, size_t count) {
+  if (!out || count < TILES_PER_GRID) return false;
+  if (!folderExists(folder_id)) return false;
+
+  // Generation VOR dem Flash-Read snapshotten: invalidiert ein Schreiber
+  // waehrend wir lesen, stimmt built_gen hinterher nicht mehr mit der
+  // aktuellen Generation ueberein und der naechste Zugriff laedt neu.
+  const uint32_t gen_now = folder_entity_cache_gen_;
+  FolderEntityCacheEntry* e = findFolderEntityCacheEntry(folder_id);
+  if (!e || e->built_gen != gen_now) {
+    TileEntitySlot slots[TILES_PER_GRID];
+    if (!loadFolderGridEntitiesOnly(folder_id, slots, TILES_PER_GRID)) return false;
+    e = storeFolderEntityCache(folder_id, slots, gen_now);
+    if (!e) return false;
+  }
+
+  for (size_t i = 0; i < TILES_PER_GRID; ++i) {
+    out[i].type = e->types[i];
+    out[i].entity = e->entities[i] ? e->entities[i] : "";
+  }
+  return true;
+}
+
+void TileConfig::invalidateFolderEntityCache() {
+  // Cross-task-sicher: nur ein Zaehler-Inkrement, kein free/kein Umbau --
+  // darf deshalb auch vom Web-Task (saveFolderGrid via Web-Admin) kommen.
+  // Kein ++ auf volatile (in C++20+ deprecated), deshalb Lesen+Zuweisen.
+  folder_entity_cache_gen_ = folder_entity_cache_gen_ + 1;
+}
+
 bool TileConfig::saveFolderGrid(uint16_t folder_id, const TileGridConfig& grid) {
   if (!folderExists(folder_id)) return false;
   bool ok = saveGrid(folder_id, grid);
@@ -2255,6 +2364,7 @@ bool TileConfig::deleteFolder(uint16_t folder_id) {
     }
   }
 
+  invalidateFolderEntityCache();
   return true;
 }
 
@@ -2382,8 +2492,14 @@ bool TileConfig::saveGrid(uint16_t folder_id, const TileGridConfig& grid) {
   if (!writeGridSd(folder_id, packed, QUARTERS_PER_GRID)) {
     Serial.printf("[TileConfig] Fehler beim Speichern von Grid %u (storage write failed)\n",
                   static_cast<unsigned>(folder_id));
+    // Entity-Sidecars oben sind ggf. schon geschrieben -> Cache trotzdem kippen.
+    invalidateFolderEntityCache();
     return false;
   }
+  // Invalidierung NACH dem abgeschlossenen Write (Reihenfolge wichtig: baut
+  // der Loop-Task parallel gerade einen Cache-Eintrag aus dem alten Stand,
+  // passt dessen Generation danach nicht mehr und er wird neu geladen).
+  invalidateFolderEntityCache();
 
   String legacy_v6 = tileGridFileLegacyV6(folder_id);
   if (storageFS().exists(legacy_v6)) {

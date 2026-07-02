@@ -531,15 +531,31 @@ void tiles_process_visible_cache_refresh(bool allow_now) {
   tiles_refresh_visible_from_cache();
 }
 
-// findSensorInitialValue() geht seit dem Index-Umbau in ha_bridge_config
-// ueber eine echte Map (O(log n)) statt den sensor_values_map-Blob linear zu
-// scannen -- der Scan war ueber alle Ordner hinweg (~150 Kacheln) der
-// dominante Anteil des bridge_cache-Buckets (zuletzt 2324ms im [LoopGap]).
-// Die Split-Zaehler unten belegen im Log, was vom Bucket uebrig bleibt:
-// lookup= sollte jetzt ~0 sein, pump= ist legitime Renderzeit (die Animation
-// zeichnet waehrend des Refreshs weiter), load= sind die Ordner-Flash-Reads.
+// === Bridge-Cache-Refresh, zeitgescheibt ===
+// Frueher lief der komplette Refresh (aktives Grid + ALLE Ordner) in einem
+// einzigen Loop-Durchlauf (gemessen: 671-733ms am Stueck, sichtbar als
+// bridge_cache-Bucket im [LoopGap] und als kurzes Verlangsamen laufender
+// 30fps-Animationen). Jetzt verarbeitet jeder Loop-Durchlauf genau EINEN
+// Schritt (Schritt 0 = aktives Grid, danach ein Hintergrund-Ordner pro
+// Durchlauf); zwischen den Schritten rendert lv_timer_handler() ganz normal.
+// Die Ordner kommen dabei aus dem PSRAM-Entity-Cache von TileConfig, der
+// Flash-Read (~20ms/Ordner) faellt also nur beim ersten Refresh bzw. nach
+// einer Grid-Aenderung an. Split-Zaehler: work= reine Arbeitszeit ueber alle
+// Schritte, wall= Zeitspanne Start->Ende, load= Slot-Beschaffung (Cache oder
+// Flash), lookup= Index-Lookups, store= Entity-Cache-Upsert (der 280-Slot-
+// Linearscan in cache_entity_payload_at -- Verdaechtiger fuer den frueher
+// unerfassten ~280ms-Rest), other= was danach noch uebrig bleibt.
+static bool g_bridge_cache_refresh_active = false;
+static size_t g_bridge_cache_refresh_step = 0;
+static uint32_t g_bridge_cache_active_snapshot_ms = 0;
+static constexpr size_t kBridgeRefreshMaxFolders = 64;
+static uint16_t g_bridge_cache_folder_ids[kBridgeRefreshMaxFolders];
+static size_t g_bridge_cache_folder_count = 0;
+static uint32_t g_bridge_cache_wall_start_ms = 0;
+static uint32_t g_bridge_cache_work_ms = 0;
+static uint32_t g_bridge_cache_load_ms = 0;
 static uint32_t g_bridge_cache_lookup_ms = 0;
-static uint32_t g_bridge_cache_pump_ms = 0;
+static uint32_t g_bridge_cache_store_ms = 0;
 
 static void refresh_cache_from_grid_config(const TileGridConfig& config, uint32_t snapshot_ms) {
   for (uint8_t i = 0; i < TILES_PER_GRID; ++i) {
@@ -551,73 +567,78 @@ static void refresh_cache_from_grid_config(const TileGridConfig& config, uint32_
 
     uint32_t t_lookup0 = millis();
     String payload = haBridgeConfig.findSensorInitialValue(tile.sensor_entity);
-    uint32_t t_pump0 = millis();
-    lvglServiceDuringBlockingWork();
-    g_bridge_cache_lookup_ms += t_pump0 - t_lookup0;
-    g_bridge_cache_pump_ms += millis() - t_pump0;
+    uint32_t t_store0 = millis();
+    g_bridge_cache_lookup_ms += t_store0 - t_lookup0;
     if (!payload.length()) continue;
     cache_entity_payload_from_bridge(tile.sensor_entity.c_str(), payload.c_str(), snapshot_ms);
+    g_bridge_cache_store_ms += millis() - t_store0;
   }
 }
 
-// Same as refresh_cache_from_grid_config(), but for background folders where we
-// only ever read tile.type/tile.sensor_entity -- takes the lightweight
-// TileEntitySlot projection instead of a full TileGridConfig so the folder scan
-// below doesn't pay for title/icon/scene/macro/image_path String allocations
-// it never uses (see TileConfig::loadFolderGridEntitiesOnly).
-static void refresh_cache_from_entity_slots(const TileEntitySlot* slots, size_t count, uint32_t snapshot_ms) {
+// Wie refresh_cache_from_grid_config(), aber fuer Hintergrund-Ordner ueber
+// die PSRAM-Cache-Sicht (nur Typ + Entity-ID, keine Arduino Strings).
+static void refresh_cache_from_entity_views(const FolderEntitySlotView* slots, size_t count, uint32_t snapshot_ms) {
   for (size_t i = 0; i < count; ++i) {
-    const TileEntitySlot& slot = slots[i];
+    const FolderEntitySlotView& slot = slots[i];
     if (slot.type != TILE_SENSOR && slot.type != TILE_SWITCH &&
         slot.type != TILE_WEATHER && slot.type != TILE_ENERGY &&
         slot.type != TILE_MEDIA) continue;
-    if (!slot.sensor_entity.length()) continue;
+    if (!slot.entity[0]) continue;
 
     uint32_t t_lookup0 = millis();
-    String payload = haBridgeConfig.findSensorInitialValue(slot.sensor_entity);
-    uint32_t t_pump0 = millis();
-    lvglServiceDuringBlockingWork();
-    g_bridge_cache_lookup_ms += t_pump0 - t_lookup0;
-    g_bridge_cache_pump_ms += millis() - t_pump0;
+    String payload = haBridgeConfig.findSensorInitialValue(slot.entity);
+    uint32_t t_store0 = millis();
+    g_bridge_cache_lookup_ms += t_store0 - t_lookup0;
     if (!payload.length()) continue;
-    cache_entity_payload_from_bridge(slot.sensor_entity.c_str(), payload.c_str(), snapshot_ms);
+    cache_entity_payload_from_bridge(slot.entity, payload.c_str(), snapshot_ms);
+    g_bridge_cache_store_ms += millis() - t_store0;
   }
 }
 
-void tiles_refresh_cache_from_bridge_values() {
-  const uint32_t t_total0 = millis();
+static void bridge_cache_refresh_begin() {
+  g_bridge_cache_refresh_active = true;
+  g_bridge_cache_refresh_step = 0;
+  g_bridge_cache_active_snapshot_ms =
+      g_bridge_cache_refresh_snapshot_ms ? g_bridge_cache_refresh_snapshot_ms : millis();
+  g_bridge_cache_wall_start_ms = millis();
+  g_bridge_cache_work_ms = 0;
+  g_bridge_cache_load_ms = 0;
   g_bridge_cache_lookup_ms = 0;
-  g_bridge_cache_pump_ms = 0;
-  uint32_t load_ms_total = 0;
+  g_bridge_cache_store_ms = 0;
 
-  const uint32_t snapshot_ms = g_bridge_cache_refresh_snapshot_ms ? g_bridge_cache_refresh_snapshot_ms : millis();
-  refresh_cache_from_grid_config(tileConfig.getActiveGrid(), snapshot_ms);
-
-  TileEntitySlot slots[TILES_PER_GRID];
+  // Ordnerliste als ID-Snapshot: der Refresh laeuft jetzt ueber mehrere
+  // Loop-Durchlaeufe, waehrenddessen kann der Web-Task Ordner anlegen oder
+  // loeschen (getFolders()-vector wird umgebaut). Ueber IDs iterieren statt
+  // ueber live-Iteratoren; ein zwischenzeitlich geloeschter Ordner faellt
+  // beim Laden einfach raus (folderExists-Check im Cache-Zugriff).
+  g_bridge_cache_folder_count = 0;
+  const uint16_t active_id = tileConfig.getActiveFolderId();
   for (const auto& folder : tileConfig.getFolders()) {
-    if (folder.id == tileConfig.getActiveFolderId()) continue;
-    uint32_t t_load0 = millis();
-    bool loaded = tileConfig.loadFolderGridEntitiesOnly(folder.id, slots, TILES_PER_GRID);
-    uint32_t load_ms = millis() - t_load0;
-    load_ms_total += load_ms;
-    if (load_ms >= 5) {
-      Serial.printf("[Bridge]   (cache) loadFolderGridEntitiesOnly(%u): %u ms\n", folder.id, (unsigned)load_ms);
-    }
-    if (!loaded) continue;
-    refresh_cache_from_entity_slots(slots, TILES_PER_GRID, snapshot_ms);
-    // loadFolderGridEntitiesOnly() is still a synchronous storage read+parse per
-    // folder. With many folders (each logged as "Grid N geladen") this loop can
-    // run long enough to visibly freeze the screen, since only yield() (feeds
-    // the watchdog) ran between folders -- lv_timer_handler() never got a turn,
-    // so nothing on screen (including running animation tiles) could redraw
-    // meanwhile. Servicing LVGL here lets the UI keep breathing during the
-    // refresh instead of stalling for its full duration.
-    lvglServiceDuringBlockingWork();
+    if (folder.id == active_id) continue;
+    if (g_bridge_cache_folder_count >= kBridgeRefreshMaxFolders) break;
+    g_bridge_cache_folder_ids[g_bridge_cache_folder_count++] = folder.id;
+  }
+}
+
+static void bridge_cache_refresh_finish() {
+  g_bridge_cache_refresh_active = false;
+  // Snapshot-Zeit nur zuruecksetzen, wenn nicht waehrend des Laufs schon die
+  // naechste Anforderung (mit frischem Zeitstempel) eingetroffen ist.
+  if (!g_bridge_cache_refresh_requested) {
+    g_bridge_cache_refresh_snapshot_ms = 0;
   }
 
-  Serial.printf("[Bridge] cache refresh split: total=%ums load=%ums lookup=%ums pump=%ums\n",
-                (unsigned)(millis() - t_total0), (unsigned)load_ms_total,
-                (unsigned)g_bridge_cache_lookup_ms, (unsigned)g_bridge_cache_pump_ms);
+  const uint32_t accounted = g_bridge_cache_load_ms + g_bridge_cache_lookup_ms + g_bridge_cache_store_ms;
+  const uint32_t other = (g_bridge_cache_work_ms > accounted) ? (g_bridge_cache_work_ms - accounted) : 0;
+  Serial.printf("[Bridge] cache refresh split: work=%ums wall=%ums steps=%u load=%ums lookup=%ums store=%ums other=%ums\n",
+                (unsigned)g_bridge_cache_work_ms,
+                (unsigned)(millis() - g_bridge_cache_wall_start_ms),
+                (unsigned)(g_bridge_cache_folder_count + 1),
+                (unsigned)g_bridge_cache_load_ms,
+                (unsigned)g_bridge_cache_lookup_ms,
+                (unsigned)g_bridge_cache_store_ms,
+                (unsigned)other);
+  tiles_request_visible_cache_refresh();
 }
 
 void tiles_request_bridge_cache_refresh() {
@@ -626,11 +647,35 @@ void tiles_request_bridge_cache_refresh() {
 }
 
 void tiles_process_bridge_cache_refresh(bool allow_now) {
-  if (!g_bridge_cache_refresh_requested || !allow_now) return;
-  g_bridge_cache_refresh_requested = false;
-  tiles_refresh_cache_from_bridge_values();
-  g_bridge_cache_refresh_snapshot_ms = 0;
-  tiles_request_visible_cache_refresh();
+  if (!allow_now) return;
+  if (!g_bridge_cache_refresh_active) {
+    if (!g_bridge_cache_refresh_requested) return;
+    g_bridge_cache_refresh_requested = false;
+    bridge_cache_refresh_begin();
+  }
+
+  const uint32_t t_step0 = millis();
+  if (g_bridge_cache_refresh_step == 0) {
+    refresh_cache_from_grid_config(tileConfig.getActiveGrid(), g_bridge_cache_active_snapshot_ms);
+  } else {
+    const size_t folder_idx = g_bridge_cache_refresh_step - 1;
+    if (folder_idx < g_bridge_cache_folder_count) {
+      const uint16_t folder_id = g_bridge_cache_folder_ids[folder_idx];
+      FolderEntitySlotView slots[TILES_PER_GRID];
+      uint32_t t_load0 = millis();
+      const bool loaded = tileConfig.getFolderEntitiesCached(folder_id, slots, TILES_PER_GRID);
+      g_bridge_cache_load_ms += millis() - t_load0;
+      if (loaded) {
+        refresh_cache_from_entity_views(slots, TILES_PER_GRID, g_bridge_cache_active_snapshot_ms);
+      }
+    }
+  }
+  g_bridge_cache_work_ms += millis() - t_step0;
+  ++g_bridge_cache_refresh_step;
+
+  if (g_bridge_cache_refresh_step > g_bridge_cache_folder_count) {
+    bridge_cache_refresh_finish();
+  }
 }
 
 static void apply_cached_state_for_index(GridType grid_type, const TileGridConfig& config, uint8_t index) {

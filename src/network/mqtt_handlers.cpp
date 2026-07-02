@@ -1101,40 +1101,38 @@ static void rebuildDynamicRoutes(std::vector<DynamicSensorRoute>& routes) {
     add_route(cfg.sensor_slots[slot], slot);
   }
 
-  // Sensor tiles from ALL folders (no slot index, entity-based update). Uses
-  // the lightweight TileEntitySlot projection (type + sensor_entity only) --
-  // this scan never touches title/icon/scene/macro/image_path, so there is no
-  // reason to pay for a full per-tile Tile unpack (see
-  // TileConfig::loadFolderGridEntitiesOnly).
-  auto add_grid_entities = [&](const TileEntitySlot* slots, size_t count) {
+  // Sensor tiles from ALL folders (no slot index, entity-based update). Geht
+  // ueber den PSRAM-Ordner-Entity-Cache von TileConfig -- der Flash-Read pro
+  // Ordner (~20ms) faellt nur beim ersten Scan bzw. nach einer Grid-Aenderung
+  // an, danach ist der komplette Ordner-Durchlauf praktisch kostenlos.
+  auto add_grid_entities = [&](const FolderEntitySlotView* slots, size_t count) {
     for (size_t i = 0; i < count; ++i) {
-      const TileEntitySlot& slot = slots[i];
+      const FolderEntitySlotView& slot = slots[i];
       if ((slot.type == TILE_SENSOR || slot.type == TILE_SWITCH || slot.type == TILE_MEDIA) &&
-          slot.sensor_entity.length()) {
-        add_route(slot.sensor_entity, -1);
+          slot.entity[0]) {
+        add_route(String(slot.entity), -1);
       }
     }
   };
 
   // Scan all folders, not just the active one
   const std::vector<FolderEntry>& folders = tileConfig.getFolders();
-  TileEntitySlot slots[TILES_PER_GRID];
+  FolderEntitySlotView slots[TILES_PER_GRID];
   for (const auto& folder : folders) {
     uint32_t t_load0 = millis();
-    bool loaded = tileConfig.loadFolderGridEntitiesOnly(folder.id, slots, TILES_PER_GRID);
+    bool loaded = tileConfig.getFolderEntitiesCached(folder.id, slots, TILES_PER_GRID);
     uint32_t load_ms = millis() - t_load0;
     if (load_ms >= 5) {
-      Serial.printf("[Bridge]   loadFolderGridEntitiesOnly(%u): %u ms\n", folder.id, (unsigned)load_ms);
+      Serial.printf("[Bridge]   getFolderEntitiesCached(%u): %u ms\n", folder.id, (unsigned)load_ms);
     }
     if (loaded) {
       add_grid_entities(slots, TILES_PER_GRID);
     }
     // This runs synchronously on the loop task (mqtt_process_inbound_queue ->
     // processMqttMessage -> mqttReloadDynamicSlots), before lv_timer_handler()
-    // gets its turn at the end of loop(). With several folders this loop can
-    // run long enough to freeze the screen (running animation tiles included).
-    // Servicing LVGL between folders keeps the UI breathing during the reload
-    // instead of stalling for its full duration.
+    // gets its turn at the end of loop(). On a cache miss (first scan / after
+    // a grid change) each folder still costs a flash read -- servicing LVGL
+    // between folders keeps the UI breathing during the reload.
     lvglServiceDuringBlockingWork();
   }
 }
@@ -1164,19 +1162,19 @@ static void rebuildDynamicWeatherRoutes(std::vector<DynamicWeatherRoute>& routes
   };
 
   const std::vector<FolderEntry>& folders = tileConfig.getFolders();
-  TileEntitySlot slots[TILES_PER_GRID];
+  FolderEntitySlotView slots[TILES_PER_GRID];
   for (const auto& folder : folders) {
     uint32_t t_load0 = millis();
-    bool loaded = tileConfig.loadFolderGridEntitiesOnly(folder.id, slots, TILES_PER_GRID);
+    bool loaded = tileConfig.getFolderEntitiesCached(folder.id, slots, TILES_PER_GRID);
     uint32_t load_ms = millis() - t_load0;
     if (load_ms >= 5) {
-      Serial.printf("[Bridge]   loadFolderGridEntitiesOnly(%u): %u ms\n", folder.id, (unsigned)load_ms);
+      Serial.printf("[Bridge]   getFolderEntitiesCached(%u): %u ms\n", folder.id, (unsigned)load_ms);
     }
     if (loaded) {
       for (size_t i = 0; i < TILES_PER_GRID; ++i) {
-        const TileEntitySlot& slot = slots[i];
-        if (slot.type == TILE_WEATHER && slot.sensor_entity.length()) {
-          add_route(slot.sensor_entity);
+        const FolderEntitySlotView& slot = slots[i];
+        if (slot.type == TILE_WEATHER && slot.entity[0]) {
+          add_route(String(slot.entity));
         }
       }
     }

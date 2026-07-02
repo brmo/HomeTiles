@@ -173,6 +173,17 @@ struct TileEntitySlot {
   String sensor_entity;
 };
 
+// Read-only-Sicht auf einen Slot des PSRAM-Ordner-Entity-Caches (siehe
+// TileConfig::getFolderEntitiesCached). Die entity-Zeiger zeigen in den
+// Cache und bleiben nur bis zum naechsten getFolderEntitiesCached()-Aufruf
+// fuer denselben Ordner gueltig -- sofort verwenden, nicht aufheben.
+struct FolderEntitySlotView {
+  TileType type = TILE_EMPTY;
+  const char* entity = "";  // nie nullptr
+};
+
+struct FolderEntityCacheEntry;
+
 class TileConfig {
 public:
   TileConfig();
@@ -180,6 +191,13 @@ public:
   bool load();
   bool loadFolderGrid(uint16_t folder_id, TileGridConfig& out);
   bool loadFolderGridEntitiesOnly(uint16_t folder_id, TileEntitySlot* out, size_t count);
+  // Wie loadFolderGridEntitiesOnly(), aber ueber einen PSRAM-Cache: der
+  // Flash-Read (~20ms pro Ordner, mehr als ein halber 33ms-Frame bei 30fps)
+  // faellt nur beim ersten Zugriff bzw. nach einer Grid-Aenderung an. NUR vom
+  // Loop-Task aufrufen (baut den Cache um); invalidateFolderEntityCache()
+  // ist dagegen von jedem Task erlaubt.
+  bool getFolderEntitiesCached(uint16_t folder_id, FolderEntitySlotView* out, size_t count);
+  void invalidateFolderEntityCache();
   bool saveFolderGrid(uint16_t folder_id, const TileGridConfig& grid);
 
   bool setActiveFolder(uint16_t folder_id);
@@ -203,6 +221,19 @@ private:
   TileGridConfig active_grid;
   uint16_t active_folder_id = kRootFolderId;
   std::vector<FolderEntry> folders;
+
+  // Ordner-Entity-Cache (PSRAM): ein Eintrag pro Ordner mit Typ + Entity-ID
+  // aller Kacheln. Invalidierung laeuft ueber einen globalen Generations-
+  // zaehler, weil Grid-Saves auch vom Web-Task kommen -- der Schreiber
+  // erhoeht nur die Zahl (kein free, kein Umbau), neu gebaut wird
+  // ausschliesslich auf dem Loop-Task beim naechsten Zugriff.
+  FolderEntityCacheEntry* folder_entity_cache_ = nullptr;
+  size_t folder_entity_cache_count_ = 0;
+  volatile uint32_t folder_entity_cache_gen_ = 1;
+  FolderEntityCacheEntry* findFolderEntityCacheEntry(uint16_t folder_id);
+  FolderEntityCacheEntry* storeFolderEntityCache(uint16_t folder_id,
+                                                 const TileEntitySlot* slots,
+                                                 uint32_t built_gen);
 
   bool loadFolders();
   bool saveFolders() const;

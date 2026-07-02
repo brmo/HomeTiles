@@ -21,7 +21,6 @@ void tiles_process_reload_requests();
 void tiles_refresh_visible_from_cache();
 void tiles_request_visible_cache_refresh();
 void tiles_process_visible_cache_refresh(bool allow_now);
-void tiles_refresh_cache_from_bridge_values();
 void tiles_request_bridge_cache_refresh();
 void tiles_process_bridge_cache_refresh(bool allow_now);
 void tiles_update_tile(GridType grid_type, uint8_t index);
