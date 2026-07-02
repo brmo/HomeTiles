@@ -85,6 +85,7 @@ bool HaBridgeConfig::load() {
   }
 
   prefs.end();
+  rebuildEntityIndexes();
   return true;
 }
 
@@ -131,6 +132,7 @@ bool HaBridgeConfig::save(const HaBridgeConfigData& incoming) {
   prefs.end();
 
   data = incoming;
+  rebuildEntityIndexes();
   return true;
 }
 
@@ -144,20 +146,29 @@ bool HaBridgeConfig::hasData() const {
          data.scene_alias_text.length() > 0;
 }
 
+// Alle vier Entity-Lookups laufen ueber den Index (O(log n) mit billigen
+// Key-Vergleichen) statt ueber lookupKeyValue()s linearen Blob-Scan -- der
+// Bridge-Cache-Refresh ruft findSensorInitialValue() einmal pro Kachel ueber
+// alle Ordner auf (~150x am Stueck), und ein einzelner Scan eines ueber die
+// Laufzeit gewachsenen Blobs war fuer sich schon ein mehrere-ms-Block.
 String HaBridgeConfig::findSensorUnit(const String& entity_id) const {
-  return lookupKeyValue(data.sensor_units_map, entity_id);
+  auto it = units_index_.find(entity_id);
+  return (it != units_index_.end()) ? it->second : String();
 }
 
 String HaBridgeConfig::findSensorName(const String& entity_id) const {
-  return lookupKeyValue(data.sensor_names_map, entity_id);
+  auto it = names_index_.find(entity_id);
+  return (it != names_index_.end()) ? it->second : String();
 }
 
 String HaBridgeConfig::findSensorInitialValue(const String& entity_id) const {
-  return lookupKeyValue(data.sensor_values_map, entity_id);
+  auto it = values_index_.find(entity_id);
+  return (it != values_index_.end()) ? it->second : String();
 }
 
 String HaBridgeConfig::findEntityIcon(const String& entity_id) const {
-  return lookupKeyValue(data.entity_icons_map, entity_id);
+  auto it = icons_index_.find(entity_id);
+  return (it != icons_index_.end()) ? it->second : String();
 }
 
 String HaBridgeConfig::findSceneEntity(const String& alias) const {
@@ -496,6 +507,7 @@ bool HaBridgeConfig::applyJson(const char* json_payload, bool* out_reload, bool*
 
   // No structural change: keep the latest meta in memory without triggering a reload.
   data = merged;
+  rebuildEntityIndexes();
   return true;
 }
 
@@ -524,9 +536,10 @@ bool HaBridgeConfig::applyIconUpdate(const char* json_payload) {
       }
     }
 
-    String current_icon = lookupKeyValue(data.entity_icons_map, entity_id);
+    String current_icon = findEntityIcon(entity_id);
     if (!next_icon.length()) {
       if (current_icon.length() && removeKeyValueMapEntry(data.entity_icons_map, entity_id)) {
+        icons_index_.erase(entity_id);
         changed = true;
       }
       continue;
@@ -534,6 +547,7 @@ bool HaBridgeConfig::applyIconUpdate(const char* json_payload) {
 
     if (!current_icon.equals(next_icon)) {
       upsertKeyValueMap(data.entity_icons_map, entity_id, next_icon);
+      icons_index_[entity_id] = next_icon;
       changed = true;
     }
   }
@@ -1270,6 +1284,48 @@ static bool removeKeyValueMapEntry(String& text, const String& key) {
   return removed;
 }
 
+// Parst einen "key=value\n"-Blob in eine Index-Map. Trim-Verhalten identisch
+// zu lookupKeyValue(); emplace() = erster Treffer gewinnt, wie beim
+// Blob-Scan (relevant nur bei pathologischen Key-Dubletten im Blob).
+static void rebuildIndexFromBlob(const String& text, HaEntityKeyMap& out) {
+  out.clear();
+  const char* buf = text.c_str();
+  const int len = static_cast<int>(text.length());
+
+  int line_start = 0;
+  while (line_start < len) {
+    int line_end = line_start;
+    while (line_end < len && buf[line_end] != '\n') ++line_end;
+
+    int eq = line_start;
+    while (eq < line_end && buf[eq] != '=') ++eq;
+
+    if (eq > line_start && eq < line_end) {
+      int lhs_start = line_start;
+      int lhs_end = eq;
+      while (lhs_start < lhs_end && isspace(static_cast<unsigned char>(buf[lhs_start]))) ++lhs_start;
+      while (lhs_end > lhs_start && isspace(static_cast<unsigned char>(buf[lhs_end - 1]))) --lhs_end;
+
+      int rhs_start = eq + 1;
+      int rhs_end = line_end;
+      while (rhs_start < rhs_end && isspace(static_cast<unsigned char>(buf[rhs_start]))) ++rhs_start;
+      while (rhs_end > rhs_start && isspace(static_cast<unsigned char>(buf[rhs_end - 1]))) --rhs_end;
+
+      if (lhs_end > lhs_start) {
+        out.emplace(text.substring(lhs_start, lhs_end), text.substring(rhs_start, rhs_end));
+      }
+    }
+    line_start = line_end + 1;
+  }
+}
+
+void HaBridgeConfig::rebuildEntityIndexes() {
+  rebuildIndexFromBlob(data.sensor_units_map, units_index_);
+  rebuildIndexFromBlob(data.sensor_names_map, names_index_);
+  rebuildIndexFromBlob(data.sensor_values_map, values_index_);
+  rebuildIndexFromBlob(data.entity_icons_map, icons_index_);
+}
+
 void HaBridgeConfig::registerSensorMeta(const String& entity_id, const String& name, const String& unit) {
   if (entity_id.length() == 0) return;
 
@@ -1280,18 +1336,26 @@ void HaBridgeConfig::registerSensorMeta(const String& entity_id, const String& n
 
   upsertKeyValueMap(data.sensor_names_map, entity_id, name);
   upsertKeyValueMap(data.sensor_units_map, entity_id, unit);
+  // Index parallel pflegen. upsertKeyValueMap() ignoriert leere Werte --
+  // der Index muss sich identisch verhalten, sonst laufen Blob und Index
+  // auseinander.
+  if (name.length()) names_index_[entity_id] = name;
+  if (unit.length()) units_index_[entity_id] = unit;
 }
 
 void HaBridgeConfig::updateEntityMeta(const String& entity_id, const String& name, const String& unit, const String& icon) {
   if (entity_id.length() == 0) return;
   if (name.length()) {
     upsertKeyValueMap(data.sensor_names_map, entity_id, name);
+    names_index_[entity_id] = name;
   }
   if (unit.length()) {
     upsertKeyValueMap(data.sensor_units_map, entity_id, unit);
+    units_index_[entity_id] = unit;
   }
   if (icon.length()) {
     upsertKeyValueMap(data.entity_icons_map, entity_id, icon);
+    icons_index_[entity_id] = icon;
   }
 }
 
@@ -1341,4 +1405,5 @@ void HaBridgeConfig::updateSensorValue(const String& entity_id, const String& va
   }
 
   valuesMap = newMap;
+  values_index_[entity_id] = value;
 }

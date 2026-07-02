@@ -2,6 +2,18 @@
 #define HA_BRIDGE_CONFIG_H
 
 #include <Arduino.h>
+#include <strings.h>
+#include <map>
+
+// Case-insensitive geordnete Map fuer Entity-Keys -- die Text-Blob-Maps
+// unten matchen Keys ueberall mit strncasecmp/equalsIgnoreCase, der Index
+// muss sich identisch verhalten.
+struct HaEntityKeyLess {
+  bool operator()(const String& a, const String& b) const {
+    return strcasecmp(a.c_str(), b.c_str()) < 0;
+  }
+};
+using HaEntityKeyMap = std::map<String, String, HaEntityKeyLess>;
 
 static constexpr size_t HA_SENSOR_SLOT_COUNT = 6;
 static constexpr size_t HA_SCENE_SLOT_COUNT = 6;
@@ -55,6 +67,23 @@ public:
 
 private:
   HaBridgeConfigData data;
+
+  // Lookup-Index ueber den 4 "key=value\n"-Text-Blobs (sensor_units_map etc.).
+  // Die Blobs bleiben das fuehrende Format (Web-Admin liest sie direkt,
+  // applyJson tauscht sie als Ganzes) -- aber ALLE find*-Lookups laufen ueber
+  // diese Maps statt den Blob linear zu durchsuchen. Ein einziger Lookup auf
+  // einem ueber die Laufzeit gewachsenen Blob war fuer sich allein schon ein
+  // mehrere-ms-Block; der Bridge-Cache-Refresh macht ~150 davon am Stueck
+  // (gemessen: bridge_cache=2324ms im [LoopGap]-Log). Bewusst NICHT in
+  // HaBridgeConfigData: applyJson kopiert das ganze struct (merged = data),
+  // die Indexe sollen da nicht mitkopiert werden.
+  HaEntityKeyMap units_index_;
+  HaEntityKeyMap names_index_;
+  HaEntityKeyMap values_index_;
+  HaEntityKeyMap icons_index_;
+  // Nach jedem Blob-Komplett-Austausch aufrufen (load/save/applyJson); die
+  // Einzel-Updates (updateSensorValue etc.) pflegen Blob und Index parallel.
+  void rebuildEntityIndexes();
 
   static void appendJsonEscaped(String& out, const String& value);
   static void appendSensorsJson(String& out, const String& text);

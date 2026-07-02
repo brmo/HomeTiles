@@ -531,15 +531,16 @@ void tiles_process_visible_cache_refresh(bool allow_now) {
   tiles_refresh_visible_from_cache();
 }
 
-// findSensorInitialValue() linearly scans the whole "entity=value\n..."
-// sensor_values_map text blob, and cache_entity_payload_from_bridge() then
-// linearly scans the kEntityCacheSize=280-slot cache array -- two O(n) scans
-// per tile. Across ~150 entity tiles (all folders) this measured as the
-// single largest unaccounted chunk of the bridge-reload freeze (see
-// [LoopGap] bridge_cache=342ms vs. ~211ms actually spent in the grid file
-// reads it wraps). Rewriting the map/cache into real data structures would be
-// the proper fix but touches shared, widely-used helpers; yielding between
-// tiles is the same low-risk pattern used everywhere else in this reload path.
+// findSensorInitialValue() geht seit dem Index-Umbau in ha_bridge_config
+// ueber eine echte Map (O(log n)) statt den sensor_values_map-Blob linear zu
+// scannen -- der Scan war ueber alle Ordner hinweg (~150 Kacheln) der
+// dominante Anteil des bridge_cache-Buckets (zuletzt 2324ms im [LoopGap]).
+// Die Split-Zaehler unten belegen im Log, was vom Bucket uebrig bleibt:
+// lookup= sollte jetzt ~0 sein, pump= ist legitime Renderzeit (die Animation
+// zeichnet waehrend des Refreshs weiter), load= sind die Ordner-Flash-Reads.
+static uint32_t g_bridge_cache_lookup_ms = 0;
+static uint32_t g_bridge_cache_pump_ms = 0;
+
 static void refresh_cache_from_grid_config(const TileGridConfig& config, uint32_t snapshot_ms) {
   for (uint8_t i = 0; i < TILES_PER_GRID; ++i) {
     const Tile& tile = config.tiles[i];
@@ -548,8 +549,12 @@ static void refresh_cache_from_grid_config(const TileGridConfig& config, uint32_
         tile.type != TILE_MEDIA) continue;
     if (!tile.sensor_entity.length()) continue;
 
+    uint32_t t_lookup0 = millis();
     String payload = haBridgeConfig.findSensorInitialValue(tile.sensor_entity);
+    uint32_t t_pump0 = millis();
     lvglServiceDuringBlockingWork();
+    g_bridge_cache_lookup_ms += t_pump0 - t_lookup0;
+    g_bridge_cache_pump_ms += millis() - t_pump0;
     if (!payload.length()) continue;
     cache_entity_payload_from_bridge(tile.sensor_entity.c_str(), payload.c_str(), snapshot_ms);
   }
@@ -568,14 +573,23 @@ static void refresh_cache_from_entity_slots(const TileEntitySlot* slots, size_t 
         slot.type != TILE_MEDIA) continue;
     if (!slot.sensor_entity.length()) continue;
 
+    uint32_t t_lookup0 = millis();
     String payload = haBridgeConfig.findSensorInitialValue(slot.sensor_entity);
+    uint32_t t_pump0 = millis();
     lvglServiceDuringBlockingWork();
+    g_bridge_cache_lookup_ms += t_pump0 - t_lookup0;
+    g_bridge_cache_pump_ms += millis() - t_pump0;
     if (!payload.length()) continue;
     cache_entity_payload_from_bridge(slot.sensor_entity.c_str(), payload.c_str(), snapshot_ms);
   }
 }
 
 void tiles_refresh_cache_from_bridge_values() {
+  const uint32_t t_total0 = millis();
+  g_bridge_cache_lookup_ms = 0;
+  g_bridge_cache_pump_ms = 0;
+  uint32_t load_ms_total = 0;
+
   const uint32_t snapshot_ms = g_bridge_cache_refresh_snapshot_ms ? g_bridge_cache_refresh_snapshot_ms : millis();
   refresh_cache_from_grid_config(tileConfig.getActiveGrid(), snapshot_ms);
 
@@ -585,6 +599,7 @@ void tiles_refresh_cache_from_bridge_values() {
     uint32_t t_load0 = millis();
     bool loaded = tileConfig.loadFolderGridEntitiesOnly(folder.id, slots, TILES_PER_GRID);
     uint32_t load_ms = millis() - t_load0;
+    load_ms_total += load_ms;
     if (load_ms >= 5) {
       Serial.printf("[Bridge]   (cache) loadFolderGridEntitiesOnly(%u): %u ms\n", folder.id, (unsigned)load_ms);
     }
@@ -599,6 +614,10 @@ void tiles_refresh_cache_from_bridge_values() {
     // refresh instead of stalling for its full duration.
     lvglServiceDuringBlockingWork();
   }
+
+  Serial.printf("[Bridge] cache refresh split: total=%ums load=%ums lookup=%ums pump=%ums\n",
+                (unsigned)(millis() - t_total0), (unsigned)load_ms_total,
+                (unsigned)g_bridge_cache_lookup_ms, (unsigned)g_bridge_cache_pump_ms);
 }
 
 void tiles_request_bridge_cache_refresh() {
