@@ -4,6 +4,7 @@
 #include <HTTPClient.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <freertos/idf_additions.h>  // xTaskCreatePinnedToCoreWithCaps (PSRAM-Task-Stack)
 #include <nvs_flash.h>
 #include <esp_err.h>
 #include <esp_ota_ops.h>
@@ -124,7 +125,7 @@ static void apply_hotspot_mode(bool enable) {
       settings_update_ap_mode(true);
       return;
     }
-    if (networkManager.isMqttConnected()) networkManager.getMqttClient().disconnect();
+    if (networkManager.isMqttConnected()) networkManager.disconnectMqtt();
     if (webAdminServer.isRunning()) webAdminServer.stop();
     settings_update_ap_mode(true);
     if (webConfigServer.start()) {
@@ -205,6 +206,26 @@ static void service_background_state_refresh(bool allow_now) {
 
   networkManager.publishBridgeRequest();
   mark_background_state_refresh_sent();
+}
+
+// ---------------------------------------------------------------------------
+// Single-Owner MQTT Worker (Etappe 2)
+//
+// Dieser Task ist der EINZIGE, der das PubSubClient-Objekt anfasst
+// (connect/loop/publish/subscribe/setBufferSize) -- alle anderen Tasks reden
+// nur ueber die Outbound-Queue bzw. volatile Flags mit ihm (siehe
+// network_manager.h). Idle-Prioritaet, damit er den IDLE0-Task (Watchdog-
+// Futter) nie verdraengen kann; Stack liegt im PSRAM, um das knappe interne
+// RAM nicht zu belasten.
+// ---------------------------------------------------------------------------
+static TaskHandle_t g_mqtt_worker_handle = nullptr;
+
+static void mqtt_worker_task(void* param) {
+  (void)param;
+  for (;;) {
+    networkManager.serviceMqttWorker();
+    vTaskDelay(pdMS_TO_TICKS(2));
+  }
 }
 
 void setup() {
@@ -359,6 +380,25 @@ void setup() {
     gameWSServer.init(8081);
     Serial.println("[Setup] Game WebSocket OK");
     Serial.flush();
+
+    Serial.println("[Setup] MQTT-Worker...");
+    Serial.flush();
+    networkManager.beginMqttWorker();
+    const BaseType_t mqtt_worker_core = (ARDUINO_RUNNING_CORE == 0) ? 1 : 0;
+    if (xTaskCreatePinnedToCoreWithCaps(mqtt_worker_task, "mqttWorker", 12288,
+                                        nullptr, tskIDLE_PRIORITY,
+                                        &g_mqtt_worker_handle, mqtt_worker_core,
+                                        MALLOC_CAP_SPIRAM) == pdPASS) {
+      Serial.printf("[Setup] MQTT-Worker auf Core %d gestartet\n", (int)mqtt_worker_core);
+    } else {
+      // Bewusst KEIN stiller Fallback auf den Loop-Task: Single-Owner ohne
+      // Worker ergibt keinen Sinn, und ein geteilter Client waere genau die
+      // Race-Quelle, die dieser Umbau beseitigt. Laut scheitern.
+      g_mqtt_worker_handle = nullptr;
+      Serial.println("[Setup] FEHLER: MQTT-Worker konnte nicht gestartet werden -- MQTT bleibt offline!");
+    }
+    log_memory_status("after-mqtt-worker");
+    Serial.flush();
   } else {
     Serial.println("[Setup] Ueberspringe Network/Game WS (keine Config)");
   }
@@ -476,6 +516,12 @@ void loop() {
     }
     if (configManager.isConfigured()) {
       networkManager.update();
+      // Der MQTT-Worker laeuft auch im Sleep weiter und reiht Empfangenes in
+      // die Inbound-Queue ein -- ohne Drain wuerde sie volllaufen (Drops).
+      // Post-Connect ebenfalls hier, damit ein Reconnect im Sleep wie frueher
+      // sofort wieder Subscribes/Discovery bekommt.
+      mqttServicePostConnect();
+      mqtt_process_inbound_queue();
       tiles_process_bridge_cache_refresh(true);
       service_background_state_refresh(true);
       process_energy_response_queue();
@@ -601,19 +647,12 @@ void loop() {
 
   if (first_run) Serial.println("[Loop] Network check...");
   if (configManager.isConfigured()) {
-    // mqtt_client.loop() (socket read + dispatch to mqttCallback) every
-    // iteration -- an incoming multi-KB payload can need several TCP
-    // segments to fully arrive, and only polling the socket once every 5
-    // iterations (the networkManager.update() throttle below) stretched
-    // that reassembly by up to ~5 loop iterations before processing could
-    // even start. WiFi reconnect/telemetry/buffer housekeeping don't need
-    // that granularity and stay on the throttle.
-    networkManager.serviceMqttLoop();
-    // serviceMqttLoop() now only enqueues received messages (mqttCallback ->
-    // FreeRTOS queue); run the actual per-topic processing here on the loop.
-    // Same task, same point in loop() as the old inline callback -> identical
-    // timing. (Etappe 2 moves serviceMqttLoop() onto a worker; this drain stays
-    // here on the loop.)
+    // MQTT-Socket, Reconnects und Puffer-Housekeeping laufen komplett auf
+    // dem Worker-Task (mqtt_worker_task oben, Single-Owner). Auf dem
+    // Loop-Task bleiben nur die beiden Queue-Enden, weil beide Flash/LVGL
+    // anfassen: das Post-Connect-Hochfahren (Subscribes/Discovery) und das
+    // Verarbeiten eingegangener Nachrichten.
+    mqttServicePostConnect();
     mqtt_process_inbound_queue();
     static uint8_t net_tick = 0;
     if (++net_tick % 5 == 0) {

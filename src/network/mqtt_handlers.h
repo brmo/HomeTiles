@@ -9,6 +9,10 @@ void mqttCallback(char* topic, uint8_t* payload, unsigned int length);
 // header comment) and runs the real per-topic processing on the caller's task.
 // Call from the main loop(). max_msgs=0 drains everything currently queued.
 void mqtt_process_inbound_queue(uint8_t max_msgs = 0);
+// Konsumiert das Post-Connect-Pending-Flag des MQTT-Workers und faehrt die
+// App-Ebene hoch (Subscribes/Discovery/Settings/Snapshot). Muss auf dem
+// Loop-Task laufen (Flash/LVGL/I2C); jede Loop-Iteration aufrufen.
+void mqttServicePostConnect();
 void mqttSubscribeTopics();
 void mqttPublishDiscovery();
 void mqttPublishScene(const char* scene_name);

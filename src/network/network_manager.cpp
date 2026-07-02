@@ -6,6 +6,10 @@
 #include "src/web/web_admin.h"
 #include "src/ui/ui_manager.h"
 #include "src/ui/tab_settings.h"
+#include <esp_heap_caps.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
 
 // Globale Instanz
 Tab5NetworkManager networkManager;
@@ -13,6 +17,92 @@ Tab5NetworkManager networkManager;
 static constexpr uint16_t kMqttBufferOta = 1024;
 static constexpr uint16_t kMqttBufferNormal = 16 * 1024;
 static constexpr uint16_t kMqttBufferLarge = 32 * 1024;
+
+// Waehrend dieses Fensters direkt nach dem Connect bleibt der MQTT-Empfangs-
+// puffer klein (16 KB). Der PubSubClient-Puffer liegt im internen RAM; ihn
+// mitten im retained-Message-Sturm auf 32 KB zu vergroessern nimmt dem
+// C6/SDIO-WLAN genau im RX-Peak das DMA-RAM weg -> Freeze beim Start.
+static constexpr uint32_t kMqttStormWindowMs = 8000;
+
+// ---------------------------------------------------------------------------
+// Outbound-Command-Queue (Single-Owner MQTT)
+//
+// Gegenstueck zur Inbound-Queue in mqtt_handlers.cpp: jeder Task darf
+// enqueuen, NUR der Worker-Task nimmt heraus und fasst mqtt_client an.
+// Ein Allokations-Block pro Kommando, [MqttOutboundCmd][topic\0][payload],
+// PSRAM bevorzugt -- 1:1 das Muster von mqttAllocInbound().
+// ---------------------------------------------------------------------------
+enum class MqttCmdKind : uint8_t { PUBLISH, SUBSCRIBE, UNSUBSCRIBE };
+
+struct MqttOutboundCmd {
+  MqttCmdKind kind;
+  bool retain;
+  size_t payload_len;
+  char* topic;       // -> in dieselbe Allokation
+  uint8_t* payload;  // -> in dieselbe Allokation (leer bei SUBSCRIBE/UNSUBSCRIBE)
+};
+
+// 64 reichte rechnerisch fuer einen mqttReloadDynamicSlots()-Burst; der
+// Post-Connect-Burst (kRoutes + Discovery + Settings + Snapshot + Reload,
+// zusammen ~90 Kommandos) kann aber auflaufen, wenn der Worker gerade in
+// einem grossen readPacket() steckt -- deshalb 128.
+static constexpr size_t kMqttOutboundQueueDepth = 128;
+static QueueHandle_t g_mqtt_outbound_queue = nullptr;
+static uint32_t g_mqtt_outbound_dropped = 0;
+
+static MqttOutboundCmd* mqttAllocOutbound(MqttCmdKind kind,
+                                          const char* topic,
+                                          const uint8_t* payload,
+                                          size_t payload_len,
+                                          bool retain) {
+  if (!topic || !*topic) return nullptr;
+  const size_t topic_len = strlen(topic);
+  const size_t total = sizeof(MqttOutboundCmd) + topic_len + 1 + payload_len;
+  uint8_t* block = static_cast<uint8_t*>(heap_caps_malloc(total, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!block) block = static_cast<uint8_t*>(heap_caps_malloc(total, MALLOC_CAP_8BIT));
+  if (!block) return nullptr;
+  MqttOutboundCmd* cmd = reinterpret_cast<MqttOutboundCmd*>(block);
+  cmd->kind = kind;
+  cmd->retain = retain;
+  cmd->payload_len = payload_len;
+  cmd->topic = reinterpret_cast<char*>(block + sizeof(MqttOutboundCmd));
+  cmd->payload = reinterpret_cast<uint8_t*>(cmd->topic + topic_len + 1);
+  memcpy(cmd->topic, topic, topic_len);
+  cmd->topic[topic_len] = '\0';
+  if (payload_len) memcpy(cmd->payload, payload, payload_len);
+  return cmd;
+}
+
+// Nie blockieren, nie inline verarbeiten (das wuerde mqtt_client vom
+// falschen Task beruehren) -- bei voller Queue/Alloc-Fehler verwerfen+loggen.
+static bool enqueueOutboundCmd(MqttCmdKind kind,
+                               const char* topic,
+                               const uint8_t* payload,
+                               size_t payload_len,
+                               bool retain) {
+  if (!g_mqtt_outbound_queue) return false;
+  MqttOutboundCmd* cmd = mqttAllocOutbound(kind, topic, payload, payload_len, retain);
+  if (!cmd) {
+    Serial.println("[MQTT] Outbound-Alloc fehlgeschlagen -> Kommando verworfen");
+    return false;
+  }
+  if (xQueueSend(g_mqtt_outbound_queue, &cmd, 0) != pdTRUE) {
+    heap_caps_free(cmd);
+    ++g_mqtt_outbound_dropped;
+    Serial.printf("[MQTT] Outbound-Queue voll -> verworfen (#%u)\n",
+                  static_cast<unsigned>(g_mqtt_outbound_dropped));
+    return false;
+  }
+  return true;
+}
+
+static void purgeOutboundQueue() {
+  if (!g_mqtt_outbound_queue) return;
+  MqttOutboundCmd* cmd = nullptr;
+  while (xQueueReceive(g_mqtt_outbound_queue, &cmd, 0) == pdTRUE) {
+    if (cmd) heap_caps_free(cmd);
+  }
+}
 
 static void buildDeviceId(char* buffer, size_t len) {
   if (!buffer || !len) return;
@@ -80,9 +170,27 @@ void Tab5NetworkManager::init() {
   WiFi.persistent(false);
   wifi_retry_at = 0;  // Sofortiger Verbindungsversuch
 
+  // Bridge-/Request-Topics EINMALIG hier bauen: sie haengen nur von der
+  // (laufzeit-konstanten) Efuse-MAC ab. Frueher baute connectMqtt() sie bei
+  // jedem Reconnect neu -- sobald connectMqtt() auf dem Worker laeuft,
+  // waehrend der Loop-Task getBridgeApplyTopic() etc. liest, waere jedes
+  // String-Reassignment ein echtes Race. init() laeuft vor dem Worker-Start.
+  char did[24];
+  buildDeviceId(did, sizeof(did));
+  String base = "tab5_lvgl/config/";
+  base += did;
+  bridge_apply_topic_ = base + "/bridge/apply";
+  bridge_request_topic_ = base + "/bridge/request";
+  history_request_topic_ = base + "/history/request";
+  history_response_topic_ = base + "/history/response";
+  weather_request_topic_ = base + "/weather/request";
+  energy_request_topic_ = base + "/energy/request";
+  energy_response_topic_ = base + "/energy/response";
+  bridge_icons_topic_ = base + "/bridge/icons";
+
   mqtt_enabled = configManager.hasMqttConfig();
   if (mqtt_enabled) {
-    // MQTT-Setup
+    // MQTT-Setup (vor Worker-Start, daher direkter Client-Zugriff okay)
     mqtt_client.setClient(net_client);
     mqtt_client.setServer(cfg.mqtt_host, cfg.mqtt_port);
     setMqttBufferSize(kMqttBufferNormal, "init");
@@ -111,7 +219,7 @@ void Tab5NetworkManager::connectWifi() {
   }
 }
 
-// ========== MQTT verbinden ==========
+// ========== MQTT verbinden (worker-only) ==========
 void Tab5NetworkManager::connectMqtt() {
   if (!mqtt_enabled) return;
   mqtt_retry_at = millis() + 3000UL;  // Retry in 3s
@@ -135,40 +243,6 @@ void Tab5NetworkManager::connectMqtt() {
     const unsigned long long mac = static_cast<unsigned long long>(ESP.getEfuseMac() & 0xFFFFFFFFFFFFULL);
     snprintf(client_id, sizeof(client_id), "Tab5_LVGL-%012llX", mac);
   }
-
-  char did[24];
-  buildDeviceId(did, sizeof(did));
-  bridge_apply_topic_ = "tab5_lvgl/config/";
-  bridge_apply_topic_ += did;
-  bridge_apply_topic_ += "/bridge/apply";
-
-  bridge_request_topic_ = "tab5_lvgl/config/";
-  bridge_request_topic_ += did;
-  bridge_request_topic_ += "/bridge/request";
-
-  history_request_topic_ = "tab5_lvgl/config/";
-  history_request_topic_ += did;
-  history_request_topic_ += "/history/request";
-
-  history_response_topic_ = "tab5_lvgl/config/";
-  history_response_topic_ += did;
-  history_response_topic_ += "/history/response";
-
-  weather_request_topic_ = "tab5_lvgl/config/";
-  weather_request_topic_ += did;
-  weather_request_topic_ += "/weather/request";
-
-  energy_request_topic_ = "tab5_lvgl/config/";
-  energy_request_topic_ += did;
-  energy_request_topic_ += "/energy/request";
-
-  energy_response_topic_ = "tab5_lvgl/config/";
-  energy_response_topic_ += did;
-  energy_response_topic_ += "/energy/response";
-
-  bridge_icons_topic_ = "tab5_lvgl/config/";
-  bridge_icons_topic_ += did;
-  bridge_icons_topic_ += "/bridge/icons";
 
   Serial.printf("MQTT: Verbinde mit %s:%u als %s\n", cfg.mqtt_host, cfg.mqtt_port, client_id);
 
@@ -194,9 +268,10 @@ void Tab5NetworkManager::connectMqtt() {
   Serial.println("✓ MQTT verbunden");
   mqtt_connected_at = millis();
 
-  // Connected - Status publizieren und Topics subscriben
+  // Status publizieren und die Antwort-Topics direkt subscriben -- direkter
+  // Client-Zugriff ist hier safe, weil connectMqtt() ausschliesslich auf dem
+  // Worker laeuft (Single-Owner).
   mqtt_client.publish(stat_topic, "1", true);
-  mqttSubscribeTopics();
   if (!bridge_apply_topic_.isEmpty()) {
     mqtt_client.subscribe(bridge_apply_topic_.c_str());
     Serial.printf("[MQTT] Listening for bridge config on %s\n", bridge_apply_topic_.c_str());
@@ -213,32 +288,209 @@ void Tab5NetworkManager::connectMqtt() {
     mqtt_client.subscribe(bridge_icons_topic_.c_str());
     Serial.printf("[MQTT] Listening for icon updates on %s\n", bridge_icons_topic_.c_str());
   }
-  mqttPublishDiscovery();
-  mqttPublishDeviceSettings();
-  mqttPublishHomeSnapshot();
+
+  // Veraltete Kommandos aus der Offline-Zeit verwerfen: solange die
+  // Verbindung weg war, hat der isMqttConnected()-Check der Publish-
+  // Funktionen neue Enqueues verhindert -- was hier noch liegt, stammt aus
+  // dem Moment des Abrisses und wuerde sonst verspaetet feuern.
+  purgeOutboundQueue();
+
+  mqtt_connected_flag = true;
+
+  // Die App-Ebene (mqttSubscribeTopics/Discovery/DeviceSettings/Snapshot)
+  // faehrt der LOOP-Task hoch (mqttServicePostConnect): diese Funktionen
+  // scannen Flash, pumpen LVGL und lesen Batterie-I2C -- nichts davon darf
+  // auf dem Worker laufen. Ihre publishes/subscribes kommen per
+  // Outbound-Queue hierher zurueck.
+  mqtt_post_connect_pending = true;
+
   // Bridge refresh is handled by the background refresh after startup.
   // Doing it here collides with retained media/weather payloads and forces
   // the MQTT buffer to 32 KB during the tightest internal-RAM window.
 }
 
-// ========== WiFi-Status ==========
-bool Tab5NetworkManager::isWifiConnected() const {
-  return WiFi.status() == WL_CONNECTED;
+// ========== Single-Owner MQTT: Worker ==========
+void Tab5NetworkManager::beginMqttWorker() {
+  if (!g_mqtt_outbound_queue) {
+    g_mqtt_outbound_queue = xQueueCreate(kMqttOutboundQueueDepth, sizeof(MqttOutboundCmd*));
+    if (!g_mqtt_outbound_queue) {
+      Serial.println("[MQTT] Outbound-Queue konnte nicht erstellt werden");
+    }
+  }
+}
+
+// Worker-Task-Body: die EINZIGE Stelle, die mqtt_client nach init() anfasst.
+void Tab5NetworkManager::serviceMqttWorker() {
+  if (!mqtt_enabled) return;
+
+  // Request-Flags zuerst -- auch im suspendierten Zustand, damit
+  // restoreMqttBufferNormal() den Worker nach einem abgebrochenen OTA wieder
+  // aufwecken kann.
+  if (mqtt_ota_prep_requested) {
+    mqtt_large_until = 0;
+    if (mqtt_client.connected()) {
+      mqtt_client.disconnect();
+      Serial.println("[OTA] MQTT disconnected for OTA");
+    }
+    setMqttBufferSize(kMqttBufferOta, "ota");
+    mqtt_connected_flag = false;
+    mqtt_suspended = true;  // waehrend OTA weder reconnecten noch loop() pumpen
+    mqtt_ota_prep_requested = false;
+    return;
+  }
+  if (mqtt_restore_normal_requested) {
+    mqtt_restore_normal_requested = false;
+    mqtt_large_until = 0;
+    setMqttBufferSize(kMqttBufferNormal, "normal");
+    mqtt_suspended = false;  // nach abgebrochenem OTA weitermachen
+    return;
+  }
+  if (mqtt_disconnect_requested) {
+    if (mqtt_client.connected()) {
+      mqtt_client.disconnect();
+      Serial.println("[MQTT] Disconnect auf Anforderung (Hotspot-Modus)");
+    }
+    mqtt_connected_flag = false;
+    mqtt_disconnect_requested = false;
+    return;
+  }
+  if (mqtt_suspended) return;
+
+  if (WiFi.status() != WL_CONNECTED) {
+    if (mqtt_connected_flag) mqtt_connected_flag = false;
+    return;
+  }
+
+  const uint32_t now_ms = millis();
+  serviceBufferHousekeeping(now_ms);
+
+  if (!mqtt_client.connected()) {
+    if (mqtt_connected_flag) {
+      mqtt_connected_flag = false;
+      Serial.println("[MQTT] Verbindung verloren");
+    }
+    if ((int32_t)(now_ms - mqtt_retry_at) >= 0) {
+      connectMqtt();
+    }
+    return;
+  }
+
+  // Erst ausgehende Kommandos, dann den Socket pumpen. Housekeeping lief
+  // davor, damit ein requestLargeMqttBuffer() des Loop-Tasks noch vor dem
+  // zugehoerigen (gerade enqueueten) grossen Publish wirksam wird.
+  drainOutboundQueue();
+  mqtt_client.loop();
+  if (!mqtt_client.connected()) {
+    mqtt_connected_flag = false;
+  }
+}
+
+void Tab5NetworkManager::drainOutboundQueue() {
+  if (!g_mqtt_outbound_queue) return;
+  MqttOutboundCmd* cmd = nullptr;
+  uint32_t drained = 0;
+  while (xQueueReceive(g_mqtt_outbound_queue, &cmd, 0) == pdTRUE) {
+    if (cmd) {
+      bool ok = false;
+      const char* verb = "?";
+      switch (cmd->kind) {
+        case MqttCmdKind::PUBLISH:
+          verb = "publish";
+          ok = mqtt_client.publish(cmd->topic, cmd->payload, cmd->payload_len, cmd->retain);
+          break;
+        case MqttCmdKind::SUBSCRIBE:
+          verb = "subscribe";
+          ok = mqtt_client.subscribe(cmd->topic);
+          break;
+        case MqttCmdKind::UNSUBSCRIBE:
+          verb = "unsubscribe";
+          ok = mqtt_client.unsubscribe(cmd->topic);
+          break;
+      }
+      if (!ok) {
+        Serial.printf("[MQTT] Worker: %s '%s' fehlgeschlagen\n", verb, cmd->topic);
+      }
+      heap_caps_free(cmd);
+    }
+    // subscribe()/unsubscribe() warten laut PubSubClient-Quelle nicht auf ein
+    // Ack (Fire-and-Forget-Write) -- trotzdem soll ein grosser Drain-Burst
+    // den Idle-Task (Watchdog-Futter) nie aushungern: alle 8 Kommandos ein
+    // echter Scheduler-Yield.
+    if ((++drained & 0x07) == 0) {
+      vTaskDelay(1);
+    }
+  }
+}
+
+// Grow/Shrink-Logik des Empfangspuffers, 1:1 aus dem frueheren update()-Code:
+// laeuft nur noch auf dem Worker, weil setBufferSize() den Client anfasst.
+void Tab5NetworkManager::serviceBufferHousekeeping(uint32_t now_ms) {
+  const uint32_t large_until = mqtt_large_until;
+  if (large_until == 0) return;
+  if ((int32_t)(now_ms - large_until) >= 0) {
+    mqtt_large_until = 0;
+    setMqttBufferSize(kMqttBufferNormal, "normal");
+  } else if (mqtt_buffer_size < kMqttBufferLarge &&
+             (mqtt_connected_at == 0 ||
+              (uint32_t)(now_ms - mqtt_connected_at) >= kMqttStormWindowMs)) {
+    // Ausserhalb des Startup-Sturms sofort vergroessern; im Sturm bleibt der
+    // Grow aufgeschoben und wird hier automatisch nachgeholt, sobald das
+    // Fenster vorbei ist (frueher "large-deferred" in update()).
+    setMqttBufferSize(kMqttBufferLarge, "large");
+  }
+}
+
+// ========== Single-Owner MQTT: API fuer andere Tasks ==========
+bool Tab5NetworkManager::mqttEnqueuePublish(const char* topic, const char* payload, bool retain) {
+  const size_t len = payload ? strlen(payload) : 0;
+  return enqueueOutboundCmd(MqttCmdKind::PUBLISH, topic,
+                            reinterpret_cast<const uint8_t*>(payload), len, retain);
+}
+
+bool Tab5NetworkManager::mqttEnqueuePublish(const char* topic, const uint8_t* payload,
+                                            size_t length, bool retain) {
+  return enqueueOutboundCmd(MqttCmdKind::PUBLISH, topic, payload, length, retain);
+}
+
+bool Tab5NetworkManager::mqttEnqueueSubscribe(const char* topic) {
+  return enqueueOutboundCmd(MqttCmdKind::SUBSCRIBE, topic, nullptr, 0, false);
+}
+
+bool Tab5NetworkManager::mqttEnqueueUnsubscribe(const char* topic) {
+  return enqueueOutboundCmd(MqttCmdKind::UNSUBSCRIBE, topic, nullptr, 0, false);
+}
+
+bool Tab5NetworkManager::consumeMqttPostConnectPending() {
+  if (!mqtt_post_connect_pending) return false;
+  mqtt_post_connect_pending = false;  // einziger Konsument ist der Loop-Task
+  return true;
+}
+
+void Tab5NetworkManager::disconnectMqtt() {
+  if (!mqtt_enabled) return;
+  mqtt_disconnect_requested = true;
+  // Der Worker prueft das Flag am Anfang jeder Iteration (~2ms Takt); der
+  // Aufrufer (Hotspot-Eintritt) ist selten und darf kurz warten.
+  for (int i = 0; i < 100 && mqtt_disconnect_requested; ++i) {
+    delay(5);
+  }
+  if (mqtt_disconnect_requested) {
+    Serial.println("[MQTT] WARNUNG: Worker hat Disconnect-Request nicht bestaetigt");
+  }
+}
+
+void Tab5NetworkManager::prepareMqttForOta() {
+  if (!mqtt_enabled) return;
+  mqtt_ota_prep_requested = true;
+  for (int i = 0; i < 100 && mqtt_ota_prep_requested; ++i) {
+    delay(5);
+  }
+  if (mqtt_ota_prep_requested) {
+    Serial.println("[OTA] WARNUNG: MQTT-Worker hat OTA-Vorbereitung nicht bestaetigt");
+  }
 }
 
 // ========== MQTT-Status ==========
-bool Tab5NetworkManager::isMqttConnected() {
-  return mqtt_client.connected();
-}
-
-PubSubClient& Tab5NetworkManager::getMqttClient() {
-  return mqtt_client;
-}
-
-uint16_t Tab5NetworkManager::getMqttBufferSize() const {
-  return mqtt_buffer_size;
-}
-
 bool Tab5NetworkManager::setMqttBufferSize(uint16_t size, const char* reason) {
   if (size == 0) return false;
   const uint16_t before = mqtt_client.getBufferSize();
@@ -263,42 +515,28 @@ bool Tab5NetworkManager::setMqttBufferSize(uint16_t size, const char* reason) {
   return true;
 }
 
-// Waehrend dieses Fensters direkt nach dem Connect bleibt der MQTT-Empfangs-
-// puffer klein (16 KB). Der PubSubClient-Puffer liegt im internen RAM; ihn
-// mitten im retained-Message-Sturm auf 32 KB zu vergroessern nimmt dem
-// C6/SDIO-WLAN genau im RX-Peak das DMA-RAM weg -> Freeze beim Start.
-static constexpr uint32_t kMqttStormWindowMs = 8000;
-
 void Tab5NetworkManager::requestLargeMqttBuffer(uint32_t hold_ms) {
   if (hold_ms == 0) hold_ms = 15000;
+  // Nur den Zeitstempel setzen -- das eigentliche setBufferSize() macht der
+  // Worker in serviceBufferHousekeeping() (inkl. Startup-Sturm-Aufschub).
   mqtt_large_until = millis() + hold_ms;
-  if (mqtt_connected_at != 0 &&
-      (uint32_t)(millis() - mqtt_connected_at) < kMqttStormWindowMs) {
-    // Im Startup-Sturm NICHT vergroessern; update() holt das spaeter nach,
-    // sobald der Sturm vorbei ist und genug internes RAM frei ist.
-    Serial.println("[MQTT] Large buffer deferred (startup storm window)");
-    return;
-  }
-  setMqttBufferSize(kMqttBufferLarge, "large-payload");
 }
 
 void Tab5NetworkManager::restoreMqttBufferNormal() {
-  mqtt_large_until = 0;
-  setMqttBufferSize(kMqttBufferNormal, "normal");
+  // Request-Flag statt direktem Client-Touch; der Worker setzt den Puffer
+  // zurueck und hebt dabei auch eine evtl. OTA-Suspendierung wieder auf
+  // (Aufrufer: restoreDisplayAfterOtaFailure()).
+  mqtt_restore_normal_requested = true;
 }
 
-void Tab5NetworkManager::prepareMqttForOta() {
-  mqtt_large_until = 0;
-  if (mqtt_client.connected()) {
-    mqtt_client.disconnect();
-    Serial.println("[OTA] MQTT disconnected for OTA");
-  }
-  setMqttBufferSize(kMqttBufferOta, "ota");
+// ========== WiFi-Status ==========
+bool Tab5NetworkManager::isWifiConnected() const {
+  return WiFi.status() == WL_CONNECTED;
 }
 
 // ========== Telemetrie senden ==========
 void Tab5NetworkManager::publishTelemetry() {
-  if (!mqtt_client.connected()) return;
+  if (!isMqttConnected()) return;
 
   uint32_t now = millis();
   if (now - last_telemetry > 30000UL) {  // 30 Sekunden
@@ -307,14 +545,14 @@ void Tab5NetworkManager::publishTelemetry() {
     snprintf(buf, sizeof(buf), "%lu", (unsigned long)(now / 1000UL));
     const char* tele_topic = mqttTopics.topic(TopicKey::TELE_UP);
     if (tele_topic && *tele_topic) {
-      mqtt_client.publish(tele_topic, buf, true);
+      mqttEnqueuePublish(tele_topic, buf, true);
     }
     mqttPublishHomeSnapshot();
   }
 }
 
 void Tab5NetworkManager::publishBridgeConfig() {
-  if (!mqtt_client.connected()) return;
+  if (!isMqttConnected()) return;
   if (!configManager.isConfigured()) return;
 
   const DeviceConfig& cfg = configManager.getConfig();
@@ -328,12 +566,12 @@ void Tab5NetworkManager::publishBridgeConfig() {
   topic += "/bridge";
   requestLargeMqttBuffer(15000);
   const size_t packet_estimate = payload.length() + topic.length() + 16;
-  if (packet_estimate > mqtt_client.getBufferSize()) {
+  if (packet_estimate > getMqttBufferSize()) {
     Serial.printf("[Network] Bridge config too large for MQTT buffer: %u > %u bytes\n",
                   static_cast<unsigned>(packet_estimate),
-                  static_cast<unsigned>(mqtt_client.getBufferSize()));
+                  static_cast<unsigned>(getMqttBufferSize()));
   }
-  mqtt_client.publish(topic.c_str(), payload.c_str(), true);
+  mqttEnqueuePublish(topic.c_str(), payload.c_str(), true);
   Serial.println("[Network] Home Assistant Bridge-Konfiguration publiziert");
 }
 
@@ -342,10 +580,10 @@ const char* Tab5NetworkManager::getBridgeApplyTopic() const {
 }
 
 void Tab5NetworkManager::publishBridgeRequest() {
-  if (!mqtt_client.connected()) return;
+  if (!isMqttConnected()) return;
   if (bridge_request_topic_.isEmpty()) return;
   requestLargeMqttBuffer(30000);
-  mqtt_client.publish(bridge_request_topic_.c_str(), "", false);
+  mqttEnqueuePublish(bridge_request_topic_.c_str(), "", false);
   Serial.println("[Network] Home Assistant Bridge-Aktualisierung angefordert");
 }
 
@@ -377,7 +615,7 @@ const char* Tab5NetworkManager::getBridgeIconsTopic() const {
   return bridge_icons_topic_.length() ? bridge_icons_topic_.c_str() : nullptr;
 }
 
-// ========== Update-Schleife ==========
+// ========== Update-Schleife (Loop-Task) ==========
 void Tab5NetworkManager::update() {
   if (!configManager.isConfigured()) {
     return;
@@ -412,41 +650,18 @@ void Tab5NetworkManager::update() {
       uiManager.scheduleNtpSync(0);
     }
 
-    // MQTT verwalten
-    if (mqtt_enabled) {
-      if (!mqtt_client.connected()) {
-        if ((int32_t)(now_ms - mqtt_retry_at) >= 0) {
-          connectMqtt();
-        }
-      } else {
-        // mqtt_client.loop() itself now runs every main-loop iteration via
-        // serviceMqttLoop() (see .ino) instead of only here -- update() is
-        // throttled to every 5th iteration, which used to delay reassembly
-        // of any large multi-segment MQTT payload by up to ~5 iterations.
-        publishTelemetry();
-      }
-      if (mqtt_large_until != 0 && (int32_t)(now_ms - mqtt_large_until) >= 0) {
-        restoreMqttBufferNormal();
-      } else if (mqtt_large_until != 0 &&
-                 mqtt_buffer_size < kMqttBufferLarge &&
-                 mqtt_connected_at != 0 &&
-                 (uint32_t)(now_ms - mqtt_connected_at) >= kMqttStormWindowMs) {
-        // Im Sturm aufgeschobenen Grow jetzt nachholen (Sturm ist vorbei).
-        setMqttBufferSize(kMqttBufferLarge, "large-deferred");
-      }
+    // MQTT-Verbindung/Socket/Puffer verwaltet komplett der Worker-Task
+    // (serviceMqttWorker). Hier bleibt nur die Telemetrie, weil
+    // publishTelemetry() -> mqttPublishHomeSnapshot() den Batterie-SoC per
+    // I2C liest und deshalb auf dem Loop-Task bleiben muss; gesendet wird
+    // ueber die Outbound-Queue.
+    if (mqtt_enabled && isMqttConnected()) {
+      publishTelemetry();
     }
   }
 
   // WiFi-Status für nächste Runde merken
   was_connected = is_connected;
-}
-
-void Tab5NetworkManager::serviceMqttLoop() {
-  if (!configManager.isConfigured()) return;
-  if (!mqtt_enabled) return;
-  if (WiFi.status() != WL_CONNECTED) return;
-  if (!mqtt_client.connected()) return;
-  mqtt_client.loop();
 }
 
 // ========== WiFi Power Management ==========
