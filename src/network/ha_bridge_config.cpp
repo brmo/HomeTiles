@@ -1048,6 +1048,10 @@ static void parseSensorMetaSection(const String& body, String& units, String& na
       if (values.length()) values += '\n';
       values += entity + "=" + value;
     }
+    // Gedrosselt (siehe lvgl_tick_service.cpp) -- rendert hoechstens alle
+    // 15ms, haelt den meta=-Block des applyJson-Splits unter einer
+    // Frame-Periode pro Stueck.
+    lvglServiceDuringBlockingWork();
     obj_start = segment.indexOf('{', obj_end + 1);
   }
 }
@@ -1105,6 +1109,7 @@ static void parseEntityIconSection(const String& body, const char* key, String& 
       if (icons.length()) icons += '\n';
       icons += entity + "=" + icon;
     }
+    lvglServiceDuringBlockingWork();  // gedrosselt, max. 1 Render pro 15ms
     obj_start = segment.indexOf('{', obj_end + 1);
   }
 }
