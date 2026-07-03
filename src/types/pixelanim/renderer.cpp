@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <FS.h>
 #include <esp_heap_caps.h>
+#include <math.h>
 #include <new>
 
 #include "src/tiles/tile_renderer_shared.h"
@@ -25,7 +26,7 @@
 //                PAN1: bpp=2, each pixel RGB565 big-endian (opaque)
 //                PAN2: bpp=4, each pixel R,G,B,A bytes (A=0 -> transparent)
 //
-// The art is intentionally tiny. The renderer integer-upscales each frame with
+// The art is intentionally tiny. The renderer pre-renders each frame with
 // nearest-neighbour into an ARGB8888 PSRAM buffer (crisp pixels + per-pixel
 // alpha so transparent areas show the tile/dashboard behind). The on-screen
 // frame is a plain blit (no runtime scaling).
@@ -36,8 +37,17 @@ namespace {
 constexpr char kAnimDir[] = "/animations";
 constexpr uint16_t kMaxSide = 128;
 constexpr uint16_t kMaxFrames = 64;
-constexpr size_t kMaxUpscaledBytes = 1536u * 1024u;  // PSRAM budget per tile (ARGB)
+constexpr size_t kMaxUpscaledBytes = 5u * 1024u * 1024u;  // PSRAM budget per tile (ARGB)
+constexpr size_t kMinPsramReserveBytes = 8u * 1024u * 1024u;
 constexpr uint16_t kHeaderBytes = 12;
+constexpr uint16_t kMinZoomPercent = 25;
+constexpr uint16_t kMaxZoomPercent = 300;
+
+enum PixelAnimFitMode : uint8_t {
+  kFitContain = 0,
+  kFitCover = 1,
+  kFitStretch = 2
+};
 
 struct PixelAnimState {
   lv_obj_t* img = nullptr;
@@ -112,9 +122,138 @@ inline uint32_t decode_pixel(const uint8_t* p, bool rgba) {
   return 0xFF000000u | (static_cast<uint32_t>(r) << 16) | (static_cast<uint32_t>(g) << 8) | b;
 }
 
+PixelAnimFitMode normalize_fit_mode(uint8_t raw) {
+  return (raw <= kFitStretch) ? static_cast<PixelAnimFitMode>(raw) : kFitContain;
+}
+
+uint16_t normalize_zoom_percent(int32_t raw) {
+  if (raw < kMinZoomPercent || raw > kMaxZoomPercent) return 100;
+  return static_cast<uint16_t>(raw);
+}
+
+const char* fit_mode_name(PixelAnimFitMode mode) {
+  switch (mode) {
+    case kFitCover: return "cover";
+    case kFitStretch: return "stretch";
+    case kFitContain:
+    default: return "contain";
+  }
+}
+
+static inline uint16_t clamp_u16(uint32_t v, uint16_t lo, uint16_t hi) {
+  if (v < lo) return lo;
+  if (v > hi) return hi;
+  return static_cast<uint16_t>(v);
+}
+
+static inline uint16_t max_u16(uint16_t a, uint16_t b) {
+  return (a > b) ? a : b;
+}
+
+void compute_display_size(uint16_t src_w, uint16_t src_h,
+                          uint16_t box_w, uint16_t box_h,
+                          PixelAnimFitMode fit_mode,
+                          uint16_t zoom_percent,
+                          uint16_t frames,
+                          uint16_t& disp_w,
+                          uint16_t& disp_h) {
+  box_w = max_u16(box_w, 1);
+  box_h = max_u16(box_h, 1);
+
+  if (fit_mode == kFitCover || fit_mode == kFitStretch) {
+    disp_w = box_w;
+    disp_h = box_h;
+  } else {
+    const float sx = static_cast<float>(box_w) / static_cast<float>(src_w);
+    const float sy = static_cast<float>(box_h) / static_cast<float>(src_h);
+    float scale = (sx < sy) ? sx : sy;
+    if (scale <= 0.0f) scale = 1.0f;
+    scale *= static_cast<float>(zoom_percent) / 100.0f;
+    uint32_t raw_w = static_cast<uint32_t>(roundf(static_cast<float>(src_w) * scale));
+    uint32_t raw_h = static_cast<uint32_t>(roundf(static_cast<float>(src_h) * scale));
+    disp_w = clamp_u16(raw_w, 1, box_w);
+    disp_h = clamp_u16(raw_h, 1, box_h);
+  }
+
+  const size_t max_frame_px = kMaxUpscaledBytes / (static_cast<size_t>(4) * max_u16(frames, 1));
+  if (max_frame_px == 0) {
+    disp_w = 1;
+    disp_h = 1;
+    return;
+  }
+
+  bool downscaled_for_budget = false;
+  while (static_cast<size_t>(disp_w) * disp_h > max_frame_px && (disp_w > 1 || disp_h > 1)) {
+    disp_w = max_u16(static_cast<uint16_t>((static_cast<uint32_t>(disp_w) * 15u) / 16u), 1);
+    disp_h = max_u16(static_cast<uint16_t>((static_cast<uint32_t>(disp_h) * 15u) / 16u), 1);
+    downscaled_for_budget = true;
+  }
+  if (downscaled_for_budget) {
+    Serial.printf("[PixelAnim] display budget reduced target to %ux%u\n", disp_w, disp_h);
+  }
+}
+
+static inline uint16_t src_index_from_ratio(uint16_t dst, uint16_t dst_size, uint16_t src_size) {
+  if (dst_size <= 1) return 0;
+  uint32_t v = (static_cast<uint32_t>(dst) * src_size) / dst_size;
+  if (v >= src_size) v = src_size - 1;
+  return static_cast<uint16_t>(v);
+}
+
+void resample_frame_nearest(const uint32_t* src,
+                            uint16_t src_w,
+                            uint16_t src_h,
+                            uint32_t* dst,
+                            uint16_t dst_w,
+                            uint16_t dst_h,
+                            PixelAnimFitMode fit_mode,
+                            uint16_t zoom_percent) {
+  if (!src || !dst || src_w == 0 || src_h == 0 || dst_w == 0 || dst_h == 0) return;
+
+  if (fit_mode == kFitCover) {
+    const float base_x = static_cast<float>(dst_w) / static_cast<float>(src_w);
+    const float base_y = static_cast<float>(dst_h) / static_cast<float>(src_h);
+    float scale = (base_x > base_y) ? base_x : base_y;
+    const uint16_t cover_zoom = (zoom_percent < 100) ? 100 : zoom_percent;
+    scale *= static_cast<float>(cover_zoom) / 100.0f;
+    if (scale <= 0.0f) scale = 1.0f;
+
+    const float visible_w = static_cast<float>(dst_w) / scale;
+    const float visible_h = static_cast<float>(dst_h) / scale;
+    const float src_x0 = (static_cast<float>(src_w) - visible_w) * 0.5f;
+    const float src_y0 = (static_cast<float>(src_h) - visible_h) * 0.5f;
+
+    for (uint16_t y = 0; y < dst_h; ++y) {
+      int sy = static_cast<int>(src_y0 + (static_cast<float>(y) + 0.5f) / scale);
+      if (sy < 0) sy = 0;
+      if (sy >= src_h) sy = src_h - 1;
+      const uint32_t* src_row = src + static_cast<size_t>(sy) * src_w;
+      uint32_t* dst_row = dst + static_cast<size_t>(y) * dst_w;
+      for (uint16_t x = 0; x < dst_w; ++x) {
+        int sx = static_cast<int>(src_x0 + (static_cast<float>(x) + 0.5f) / scale);
+        if (sx < 0) sx = 0;
+        if (sx >= src_w) sx = src_w - 1;
+        dst_row[x] = src_row[sx];
+      }
+    }
+    return;
+  }
+
+  for (uint16_t y = 0; y < dst_h; ++y) {
+    const uint16_t sy = src_index_from_ratio(y, dst_h, src_h);
+    const uint32_t* src_row = src + static_cast<size_t>(sy) * src_w;
+    uint32_t* dst_row = dst + static_cast<size_t>(y) * dst_w;
+    for (uint16_t x = 0; x < dst_w; ++x) {
+      const uint16_t sx = src_index_from_ratio(x, dst_w, src_w);
+      dst_row[x] = src_row[sx];
+    }
+  }
+}
+
 // Loads the file, upscales every frame into a fresh PSRAM ARGB8888 buffer and
 // fills `st`. Returns false (nothing allocated) on any error.
 bool load_panim(const String& file_name, uint16_t avail_w, uint16_t avail_h,
+                PixelAnimFitMode fit_mode, uint16_t zoom_percent,
                 PixelAnimState& st, uint16_t& out_frame_ms) {
   if (!Device::sdReady()) return false;
 
@@ -156,29 +295,40 @@ bool load_panim(const String& file_name, uint16_t avail_w, uint16_t avail_h,
     return false;
   }
 
-  uint16_t scale = 1;
-  {
-    uint16_t sx = w ? avail_w / w : 1;
-    uint16_t sy = h ? avail_h / h : 1;
-    uint16_t s = sx < sy ? sx : sy;
-    if (s >= 1) scale = s;
-  }
-  while (scale > 1) {
-    size_t total = static_cast<size_t>(w) * scale * h * scale * 4 * frames;
-    if (total <= kMaxUpscaledBytes) break;
-    --scale;
-  }
-
-  const uint16_t disp_w = static_cast<uint16_t>(w * scale);
-  const uint16_t disp_h = static_cast<uint16_t>(h * scale);
+  uint16_t disp_w = 1;
+  uint16_t disp_h = 1;
+  compute_display_size(w, h, avail_w, avail_h, fit_mode, zoom_percent, frames, disp_w, disp_h);
   const size_t frame_px = static_cast<size_t>(disp_w) * disp_h;
   const size_t frame_bytes = frame_px * 4;  // ARGB8888
   const size_t total_bytes = frame_bytes * frames;
 
-  uint8_t* buf = static_cast<uint8_t*>(heap_caps_malloc(total_bytes, MALLOC_CAP_SPIRAM));
-  if (!buf) buf = static_cast<uint8_t*>(heap_caps_malloc(total_bytes, MALLOC_CAP_8BIT));
+  const size_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+  const size_t psram_largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+  if (psram_largest < total_bytes || psram_free < total_bytes + kMinPsramReserveBytes) {
+    Serial.printf("[PixelAnim] PSRAM budget too low (%u bytes needed, free=%u, largest=%u)\n",
+                  static_cast<unsigned>(total_bytes),
+                  static_cast<unsigned>(psram_free),
+                  static_cast<unsigned>(psram_largest));
+    f.close();
+    return false;
+  }
+
+  uint8_t* buf = static_cast<uint8_t*>(heap_caps_malloc(total_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (!buf) {
     Serial.printf("[PixelAnim] alloc fail (%u bytes)\n", static_cast<unsigned>(total_bytes));
+    f.close();
+    return false;
+  }
+
+  uint32_t* native_frame = static_cast<uint32_t*>(
+      heap_caps_malloc(static_cast<size_t>(w) * h * 4, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  bool native_frame_caps_alloc = true;
+  if (!native_frame) {
+    native_frame = static_cast<uint32_t*>(malloc(static_cast<size_t>(w) * h * 4));
+    native_frame_caps_alloc = false;
+  }
+  if (!native_frame) {
+    heap_caps_free(buf);
     f.close();
     return false;
   }
@@ -186,6 +336,8 @@ bool load_panim(const String& file_name, uint16_t avail_w, uint16_t avail_h,
   // Per-row scratch for the native source row (<= 512 bytes).
   uint8_t* native_row = static_cast<uint8_t*>(malloc(static_cast<size_t>(w) * src_bpp));
   if (!native_row) {
+    if (native_frame_caps_alloc) heap_caps_free(native_frame);
+    else free(native_frame);
     heap_caps_free(buf);
     f.close();
     return false;
@@ -195,23 +347,22 @@ bool load_panim(const String& file_name, uint16_t avail_w, uint16_t avail_h,
   const int row_bytes = static_cast<int>(w) * src_bpp;
   uint32_t* buf32 = reinterpret_cast<uint32_t*>(buf);
   for (uint16_t fr = 0; fr < frames && ok; ++fr) {
-    uint32_t* slot = buf32 + static_cast<size_t>(fr) * frame_px;
     for (uint16_t ny = 0; ny < h && ok; ++ny) {
       if (f.read(native_row, row_bytes) != row_bytes) { ok = false; break; }
-      uint32_t* dst0 = slot + static_cast<size_t>(ny) * scale * disp_w;
       for (uint16_t nx = 0; nx < w; ++nx) {
-        uint32_t argb = decode_pixel(native_row + static_cast<size_t>(nx) * src_bpp, rgba);
-        uint32_t* p = dst0 + static_cast<size_t>(nx) * scale;
-        for (uint16_t sx = 0; sx < scale; ++sx) p[sx] = argb;
+        native_frame[static_cast<size_t>(ny) * w + nx] =
+            decode_pixel(native_row + static_cast<size_t>(nx) * src_bpp, rgba);
       }
-      for (uint16_t sy = 1; sy < scale; ++sy) {
-        memcpy(slot + (static_cast<size_t>(ny) * scale + sy) * disp_w, dst0,
-               static_cast<size_t>(disp_w) * 4);
-      }
+    }
+    if (ok) {
+      uint32_t* slot = buf32 + static_cast<size_t>(fr) * frame_px;
+      resample_frame_nearest(native_frame, w, h, slot, disp_w, disp_h, fit_mode, zoom_percent);
     }
   }
 
   free(native_row);
+  if (native_frame_caps_alloc) heap_caps_free(native_frame);
+  else free(native_frame);
   f.close();
   if (!ok) {
     heap_caps_free(buf);
@@ -243,8 +394,9 @@ bool load_panim(const String& file_name, uint16_t avail_w, uint16_t avail_h,
   st.cur_frame = 0;
 
   out_frame_ms = frame_ms;
-  Serial.printf("[PixelAnim] '%s' %ux%u x%u %s -> %ux%u (%u bytes)\n",
+  Serial.printf("[PixelAnim] '%s' %ux%u x%u %s -> %ux%u %s zoom=%u (%u bytes)\n",
                 file_name.c_str(), w, h, frames, rgba ? "rgba" : "rgb565", disp_w, disp_h,
+                fit_mode_name(fit_mode), static_cast<unsigned>(zoom_percent),
                 static_cast<unsigned>(total_bytes));
   return true;
 }
@@ -262,14 +414,18 @@ lv_obj_t* render_pixelanim_tile(lv_obj_t* parent, int col, int row, const Tile& 
   lv_obj_set_style_pad_all(card, 0, 0);
   lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
+  const PixelAnimFitMode fit_mode = normalize_fit_mode(tile.sensor_display_mode);
+  const uint16_t zoom_percent = normalize_zoom_percent(tile.sensor_gauge_max);
+  const bool edge_to_edge = (fit_mode == kFitCover || fit_mode == kFitStretch);
+
   // bg_color 0 -> fully transparent: the tile looks like empty space (no visible
   // card), and a transparent sprite shows the dashboard behind it. A real colour
   // fills a normal rounded card that the sprite's alpha blends over.
-  if (tile.bg_color == 0) {
+  if (tile.bg_color == 0 && !edge_to_edge) {
     lv_obj_set_style_bg_opa(card, LV_OPA_TRANSP, 0);
     lv_obj_set_style_radius(card, 0, 0);
   } else {
-    lv_obj_set_style_bg_color(card, lv_color_hex(tile.bg_color), 0);
+    lv_obj_set_style_bg_color(card, lv_color_hex(tile.bg_color ? tile.bg_color : 0x000000), 0);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(card, 22, 0);
     lv_obj_set_style_clip_corner(card, true, 0);
@@ -292,14 +448,25 @@ lv_obj_t* render_pixelanim_tile(lv_obj_t* parent, int col, int row, const Tile& 
     return card;  // no animation chosen yet
   }
 
-  uint16_t avail_w = static_cast<uint16_t>(GRID_CELL_W * tile.span_w + GRID_GAP * (tile.span_w - 1));
-  uint16_t avail_h = static_cast<uint16_t>(GRID_CELL_H * tile.span_h + GRID_GAP * (tile.span_h - 1));
-  if (avail_w > 20) avail_w -= 16;
-  if (avail_h > 20) avail_h -= (has_title ? 40 : 16);
+  const uint16_t card_w = static_cast<uint16_t>(GRID_CELL_W * tile.span_w + GRID_GAP * (tile.span_w - 1));
+  const uint16_t card_h = static_cast<uint16_t>(GRID_CELL_H * tile.span_h + GRID_GAP * (tile.span_h - 1));
+  uint16_t avail_w = card_w;
+  uint16_t avail_h = card_h;
+  int16_t image_y_offset = 0;
+  if (edge_to_edge) {
+    if (has_title && avail_h > 44) {
+      avail_h -= 40;
+      image_y_offset = 20;
+    }
+  } else {
+    if (avail_w > 20) avail_w -= 16;
+    if (avail_h > 20) avail_h -= (has_title ? 40 : 16);
+    image_y_offset = has_title ? 12 : 0;
+  }
 
   PixelAnimState* st = new PixelAnimState();
   uint16_t frame_ms = 120;
-  if (!load_panim(file_name, avail_w, avail_h, *st, frame_ms)) {
+  if (!load_panim(file_name, avail_w, avail_h, fit_mode, zoom_percent, *st, frame_ms)) {
     delete st;
     return card;
   }
@@ -318,7 +485,7 @@ lv_obj_t* render_pixelanim_tile(lv_obj_t* parent, int col, int row, const Tile& 
   }
   lv_image_set_src(img, &st->dscs[0]);
   lv_obj_set_size(img, st->dscs[0].header.w, st->dscs[0].header.h);
-  lv_obj_align(img, LV_ALIGN_CENTER, 0, has_title ? 12 : 0);
+  lv_obj_align(img, LV_ALIGN_CENTER, 0, image_y_offset);
   lv_obj_remove_flag(img, LV_OBJ_FLAG_CLICKABLE);
 
   st->img = img;

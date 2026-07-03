@@ -96,6 +96,22 @@ void append_pixelanim_fields_html(String& html, const String& tab_id) {
   html += R"html(_animation_fps" oninput="document.getElementById(')html";
   html += tab_id;
   html += R"html(_animation_fps_val').textContent=this.value">
+              <label style="margin-top:10px;">Darstellung</label>
+              <select id=")html";
+  html += tab_id;
+  html += R"html(_animation_fit">
+                <option value="0">Einpassen</option>
+                <option value="1">Randlos fuellen</option>
+                <option value="2">Strecken</option>
+              </select>
+              <label style="margin-top:10px;">Zoom (<span id=")html";
+  html += tab_id;
+  html += R"html(_animation_zoom_val">100</span> %)</label>
+              <input type="range" min="25" max="300" step="5" value="100" style="width:100%;" id=")html";
+  html += tab_id;
+  html += R"html(_animation_zoom" oninput="document.getElementById(')html";
+  html += tab_id;
+  html += R"html(_animation_zoom_val').textContent=this.value">
             </div>
 )html";
 }
