@@ -217,7 +217,21 @@ static const Strings kStringsDe = {
     "Update wird installiert...",
     "Warte auf Neustart...",
     "Update erfolgreich installiert. Das Gerät startet jetzt neu.",
-    "Firmware-Update fehlgeschlagen"};
+    "Firmware-Update fehlgeschlagen",
+
+    // WLAN-Auswahl direkt am Geraet (wifi_setup_popup)
+    "WLAN wählen",
+    "Suche Netzwerke...",
+    "Keine Netzwerke gefunden",
+    "Neu suchen",
+    "Manuell eingeben...",
+    "offen",
+    "Passwort für %s",
+    "Verbinden",
+    "Zurück",
+    "Passwort anzeigen",
+    "Gespeichert – Gerät startet neu...",
+    "Speichern fehlgeschlagen"};
 
 static const Strings kStringsEn = {
     "en",
@@ -434,7 +448,21 @@ static const Strings kStringsEn = {
     "Installing update...",
     "Waiting for restart...",
     "Update installed successfully. The device is restarting now.",
-    "Firmware update failed"};
+    "Firmware update failed",
+
+    // On-device WiFi selection (wifi_setup_popup)
+    "Choose WiFi",
+    "Scanning for networks...",
+    "No networks found",
+    "Scan again",
+    "Enter manually...",
+    "open",
+    "Password for %s",
+    "Connect",
+    "Back",
+    "Show password",
+    "Saved - device is restarting...",
+    "Saving failed"};
 
 const char* normalize_language_code(const char* language_code) {
   if (!language_code || !language_code[0]) return kStringsEn.code;

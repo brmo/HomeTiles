@@ -221,6 +221,20 @@ struct Strings {
   const char* js_ota_reconnecting;
   const char* js_ota_success;
   const char* js_ota_failed;
+
+  // WLAN-Auswahl direkt am Geraet (wifi_setup_popup)
+  const char* wifi_choose_btn;
+  const char* wifi_scan_searching;
+  const char* wifi_scan_none;
+  const char* wifi_scan_retry;
+  const char* wifi_manual_entry;
+  const char* wifi_open_network;
+  const char* wifi_password_for_fmt;
+  const char* wifi_connect_btn;
+  const char* wifi_back_btn;
+  const char* wifi_show_password;
+  const char* wifi_saved_restarting;
+  const char* wifi_save_failed;
 };
 
 const Strings& strings(const char* language_code);
