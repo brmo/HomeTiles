@@ -29,6 +29,7 @@
 #include <string.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <lwip/sockets.h>
 
 namespace {
 
@@ -264,6 +265,7 @@ String g_file_manager_upload_path;
 String g_file_manager_upload_error;
 bool g_file_manager_upload_started = false;
 bool g_file_manager_upload_finished = false;
+bool g_file_manager_upload_is_append = false;
 size_t g_file_manager_upload_bytes = 0;
 size_t g_file_manager_upload_next_heap_log = 0;
 
@@ -288,6 +290,7 @@ void resetFileManagerUploadState() {
   g_file_manager_upload_error = "";
   g_file_manager_upload_started = false;
   g_file_manager_upload_finished = false;
+  g_file_manager_upload_is_append = false;
   g_file_manager_upload_bytes = 0;
   g_file_manager_upload_next_heap_log = 0;
 }
@@ -1827,6 +1830,11 @@ void WebAdminServer::handleUploadIcon() {
   static File uploadFile;
 
   if (upload.status == UPLOAD_FILE_START) {
+    // Empfangsfenster begrenzen -- gleiche Absturzursache wie beim
+    // Filemanager-Upload (interner DMA-Heap vs. 64KB TCP-Fenster).
+    int rcvbuf = 8 * 1024;
+    server.client().setSocketOption(SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
+
     if (!storageReady()) {
       Serial.println("[Icons] Upload failed: storage unavailable");
       return;
@@ -2101,6 +2109,13 @@ void WebAdminServer::handleFileManagerUpload() {
     resetFileManagerUploadState();
     g_file_manager_upload_started = true;
 
+    // Empfangsfenster dieser Verbindung klein halten: lwIP erlaubt dem
+    // Browser sonst 64KB unbestaetigte Daten (CONFIG_LWIP_TCP_WND_DEFAULT),
+    // die alle in internen DMA-Puffern landen muessen -- gemessene
+    // Absturzursache (assert in sdio_rx_get_buffer bei 1MB-Upload).
+    int rcvbuf = 8 * 1024;
+    server.client().setSocketOption(SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
+
     fs::FS* fs = nullptr;
     String fs_key;
     String error;
@@ -2108,6 +2123,10 @@ void WebAdminServer::handleFileManagerUpload() {
       g_file_manager_upload_error = error;
       return;
     }
+
+    // append=1: Fortsetzungs-Teil eines in kleine Requests zerlegten Uploads
+    // (siehe uploadFileManagerFile im Admin-JS) -- Datei anfuegen statt neu.
+    g_file_manager_upload_is_append = server.hasArg("append") && server.arg("append") == "1";
 
     const String dir_path = normalizeFileManagerPath(server.hasArg("path") ? server.arg("path") : String("/"));
     const String filename = sanitizeFileManagerUploadName(upload.filename);
@@ -2130,17 +2149,24 @@ void WebAdminServer::handleFileManagerUpload() {
       return;
     }
 
-    if (fs->exists(target)) {
-      File existing = fs->open(target, FILE_READ);
-      const bool existing_is_dir = existing && existing.isDirectory();
-      if (existing) existing.close();
-      if (existing_is_dir || !fs->remove(target)) {
-        g_file_manager_upload_error = "Could not replace existing file";
+    if (g_file_manager_upload_is_append) {
+      if (!fs->exists(target)) {
+        g_file_manager_upload_error = "Append target missing";
         return;
       }
+      g_file_manager_upload_file = fs->open(target, FILE_APPEND);
+    } else {
+      if (fs->exists(target)) {
+        File existing = fs->open(target, FILE_READ);
+        const bool existing_is_dir = existing && existing.isDirectory();
+        if (existing) existing.close();
+        if (existing_is_dir || !fs->remove(target)) {
+          g_file_manager_upload_error = "Could not replace existing file";
+          return;
+        }
+      }
+      g_file_manager_upload_file = fs->open(target, FILE_WRITE);
     }
-
-    g_file_manager_upload_file = fs->open(target, FILE_WRITE);
     if (!g_file_manager_upload_file) {
       g_file_manager_upload_error = "Could not open target file";
       return;
@@ -2150,8 +2176,10 @@ void WebAdminServer::handleFileManagerUpload() {
     g_file_manager_upload_path = target;
     g_file_manager_upload_bytes = 0;
     g_file_manager_upload_next_heap_log = 512u * 1024u;
-    Serial.printf("[FileManager] Upload started: %s:%s\n", fs_key.c_str(), target.c_str());
-    logFileManagerUploadHeap("start");
+    if (!g_file_manager_upload_is_append) {
+      Serial.printf("[FileManager] Upload started: %s:%s\n", fs_key.c_str(), target.c_str());
+      logFileManagerUploadHeap("start");
+    }
     return;
   }
 
@@ -2205,10 +2233,14 @@ void WebAdminServer::handleFileManagerUpload() {
       g_file_manager_upload_file.close();
     }
     g_file_manager_upload_finished = true;
-    Serial.printf("[FileManager] Uploaded %s (%u bytes)\n",
-                  g_file_manager_upload_path.c_str(),
-                  static_cast<unsigned>(g_file_manager_upload_bytes));
-    logFileManagerUploadHeap("end");
+    // Append-Teile eines zerlegten Uploads nicht einzeln loggen (bis zu
+    // 64 Requests pro Datei) -- Fehler/Abbruch loggen weiterhin immer.
+    if (!g_file_manager_upload_is_append) {
+      Serial.printf("[FileManager] Uploaded %s (%u bytes)\n",
+                    g_file_manager_upload_path.c_str(),
+                    static_cast<unsigned>(g_file_manager_upload_bytes));
+      logFileManagerUploadHeap("end");
+    }
   }
 }
 
@@ -2262,6 +2294,11 @@ void WebAdminServer::handleOtaUpdate() {
   HTTPUpload& upload = server.upload();
 
   if (upload.status == UPLOAD_FILE_START) {
+    // Empfangsfenster begrenzen -- gleiche Absturzursache wie beim
+    // Filemanager-Upload (interner DMA-Heap vs. 64KB TCP-Fenster).
+    int rcvbuf = 8 * 1024;
+    server.client().setSocketOption(SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
+
     const bool was_prepared = g_ota_upload_state.upload_prepared;
     if (!was_prepared) {
       resetOtaUploadState();

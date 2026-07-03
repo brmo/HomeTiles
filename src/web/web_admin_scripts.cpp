@@ -585,46 +585,55 @@ void appendAdminScripts(String& html) {
   // knappen internen Puffer-Pool des Geraets.
   let fileManagerUploadBusy = false;
 
-  function uploadFileManagerFile() {
+  // Sequenzielle kleine Teile statt eines grossen POST: das Geraet hat nur
+  // wenig internen RAM fuer WLAN-Empfangspuffer. Ein grosser Upload laesst
+  // den Browser bis zu 64KB unbestaetigt vorausschicken und hat den
+  // SDIO-Empfangspfad reproduzierbar zum Absturz gebracht -- mit 16KB pro
+  // Request ist die maximale Menge "in der Luft" hart begrenzt.
+  const FILE_MANAGER_UPLOAD_PART_SIZE = 16 * 1024;
+
+  async function uploadFileManagerFile() {
     const input = document.getElementById('file_manager_upload');
     if (!input || !input.files || !input.files.length) {
       showNotification(fileManagerText('Bitte zuerst eine Datei ausw\u00e4hlen.', 'Select a file first.'), false);
       return;
     }
+    if (fileManagerUploadBusy) return;
     const file = input.files[0];
-    const formData = new FormData();
-    formData.append('file', file);
-    setFileManagerStatus(fileManagerText('Upload l\u00e4uft...', 'Uploading...'));
-
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', fileManagerUrl('/api/files/upload', {
-      fs: fileManagerState.fs,
-      path: fileManagerState.path || '/'
-    }), true);
-    xhr.onload = () => {
-      fileManagerUploadBusy = false;
-      let data = {};
-      try { data = JSON.parse(xhr.responseText || '{}'); } catch (e) {}
-      if (xhr.status < 200 || xhr.status >= 300 || !data.success) {
-        const message = data.error || fileManagerText('Upload fehlgeschlagen.', 'Upload failed.');
-        setFileManagerStatus(message, false);
-        showNotification(message, false);
-        return;
+    fileManagerUploadBusy = true;
+    try {
+      let offset = 0;
+      let firstPart = true;
+      while (offset < file.size || firstPart) {
+        const end = Math.min(offset + FILE_MANAGER_UPLOAD_PART_SIZE, file.size);
+        const formData = new FormData();
+        formData.append('file', new File([file.slice(offset, end)], file.name));
+        const pct = file.size ? Math.round((end / file.size) * 100) : 100;
+        setFileManagerStatus(fileManagerText('Upload l\u00e4uft... ', 'Uploading... ') + pct + '%');
+        const res = await fetch(fileManagerUrl('/api/files/upload', {
+          fs: fileManagerState.fs,
+          path: fileManagerState.path || '/',
+          append: firstPart ? '0' : '1'
+        }), { method: 'POST', body: formData });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || fileManagerText('Upload fehlgeschlagen.', 'Upload failed.'));
+        }
+        offset = end;
+        firstPart = false;
       }
       input.value = '';
       updateFileManagerUploadName(input);
       setFileManagerStatus(fileManagerText('Upload abgeschlossen.', 'Upload complete.'), true);
       showNotification(fileManagerText('Upload abgeschlossen.', 'Upload complete.'));
       loadFileManager();
-    };
-    xhr.onerror = () => {
-      fileManagerUploadBusy = false;
-      const message = fileManagerText('Upload fehlgeschlagen.', 'Upload failed.');
+    } catch (err) {
+      const message = err?.message || fileManagerText('Upload fehlgeschlagen.', 'Upload failed.');
       setFileManagerStatus(message, false);
       showNotification(message, false);
-    };
-    fileManagerUploadBusy = true;
-    xhr.send(formData);
+    } finally {
+      fileManagerUploadBusy = false;
+    }
   }
 
   async function uploadOtaFirmware() {
