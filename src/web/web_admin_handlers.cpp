@@ -265,6 +265,19 @@ String g_file_manager_upload_error;
 bool g_file_manager_upload_started = false;
 bool g_file_manager_upload_finished = false;
 size_t g_file_manager_upload_bytes = 0;
+size_t g_file_manager_upload_next_heap_log = 0;
+
+// Der WLAN-SDIO-Treiber crasht per assert (pkt_rxbuff), wenn ihm der interne
+// DMA-faehige Heap ausgeht -- ein Upload ist das Szenario mit dem hoechsten
+// Empfangsdruck. Diese Logs liefern beim naechsten Fehler/Crash die Zahlen
+// dazu (interner Free-Heap + groesster zusammenhaengender DMA-Block).
+void logFileManagerUploadHeap(const char* phase) {
+  Serial.printf("[FileManager] Upload heap (%s, %u KB geschrieben): int frei=%u KB, DMA largest=%u KB\n",
+                phase,
+                static_cast<unsigned>(g_file_manager_upload_bytes / 1024),
+                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+                static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_DMA) / 1024));
+}
 
 void resetFileManagerUploadState() {
   if (g_file_manager_upload_file) {
@@ -276,6 +289,7 @@ void resetFileManagerUploadState() {
   g_file_manager_upload_started = false;
   g_file_manager_upload_finished = false;
   g_file_manager_upload_bytes = 0;
+  g_file_manager_upload_next_heap_log = 0;
 }
 
 constexpr const char* kScreenshotPath = "/ui_screenshot.bmp";
@@ -1845,6 +1859,7 @@ void WebAdminServer::handleUploadIconDone() {
 }
 
 void WebAdminServer::handleFileManagerList() {
+  webAdminMarkActivity();
   fs::FS* fs = nullptr;
   String fs_key;
   String error;
@@ -1923,6 +1938,7 @@ void WebAdminServer::handleFileManagerList() {
 }
 
 void WebAdminServer::handleFileManagerDownload() {
+  webAdminMarkActivity();
   fs::FS* fs = nullptr;
   String fs_key;
   String error;
@@ -1961,6 +1977,7 @@ void WebAdminServer::handleFileManagerDownload() {
 }
 
 void WebAdminServer::handleFileManagerDelete() {
+  webAdminMarkActivity();
   fs::FS* fs = nullptr;
   String fs_key;
   String error;
@@ -1988,6 +2005,7 @@ void WebAdminServer::handleFileManagerDelete() {
 }
 
 void WebAdminServer::handleFileManagerRename() {
+  webAdminMarkActivity();
   fs::FS* fs = nullptr;
   String fs_key;
   String error;
@@ -2029,6 +2047,7 @@ void WebAdminServer::handleFileManagerRename() {
 }
 
 void WebAdminServer::handleFileManagerMkdir() {
+  webAdminMarkActivity();
   fs::FS* fs = nullptr;
   String fs_key;
   String error;
@@ -2071,6 +2090,12 @@ void WebAdminServer::handleFileManagerMkdir() {
 
 void WebAdminServer::handleFileManagerUpload() {
   HTTPUpload& upload = server.upload();
+
+  // Haelt den Media-Cover-Worker waehrend des gesamten Uploads angehalten
+  // (der prueft webAdminRecentlyActive): ein parallel startender
+  // Cover-Download wuerde den ohnehin maximal belasteten internen
+  // DMA-Puffer-Pool des WLAN-Treibers zusaetzlich unter Druck setzen.
+  webAdminMarkActivity();
 
   if (upload.status == UPLOAD_FILE_START) {
     resetFileManagerUploadState();
@@ -2124,7 +2149,9 @@ void WebAdminServer::handleFileManagerUpload() {
     g_file_manager_upload_fs_key = fs_key;
     g_file_manager_upload_path = target;
     g_file_manager_upload_bytes = 0;
+    g_file_manager_upload_next_heap_log = 512u * 1024u;
     Serial.printf("[FileManager] Upload started: %s:%s\n", fs_key.c_str(), target.c_str());
+    logFileManagerUploadHeap("start");
     return;
   }
 
@@ -2140,6 +2167,7 @@ void WebAdminServer::handleFileManagerUpload() {
     const size_t written = g_file_manager_upload_file.write(upload.buf, upload.currentSize);
     if (written != upload.currentSize) {
       g_file_manager_upload_error = "Could not write upload chunk";
+      logFileManagerUploadHeap("write-fehler");
       g_file_manager_upload_file.close();
       fs::FS* fs = nullptr;
       String fs_key;
@@ -2150,11 +2178,16 @@ void WebAdminServer::handleFileManagerUpload() {
       return;
     }
     g_file_manager_upload_bytes += written;
+    if (g_file_manager_upload_bytes >= g_file_manager_upload_next_heap_log) {
+      g_file_manager_upload_next_heap_log += 512u * 1024u;
+      logFileManagerUploadHeap("write");
+    }
     return;
   }
 
   if (upload.status == UPLOAD_FILE_ABORTED) {
     g_file_manager_upload_error = "Upload aborted";
+    logFileManagerUploadHeap("abbruch");
     if (g_file_manager_upload_file) {
       g_file_manager_upload_file.close();
     }
@@ -2175,10 +2208,12 @@ void WebAdminServer::handleFileManagerUpload() {
     Serial.printf("[FileManager] Uploaded %s (%u bytes)\n",
                   g_file_manager_upload_path.c_str(),
                   static_cast<unsigned>(g_file_manager_upload_bytes));
+    logFileManagerUploadHeap("end");
   }
 }
 
 void WebAdminServer::handleFileManagerUploadDone() {
+  webAdminMarkActivity();
   if (!g_file_manager_upload_started) {
     sendJsonError(server, 400, "No upload started");
     return;

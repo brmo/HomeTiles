@@ -579,6 +579,12 @@ void appendAdminScripts(String& html) {
     }
   }
 
+  // Waehrend eines laufenden Uploads keine parallelen Requests starten
+  // (Sensor-Polling): der Server arbeitet eine Verbindung nach der anderen
+  // ab, zusaetzliche Verbindungen stauen sich nur auf und belasten den
+  // knappen internen Puffer-Pool des Geraets.
+  let fileManagerUploadBusy = false;
+
   function uploadFileManagerFile() {
     const input = document.getElementById('file_manager_upload');
     if (!input || !input.files || !input.files.length) {
@@ -596,6 +602,7 @@ void appendAdminScripts(String& html) {
       path: fileManagerState.path || '/'
     }), true);
     xhr.onload = () => {
+      fileManagerUploadBusy = false;
       let data = {};
       try { data = JSON.parse(xhr.responseText || '{}'); } catch (e) {}
       if (xhr.status < 200 || xhr.status >= 300 || !data.success) {
@@ -611,10 +618,12 @@ void appendAdminScripts(String& html) {
       loadFileManager();
     };
     xhr.onerror = () => {
+      fileManagerUploadBusy = false;
       const message = fileManagerText('Upload fehlgeschlagen.', 'Upload failed.');
       setFileManagerStatus(message, false);
       showNotification(message, false);
     };
+    fileManagerUploadBusy = true;
     xhr.send(formData);
   }
 
@@ -1006,6 +1015,14 @@ void appendAdminScripts(String& html) {
     if (snapshot && Object.prototype.hasOwnProperty.call(snapshot, 'clock_date_format')) {
       const num = Number(snapshot.clock_date_format);
       tile.sensor_gauge_max = Number.isFinite(num) ? num : 0;
+    }
+    if (snapshot && Object.prototype.hasOwnProperty.call(snapshot, 'animation_fit')) {
+      const num = Number(snapshot.animation_fit);
+      tile.sensor_display_mode = Number.isFinite(num) ? num : 0;
+    }
+    if (snapshot && Object.prototype.hasOwnProperty.call(snapshot, 'animation_zoom')) {
+      const num = Number(snapshot.animation_zoom);
+      tile.sensor_gauge_max = Number.isFinite(num) ? num : 100;
     }
 
     tiles[index] = tile;
@@ -1584,6 +1601,8 @@ void appendAdminScripts(String& html) {
     const mediaSelect = document.getElementById(prefix + '_media_entity');
     const animationSelect = document.getElementById(prefix + '_animation_file');
     const animationFpsInput = document.getElementById(prefix + '_animation_fps');
+    const animationFitSelect = document.getElementById(prefix + '_animation_fit');
+    const animationZoomInput = document.getElementById(prefix + '_animation_zoom');
     const clockTimeCheck = document.getElementById(prefix + '_clock_show_time');
     const clockDateCheck = document.getElementById(prefix + '_clock_show_date');
     const clockTimeFontSelect = document.getElementById(prefix + '_clock_time_font');
@@ -1634,6 +1653,8 @@ void appendAdminScripts(String& html) {
     bindLive(mediaSelect, 'change', 'mediaEntity', () => { maybeFillTitleFromMedia(tab); updateTilePreview(tab); updateMediaValuePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(animationSelect, 'change', 'animationFile', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(animationFpsInput, 'input', 'animationFps', () => { updateDraft(tab); scheduleAutoSave(tab); });
+    bindLive(animationFitSelect, 'change', 'animationFit', () => { updateDraft(tab); scheduleAutoSave(tab); });
+    bindLive(animationZoomInput, 'input', 'animationZoom', () => { updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(clockTimeCheck, 'change', 'clockShowTime', () => {
       ensureClockSelection(prefix);
       updateTilePreview(tab);
@@ -2442,6 +2463,17 @@ void appendAdminScripts(String& html) {
       if (tile.sensor_value_y_offset !== undefined && tile.sensor_value_y_offset !== null && String(tile.sensor_value_y_offset).length > 0) {
         fd.append('sensor_value_y_offset', tile.sensor_value_y_offset);
       }
+    } else if (safeType === 16) {
+      fd.append('animation_file', tile.animation_file || tile.scene_alias || '');
+      fd.append('animation_fps', tile.animation_fps || tile.image_slideshow_sec || '10');
+      fd.append('animation_fit',
+        (tile.animation_fit !== undefined && tile.animation_fit !== null)
+          ? tile.animation_fit
+          : (tile.sensor_display_mode || '0'));
+      fd.append('animation_zoom',
+        (tile.animation_zoom !== undefined && tile.animation_zoom !== null)
+          ? tile.animation_zoom
+          : (tile.sensor_gauge_max || '100'));
     }
 
     const res = await fetch('/api/tiles', { method: 'POST', body: fd });
@@ -3411,7 +3443,7 @@ void appendAdminScripts(String& html) {
     const targetTab = savedTab && document.getElementById(savedTab) ? savedTab : defaultTab;
     const targetBtn = Array.from(document.querySelectorAll('.tab-btn')).find(btn => btn.getAttribute('onclick')?.includes(targetTab)) || document.querySelector('.tab-btn');
     if (targetBtn) targetBtn.click();
-    setInterval(() => { if (!document.hidden) loadSensorValues(false, false); }, 15000);
+    setInterval(() => { if (!document.hidden && !fileManagerUploadBusy) loadSensorValues(false, false); }, 15000);
     tileTabs.forEach(tab => {
       enableTileDrag(tab);
       enableTileResize(tab);
