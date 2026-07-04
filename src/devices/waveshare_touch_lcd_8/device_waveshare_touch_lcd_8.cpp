@@ -68,6 +68,10 @@ constexpr uint8_t kPpaFaultsBeforeReset = 2;
 // 256 let the title jam the engine (display slow forever); 768 over-corrected and
 // pushed the 752 px charts onto the CPU (popups felt sluggish).
 constexpr int32_t kPpaMinRotateWidth = 600;
+// If re-registering the PPA client fails (e.g. no internal heap for the driver
+// state at that moment), don't stay on the slow CPU rotate until reboot: retry
+// the re-init on this interval from the rotate path.
+constexpr uint32_t kPpaReinitRetryMs = 3000;
 
 esp_lcd_dsi_bus_handle_t g_dsi_bus = nullptr;
 esp_lcd_panel_io_handle_t g_panel_io = nullptr;
@@ -81,6 +85,7 @@ SemaphoreHandle_t g_ppa_done = nullptr;   // PPA rotate completion (non-blocking
 bool g_ppa_async_ready = false;           // true once the PPA done-callback is armed
 uint32_t g_ppa_cooldown_until_ms = 0;     // while active, flushes use CPU rotate
 uint8_t g_ppa_consecutive_faults = 0;     // resets to 0 on any successful rotate
+uint32_t g_ppa_reinit_at_ms = 0;          // 0 = no pending re-init retry
 
 DEV_I2C_Port g_i2c = {};
 bool g_i2c_ready = false;
@@ -183,9 +188,21 @@ void reset_ppa_client() {
   ppa_client_config_t ppa_cfg = {};
   ppa_cfg.oper_type = PPA_OPERATION_SRM;
   ppa_client_handle_t fresh = nullptr;
-  if (ppa_register_client(&ppa_cfg, &fresh) != ESP_OK || !fresh) {
-    Serial.println("[Device/WaveshareTouchLCD8] PPA reset: re-register failed -> CPU-only rotate");
+  const esp_err_t reg_err = ppa_register_client(&ppa_cfg, &fresh);
+  if (reg_err != ESP_OK || !fresh) {
+    g_ppa_reinit_at_ms = millis() + kPpaReinitRetryMs;
+    if (!g_ppa_reinit_at_ms) g_ppa_reinit_at_ms = 1;
+    Serial.printf("[Device/WaveshareTouchLCD8] PPA reset failed err=%d (int free=%u KB, largest=%u KB), retry in %lu ms\n",
+                  static_cast<int>(reg_err),
+                  static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+                  static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024),
+                  static_cast<unsigned long>(kPpaReinitRetryMs));
     return;
+  }
+  if (!g_ppa_done) {
+    // First registration may have failed before the semaphore existed; without
+    // it we would fall back to blocking PPA, which can freeze on a stall.
+    g_ppa_done = xSemaphoreCreateBinary();
   }
   if (g_ppa_done) {
     ppa_event_callbacks_t ppa_cbs = {};
@@ -194,6 +211,7 @@ void reset_ppa_client() {
         (ppa_client_register_event_callbacks(fresh, &ppa_cbs) == ESP_OK);
   }
   g_ppa_handle = fresh;
+  g_ppa_reinit_at_ms = 0;
   Serial.println("[Device/WaveshareTouchLCD8] PPA client reset after fault");
 }
 
@@ -481,6 +499,12 @@ bool draw_landscape_area(int32_t x, int32_t y, int32_t w, int32_t h, const uint1
   } else {
     dst_x = logical_h - y - h;
     dst_y = x;
+  }
+
+  if (!g_ppa_handle && g_ppa_reinit_at_ms &&
+      static_cast<int32_t>(millis() - g_ppa_reinit_at_ms) >= 0) {
+    g_ppa_reinit_at_ms = 0;
+    reset_ppa_client();
   }
 
   if (g_ppa_handle && g_panel_fb_ready && !ppa_cooldown_active() && w >= kPpaMinRotateWidth) {
@@ -847,6 +871,8 @@ bool init_display() {
     Serial.printf("[Device/WaveshareTouchLCD8] PPA client register failed err=%d, falling back to CPU rotate\n",
                   static_cast<int>(ppa_err));
     g_ppa_handle = nullptr;
+    g_ppa_reinit_at_ms = millis() + kPpaReinitRetryMs;
+    if (!g_ppa_reinit_at_ms) g_ppa_reinit_at_ms = 1;
   } else {
     log_step("PPA client registered");
     // Arm the done-callback so draw_landscape_area can use the timeout-safe

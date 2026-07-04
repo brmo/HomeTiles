@@ -74,6 +74,26 @@ static void log_memory_status(const char* tag) {
   Serial.flush();
 }
 
+#if defined(DEVICE_M5STACKS_TAB5)
+static void tab5_timed_refresh_now(const char* label) {
+  const uint32_t start_ms = millis();
+  lv_refr_now(displayManager.getDisplay());
+  Serial.printf("[Tab5/Setup] %s lv_refr_now=%lu ms\n",
+                label ? label : "?",
+                static_cast<unsigned long>(millis() - start_ms));
+  Serial.flush();
+}
+
+static void tab5_timed_display_wait(const char* label) {
+  const uint32_t start_ms = millis();
+  BoardHAL::displayWaitDisplay();
+  Serial.printf("[Tab5/Setup] %s displayWait=%lu ms\n",
+                label ? label : "?",
+                static_cast<unsigned long>(millis() - start_ms));
+  Serial.flush();
+}
+#endif
+
 
 static void confirm_running_ota_if_needed() {
   const esp_partition_t* running = esp_ota_get_running_partition();
@@ -344,12 +364,22 @@ void setup() {
 
   BoardHAL::displayWake();
   lv_obj_invalidate(lv_screen_active());
+#if defined(DEVICE_M5STACKS_TAB5)
+  tab5_timed_refresh_now("wake-1");
+  tab5_timed_display_wait("wake-1");
+#else
   lv_refr_now(displayManager.getDisplay());
   BoardHAL::displayWaitDisplay();
+#endif
   delay(20);
   lv_obj_invalidate(lv_screen_active());
+#if defined(DEVICE_M5STACKS_TAB5)
+  tab5_timed_refresh_now("wake-2");
+  tab5_timed_display_wait("wake-2");
+#else
   lv_refr_now(displayManager.getDisplay());
   BoardHAL::displayWaitDisplay();
+#endif
   Serial.println("[Setup] Display wake OK");
   log_memory_status("after-ui-build");
   Serial.flush();

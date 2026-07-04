@@ -37,6 +37,74 @@ static bool g_reverse_flush_once = false;
 static volatile uint32_t g_fullscreen_flush_seq = 0;
 static size_t g_requested_buffer_lines = 0;
 
+#if defined(DEVICE_M5STACKS_TAB5)
+struct Tab5FlushStats {
+  uint32_t frame_start_us = 0;
+  uint32_t flushes = 0;
+  uint32_t dma_flushes = 0;
+  uint32_t cpu_flushes = 0;
+  uint32_t pixels = 0;
+  uint32_t total_us = 0;
+  uint32_t push_us = 0;
+  uint32_t wait_us = 0;
+  uint32_t cache_us = 0;
+  uint32_t max_flush_us = 0;
+  uint32_t frame_no = 0;
+};
+
+static Tab5FlushStats g_tab5_flush_stats;
+static uint8_t g_tab5_flush_log_budget = 12;
+
+static void tab5_note_flush(uint32_t pixels, uint32_t flush_us, uint32_t push_us,
+                            uint32_t wait_us, uint32_t cache_us, bool used_dma,
+                            bool used_cpu, bool is_last) {
+  g_tab5_flush_stats.flushes++;
+  if (used_dma) g_tab5_flush_stats.dma_flushes++;
+  if (used_cpu) g_tab5_flush_stats.cpu_flushes++;
+  g_tab5_flush_stats.pixels += pixels;
+  g_tab5_flush_stats.total_us += flush_us;
+  g_tab5_flush_stats.push_us += push_us;
+  g_tab5_flush_stats.wait_us += wait_us;
+  g_tab5_flush_stats.cache_us += cache_us;
+  if (flush_us > g_tab5_flush_stats.max_flush_us) {
+    g_tab5_flush_stats.max_flush_us = flush_us;
+  }
+
+  if (!is_last) {
+    return;
+  }
+
+  if (g_tab5_flush_log_budget > 0) {
+    const uint32_t wall_us = micros() - g_tab5_flush_stats.frame_start_us;
+    Serial.printf("[Tab5/Flush] frame=%lu flushes=%lu dma=%lu cpu=%lu px=%lu wall=%lu ms flush=%lu ms push=%lu ms wait=%lu ms cache=%lu ms max=%lu us\n",
+                  static_cast<unsigned long>(g_tab5_flush_stats.frame_no),
+                  static_cast<unsigned long>(g_tab5_flush_stats.flushes),
+                  static_cast<unsigned long>(g_tab5_flush_stats.dma_flushes),
+                  static_cast<unsigned long>(g_tab5_flush_stats.cpu_flushes),
+                  static_cast<unsigned long>(g_tab5_flush_stats.pixels),
+                  static_cast<unsigned long>(wall_us / 1000),
+                  static_cast<unsigned long>(g_tab5_flush_stats.total_us / 1000),
+                  static_cast<unsigned long>(g_tab5_flush_stats.push_us / 1000),
+                  static_cast<unsigned long>(g_tab5_flush_stats.wait_us / 1000),
+                  static_cast<unsigned long>(g_tab5_flush_stats.cache_us / 1000),
+                  static_cast<unsigned long>(g_tab5_flush_stats.max_flush_us));
+    g_tab5_flush_log_budget--;
+  }
+
+  g_tab5_flush_stats.frame_no++;
+  g_tab5_flush_stats.frame_start_us = 0;
+  g_tab5_flush_stats.flushes = 0;
+  g_tab5_flush_stats.dma_flushes = 0;
+  g_tab5_flush_stats.cpu_flushes = 0;
+  g_tab5_flush_stats.pixels = 0;
+  g_tab5_flush_stats.total_us = 0;
+  g_tab5_flush_stats.push_us = 0;
+  g_tab5_flush_stats.wait_us = 0;
+  g_tab5_flush_stats.cache_us = 0;
+  g_tab5_flush_stats.max_flush_us = 0;
+}
+#endif
+
 // --- Draw buffer placement --------------------------------------------------
 // The 8-inch panel renders 1280x800 = 1.0 Mpx. Software-rasterising every frame
 // into PSRAM is the dominant cost on this board (PSRAM write bandwidth). We try
@@ -286,13 +354,25 @@ void IRAM_ATTR DisplayManager::flush_cb(lv_display_t *lv_disp, const lv_area_t *
   const size_t stride_bytes = lv_draw_buf_width_to_stride(w, lv_display_get_color_format(lv_disp));
   const bool packed_rows = (stride_bytes == row_bytes);
   const uint32_t area_px = w * h;
+  const bool is_last_flush = lv_display_flush_is_last(lv_disp);
   static constexpr uint32_t kMinPixelsForDma = 2048;  // avoid DMA overhead on tiny dirty areas
   static constexpr uint32_t kReverseMinPixels = (SCREEN_WIDTH * SCREEN_HEIGHT) / 8;  // trigger only on large image updates
+#if defined(DEVICE_M5STACKS_TAB5)
+  const uint32_t tab5_flush_start_us = micros();
+  if (g_tab5_flush_stats.flushes == 0 && g_tab5_flush_stats.frame_start_us == 0) {
+    g_tab5_flush_stats.frame_start_us = tab5_flush_start_us;
+  }
+  uint32_t tab5_push_us = 0;
+  uint32_t tab5_wait_us = 0;
+  uint32_t tab5_cache_us = 0;
+  bool tab5_used_dma = false;
+  bool tab5_used_cpu = false;
+#endif
   if (g_flush_log_budget) {
     Serial.printf("[FLUSH] x=%d..%d y=%d..%d w=%lu h=%lu last=%d\n",
                   area->x1, area->x2, area->y1, area->y2,
                   (unsigned long)w, (unsigned long)h,
-                  lv_display_flush_is_last(lv_disp));
+                  is_last_flush);
     g_flush_log_budget--;
   }
   if (g_reverse_flush && g_reverse_buf && g_reverse_buf_width > 0 &&
@@ -310,7 +390,14 @@ void IRAM_ATTR DisplayManager::flush_cb(lv_display_t *lv_disp, const lv_area_t *
             reinterpret_cast<const uint8_t*>(src) + row * stride_bytes) + start;
         std::memcpy(dst + row * cur_w, src_row, cur_w * sizeof(uint16_t));
       }
+#if defined(DEVICE_M5STACKS_TAB5)
+      const uint32_t push_start_us = micros();
+#endif
       BoardHAL::displayPushPixelsDMA(area->x1 + (int32_t)start, area->y1, cur_w, h, dst);
+#if defined(DEVICE_M5STACKS_TAB5)
+      tab5_push_us += micros() - push_start_us;
+      tab5_used_dma = true;
+#endif
       x += cur_w;
     }
     if (g_reverse_flush_once) {
@@ -321,6 +408,11 @@ void IRAM_ATTR DisplayManager::flush_cb(lv_display_t *lv_disp, const lv_area_t *
       g_fullscreen_flush_seq++;
     }
     commit_display_if_last(lv_disp);
+#if defined(DEVICE_M5STACKS_TAB5)
+    tab5_note_flush(area_px, micros() - tab5_flush_start_us, tab5_push_us,
+                    tab5_wait_us, tab5_cache_us, tab5_used_dma, tab5_used_cpu,
+                    is_last_flush);
+#endif
     lv_display_flush_ready(lv_disp);
     return;
   }
@@ -330,18 +422,47 @@ void IRAM_ATTR DisplayManager::flush_cb(lv_display_t *lv_disp, const lv_area_t *
   // - larger areas via DMA when rows are tightly packed
   const bool use_dma = packed_rows && (area_px >= kMinPixelsForDma);
   if (use_dma) {
+#if defined(DEVICE_M5STACKS_TAB5)
+    uint32_t step_start_us = micros();
+#endif
     flush_cache_for_dma(px_map, row_bytes * h);
+#if defined(DEVICE_M5STACKS_TAB5)
+    tab5_cache_us += micros() - step_start_us;
+    step_start_us = micros();
+#endif
     BoardHAL::displayPushPixelsDMA(area->x1, area->y1, w, h, (uint16_t*)px_map);
+#if defined(DEVICE_M5STACKS_TAB5)
+    tab5_push_us += micros() - step_start_us;
+    step_start_us = micros();
+#endif
     BoardHAL::displayWaitDMA();
+#if defined(DEVICE_M5STACKS_TAB5)
+    tab5_wait_us += micros() - step_start_us;
+    tab5_used_dma = true;
+#endif
   } else {
     if (packed_rows) {
+#if defined(DEVICE_M5STACKS_TAB5)
+      const uint32_t step_start_us = micros();
+#endif
       BoardHAL::displayPushPixels(area->x1, area->y1, w, h, (uint16_t*)px_map);
+#if defined(DEVICE_M5STACKS_TAB5)
+      tab5_push_us += micros() - step_start_us;
+      tab5_used_cpu = true;
+#endif
     } else {
       // LVGL can align each line in px_map; push line-by-line when rows are padded.
       for (uint32_t row = 0; row < h; ++row) {
         const uint16_t* src_row = reinterpret_cast<const uint16_t*>(
             reinterpret_cast<const uint8_t*>(px_map) + row * stride_bytes);
+#if defined(DEVICE_M5STACKS_TAB5)
+        const uint32_t step_start_us = micros();
+#endif
         BoardHAL::displayPushPixels(area->x1, area->y1 + (int32_t)row, w, 1, (uint16_t*)src_row);
+#if defined(DEVICE_M5STACKS_TAB5)
+        tab5_push_us += micros() - step_start_us;
+        tab5_used_cpu = true;
+#endif
       }
     }
   }
@@ -350,6 +471,11 @@ void IRAM_ATTR DisplayManager::flush_cb(lv_display_t *lv_disp, const lv_area_t *
     g_fullscreen_flush_seq++;
   }
   commit_display_if_last(lv_disp);
+#if defined(DEVICE_M5STACKS_TAB5)
+  tab5_note_flush(area_px, micros() - tab5_flush_start_us, tab5_push_us,
+                  tab5_wait_us, tab5_cache_us, tab5_used_dma, tab5_used_cpu,
+                  is_last_flush);
+#endif
   lv_display_flush_ready(lv_disp);
 }
 

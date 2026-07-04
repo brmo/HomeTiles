@@ -8,7 +8,10 @@
 #include "src/core/config_manager.h"
 #include "src/core/display_manager.h"
 #include "src/core/i18n.h"
+#include "src/devices/device.h"
 #include "src/fonts/ui_fonts.h"
+#include "src/tiles/mdi_icons.h"
+#include "src/ui/ui_keyboard.h"
 
 namespace {
 
@@ -33,7 +36,8 @@ lv_obj_t* g_list_container = nullptr;
 lv_obj_t* g_scan_status_label = nullptr;
 lv_obj_t* g_rescan_btn = nullptr;
 lv_obj_t* g_entry_view = nullptr;      // Ansicht 2: SSID/Passwort + Tastatur
-lv_obj_t* g_entry_title = nullptr;
+lv_obj_t* g_back_btn = nullptr;
+lv_obj_t* g_connect_btn = nullptr;
 lv_obj_t* g_ssid_ta = nullptr;
 lv_obj_t* g_pass_ta = nullptr;
 lv_obj_t* g_show_pass_cb = nullptr;
@@ -69,7 +73,8 @@ void close_popup() {
   g_scan_status_label = nullptr;
   g_rescan_btn = nullptr;
   g_entry_view = nullptr;
-  g_entry_title = nullptr;
+  g_back_btn = nullptr;
+  g_connect_btn = nullptr;
   g_ssid_ta = nullptr;
   g_pass_ta = nullptr;
   g_show_pass_cb = nullptr;
@@ -90,7 +95,7 @@ void style_popup_button(lv_obj_t* btn, uint32_t color) {
 lv_obj_t* create_popup_button(lv_obj_t* parent, const char* text, uint32_t color,
                               lv_event_cb_t cb) {
   lv_obj_t* btn = lv_button_create(parent);
-  lv_obj_set_height(btn, 48);
+  lv_obj_set_height(btn, 64);
   style_popup_button(btn, color);
   lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* label = lv_label_create(btn);
@@ -109,6 +114,10 @@ int rssi_to_percent(int16_t rssi) {
 // ---- Ansicht wechseln ------------------------------------------------------
 
 void show_list_view() {
+  if (g_title_label) lv_label_set_text(g_title_label, tr().wifi_choose_btn);
+  if (g_rescan_btn) lv_obj_clear_flag(g_rescan_btn, LV_OBJ_FLAG_HIDDEN);
+  if (g_back_btn) lv_obj_add_flag(g_back_btn, LV_OBJ_FLAG_HIDDEN);
+  if (g_connect_btn) lv_obj_add_flag(g_connect_btn, LV_OBJ_FLAG_HIDDEN);
   if (g_list_view) lv_obj_clear_flag(g_list_view, LV_OBJ_FLAG_HIDDEN);
   if (g_entry_view) lv_obj_add_flag(g_entry_view, LV_OBJ_FLAG_HIDDEN);
 }
@@ -123,18 +132,21 @@ void show_entry_view(bool manual, const char* ssid, bool open_network) {
     g_selected_ssid[0] = '\0';
   }
 
-  if (g_entry_title) {
+  if (g_title_label) {
     static char buf[80];
     if (manual) {
-      lv_label_set_text(g_entry_title, tr().wifi_manual_entry);
+      lv_label_set_text(g_title_label, tr().wifi_manual_entry);
     } else if (open_network) {
       snprintf(buf, sizeof(buf), "%s (%s)", g_selected_ssid, tr().wifi_open_network);
-      lv_label_set_text(g_entry_title, buf);
+      lv_label_set_text(g_title_label, buf);
     } else {
       snprintf(buf, sizeof(buf), tr().wifi_password_for_fmt, g_selected_ssid);
-      lv_label_set_text(g_entry_title, buf);
+      lv_label_set_text(g_title_label, buf);
     }
   }
+  if (g_rescan_btn) lv_obj_add_flag(g_rescan_btn, LV_OBJ_FLAG_HIDDEN);
+  if (g_back_btn) lv_obj_clear_flag(g_back_btn, LV_OBJ_FLAG_HIDDEN);
+  if (g_connect_btn) lv_obj_clear_flag(g_connect_btn, LV_OBJ_FLAG_HIDDEN);
   if (g_ssid_ta) {
     lv_textarea_set_text(g_ssid_ta, "");
     if (manual) {
@@ -162,11 +174,12 @@ void show_entry_view(bool manual, const char* ssid, bool open_network) {
     }
   }
   if (g_keyboard) {
-    lv_keyboard_set_textarea(g_keyboard, manual ? g_ssid_ta : g_pass_ta);
     if (!manual && open_network) {
       lv_obj_add_flag(g_keyboard, LV_OBJ_FLAG_HIDDEN);
     } else {
       lv_obj_clear_flag(g_keyboard, LV_OBJ_FLAG_HIDDEN);
+      ui_keyboard_set_target(g_keyboard, manual ? g_ssid_ta : g_pass_ta,
+                             manual ? g_pass_ta : g_ssid_ta);
     }
   }
 
@@ -293,18 +306,20 @@ void do_connect() {
   cfg.wifi_dns[0] = '\0';
 
   if (!configManager.save(cfg)) {
-    if (g_entry_title) lv_label_set_text(g_entry_title, tr().wifi_save_failed);
+    if (g_title_label) lv_label_set_text(g_title_label, tr().wifi_save_failed);
     return;
   }
 
   Serial.printf("[WifiSetup] Neue WLAN-Konfiguration gespeichert (SSID '%s'), Neustart...\n",
                 cfg.wifi_ssid);
   g_restart_pending = true;
-  if (g_entry_title) lv_label_set_text(g_entry_title, tr().wifi_saved_restarting);
+  if (g_title_label) lv_label_set_text(g_title_label, tr().wifi_saved_restarting);
   if (g_keyboard) lv_obj_add_flag(g_keyboard, LV_OBJ_FLAG_HIDDEN);
   if (g_ssid_ta) lv_obj_add_flag(g_ssid_ta, LV_OBJ_FLAG_HIDDEN);
   if (g_pass_ta) lv_obj_add_flag(g_pass_ta, LV_OBJ_FLAG_HIDDEN);
   if (g_show_pass_cb) lv_obj_add_flag(g_show_pass_cb, LV_OBJ_FLAG_HIDDEN);
+  if (g_back_btn) lv_obj_add_flag(g_back_btn, LV_OBJ_FLAG_HIDDEN);
+  if (g_connect_btn) lv_obj_add_flag(g_connect_btn, LV_OBJ_FLAG_HIDDEN);
   lv_timer_t* t = lv_timer_create(on_restart_timer, 1200, nullptr);
   lv_timer_set_repeat_count(t, 1);
 }
@@ -328,7 +343,8 @@ void on_network_clicked(lv_event_t* e) {
 
 void on_textarea_focused(lv_event_t* e) {
   lv_obj_t* ta = static_cast<lv_obj_t*>(lv_event_get_target(e));
-  if (g_keyboard && ta) lv_keyboard_set_textarea(g_keyboard, ta);
+  if (!g_keyboard || !ta) return;
+  ui_keyboard_set_target(g_keyboard, ta, ta == g_ssid_ta ? g_pass_ta : g_ssid_ta);
 }
 
 void on_keyboard_event(lv_event_t* e) {
@@ -407,6 +423,19 @@ lv_obj_t* create_textarea(lv_obj_t* parent, const char* placeholder, bool passwo
   lv_obj_set_style_bg_color(ta, lv_color_hex(0x1E1E1E), 0);
   lv_obj_set_style_text_color(ta, lv_color_white(), 0);
   lv_obj_set_style_radius(ta, 10, 0);
+  lv_obj_set_style_border_color(ta, lv_color_hex(0x555555), 0);
+  lv_obj_set_style_border_width(ta, 1, 0);
+  lv_obj_set_style_border_opa(ta, LV_OPA_COVER, 0);
+  // Aktives Feld: blauer Rahmen + sichtbarer weisser Cursor. Ohne explizite
+  // Fokus-Styles zeigt das dunkle Theme keinen erkennbaren Cursor.
+  lv_obj_set_style_border_color(ta, lv_color_hex(0x378ADD), LV_STATE_FOCUSED);
+  lv_obj_set_style_border_width(ta, 2, LV_STATE_FOCUSED);
+  lv_obj_set_style_border_color(ta, lv_color_white(),
+                                LV_PART_CURSOR | LV_STATE_FOCUSED);
+  lv_obj_set_style_border_width(ta, 2, LV_PART_CURSOR | LV_STATE_FOCUSED);
+  lv_obj_set_style_border_side(ta, LV_BORDER_SIDE_LEFT,
+                               LV_PART_CURSOR | LV_STATE_FOCUSED);
+  lv_obj_set_style_border_opa(ta, LV_OPA_COVER, LV_PART_CURSOR | LV_STATE_FOCUSED);
   lv_obj_add_event_cb(ta, on_textarea_focused, LV_EVENT_FOCUSED, nullptr);
   return ta;
 }
@@ -416,31 +445,43 @@ lv_obj_t* create_textarea(lv_obj_t* parent, const char* placeholder, bool passwo
 void wifi_setup_popup_open() {
   if (g_overlay) return;  // laeuft bereits
 
-  g_overlay = lv_obj_create(lv_layer_top());
+  // Opak und als Kind des aktiven Screens (nicht lv_layer_top): LVGLs
+  // Top-Objekt-Optimierung (lv_refr_get_top_obj) greift nur innerhalb des
+  // Screens. Nur so ueberspringt jeder Popup-Redraw das Rendern+Blenden des
+  // kompletten Tabs darunter — sonst sichtbar langsamer Aufbau (v.a. Tab5).
+  g_overlay = lv_obj_create(lv_screen_active());
   lv_obj_set_size(g_overlay, LV_PCT(100), LV_PCT(100));
-  lv_obj_set_style_bg_color(g_overlay, lv_color_black(), 0);
-  lv_obj_set_style_bg_opa(g_overlay, LV_OPA_60, 0);
+  lv_obj_set_pos(g_overlay, 0, 0);
+  lv_obj_set_style_bg_color(g_overlay, lv_color_hex(0x0A0A0A), 0);
+  lv_obj_set_style_bg_opa(g_overlay, LV_OPA_COVER, 0);
   lv_obj_set_style_border_opa(g_overlay, LV_OPA_TRANSP, 0);
   lv_obj_set_style_radius(g_overlay, 0, 0);
-  lv_obj_set_style_pad_all(g_overlay, 0, 0);
+  // Rand exakt wie die aeusseren Tiles zum Screenrand (grid_pad des Geraets):
+  // die Karte fuellt fast den ganzen Screen, ihre runden Ecken bleiben aber
+  // gegen den Overlay-Hintergrund sichtbar.
+  lv_obj_set_style_pad_all(g_overlay, Device::kGridPad, 0);
   lv_obj_clear_flag(g_overlay, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(g_overlay, LV_OBJ_FLAG_CLICKABLE);  // Klicks nicht durchlassen
+  lv_obj_add_flag(g_overlay, LV_OBJ_FLAG_FLOATING);   // von Layout/Scroll ausnehmen
 
   g_card = lv_obj_create(g_overlay);
-  lv_obj_set_size(g_card, LV_PCT(92), LV_PCT(90));
+  lv_obj_set_size(g_card, LV_PCT(100), LV_PCT(100));
   lv_obj_center(g_card);
   lv_obj_set_style_bg_color(g_card, lv_color_hex(0x2A2A2A), 0);
   lv_obj_set_style_border_opa(g_card, LV_OPA_TRANSP, 0);
   lv_obj_set_style_radius(g_card, 22, 0);
-  lv_obj_set_style_pad_all(g_card, 14, 0);
+  // Kinder (v.a. die eckigen Tasten) sauber an der Rundung abschneiden
+  lv_obj_set_style_clip_corner(g_card, true, 0);
+  lv_obj_set_style_pad_all(g_card, 10, 0);
   lv_obj_clear_flag(g_card, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_flex_flow(g_card, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_style_pad_row(g_card, 10, 0);
+  lv_obj_set_style_pad_row(g_card, 8, 0);
 
-  // Kopfzeile: Titel + Neu-suchen + X
+  // Kopfzeile: Titel + Neu-suchen + X - hoeher, aehnlich dem Kopf der
+  // anderen Popups (dort kHeaderHeight = 96).
   lv_obj_t* header = lv_obj_create(g_card);
   lv_obj_set_width(header, LV_PCT(100));
-  lv_obj_set_height(header, 52);
+  lv_obj_set_height(header, 88);
   lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_opa(header, LV_OPA_TRANSP, 0);
   lv_obj_set_style_pad_all(header, 0, 0);
@@ -452,15 +493,40 @@ void wifi_setup_popup_open() {
 
   g_title_label = lv_label_create(header);
   lv_label_set_text(g_title_label, tr().wifi_choose_btn);
-  lv_obj_set_style_text_font(g_title_label, &ui_font_20, 0);
+  lv_label_set_long_mode(g_title_label, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_font(g_title_label, &ui_font_28, 0);
   lv_obj_set_style_text_color(g_title_label, lv_color_white(), 0);
   lv_obj_set_flex_grow(g_title_label, 1);
 
   g_rescan_btn = create_popup_button(header, tr().wifi_scan_retry, 0x1976D2,
                                      on_rescan_clicked);
-  lv_obj_t* close_btn = create_popup_button(header, LV_SYMBOL_CLOSE, 0x555555,
-                                            on_close_clicked);
-  lv_obj_set_width(close_btn, 56);
+  // Zurueck/Verbinden leben in der Kopfzeile (nur im Eingabe-View sichtbar),
+  // damit unten die volle Hoehe fuer die Tastatur bleibt.
+  g_back_btn = create_popup_button(header, tr().wifi_back_btn, 0x555555,
+                                   on_back_clicked);
+  lv_obj_add_flag(g_back_btn, LV_OBJ_FLAG_HIDDEN);
+  g_connect_btn = create_popup_button(header, tr().wifi_connect_btn, 0x2E7D32,
+                                      on_connect_clicked);
+  lv_obj_add_flag(g_connect_btn, LV_OBJ_FLAG_HIDDEN);
+
+  // X-Button im Stil der uebrigen Popups: transparent, MDI-Icon, Press-Feedback
+  lv_obj_t* close_btn = lv_button_create(header);
+  lv_obj_set_size(close_btn, 64, 64);
+  lv_obj_set_style_bg_opa(close_btn, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_bg_color(close_btn, lv_color_hex(0xFFFFFF), LV_STATE_PRESSED);
+  lv_obj_set_style_bg_opa(close_btn, LV_OPA_20, LV_STATE_PRESSED);
+  lv_obj_set_style_border_opa(close_btn, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_outline_opa(close_btn, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_shadow_opa(close_btn, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_radius(close_btn, 14, 0);
+  lv_obj_set_style_pad_all(close_btn, 0, 0);
+  lv_obj_set_ext_click_area(close_btn, 8);
+  lv_obj_add_event_cb(close_btn, on_close_clicked, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* close_label = lv_label_create(close_btn);
+  lv_obj_set_style_text_font(close_label, FONT_MDI_ICONS, 0);
+  lv_obj_set_style_text_color(close_label, lv_color_white(), 0);
+  lv_label_set_text(close_label, getMdiChar("window-close").c_str());
+  lv_obj_center(close_label);
 
   // Ansicht 1: Scan-Status + Liste
   g_list_view = lv_obj_create(g_card);
@@ -499,45 +565,37 @@ void wifi_setup_popup_open() {
   lv_obj_set_style_pad_row(g_entry_view, 8, 0);
   lv_obj_add_flag(g_entry_view, LV_OBJ_FLAG_HIDDEN);
 
-  g_entry_title = lv_label_create(g_entry_view);
-  lv_label_set_text(g_entry_title, "");
-  lv_obj_set_width(g_entry_title, LV_PCT(100));
-  lv_label_set_long_mode(g_entry_title, LV_LABEL_LONG_CLIP);
-  lv_obj_set_style_text_font(g_entry_title, &ui_font_20, 0);
-  lv_obj_set_style_text_color(g_entry_title, lv_color_white(), 0);
-
   g_ssid_ta = create_textarea(g_entry_view, tr().ssid_label, false);
   g_pass_ta = create_textarea(g_entry_view, tr().wifi_password_label, true);
 
-  lv_obj_t* controls = lv_obj_create(g_entry_view);
-  lv_obj_set_width(controls, LV_PCT(100));
-  lv_obj_set_height(controls, 52);
-  lv_obj_set_style_bg_opa(controls, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_opa(controls, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_pad_all(controls, 0, 0);
-  lv_obj_clear_flag(controls, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_flex_flow(controls, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(controls, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
-                        LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_column(controls, 10, 0);
-
-  g_show_pass_cb = lv_checkbox_create(controls);
+  g_show_pass_cb = lv_checkbox_create(g_entry_view);
   lv_checkbox_set_text(g_show_pass_cb, tr().wifi_show_password);
   lv_obj_set_style_text_font(g_show_pass_cb, &ui_font_20, 0);
   lv_obj_set_style_text_color(g_show_pass_cb, lv_color_hex(0xC8C8C8), 0);
   lv_obj_add_event_cb(g_show_pass_cb, on_show_pass_toggled, LV_EVENT_VALUE_CHANGED,
                       nullptr);
 
-  lv_obj_t* back_btn = create_popup_button(controls, tr().wifi_back_btn, 0x555555,
-                                           on_back_clicked);
-  lv_obj_set_width(back_btn, LV_PCT(24));
-  lv_obj_t* connect_btn = create_popup_button(controls, tr().wifi_connect_btn,
-                                              0x2E7D32, on_connect_clicked);
-  lv_obj_set_width(connect_btn, LV_PCT(32));
+  // Unsichtbarer Spacer schluckt den Rest der Hoehe (z.B. wenn das SSID-Feld
+  // ausgeblendet ist), damit die Tastatur trotzdem unten verankert bleibt
+  // statt in der Mitte zu schweben.
+  lv_obj_t* keyboard_spacer = lv_obj_create(g_entry_view);
+  lv_obj_set_width(keyboard_spacer, LV_PCT(100));
+  lv_obj_set_flex_grow(keyboard_spacer, 1);
+  lv_obj_set_style_bg_opa(keyboard_spacer, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_opa(keyboard_spacer, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_pad_all(keyboard_spacer, 0, 0);
+  lv_obj_clear_flag(keyboard_spacer, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(keyboard_spacer, LV_OBJ_FLAG_CLICKABLE);
 
-  g_keyboard = lv_keyboard_create(g_entry_view);
+  g_keyboard = ui_keyboard_create(g_entry_view);
   lv_obj_set_width(g_keyboard, LV_PCT(100));
-  lv_obj_set_flex_grow(g_keyboard, 1);
+  // Feste (kleinere) Hoehe statt flex_grow: die Tastatur soll immer gleich
+  // gross sein, egal ob (manuell) SSID+Passwort oder (Auswahl) nur Passwort
+  // sichtbar ist - und damit auch Platz fuer weitere Felder auf kuenftigen
+  // Eingabe-Seiten (MQTT, statische IP, ...) frei bleibt. Der Spacer oben
+  // verankert sie unten buendig mit demselben Abstand wie links/rechts
+  // (card-pad), statt dass sie mittig schwebt.
+  lv_obj_set_height(g_keyboard, LV_PCT(46));
   lv_keyboard_set_textarea(g_keyboard, g_pass_ta);
   lv_obj_add_event_cb(g_keyboard, on_keyboard_event, LV_EVENT_ALL, nullptr);
 

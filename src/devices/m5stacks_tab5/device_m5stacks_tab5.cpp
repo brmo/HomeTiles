@@ -4,16 +4,34 @@
 
 #if defined(DEVICE_M5STACKS_TAB5)
 
+#include <driver/ppa.h>
+#include <esp_cache.h>
+#include <esp_heap_caps.h>
 #include <LittleFS.h>
 #include <M5Unified.h>
 #include <SD.h>
 #include <SPI.h>
 #include <Wire.h>
+#include <lgfx/v1/platforms/esp32p4/Panel_DSI.hpp>
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 namespace {
 
 constexpr int32_t kLogicalWidth = DeviceM5StacksTab5::kProfile.screen_width;
 constexpr int32_t kLogicalHeight = DeviceM5StacksTab5::kProfile.screen_height;
+constexpr int32_t kPanelWidth = 720;
+constexpr int32_t kPanelHeight = 1280;
+constexpr size_t kPanelFrameBytes =
+    static_cast<size_t>(kPanelWidth) * static_cast<size_t>(kPanelHeight) * sizeof(uint16_t);
+constexpr size_t kCacheLineSize = 64;
+constexpr int32_t kPpaMinRotateWidth = 32;
+constexpr int32_t kPpaMinRotateHeight = 8;   // duenne Streifen: Treiber validiert keine Mindesthoehe, Verdacht auf 2D-DMA-Verklemmung
+constexpr uint32_t kPpaRotateTimeoutMs = 80;
+constexpr uint32_t kPpaWedgeGraceMs = 400;   // Nachfrist: nur langsam (Bus-Last) oder endgueltig verklemmt?
+constexpr uint32_t kPpaFaultCooldownMs = 500;
+constexpr uint32_t kPpaReinitRetryMs = 3000;
 
 constexpr int kSdClkPin = 43;
 constexpr int kSdMisoPin = 39;
@@ -28,10 +46,196 @@ uint32_t g_sd_retry_tick_ms = 0;
 bool g_littlefs_ready = false;
 uint8_t g_brightness = 150;
 uint8_t g_rotation = DeviceM5StacksTab5::kProfile.rotation_default;
+ppa_client_handle_t g_ppa_handle = nullptr;
+SemaphoreHandle_t g_ppa_done = nullptr;
+bool g_ppa_async_ready = false;
+bool g_ppa_ready = false;
+uint16_t* g_panel_fb = nullptr;
+uint8_t g_ppa_consecutive_faults = 0;
+uint32_t g_ppa_cooldown_until_ms = 0;
+uint32_t g_ppa_fallback_log_count = 0;
+uint32_t g_ppa_fallback_log_window_ms = 0;
+uint32_t g_ppa_reinit_at_ms = 0;  // 0 = kein Re-Init noetig
+// Bekannte IDF-Luecke (TODO in ppa_core.c): eine SRM-Transaktion mit
+// unguenstigen Parametern verklemmt die 2D-DMA endgueltig — die Engine ist
+// dann tot, unregister schlaegt fehl ("client still has unprocessed trans"),
+// jeder weitere Versuch erzeugt nur die Fehler-Kaskade und leakt Clients.
+bool g_ppa_dead = false;
 
 uint8_t to_panel_rotation(uint8_t logical_rotation) {
   logical_rotation &= 0x03;
   return (logical_rotation & 0x02) ? 3 : 1;
+}
+
+bool IRAM_ATTR on_ppa_trans_done(ppa_client_handle_t, ppa_event_data_t*, void* user_ctx) {
+  SemaphoreHandle_t sem = static_cast<SemaphoreHandle_t>(user_ctx);
+  if (!sem) {
+    return false;
+  }
+
+  BaseType_t high_task_woken = pdFALSE;
+  xSemaphoreGiveFromISR(sem, &high_task_woken);
+  return high_task_woken == pdTRUE;
+}
+
+void flush_cache_for_dma(const void* ptr, size_t size) {
+  if (!ptr || size == 0) {
+    return;
+  }
+
+  const uintptr_t start = reinterpret_cast<uintptr_t>(ptr);
+  const uintptr_t aligned_start = start & ~(kCacheLineSize - 1);
+  const uintptr_t end = start + size;
+  const uintptr_t aligned_end = (end + kCacheLineSize - 1) & ~(kCacheLineSize - 1);
+  if (aligned_end <= aligned_start) {
+    return;
+  }
+
+  esp_cache_msync(reinterpret_cast<void*>(aligned_start),
+                  aligned_end - aligned_start,
+                  ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
+}
+
+bool ppa_cooldown_active() {
+  if (!g_ppa_cooldown_until_ms) {
+    return false;
+  }
+  const uint32_t now = millis();
+  if (static_cast<int32_t>(g_ppa_cooldown_until_ms - now) > 0) {
+    return true;
+  }
+  g_ppa_cooldown_until_ms = 0;
+  return false;
+}
+
+void pause_ppa_for(uint32_t duration_ms) {
+  g_ppa_cooldown_until_ms = millis() + duration_ms;
+}
+
+void reset_ppa_client() {
+  g_ppa_ready = false;
+  g_ppa_async_ready = false;
+
+  ppa_client_handle_t old = g_ppa_handle;
+  g_ppa_handle = nullptr;
+  if (old) {
+    const esp_err_t unreg_err = ppa_unregister_client(old);
+    if (unreg_err != ESP_OK) {
+      // Haengt meist an einer noch offenen Transaktion; Handle verfaellt dann.
+      Serial.printf("[Device/M5StacksTab5] PPA unregister err=%d\n",
+                    static_cast<int>(unreg_err));
+    }
+  }
+
+  ppa_client_config_t ppa_cfg = {};
+  ppa_cfg.oper_type = PPA_OPERATION_SRM;
+  ppa_client_handle_t fresh = nullptr;
+  const esp_err_t reg_err = ppa_register_client(&ppa_cfg, &fresh);
+  if (reg_err != ESP_OK || !fresh) {
+    // Nicht dauerhaft aufgeben: spaeter automatisch neu versuchen, sonst bleibt
+    // das Geraet bis zum Reboot im langsamen M5GFX-Fallback haengen.
+    g_ppa_reinit_at_ms = millis() + kPpaReinitRetryMs;
+    if (!g_ppa_reinit_at_ms) g_ppa_reinit_at_ms = 1;
+    Serial.printf("[Device/M5StacksTab5] PPA reset failed err=%d (int frei=%u KB, largest=%u KB), Retry in %lu ms\n",
+                  static_cast<int>(reg_err),
+                  static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+                  static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024),
+                  static_cast<unsigned long>(kPpaReinitRetryMs));
+    return;
+  }
+
+  if (g_ppa_done) {
+    ppa_event_callbacks_t ppa_cbs = {};
+    ppa_cbs.on_trans_done = on_ppa_trans_done;
+    g_ppa_async_ready = (ppa_client_register_event_callbacks(fresh, &ppa_cbs) == ESP_OK);
+  }
+
+  g_ppa_handle = fresh;
+  g_ppa_ready = (g_panel_fb != nullptr);
+  g_ppa_reinit_at_ms = 0;
+  Serial.println("[Device/M5StacksTab5] PPA client reset");
+}
+
+void note_ppa_fault() {
+  // Kein Client-Reset mehr: mit einer offenen (verklemmten) Transaktion kann
+  // ppa_unregister_client nie gelingen — der Reset leakt nur Clients und
+  // Heap. Verklemmung wird direkt im Rotate-Pfad erkannt (g_ppa_dead).
+  Serial.printf("[Device/M5StacksTab5] PPA fault #%u (int frei=%u KB, largest=%u KB)\n",
+                static_cast<unsigned>(g_ppa_consecutive_faults + 1),
+                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+                static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024));
+  ++g_ppa_consecutive_faults;
+  pause_ppa_for(kPpaFaultCooldownMs);
+}
+
+void log_ppa_fallback(const char* reason, int err = 0) {
+  // Budget pro 30s-Fenster statt einmalig: spaetere Ausfaelle (z.B. erst im
+  // WLAN-Menue) sollen im Log sichtbar bleiben.
+  const uint32_t now = millis();
+  if (now - g_ppa_fallback_log_window_ms > 30000) {
+    g_ppa_fallback_log_window_ms = now;
+    g_ppa_fallback_log_count = 0;
+  }
+  if (g_ppa_fallback_log_count >= 6) {
+    return;
+  }
+  ++g_ppa_fallback_log_count;
+  if (err) {
+    Serial.printf("[Device/M5StacksTab5] PPA fallback: %s err=%d\n", reason, err);
+  } else {
+    Serial.printf("[Device/M5StacksTab5] PPA fallback: %s\n", reason);
+  }
+}
+
+bool init_tab5_ppa() {
+  if (g_ppa_ready) {
+    return true;
+  }
+  if (M5.getBoard() != m5::board_t::board_M5Tab5) {
+    Serial.println("[Device/M5StacksTab5] PPA skipped: detected board is not Tab5");
+    return false;
+  }
+
+  auto* panel = static_cast<lgfx::Panel_DSI*>(M5.Display.getPanel());
+  if (!panel) {
+    Serial.println("[Device/M5StacksTab5] PPA skipped: no DSI panel");
+    return false;
+  }
+
+  g_panel_fb = static_cast<uint16_t*>(panel->config_detail().buffer);
+  if (!g_panel_fb) {
+    Serial.println("[Device/M5StacksTab5] PPA skipped: no panel framebuffer");
+    return false;
+  }
+
+  ppa_client_config_t ppa_cfg = {};
+  ppa_cfg.oper_type = PPA_OPERATION_SRM;
+  const esp_err_t ppa_err = ppa_register_client(&ppa_cfg, &g_ppa_handle);
+  if (ppa_err != ESP_OK || !g_ppa_handle) {
+    Serial.printf("[Device/M5StacksTab5] PPA client register failed err=%d, using M5GFX fallback\n",
+                  static_cast<int>(ppa_err));
+    g_ppa_handle = nullptr;
+    g_ppa_reinit_at_ms = millis() + kPpaReinitRetryMs;
+    if (!g_ppa_reinit_at_ms) g_ppa_reinit_at_ms = 1;
+    return false;
+  }
+
+  g_ppa_done = xSemaphoreCreateBinary();
+  if (g_ppa_done) {
+    ppa_event_callbacks_t ppa_cbs = {};
+    ppa_cbs.on_trans_done = on_ppa_trans_done;
+    if (ppa_client_register_event_callbacks(g_ppa_handle, &ppa_cbs) == ESP_OK) {
+      g_ppa_async_ready = true;
+    } else {
+      Serial.println("[Device/M5StacksTab5] PPA event cb register failed, using blocking PPA");
+    }
+  }
+
+  g_ppa_ready = true;
+  Serial.printf("[Device/M5StacksTab5] PPA ready: fb=%p panel=%ldx%ld async=%u\n",
+                g_panel_fb, static_cast<long>(kPanelWidth), static_cast<long>(kPanelHeight),
+                static_cast<unsigned>(g_ppa_async_ready ? 1 : 0));
+  return true;
 }
 
 bool init_display() {
@@ -59,6 +263,7 @@ bool init_display() {
   M5.Display.setBrightness(g_brightness);
 
   g_display_ready = true;
+  init_tab5_ppa();
 
   Serial.printf("[Device/M5StacksTab5] Display ready: %dx%d rot=%u\n",
                 M5.Display.width(), M5.Display.height(),
@@ -71,6 +276,137 @@ bool rect_inside_logical_bounds(int32_t x, int32_t y, int32_t w, int32_t h) {
   return x >= 0 && y >= 0 && w > 0 && h > 0 &&
          (x + w) <= kLogicalWidth &&
          (y + h) <= kLogicalHeight;
+}
+
+bool ppa_rotate_to_panel(int32_t x, int32_t y, int32_t w, int32_t h, const uint16_t* data) {
+  if (g_ppa_dead) {
+    return false;
+  }
+  if (!g_ppa_ready || !g_ppa_handle) {
+    // Fehlgeschlagener Reset: zeitgesteuert neu versuchen statt dauerhaft
+    // im langsamen Fallback zu bleiben.
+    if (g_ppa_reinit_at_ms && g_panel_fb &&
+        static_cast<int32_t>(millis() - g_ppa_reinit_at_ms) >= 0) {
+      g_ppa_reinit_at_ms = 0;
+      reset_ppa_client();
+    }
+    if (!g_ppa_ready || !g_ppa_handle) {
+      return false;
+    }
+  }
+  if (!g_panel_fb || ppa_cooldown_active() || w < kPpaMinRotateWidth ||
+      h < kPpaMinRotateHeight) {
+    return false;
+  }
+
+  int32_t dst_x = 0;
+  int32_t dst_y = 0;
+  const int32_t dst_w = h;
+  const int32_t dst_h = w;
+  if (g_rotation & 0x02) {
+    dst_x = y;
+    dst_y = kLogicalWidth - x - w;
+  } else {
+    dst_x = kLogicalHeight - y - h;
+    dst_y = x;
+  }
+
+  if (dst_x < 0 || dst_y < 0 || (dst_x + dst_w) > kPanelWidth ||
+      (dst_y + dst_h) > kPanelHeight) {
+    log_ppa_fallback("mapped rect outside panel");
+    return false;
+  }
+
+  flush_cache_for_dma(data, static_cast<size_t>(w) * static_cast<size_t>(h) * sizeof(uint16_t));
+
+  ppa_srm_oper_config_t oper = {};
+  oper.in.buffer = data;
+  oper.in.pic_w = w;
+  oper.in.pic_h = h;
+  oper.in.block_w = w;
+  oper.in.block_h = h;
+  oper.in.block_offset_x = 0;
+  oper.in.block_offset_y = 0;
+  oper.in.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+
+  oper.out.buffer = g_panel_fb;
+  oper.out.buffer_size = kPanelFrameBytes;
+  oper.out.pic_w = kPanelWidth;
+  oper.out.pic_h = kPanelHeight;
+  oper.out.block_offset_x = dst_x;
+  oper.out.block_offset_y = dst_y;
+  oper.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+
+  oper.rotation_angle = (g_rotation & 0x02) ? PPA_SRM_ROTATION_ANGLE_90
+                                            : PPA_SRM_ROTATION_ANGLE_270;
+  oper.scale_x = 1.0f;
+  oper.scale_y = 1.0f;
+  oper.rgb_swap = false;
+  oper.byte_swap = true;  // LVGL uses RGB565_SWAPPED on Tab5, panel framebuffer is RGB565.
+
+  if (g_ppa_async_ready && g_ppa_done) {
+    oper.mode = PPA_TRANS_MODE_NON_BLOCKING;
+    oper.user_data = g_ppa_done;
+    xSemaphoreTake(g_ppa_done, 0);
+    const esp_err_t err = ppa_do_scale_rotate_mirror(g_ppa_handle, &oper);
+    if (err != ESP_OK) {
+      log_ppa_fallback("submit failed", static_cast<int>(err));
+      Serial.printf("[Device/M5StacksTab5] PPA submit-geo: %ldx%ld src=(%ld,%ld) dst=(%ld,%ld)\n",
+                    static_cast<long>(w), static_cast<long>(h),
+                    static_cast<long>(x), static_cast<long>(y),
+                    static_cast<long>(dst_x), static_cast<long>(dst_y));
+      note_ppa_fault();
+      return false;
+    }
+    if (xSemaphoreTake(g_ppa_done, pdMS_TO_TICKS(kPpaRotateTimeoutMs)) != pdTRUE) {
+      // Nachfrist: unter Bus-Last (PSRAM/DSI/WLAN) darf eine Transaktion auch
+      // mal laenger brauchen — das ist dann kein Grund, PPA abzuschreiben.
+      if (xSemaphoreTake(g_ppa_done, pdMS_TO_TICKS(kPpaWedgeGraceMs)) == pdTRUE) {
+        Serial.printf("[Device/M5StacksTab5] PPA langsam (>%lu ms): %ldx%ld dst=(%ld,%ld)\n",
+                      static_cast<unsigned long>(kPpaRotateTimeoutMs),
+                      static_cast<long>(w), static_cast<long>(h),
+                      static_cast<long>(dst_x), static_cast<long>(dst_y));
+        g_ppa_consecutive_faults = 0;
+        return true;
+      }
+      // Endgueltig verklemmt (IDF-TODO: "SRM parameter error blocks at
+      // 2D-DMA, transaction can never finish"): Engine ist tot, unregister
+      // unmoeglich. Sauber auf M5GFX zurueckfallen statt Fehler-Kaskade.
+      g_ppa_dead = true;
+      g_ppa_ready = false;
+      Serial.printf("[Device/M5StacksTab5] PPA VERKLEMMT: rotate %ldx%ld src=(%ld,%ld) dst=(%ld,%ld) rot=%d — PPA aus bis Reboot\n",
+                    static_cast<long>(w), static_cast<long>(h),
+                    static_cast<long>(x), static_cast<long>(y),
+                    static_cast<long>(dst_x), static_cast<long>(dst_y),
+                    (g_rotation & 0x02) ? 90 : 270);
+      return false;
+    }
+    g_ppa_consecutive_faults = 0;
+    return true;
+  }
+
+  oper.mode = PPA_TRANS_MODE_BLOCKING;
+  const esp_err_t err = ppa_do_scale_rotate_mirror(g_ppa_handle, &oper);
+  if (err != ESP_OK) {
+    log_ppa_fallback("blocking rotate failed", static_cast<int>(err));
+    note_ppa_fault();
+    return false;
+  }
+  g_ppa_consecutive_faults = 0;
+  return true;
+}
+
+void push_pixels_with_ppa_fallback(int32_t x, int32_t y, int32_t w, int32_t h,
+                                   const uint16_t* data, bool dma) {
+  if (ppa_rotate_to_panel(x, y, w, h, data)) {
+    return;
+  }
+
+  if (dma) {
+    M5.Display.pushImageDMA(x, y, w, h, data);
+  } else {
+    M5.Display.pushImage(x, y, w, h, data);
+  }
 }
 
 }  // namespace
@@ -108,7 +444,7 @@ void DeviceM5StacksTab5::displayPushPixels(int32_t x, int32_t y, int32_t w, int3
     return;
   }
 
-  M5.Display.pushImage(x, y, w, h, data);
+  push_pixels_with_ppa_fallback(x, y, w, h, data, false);
 }
 
 void DeviceM5StacksTab5::displayPushPixelsDMA(int32_t x, int32_t y, int32_t w, int32_t h,
@@ -117,7 +453,7 @@ void DeviceM5StacksTab5::displayPushPixelsDMA(int32_t x, int32_t y, int32_t w, i
     return;
   }
 
-  M5.Display.pushImageDMA(x, y, w, h, data);
+  push_pixels_with_ppa_fallback(x, y, w, h, data, true);
 }
 
 void DeviceM5StacksTab5::displayWaitDMA() {
