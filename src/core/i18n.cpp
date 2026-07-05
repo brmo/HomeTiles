@@ -120,7 +120,7 @@ static const Strings kStringsDe = {
     "Farbton",
     "Sättigung",
     "Sleep",
-    "nach",
+    "in",
     "Nie",
     "Touch",
     "GT911 / kein IMU",
@@ -229,7 +229,14 @@ static const Strings kStringsDe = {
     "Zurück",
     "Verbinden",
     "Gespeichert – Gerät startet neu...",
-    "Speichern fehlgeschlagen"};
+    "Speichern fehlgeschlagen",
+
+    "Tastatur",
+
+    "Helligkeit, Standby & Rotation",
+    "Netzwerk & Access Point",
+    "Sprache, Zeitzone & Tastatur",
+    "Version %s"};
 
 static const Strings kStringsEn = {
     "en",
@@ -349,7 +356,7 @@ static const Strings kStringsEn = {
     "Hue",
     "Saturation",
     "Sleep",
-    "after",
+    "in",
     "Never",
     "Touch",
     "GT911 / no IMU",
@@ -458,7 +465,14 @@ static const Strings kStringsEn = {
     "Back",
     "Connect",
     "Saved - device is restarting...",
-    "Saving failed"};
+    "Saving failed",
+
+    "Keyboard",
+
+    "Brightness, standby & rotation",
+    "Network & access point",
+    "Language, time zone & keyboard",
+    "Version %s"};
 
 const char* normalize_language_code(const char* language_code) {
   if (!language_code || !language_code[0]) return kStringsEn.code;

@@ -48,18 +48,26 @@ static const char* const kMapUpperDe[] = {
     "_", "-", "Y", "X", "C", "V", "B", "N", "M", "\xC3\x9F", ".", ",", ":", "\n",
     LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""};
 
-// Layout-Auswahl nach Sprachcode: nur Sprachen mit abweichender Belegung
-// (aktuell Deutsch, wegen oe/ae/ue/ss) brauchen einen Eintrag. Ohne Treffer
-// bleibt LVGLs eingebaute Standard-Map (Englisch) aktiv - fuer weitere
-// Sprachen hier einfach einen weiteren Zweig ergaenzen.
+// Layout-Auswahl: explizite Einstellung (Lokalisierung -> Tastatur) gewinnt,
+// "Auto" folgt der UI-Sprache. Nur Layouts mit abweichender Belegung (aktuell
+// Deutsch/QWERTZ, wegen oe/ae/ue/ss) brauchen einen Eintrag - ohne Treffer
+// bleibt LVGLs eingebaute Standard-Map (Englisch/QWERTY) aktiv.
 struct KeyboardLayout {
   const char* const* lower_map;
   const char* const* upper_map;
   const lv_buttonmatrix_ctrl_t* ctrl_map;
 };
 
-const KeyboardLayout* layout_for_language(const char* lang_code) {
-  if (lang_code && lang_code[0] == 'd' && lang_code[1] == 'e') {
+const KeyboardLayout* layout_for_config(uint8_t keyboard_layout, const char* lang_code) {
+  bool german;
+  if (keyboard_layout == 1) {
+    german = true;   // Deutsch (QWERTZ) erzwungen
+  } else if (keyboard_layout == 2) {
+    german = false;  // English (QWERTY) erzwungen
+  } else {
+    german = lang_code && lang_code[0] == 'd' && lang_code[1] == 'e';
+  }
+  if (german) {
     static const KeyboardLayout kDeLayout{kMapLowerDe, kMapUpperDe, kCtrlDe};
     return &kDeLayout;
   }
@@ -172,9 +180,10 @@ lv_obj_t* ui_keyboard_create(lv_obj_t* parent) {
   const bool large = lv_display_get_horizontal_resolution(nullptr) >= 1024;
   lv_obj_set_style_text_font(kb, large ? &ui_font_24 : &ui_font_20, LV_PART_ITEMS);
 
-  // Ohne Layout-Eintrag fuer die aktuelle Sprache bleibt LVGLs eingebaute
-  // Englisch-Map (bereits nach lv_keyboard_create aktiv) unveraendert.
-  const KeyboardLayout* layout = layout_for_language(configManager.getConfig().language);
+  // Ohne Layout-Eintrag bleibt LVGLs eingebaute Englisch-Map (bereits nach
+  // lv_keyboard_create aktiv) unveraendert.
+  const DeviceConfig& kb_cfg = configManager.getConfig();
+  const KeyboardLayout* layout = layout_for_config(kb_cfg.keyboard_layout, kb_cfg.language);
   if (layout) {
     lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_TEXT_LOWER, layout->lower_map, layout->ctrl_map);
     lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_TEXT_UPPER, layout->upper_map, layout->ctrl_map);

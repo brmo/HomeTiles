@@ -135,6 +135,7 @@ ConfigManager::ConfigManager() {
   set_timezone_code(config.timezone, sizeof(config.timezone), "berlin");
   config.global_time_format = clock_tile::TIME_FORMAT_AUTO;
   config.global_date_format = clock_tile::DATE_FORMAT_AUTO;
+  config.keyboard_layout = 0;  // Auto (folgt Sprache)
 
   // Display & Power Defaults
   config.display_brightness = 200;
@@ -192,6 +193,8 @@ bool ConfigManager::load() {
       normalize_global_time_format(prefs.getUChar("time_fmt", clock_tile::TIME_FORMAT_AUTO));
   config.global_date_format =
       normalize_global_date_format(prefs.getUChar("date_fmt", clock_tile::DATE_FORMAT_AUTO));
+  config.keyboard_layout = prefs.getUChar("kb_layout", 0);
+  if (config.keyboard_layout > 2) config.keyboard_layout = 0;
 
   // Display & Power Settings laden
   config.display_brightness = prefs.getUChar("disp_bright", 200);
@@ -311,6 +314,8 @@ bool ConfigManager::save(const DeviceConfig& cfg) {
   normalized.global_date_format = normalize_global_date_format(normalized.global_date_format);
   prefs.putUChar("time_fmt", normalized.global_time_format);
   prefs.putUChar("date_fmt", normalized.global_date_format);
+  if (normalized.keyboard_layout > 2) normalized.keyboard_layout = 0;
+  prefs.putUChar("kb_layout", normalized.keyboard_layout);
 
   // Display & Power Settings speichern
   prefs.putUChar("disp_bright", normalized.display_brightness);

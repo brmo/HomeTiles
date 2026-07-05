@@ -34,6 +34,7 @@ static lv_obj_t *battery_wake_sub_label = nullptr;
 static uint8_t wake_mode_mains = kWakeModeTouch;
 static uint8_t wake_mode_battery = kWakeModeTouch;
 static hotspot_callback_t g_hotspot_callback = nullptr;
+static wifi_reconnect_callback_t g_wifi_reconnect_callback = nullptr;
 
 enum class SettingsPopupKind : uint8_t {
   Display,
@@ -45,6 +46,7 @@ enum class SettingsPopupKind : uint8_t {
 static lv_obj_t *settings_tile_display_title = nullptr;
 static lv_obj_t *settings_tile_display_summary = nullptr;
 static lv_obj_t *settings_tile_wifi_title = nullptr;
+static lv_obj_t *settings_tile_wifi_summary = nullptr;
 static lv_obj_t *settings_tile_locale_title = nullptr;
 static lv_obj_t *settings_tile_locale_summary = nullptr;
 static lv_obj_t *settings_tile_firmware_title = nullptr;
@@ -53,8 +55,6 @@ static lv_obj_t *settings_tile_firmware_summary = nullptr;
 static lv_obj_t *settings_popup_overlay = nullptr;
 static lv_obj_t *settings_popup_card = nullptr;
 static lv_obj_t *settings_popup_title = nullptr;
-static lv_obj_t *settings_popup_save_btn = nullptr;
-static lv_obj_t *settings_popup_save_label = nullptr;
 static lv_obj_t *settings_popup_content = nullptr;
 static lv_obj_t *settings_popup_keyboard = nullptr;
 static lv_obj_t *settings_popup_active_ta = nullptr;
@@ -66,7 +66,6 @@ static lv_obj_t *settings_popup_close_icon = nullptr;
 // die Netzwerkliste die volle Hoehe nutzen kann.
 static lv_obj_t *settings_popup_kb_spacer = nullptr;
 static SettingsPopupKind settings_popup_kind = SettingsPopupKind::Display;
-static bool settings_popup_restart_pending = false;
 
 static lv_obj_t *wifi_ssid_ta = nullptr;
 static lv_obj_t *wifi_pass_ta = nullptr;
@@ -87,20 +86,20 @@ static char wifi_selected_ssid[33] = {};
 static bool wifi_selected_open = false;
 static bool wifi_manual_mode = false;
 static char wifi_known_fallback_ssid[33] = {};
+// Nach einem angeforderten (Re-)Connect kurz keine Scans starten - ein
+// laufender Scan wuerde das WiFi.begin() im Hauptloop wieder stoeren.
+static uint32_t wifi_scan_block_until = 0;
 
 static lv_obj_t *locale_language_dd = nullptr;
 static lv_obj_t *locale_timezone_dd = nullptr;
 static lv_obj_t *locale_time_format_dd = nullptr;
 static lv_obj_t *locale_date_format_dd = nullptr;
+static lv_obj_t *locale_keyboard_dd = nullptr;
 
 static const i18n::Strings& tr() {
   return i18n::strings(configManager.getConfig().language);
 }
 
-// WiFi Status Labels
-static lv_obj_t *wifi_status_label = nullptr;
-static lv_obj_t *wifi_ssid_label = nullptr;
-static lv_obj_t *wifi_ip_label = nullptr;
 static lv_obj_t *ap_mode_btn = nullptr;
 static lv_obj_t *ap_mode_btn_label = nullptr;
 static lv_obj_t *ap_confirm_row = nullptr;
@@ -113,6 +112,8 @@ static lv_obj_t *ap_yes_label_obj = nullptr;
 static lv_obj_t *ap_no_label_obj = nullptr;
 static lv_obj_t *sleep_section_label = nullptr;
 static lv_timer_t *ap_confirm_timer = nullptr;
+// Sperr-Timer nach AP-Umschalten im WLAN-Popup (Schutz vor Doppeltippen)
+static lv_timer_t *ap_btn_cooldown_timer = nullptr;
 static bool ap_mode_confirm_pending = false;
 static bool ap_mode_active = false;
 static uint32_t ap_mode_click_block_until = 0;
@@ -147,8 +148,8 @@ static const uint8_t kSettingsBrightnessRawMax = 255;
 static const int kSettingsBrightnessPctMin = 1;
 static const int kSettingsBrightnessPctMax = 100;
 static const int kSettingsSliderValueWidth = 70;
-static const int kSettingsSliderHeight = 16;
-static const int kSettingsSliderKnobSize = 36;
+static const int kSettingsSliderHeight = 20;
+static const int kSettingsSliderKnobSize = 42;
 static const int kSettingsSliderClickPad = 20;
 static const uint8_t kSettingsCardColStart = 1;
 
@@ -160,6 +161,7 @@ static void open_settings_popup(SettingsPopupKind kind);
 static void wifi_stop_scan_timer();
 static void wifi_show_list_view();
 static void wifi_update_conn_status_label();
+static void build_localization_popup(lv_obj_t* parent);
 
 static void style_settings_button(lv_obj_t *btn, uint32_t base_color) {
   if (!btn) return;
@@ -673,11 +675,6 @@ static const SettingsTimezoneOption& selected_timezone_option(uint32_t index) {
   return kSettingsTimezoneOptions[index];
 }
 
-static const char* timezone_label_for_code(const char* code) {
-  const SettingsTimezoneOption& opt = selected_timezone_option(settings_timezone_index(code));
-  return settings_language_is_german() ? opt.label_de : opt.label_en;
-}
-
 static void build_timezone_dropdown_options() {
   settings_timezone_options_text = "";
   settings_timezone_options_text.reserve(900);
@@ -757,12 +754,6 @@ static void style_popup_dropdown_list(lv_obj_t* list) {
   lv_obj_set_style_bg_opa(list, LV_OPA_COVER, LV_PART_SCROLLBAR);
 }
 
-static void on_popup_dropdown_ready(lv_event_t* e) {
-  lv_obj_t* dd = static_cast<lv_obj_t*>(lv_event_get_current_target(e));
-  if (!dd) return;
-  style_popup_dropdown_list(lv_dropdown_get_list(dd));
-}
-
 static lv_obj_t* create_popup_button(lv_obj_t* parent, const char* text, uint32_t color,
                                      lv_event_cb_t cb) {
   lv_obj_t* btn = lv_button_create(parent);
@@ -814,6 +805,9 @@ static lv_obj_t* create_display_control_row(lv_obj_t* parent) {
   return row;
 }
 
+// Gleiche Optik wie die WLAN-/Lokalisierungs-Zeilen: Beschriftung links in
+// gedecktem Grau, Werte (rechts) werden an den Aufrufstellen auf Weiss
+// umgestellt.
 static lv_obj_t* create_display_row_label(lv_obj_t* parent, const char* text,
                                           lv_coord_t width,
                                           lv_text_align_t align = LV_TEXT_ALIGN_LEFT) {
@@ -822,8 +816,8 @@ static lv_obj_t* create_display_row_label(lv_obj_t* parent, const char* text,
   lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
   lv_obj_set_width(label, width);
   lv_obj_set_style_text_align(label, align, 0);
-  lv_obj_set_style_text_font(label, &ui_font_20, 0);
-  lv_obj_set_style_text_color(label, lv_color_white(), 0);
+  lv_obj_set_style_text_font(label, &ui_font_24, 0);
+  lv_obj_set_style_text_color(label, lv_color_hex(0xC8C8C8), 0);
   return label;
 }
 
@@ -834,24 +828,6 @@ static lv_obj_t* create_flex_spacer(lv_obj_t* parent) {
   lv_obj_set_height(spacer, 1);
   lv_obj_set_flex_grow(spacer, 1);
   return spacer;
-}
-
-static lv_obj_t* create_field_box(lv_obj_t* parent, const char* label_text) {
-  lv_obj_t* box = lv_obj_create(parent);
-  style_plain_container(box);
-  lv_obj_set_height(box, 76);
-  lv_obj_set_flex_grow(box, 1);
-  lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(box, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-  lv_obj_set_style_pad_row(box, 4, 0);
-
-  lv_obj_t* label = lv_label_create(box);
-  lv_label_set_text(label, label_text);
-  lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
-  lv_obj_set_width(label, LV_PCT(100));
-  lv_obj_set_style_text_font(label, &ui_font_16, 0);
-  lv_obj_set_style_text_color(label, lv_color_hex(0xC8C8C8), 0);
-  return box;
 }
 
 // Tastatur erscheint erst, wenn ein Feld antippt wird (statt permanent unten
@@ -885,33 +861,22 @@ static void on_popup_textarea_defocused(lv_event_t*) {
   if (settings_popup_keyboard) lv_obj_add_flag(settings_popup_keyboard, LV_OBJ_FLAG_HIDDEN);
 }
 
-static lv_obj_t* create_dropdown_field(lv_obj_t* parent, const char* label_text,
-                                       const char* options, uint32_t selected) {
-  lv_obj_t* box = create_field_box(parent, label_text);
-  lv_obj_t* dd = lv_dropdown_create(box);
-  lv_obj_set_width(dd, LV_PCT(100));
-  style_popup_dropdown(dd);
-  lv_dropdown_set_symbol(dd, LV_SYMBOL_DOWN);
-  lv_dropdown_set_options(dd, options);
-  lv_dropdown_set_selected(dd, selected);
-  style_popup_dropdown_list(lv_dropdown_get_list(dd));
-  lv_obj_add_event_cb(dd, on_popup_dropdown_ready, LV_EVENT_READY, nullptr);
-  return dd;
-}
-
 static void reset_popup_refs() {
   settings_popup_card = nullptr;
   settings_popup_title = nullptr;
-  settings_popup_save_btn = nullptr;
-  settings_popup_save_label = nullptr;
   settings_popup_content = nullptr;
   settings_popup_keyboard = nullptr;
   settings_popup_active_ta = nullptr;
   settings_popup_close_icon = nullptr;
   settings_popup_kb_spacer = nullptr;
-  settings_popup_restart_pending = false;
 
   brightness_label = nullptr;
+  // WICHTIG: wird in build_display_popup gesetzt - ohne das Nullen hier
+  // zeigte der Pointer nach dem Schliessen des Display-Popups ins Leere und
+  // der naechste settings_refresh_language()-Aufruf (Sprachwechsel!) schrieb
+  // per lv_label_set_text in freigegebenen Speicher -> Guru Meditation
+  // (Store access fault in lv_label_revert_dots; Tab5-Crash 2026-07-05).
+  brightness_title_label = nullptr;
   display_rotate_btn = nullptr;
   display_rotate_label = nullptr;
   display_rotate_sub_label = nullptr;
@@ -938,11 +903,15 @@ static void reset_popup_refs() {
   locale_timezone_dd = nullptr;
   locale_time_format_dd = nullptr;
   locale_date_format_dd = nullptr;
+  locale_keyboard_dd = nullptr;
 }
 
 static void close_settings_popup() {
-  if (settings_popup_restart_pending) return;
   wifi_stop_scan_timer();
+  if (ap_btn_cooldown_timer) {
+    lv_timer_del(ap_btn_cooldown_timer);
+    ap_btn_cooldown_timer = nullptr;
+  }
   WiFi.scanDelete();
   if (settings_popup_overlay) {
     lv_obj_del(settings_popup_overlay);
@@ -952,7 +921,6 @@ static void close_settings_popup() {
 }
 
 static void on_settings_popup_close_clicked(lv_event_t*) {
-  if (settings_popup_restart_pending) return;
   // In der WLAN-Eingabe-Ansicht ist der Kopf-Button ein Zurueck-Pfeil (Icon
   // wird in wifi_show_entry_view getauscht) und fuehrt zur Liste zurueck -
   // erst von dort schliesst er das Popup wirklich.
@@ -962,24 +930,6 @@ static void on_settings_popup_close_clicked(lv_event_t*) {
     return;
   }
   close_settings_popup();
-}
-
-static void on_settings_restart_timer(lv_timer_t* t) {
-  lv_timer_del(t);
-  displayManager.setInputEnabled(false);
-  BoardHAL::prepareForRestart();
-  delay(150);
-  ESP.restart();
-}
-
-static void mark_popup_restarting() {
-  settings_popup_restart_pending = true;
-  if (settings_popup_title) lv_label_set_text(settings_popup_title, tr().wifi_saved_restarting);
-  if (settings_popup_keyboard) lv_obj_add_flag(settings_popup_keyboard, LV_OBJ_FLAG_HIDDEN);
-  if (settings_popup_content) lv_obj_add_flag(settings_popup_content, LV_OBJ_FLAG_HIDDEN);
-  if (settings_popup_save_btn) lv_obj_add_flag(settings_popup_save_btn, LV_OBJ_FLAG_HIDDEN);
-  lv_timer_t* t = lv_timer_create(on_settings_restart_timer, 1200, nullptr);
-  lv_timer_set_repeat_count(t, 1);
 }
 
 // WLAN-Liste/Eingabe-Statemachine, portiert aus dem vormals unverdrahteten
@@ -1173,6 +1123,12 @@ static void wifi_start_scan() {
     wifi_show_scan_finished_state();
     return;
   }
+  // Frisch angestossener (Re-)Connect: Scan wuerde WiFi.begin() stoeren
+  if (wifi_scan_block_until != 0 &&
+      (int32_t)(millis() - wifi_scan_block_until) < 0) {
+    wifi_show_scan_finished_state();
+    return;
+  }
   wifi_show_scanning_state();
   WiFi.scanDelete();
   const int16_t r = WiFi.scanNetworks(/*async=*/true);
@@ -1186,6 +1142,17 @@ static void wifi_start_scan() {
 static void wifi_update_conn_status_label() {
   if (!wifi_conn_status_label) return;
   static char buf[96];
+
+  // Aendert sich der Verbindungszustand (z.B. Live-Reconnect nach
+  // "Verbinden"), die Zeilen neu aufbauen - sonst fehlt das gruene Haekchen
+  // am gerade verbundenen Netz, weil waehrend des Verbindens keine Scans
+  // laufen, die die Liste auffrischen wuerden.
+  const bool sta_connected = !ap_mode_active && WiFi.status() == WL_CONNECTED;
+  static bool prev_sta_connected = false;
+  if (sta_connected != prev_sta_connected) {
+    prev_sta_connected = sta_connected;
+    if (wifi_list_container) wifi_populate_list();
+  }
 
   // Im AP-Modus sind Scan und Netzwerkliste nutzlos (Scans sind waehrend des
   // Portal-Betriebs abgeschaltet, siehe wifi_start_scan) - die Liste weicht
@@ -1347,53 +1314,56 @@ static void on_wifi_pass_eye_clicked(lv_event_t* e) {
   lv_label_set_text(icon, getMdiChar(currently_masked ? "eye-off" : "eye").c_str());
 }
 
+// Verbindet LIVE statt das Geraet neu zu starten: Zugangsdaten speichern und
+// den Reconnect im Hauptloop anstossen (WiFi.disconnect + connectWifi mit den
+// frischen Daten). Danach zurueck zur Listen-Ansicht - die Infobox zeigt den
+// Verbindungsfortschritt, weil settings_update_wifi_status sie live fuettert.
 static void wifi_do_connect() {
-  if (settings_popup_restart_pending) return;
   const char* ssid = wifi_manual_mode && wifi_ssid_ta ? lv_textarea_get_text(wifi_ssid_ta)
                                                       : wifi_selected_ssid;
   const char* pass = wifi_pass_ta ? lv_textarea_get_text(wifi_pass_ta) : "";
   if (!ssid || !ssid[0]) return;
-  // Gesichertes Netz ohne Passwort: nicht speichern (wuerde nach dem
-  // Neustart nur in einer toten Verbindung enden)
+  // Gesichertes Netz ohne Passwort: nicht speichern (endet nur in einer
+  // toten Verbindung)
   if (!wifi_manual_mode && !wifi_selected_open && (!pass || !pass[0])) return;
 
-  // Unveraenderte Zugangsdaten: kein unnoetiges Speichern+Neustarten.
-  // Aus dem AP-Modus heraus reicht "AP aus" - der Hauptloop verbindet dann
-  // automatisch neu (apply_hotspot_mode).
   const DeviceConfig& cur = configManager.getConfig();
-  if (strcmp(cur.wifi_ssid, ssid) == 0 && strcmp(cur.wifi_pass, pass ? pass : "") == 0) {
-    if (ap_mode_active) {
-      wifi_stop_scan_timer();
-      WiFi.scanDelete();
-      if (g_hotspot_callback) g_hotspot_callback(false);
-      close_settings_popup();
+  const bool creds_changed = strcmp(cur.wifi_ssid, ssid) != 0 ||
+                             strcmp(cur.wifi_pass, pass ? pass : "") != 0;
+
+  if (creds_changed) {
+    DeviceConfig cfg = configManager.getConfig();
+    strncpy(cfg.wifi_ssid, ssid, CONFIG_WIFI_SSID_MAX - 1);
+    cfg.wifi_ssid[CONFIG_WIFI_SSID_MAX - 1] = '\0';
+    strncpy(cfg.wifi_pass, pass ? pass : "", CONFIG_WIFI_PASS_MAX - 1);
+    cfg.wifi_pass[CONFIG_WIFI_PASS_MAX - 1] = '\0';
+    // Netzwechsel setzt auf DHCP zurueck, damit eine alte statische IP das
+    // Geraet im neuen Netz nicht aussperrt (statische IP gibt's nur noch im
+    // Web-Admin).
+    cfg.wifi_static_ip[0] = '\0';
+    cfg.wifi_gateway[0] = '\0';
+    cfg.wifi_subnet[0] = '\0';
+    cfg.wifi_dns[0] = '\0';
+    if (!configManager.save(cfg)) {
+      if (settings_popup_title) lv_label_set_text(settings_popup_title, tr().wifi_save_failed);
       return;
     }
-    if (WiFi.status() == WL_CONNECTED) {
-      close_settings_popup();
-      return;
-    }
-    // offline mit denselben Daten: unten regulaer speichern + neu starten
   }
 
-  DeviceConfig cfg = configManager.getConfig();
-  strncpy(cfg.wifi_ssid, ssid, CONFIG_WIFI_SSID_MAX - 1);
-  cfg.wifi_ssid[CONFIG_WIFI_SSID_MAX - 1] = '\0';
-  strncpy(cfg.wifi_pass, pass ? pass : "", CONFIG_WIFI_PASS_MAX - 1);
-  cfg.wifi_pass[CONFIG_WIFI_PASS_MAX - 1] = '\0';
-  // Netzwechsel setzt auf DHCP zurueck, damit eine alte statische IP das
-  // Geraet im neuen Netz nicht aussperrt (statische IP gibt's nur noch im
-  // Web-Admin).
-  cfg.wifi_static_ip[0] = '\0';
-  cfg.wifi_gateway[0] = '\0';
-  cfg.wifi_subnet[0] = '\0';
-  cfg.wifi_dns[0] = '\0';
+  wifi_stop_scan_timer();
+  WiFi.scanDelete();
+  // Waehrend der Verbindungsaufbau laeuft, keine neuen Scans anstossen
+  wifi_scan_block_until = millis() + 10000UL;
 
-  if (!configManager.save(cfg)) {
-    if (settings_popup_title) lv_label_set_text(settings_popup_title, tr().wifi_save_failed);
-    return;
+  if (ap_mode_active) {
+    // AP aus - apply_hotspot_mode im Hauptloop verbindet dann mit den
+    // (ggf. gerade gespeicherten) Zugangsdaten
+    if (g_hotspot_callback) g_hotspot_callback(false);
+  } else if (creds_changed || WiFi.status() != WL_CONNECTED) {
+    if (g_wifi_reconnect_callback) g_wifi_reconnect_callback();
   }
-  mark_popup_restarting();
+
+  wifi_show_list_view();
 }
 
 // Kopf bleibt immer gleich (Icon+"WLAN"+Speichern+X, siehe open_settings_popup) -
@@ -1422,6 +1392,10 @@ static void save_localization_popup() {
   cfg.global_date_format = clock_tile::normalize_date_format(
       locale_date_format_dd ? static_cast<int>(lv_dropdown_get_selected(locale_date_format_dd)) : 0);
 
+  uint8_t keyboard_layout = locale_keyboard_dd
+      ? static_cast<uint8_t>(lv_dropdown_get_selected(locale_keyboard_dd)) : 0;
+  cfg.keyboard_layout = (keyboard_layout > 2) ? 0 : keyboard_layout;
+
   if (!configManager.save(cfg)) {
     if (settings_popup_title) lv_label_set_text(settings_popup_title, tr().save_failed);
     return;
@@ -1430,7 +1404,20 @@ static void save_localization_popup() {
   settings_refresh_language();
   uiManager.scheduleNtpSync(0);
   tiles_request_reload_all();
-  close_settings_popup();
+  // Popup bleibt nach dem Speichern offen. Der Inhalt wird neu aufgebaut,
+  // damit Zeilen-Labels und Optionstexte eine evtl. geaenderte Sprache
+  // sofort zeigen. lv_obj_clean loescht dabei auch den gerade gedrueckten
+  // Speichern-Button - dasselbe Muster wie close_settings_popup aus dem
+  // X-Klick (LVGL raeumt Events auf geloeschte Ziele selbst ab).
+  if (settings_popup_content) {
+    locale_language_dd = nullptr;
+    locale_timezone_dd = nullptr;
+    locale_time_format_dd = nullptr;
+    locale_date_format_dd = nullptr;
+    locale_keyboard_dd = nullptr;
+    lv_obj_clean(settings_popup_content);
+    build_localization_popup(settings_popup_content);
+  }
 }
 
 static void save_settings_popup() {
@@ -1472,7 +1459,19 @@ static void on_popup_keyboard_event(lv_event_t* e) {
   }
 }
 
+// Cooldown nach jedem AP-Umschalten: der Button springt sofort auf die neue
+// Beschriftung um und sitzt an derselben Stelle - ohne Sperre schaltete ein
+// schnelles Doppeltippen den AP direkt wieder ein/aus.
+static void on_ap_btn_cooldown_timer(lv_timer_t*) {
+  ap_btn_cooldown_timer = nullptr;  // repeat_count=1: LVGL loescht den Timer selbst
+  if (ap_mode_btn) {
+    lv_obj_set_style_opa(ap_mode_btn, LV_OPA_COVER, 0);
+    lv_obj_add_flag(ap_mode_btn, LV_OBJ_FLAG_CLICKABLE);
+  }
+}
+
 static void on_popup_ap_mode_clicked(lv_event_t*) {
+  if (ap_btn_cooldown_timer) return;
   if (ap_mode_click_block_until != 0 &&
       (int32_t)(millis() - ap_mode_click_block_until) < 0) {
     return;
@@ -1484,18 +1483,32 @@ static void on_popup_ap_mode_clicked(lv_event_t*) {
   if (g_hotspot_callback) {
     g_hotspot_callback(!ap_mode_active);
   }
-  settings_update_ap_mode(!ap_mode_active);
-  ap_mode_click_block_until = millis() + 400;
+  // Kein optimistisches settings_update_ap_mode mehr: Beschriftung/Farbe
+  // wechseln erst, wenn der Hauptloop den Modus wirklich umgeschaltet hat
+  // (apply_hotspot_mode ruft settings_update_ap_mode). Bis dahin ist der
+  // Button gedimmt und inert.
+  ap_mode_click_block_until = millis() + 2500;
+  if (ap_mode_btn) {
+    lv_obj_set_style_opa(ap_mode_btn, LV_OPA_50, 0);
+    lv_obj_clear_flag(ap_mode_btn, LV_OBJ_FLAG_CLICKABLE);
+  }
+  ap_btn_cooldown_timer = lv_timer_create(on_ap_btn_cooldown_timer, 2500, nullptr);
+  lv_timer_set_repeat_count(ap_btn_cooldown_timer, 1);
 }
 
 static void build_display_popup(lv_obj_t* parent) {
   const DeviceConfig& cfg = configManager.getConfig();
   lv_obj_t* form = create_form_area(parent);
   lv_obj_clear_flag(form, LV_OBJ_FLAG_SCROLLABLE);
+  // Nur drei Reihen: mit festem Abstand von oben und viel Luft dazwischen -
+  // nicht ganz oben angeklebt (wirkte verloren), aber auch nicht komplett
+  // mittig (User-Wunsch).
+  lv_obj_set_style_pad_top(form, 48, 0);
+  lv_obj_set_style_pad_row(form, 26, 0);
 
   lv_obj_t* brightness_row = create_display_control_row(form);
   brightness_title_label =
-      create_display_row_label(brightness_row, tr().brightness_label, 160);
+      create_display_row_label(brightness_row, tr().brightness_label, 210);
 
   lv_obj_t* brightness_slider = lv_slider_create(brightness_row);
   style_settings_slider(brightness_slider);
@@ -1509,11 +1522,14 @@ static void build_display_popup(lv_obj_t* parent) {
 
   static char bright_buf[16];
   snprintf(bright_buf, sizeof(bright_buf), "%d%%", current_brightness_pct);
+  // Gleiche Wertspaltenbreite wie beim Sleep-Slider, damit beide Slider
+  // exakt gleich lang sind
   brightness_label =
-      create_display_row_label(brightness_row, bright_buf, 112, LV_TEXT_ALIGN_RIGHT);
+      create_display_row_label(brightness_row, bright_buf, 150, LV_TEXT_ALIGN_RIGHT);
+  lv_obj_set_style_text_color(brightness_label, lv_color_white(), 0);
 
   lv_obj_t* sleep_row = create_display_control_row(form);
-  sleep_label = create_display_row_label(sleep_row, tr().sleep_label, 160);
+  sleep_label = create_display_row_label(sleep_row, tr().sleep_label, 210);
 
   sleep_slider = lv_slider_create(sleep_row);
   style_settings_slider(sleep_slider);
@@ -1530,18 +1546,28 @@ static void build_display_popup(lv_obj_t* parent) {
   static char sleep_buf[32];
   format_sleep_popup_value_for_index(sleep_buf, sizeof(sleep_buf), sleep_index);
   sleep_time_label =
-      create_display_row_label(sleep_row, sleep_buf, 128, LV_TEXT_ALIGN_RIGHT);
+      create_display_row_label(sleep_row, sleep_buf, 150, LV_TEXT_ALIGN_RIGHT);
+  lv_obj_set_style_text_color(sleep_time_label, lv_color_white(), 0);
 
   lv_obj_t* rotate_row = create_display_control_row(form);
-  create_display_row_label(rotate_row, "Rotation", 160);
-  create_flex_spacer(rotate_row);
+  create_display_row_label(rotate_row, "Rotation", 210);
 
+  // Button exakt in der Slider-Spalte (flex_grow + 150er-Blindspalte rechts
+  // wie die Wert-Labels) - vorher hing seine linke Kante frei in der Luft.
   display_rotate_btn = create_popup_button(rotate_row, "", 0x2E7D32, on_display_rotate_clicked);
-  lv_obj_set_width(display_rotate_btn, LV_PCT(42));
-  lv_obj_set_height(display_rotate_btn, 64);
+  lv_obj_set_width(display_rotate_btn, 1);
+  lv_obj_set_flex_grow(display_rotate_btn, 1);
+  lv_obj_set_height(display_rotate_btn, 76);
   display_rotate_label = lv_obj_get_child(display_rotate_btn, 0);
   if (FONT_MDI_ICONS) lv_obj_set_style_text_font(display_rotate_label, FONT_MDI_ICONS, 0);
   update_display_rotate_label();
+
+  // Blindspalte in Wert-Label-Breite: rechte Buttonkante endet dadurch exakt
+  // dort, wo auch die Slider enden
+  lv_obj_t* rotate_pad = lv_obj_create(rotate_row);
+  style_plain_container(rotate_pad);
+  lv_obj_clear_flag(rotate_pad, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_size(rotate_pad, 150, 1);
 }
 
 // Tastatur bleibt naeher am Card-Rand als das restliche Formular: statt der
@@ -1566,9 +1592,14 @@ static void create_popup_keyboard(lv_obj_t* content_parent) {
   style_plain_container(spacer);
   lv_obj_clear_flag(spacer, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_width(spacer, LV_PCT(100));
-  lv_obj_set_height(spacer, LV_PCT(42));
+  // 48% statt 42%: groessere Tasten (User-Wunsch); die Eingabe-Ansicht
+  // (2 Zeilen + Verbinden ~ 280px) passt auch auf den 720ern noch drueber.
+  lv_obj_set_height(spacer, LV_PCT(48));
   lv_obj_update_layout(content_parent);
-  const int reserved_w = lv_obj_get_width(spacer);
+  // Breite von der KARTE statt vom Spacer: der Content ist auf Lesebreite
+  // gedeckelt (max_width), die Tastatur soll aber weiterhin die volle
+  // Kartenbreite nutzen.
+  const int reserved_w = lv_obj_get_content_width(settings_popup_card);
   const int reserved_h = lv_obj_get_height(spacer);
   // Erst NACH der Messung merken/ausblendbar machen - die Tastaturgroesse
   // haengt von der sichtbaren 42%-Hoehe ab.
@@ -1723,7 +1754,7 @@ static void build_wifi_popup(lv_obj_t* parent) {
 
 #if LV_USE_QRCODE
   wifi_ap_qr = lv_qrcode_create(info_box);
-  lv_qrcode_set_size(wifi_ap_qr, 150);
+  lv_qrcode_set_size(wifi_ap_qr, 280);
   lv_qrcode_set_dark_color(wifi_ap_qr, lv_color_black());
   lv_qrcode_set_light_color(wifi_ap_qr, lv_color_white());
   lv_qrcode_set_quiet_zone(wifi_ap_qr, true);
@@ -1745,7 +1776,13 @@ static void build_wifi_popup(lv_obj_t* parent) {
   lv_obj_set_flex_grow(wifi_entry_view, 1);
   lv_obj_clear_flag(wifi_entry_view, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_flex_flow(wifi_entry_view, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_style_pad_row(wifi_entry_view, 14, 0);
+  // Querachse CENTER fuer den kompakten Verbinden-Button; die vollbreiten
+  // Eingabezeilen bleiben vollbreit.
+  lv_obj_set_flex_align(wifi_entry_view, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  // Etwas enger als die anderen Formulare: mit der 48%-Tastatur muss
+  // "2 Zeilen + Verbinden" auch auf den 720er-Displays sicher passen.
+  lv_obj_set_style_pad_row(wifi_entry_view, 10, 0);
   lv_obj_add_flag(wifi_entry_view, LV_OBJ_FLAG_HIDDEN);
 
   wifi_create_entry_row(wifi_entry_view, tr().ssid_label, &wifi_ssid_ta,
@@ -1767,19 +1804,25 @@ static void build_wifi_popup(lv_obj_t* parent) {
   lv_obj_add_flag(wifi_pass_eye_icon, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(wifi_pass_eye_icon, on_wifi_pass_eye_clicked, LV_EVENT_CLICKED, nullptr);
 
-  // Spacer drueckt den Verbinden-Button an den unteren Rand der Ansicht
-  // (direkt ueber die Tastatur) - "alle Buttons nach unten".
-  create_flex_spacer(wifi_entry_view);
+  // Kleiner Abstand zwischen Passwortfeld und Verbinden-Button
+  lv_obj_t* connect_gap = lv_obj_create(wifi_entry_view);
+  style_plain_container(connect_gap);
+  lv_obj_clear_flag(connect_gap, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_size(connect_gap, LV_PCT(100), 6);
 
   // Eigener, klar beschrifteter Verbinden-Button statt des generischen
   // Speichern oben rechts. Nutzt denselben Save-Dispatch wie die Tastatur-
   // Enter-Taste (on_settings_popup_save_clicked -> save_wifi_popup).
+  // Direkt unter den Feldern (nicht mehr an den unteren Rand gedrueckt),
+  // kompakt und mittig wie der AP-Button.
   lv_obj_t* wifi_connect_btn = create_popup_button(wifi_entry_view, tr().wifi_connect_btn, 0x2E7D32,
                                                    on_settings_popup_save_clicked);
-  lv_obj_set_width(wifi_connect_btn, LV_PCT(100));
-  lv_obj_set_height(wifi_connect_btn, 72);
+  lv_obj_set_size(wifi_connect_btn, 360, 76);
   lv_obj_t* connect_label = lv_obj_get_child(wifi_connect_btn, 0);
   if (connect_label) lv_obj_set_style_text_font(connect_label, &ui_font_24, 0);
+
+  // Restplatz zwischen Button und Tastaturbereich
+  create_flex_spacer(wifi_entry_view);
 
   // Tastatur zuerst (legt den Platzhalter an), dann die Listen-Ansicht
   // aktivieren - die blendet den Platzhalter direkt wieder aus.
@@ -1802,30 +1845,108 @@ static String format_options_text(bool time_format) {
   return opts;
 }
 
+// Aufgeklappte Liste im Stil des geschlossenen Feldes: gleiche 28er-Schrift,
+// Eintraege buendig zum Feldtext (pad_left 20 wie das Feld statt 6) und
+// clip_corner, damit der blaue Auswahlbalken beim ersten/letzten Eintrag
+// nicht ueber den Eckenradius hinausragt.
+static void style_locale_dropdown_list(lv_obj_t* list) {
+  if (!list) return;
+  style_popup_dropdown_list(list);
+  lv_obj_set_style_text_font(list, &ui_font_28, LV_PART_MAIN);
+  lv_obj_set_style_text_font(list, &ui_font_28, LV_PART_SELECTED);
+  lv_obj_set_style_pad_left(list, 20, 0);
+  lv_obj_set_style_pad_right(list, 10, 0);
+  lv_obj_set_style_pad_ver(list, 8, 0);
+  lv_obj_set_style_clip_corner(list, true, 0);
+}
+
+// Liste bei jedem Oeffnen frisch stylen (READY-Event), sonst setzt LVGLs
+// Theme sie auf die kompakten Defaults zurueck.
+static void on_locale_dropdown_ready(lv_event_t* e) {
+  lv_obj_t* dd = static_cast<lv_obj_t*>(lv_event_get_current_target(e));
+  if (!dd) return;
+  style_locale_dropdown_list(lv_dropdown_get_list(dd));
+}
+
+// Eine Lokalisierungs-Zeile "Label | Dropdown" - exakt das Muster (Fonts,
+// Radius, Padding) der WLAN-Eingabezeilen (wifi_create_entry_row), damit
+// beide Seiten gleich aussehen. Zeilenhoehe = Inhaltshoehe: kompakt genug,
+// dass alle 5 Zeilen + Speichern-Button auch auf 720p ohne Scrollen passen.
+static lv_obj_t* create_locale_dropdown_row(lv_obj_t* form, const char* label_text,
+                                            const char* options, uint32_t selected) {
+  lv_obj_t* row = lv_obj_create(form);
+  style_plain_container(row);
+  lv_obj_set_width(row, LV_PCT(100));
+  lv_obj_set_height(row, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(row, 14, 0);
+
+  // Breiter als beim WLAN (160): "Datumsformat" braucht Platz, und eine
+  // gemeinsame Spaltenbreite haelt alle Dropdowns buendig untereinander.
+  lv_obj_t* label = lv_label_create(row);
+  lv_label_set_text(label, label_text);
+  lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
+  lv_obj_set_width(label, 210);
+  lv_obj_set_style_text_font(label, &ui_font_24, 0);
+  lv_obj_set_style_text_color(label, lv_color_hex(0xC8C8C8), 0);
+
+  lv_obj_t* dd = lv_dropdown_create(row);
+  style_popup_dropdown(dd);
+  // flex_grow im ROW-Elternobjekt = restliche Breite (Hauptachse)
+  lv_obj_set_flex_grow(dd, 1);
+  lv_dropdown_set_symbol(dd, LV_SYMBOL_DOWN);
+  lv_dropdown_set_options(dd, options);
+  lv_dropdown_set_selected(dd, selected);
+
+  // Inhaltshoehe + symmetrisches Padding = Text sitzt exakt mittig
+  lv_obj_set_height(dd, LV_SIZE_CONTENT);
+  lv_obj_set_style_pad_ver(dd, 18, 0);
+  lv_obj_set_style_pad_left(dd, 20, 0);
+  lv_obj_set_style_radius(dd, 18, 0);
+  lv_obj_set_style_text_font(dd, &ui_font_28, LV_PART_MAIN);
+  lv_obj_set_style_text_font(dd, &lv_font_montserrat_24, LV_PART_INDICATOR);
+  style_locale_dropdown_list(lv_dropdown_get_list(dd));
+  lv_obj_add_event_cb(dd, on_locale_dropdown_ready, LV_EVENT_READY, nullptr);
+  return dd;
+}
+
 static void build_localization_popup(lv_obj_t* parent) {
   const DeviceConfig& cfg = configManager.getConfig();
   lv_obj_t* form = create_form_area(parent);
-  lv_obj_clear_flag(form, LV_OBJ_FLAG_SCROLLABLE);
+  // Gleicher Zeilenabstand wie die WLAN-Eingabe-Ansicht
+  lv_obj_set_style_pad_row(form, 14, 0);
 
   build_timezone_dropdown_options();
   const bool language_is_de = i18n::normalize_language_code(cfg.language)[0] == 'd';
   const String time_options = format_options_text(true);
   const String date_options = format_options_text(false);
+  const String keyboard_options =
+      String(tr().format_auto_language) + "\nDeutsch (QWERTZ)\nEnglish (QWERTY)";
 
-  lv_obj_t* row1 = create_form_row(form);
-  locale_language_dd = create_dropdown_field(row1, tr().language_label,
-                                             "English\nDeutsch", language_is_de ? 1 : 0);
-  locale_timezone_dd = create_dropdown_field(row1, tr().timezone_label,
-                                             settings_timezone_options_text.c_str(),
-                                             settings_timezone_index(cfg.timezone));
+  locale_language_dd = create_locale_dropdown_row(form, tr().language_label,
+                                                  "English\nDeutsch", language_is_de ? 1 : 0);
+  locale_timezone_dd = create_locale_dropdown_row(form, tr().timezone_label,
+                                                  settings_timezone_options_text.c_str(),
+                                                  settings_timezone_index(cfg.timezone));
+  locale_time_format_dd = create_locale_dropdown_row(form, tr().time_format_label,
+                                                     time_options.c_str(),
+                                                     clock_tile::normalize_time_format(cfg.global_time_format));
+  locale_date_format_dd = create_locale_dropdown_row(form, tr().date_format_label,
+                                                     date_options.c_str(),
+                                                     clock_tile::normalize_date_format(cfg.global_date_format));
+  locale_keyboard_dd = create_locale_dropdown_row(form, tr().keyboard_layout_label,
+                                                  keyboard_options.c_str(),
+                                                  cfg.keyboard_layout > 2 ? 0 : cfg.keyboard_layout);
 
-  lv_obj_t* row2 = create_form_row(form);
-  locale_time_format_dd = create_dropdown_field(row2, tr().time_format_label,
-                                                time_options.c_str(),
-                                                clock_tile::normalize_time_format(cfg.global_time_format));
-  locale_date_format_dd = create_dropdown_field(row2, tr().date_format_label,
-                                                date_options.c_str(),
-                                                clock_tile::normalize_date_format(cfg.global_date_format));
+  // Speichern unten, kompakt und mittig wie AP-/Verbinden-Button (das
+  // Formular darueber bekommt per flex_grow die Resthoehe; zentriert wird
+  // ueber die Querachse von settings_popup_content)
+  lv_obj_t* save_btn = create_popup_button(parent, tr().save, 0x2E7D32,
+                                           on_settings_popup_save_clicked);
+  lv_obj_set_size(save_btn, 360, 76);
+  lv_obj_t* save_btn_label = lv_obj_get_child(save_btn, 0);
+  if (save_btn_label) lv_obj_set_style_text_font(save_btn_label, &ui_font_24, 0);
 }
 
 static void build_firmware_popup(lv_obj_t* parent) {
@@ -1898,11 +2019,6 @@ static void build_popup_content(SettingsPopupKind kind, lv_obj_t* parent) {
   }
 }
 
-static bool popup_kind_has_save(SettingsPopupKind kind) {
-  return kind == SettingsPopupKind::Wifi ||
-         kind == SettingsPopupKind::Localization;
-}
-
 static void open_settings_popup(SettingsPopupKind kind) {
   if (settings_popup_overlay) return;
   reset_popup_refs();
@@ -1933,6 +2049,10 @@ static void open_settings_popup(SettingsPopupKind kind) {
   lv_obj_set_style_pad_row(settings_popup_card, 8, 0);
   lv_obj_clear_flag(settings_popup_card, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_flex_flow(settings_popup_card, LV_FLEX_FLOW_COLUMN);
+  // Querachse CENTER: zentriert den (auf Lesebreite begrenzten) Content auf
+  // den 1280 Pixel breiten Geraeten; vollbreite Kinder (Header) unbeeindruckt.
+  lv_obj_set_flex_align(settings_popup_card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
 
   lv_obj_t* header = lv_obj_create(settings_popup_card);
   lv_obj_set_width(header, LV_PCT(100));
@@ -1948,30 +2068,15 @@ static void open_settings_popup(SettingsPopupKind kind) {
   lv_obj_set_style_text_color(header_icon, lv_color_white(), 0);
   lv_obj_align(header_icon, LV_ALIGN_LEFT_MID, 8, 0);
 
-  // WiFi hat unten in der Eingabe-Ansicht einen eigenen, klar beschrifteten
-  // "Verbinden"-Button (siehe build_wifi_popup) - der generische Speichern
-  // oben rechts war dort nur verwirrend ("was macht der Button ueberhaupt"),
-  // weil er in der Listen-Ansicht nichts tut. Fuer Localization bleibt er wie
-  // gehabt oben.
-  const bool show_top_save = popup_kind_has_save(kind) && kind != SettingsPopupKind::Wifi;
-
+  // Kein Speichern oben rechts mehr: WLAN hat den Verbinden-Button und
+  // Lokalisierung den Speichern-Button jeweils unten im Inhalt.
   settings_popup_title = lv_label_create(header);
   lv_label_set_text(settings_popup_title, popup_title_for_kind(kind));
   lv_label_set_long_mode(settings_popup_title, LV_LABEL_LONG_DOT);
-  lv_obj_set_width(settings_popup_title, show_top_save ? LV_PCT(46) : LV_PCT(62));
+  lv_obj_set_width(settings_popup_title, LV_PCT(62));
   lv_obj_set_style_text_font(settings_popup_title, &ui_font_24, 0);
   lv_obj_set_style_text_color(settings_popup_title, lv_color_white(), 0);
   lv_obj_align(settings_popup_title, LV_ALIGN_LEFT_MID, 78, 0);
-
-  settings_popup_save_btn = create_popup_button(settings_popup_card, tr().save, 0x2E7D32,
-                                                on_settings_popup_save_clicked);
-  lv_obj_add_flag(settings_popup_save_btn, LV_OBJ_FLAG_IGNORE_LAYOUT);
-  lv_obj_set_width(settings_popup_save_btn, 150);
-  lv_obj_align(settings_popup_save_btn, LV_ALIGN_TOP_RIGHT, -108, 10);
-  settings_popup_save_label = lv_obj_get_child(settings_popup_save_btn, 0);
-  if (!show_top_save) {
-    lv_obj_add_flag(settings_popup_save_btn, LV_OBJ_FLAG_HIDDEN);
-  }
 
   lv_obj_t* close_btn = lv_button_create(settings_popup_card);
   lv_obj_add_flag(close_btn, LV_OBJ_FLAG_IGNORE_LAYOUT);
@@ -1998,6 +2103,11 @@ static void open_settings_popup(SettingsPopupKind kind) {
 
   settings_popup_content = lv_obj_create(settings_popup_card);
   lv_obj_set_width(settings_popup_content, LV_PCT(100));
+  // Lesebreite: auf den 1280 Pixel breiten Geraeten (8-Zoll/Tab5) waren
+  // Dropdowns/Felder/Listenzeilen absurd breit. Deckel entspricht der
+  // Content-Breite des B4 (720er: 648px -> dort greift der Deckel nie).
+  // Nur der Inhalt - Header und Tastatur bleiben volle Kartenbreite.
+  lv_obj_set_style_max_width(settings_popup_content, 660, 0);
   lv_obj_set_flex_grow(settings_popup_content, 1);
   style_plain_container(settings_popup_content);
   lv_obj_set_style_pad_all(settings_popup_content, 0, 0);
@@ -2007,7 +2117,9 @@ static void open_settings_popup(SettingsPopupKind kind) {
   // Inhalt oben rechts.
   lv_obj_set_style_pad_top(settings_popup_content, 14, 0);
   lv_obj_set_flex_flow(settings_popup_content, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(settings_popup_content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  // Querachse CENTER fuer die schmalen Aktions-Buttons (Speichern etc.);
+  // vollbreite Kinder bleiben vollbreit.
+  lv_obj_set_flex_align(settings_popup_content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
   build_popup_content(settings_popup_kind, settings_popup_content);
 
   lv_obj_move_foreground(settings_popup_overlay);
@@ -2023,15 +2135,16 @@ static void on_settings_tile_clicked(lv_event_t* e) {
   open_settings_popup(static_cast<SettingsPopupKind>(static_cast<uint8_t>(raw)));
 }
 
+// Kachel im 3x1-Layout: links das Icon+Titel-Feld (eine Zelle), rechts eine
+// kurze, lokalisierte Beschreibung dessen, was sich dahinter verbirgt.
 static lv_obj_t* create_settings_menu_tile(lv_obj_t* parent, uint8_t col, uint8_t row,
                                            const char* icon_name, const char* title,
                                            lv_obj_t** title_label_out,
                                            lv_obj_t** summary_label_out,
-                                           SettingsPopupKind kind,
-                                           lv_obj_t** info_container_out = nullptr) {
+                                           SettingsPopupKind kind) {
   lv_obj_t* tile = lv_button_create(parent);
   lv_obj_clear_flag(tile, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_grid_cell(tile, LV_GRID_ALIGN_STRETCH, col, 2, LV_GRID_ALIGN_STRETCH, row, 1);
+  lv_obj_set_grid_cell(tile, LV_GRID_ALIGN_STRETCH, col, 3, LV_GRID_ALIGN_STRETCH, row, 1);
   style_settings_button(tile, 0x2A2A2A);
   lv_obj_set_style_radius(tile, 22, 0);
   lv_obj_set_style_border_opa(tile, LV_OPA_TRANSP, 0);
@@ -2053,25 +2166,15 @@ static lv_obj_t* create_settings_menu_tile(lv_obj_t* parent, uint8_t col, uint8_
   lv_obj_set_height(face, LV_PCT(100));
   lv_obj_set_style_pad_all(face, 0, 0);
 
+  // Icon alleine mittig im linken Feld - Titel wandert nach rechts ueber die
+  // Beschreibung (klassischer Listeneintrag: Icon | Titel + Untertext).
   lv_obj_t* icon = lv_label_create(face);
   lv_label_set_text(icon, getMdiChar(icon_name).c_str());
   if (FONT_MDI_ICONS) lv_obj_set_style_text_font(icon, FONT_MDI_ICONS, 0);
   lv_obj_set_style_text_color(icon, lv_color_white(), 0);
   lv_obj_clear_flag(icon, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_flag(icon, LV_OBJ_FLAG_EVENT_BUBBLE);
-  lv_obj_align(icon, LV_ALIGN_CENTER, 0, -20);
-
-  lv_obj_t* title_label = lv_label_create(face);
-  lv_label_set_text(title_label, title);
-  lv_label_set_long_mode(title_label, LV_LABEL_LONG_CLIP);
-  lv_obj_set_width(title_label, GRID_CELL_W - 20);
-  lv_obj_set_style_text_align(title_label, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_text_font(title_label, &ui_font_20, 0);
-  lv_obj_set_style_text_color(title_label, lv_color_white(), 0);
-  lv_obj_clear_flag(title_label, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_flag(title_label, LV_OBJ_FLAG_EVENT_BUBBLE);
-  lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 35);
-  if (title_label_out) *title_label_out = title_label;
+  lv_obj_center(icon);
 
   lv_obj_t* info = lv_obj_create(tile);
   style_plain_container(info);
@@ -2079,17 +2182,24 @@ static lv_obj_t* create_settings_menu_tile(lv_obj_t* parent, uint8_t col, uint8_
   lv_obj_add_flag(info, LV_OBJ_FLAG_EVENT_BUBBLE);
   lv_obj_set_height(info, LV_PCT(100));
   lv_obj_set_flex_grow(info, 1);
-  lv_obj_set_style_pad_hor(info, 12, 0);
+  lv_obj_set_style_pad_right(info, 16, 0);
   lv_obj_set_style_pad_ver(info, 8, 0);
   lv_obj_set_flex_flow(info, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(info, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_row(info, 4, 0);
-  if (info_container_out) *info_container_out = info;
+  lv_obj_set_style_pad_row(info, 6, 0);
+
+  lv_obj_t* title_label = lv_label_create(info);
+  lv_label_set_text(title_label, title);
+  lv_label_set_long_mode(title_label, LV_LABEL_LONG_CLIP);
+  lv_obj_set_width(title_label, LV_PCT(100));
+  lv_obj_set_style_text_font(title_label, &ui_font_28, 0);
+  lv_obj_set_style_text_color(title_label, lv_color_white(), 0);
+  if (title_label_out) *title_label_out = title_label;
 
   if (summary_label_out) {
     lv_obj_t* summary = lv_label_create(info);
     lv_label_set_text(summary, "");
-    lv_label_set_long_mode(summary, LV_LABEL_LONG_CLIP);
+    lv_label_set_long_mode(summary, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(summary, LV_PCT(100));
     lv_obj_set_style_text_align(summary, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_style_text_font(summary, &ui_font_20, 0);
@@ -2099,38 +2209,22 @@ static lv_obj_t* create_settings_menu_tile(lv_obj_t* parent, uint8_t col, uint8_
   return tile;
 }
 
+// Kacheln zeigen eine kurze, lokalisierte Beschreibung ihres Inhalts statt
+// dynamischer Statuswerte (die stehen in den jeweiligen Popups).
 static void update_settings_tile_summaries() {
-  const DeviceConfig& cfg = configManager.getConfig();
-  static char buf[128];
-
   if (settings_tile_display_summary) {
-    char sleep_buf[16];
-    if (cfg.auto_sleep_enabled) {
-      format_sleep_label(sleep_buf, sizeof(sleep_buf), cfg.auto_sleep_seconds);
-    } else {
-      snprintf(sleep_buf, sizeof(sleep_buf), "%s", tr().sleep_never);
-    }
-    // Eine Info pro Zeile mit Beschriftung statt kryptischem "51% / Nie"
-    snprintf(buf, sizeof(buf), "%s: %d%%\n%s: %s", tr().brightness_label,
-             brightness_pct_from_raw(BoardHAL::getBrightness()),
-             tr().sleep_label, sleep_buf);
-    lv_label_set_text(settings_tile_display_summary, buf);
+    lv_label_set_text(settings_tile_display_summary, tr().settings_tile_desc_display);
   }
-
+  if (settings_tile_wifi_summary) {
+    lv_label_set_text(settings_tile_wifi_summary, tr().settings_tile_desc_wifi);
+  }
   if (settings_tile_locale_summary) {
-    const char* language = (i18n::normalize_language_code(cfg.language)[0] == 'd')
-                               ? tr().language_option_german
-                               : tr().language_option_english;
-    // Nur der Stadtname - das volle "UTC+1 / UTC+2 - Berlin" wurde auf der
-    // Kachel abgeschnitten ("Deutsch / UTC+1 / U").
-    const char* tz_label = timezone_label_for_code(cfg.timezone);
-    const char* city = strstr(tz_label, " - ");
-    snprintf(buf, sizeof(buf), "%s\n%s", language, city ? city + 3 : tz_label);
-    lv_label_set_text(settings_tile_locale_summary, buf);
+    lv_label_set_text(settings_tile_locale_summary, tr().settings_tile_desc_locale);
   }
-
   if (settings_tile_firmware_summary) {
-    lv_label_set_text(settings_tile_firmware_summary, FW_VERSION);
+    static char buf[48];
+    snprintf(buf, sizeof(buf), tr().settings_tile_desc_firmware_fmt, FW_VERSION);
+    lv_label_set_text(settings_tile_firmware_summary, buf);
   }
 }
 
@@ -2142,21 +2236,11 @@ static void build_grid_track_descriptors(lv_coord_t* dsc, uint8_t count, lv_coor
   dsc[count] = LV_GRID_TEMPLATE_LAST;
 }
 
-static void next_settings_tile_cell(uint8_t& col, uint8_t& row,
-                                    uint8_t span_w,
-                                    uint8_t& out_col, uint8_t& out_row) {
-  if (span_w == 0) span_w = 1;
-  if (span_w > GRID_COLS) span_w = GRID_COLS;
-  if (col + span_w > GRID_COLS) {
-    col = 0;
-    row++;
-  }
-  out_col = col;
-  out_row = row;
-  col += span_w;
+// ========== Public API ==========
+void settings_set_wifi_reconnect_callback(wifi_reconnect_callback_t cb) {
+  g_wifi_reconnect_callback = cb;
 }
 
-// ========== Public API ==========
 void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   g_hotspot_callback = hotspot_cb;
   ap_mode_confirm_pending = false;
@@ -2212,62 +2296,33 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
 
   create_settings_back_button(tab);
 
-  static constexpr uint8_t kSettingsMenuTileSpanW = 2;
-  uint8_t settings_col = 0;
-  uint8_t settings_row = 1;
-  uint8_t tile_col = 0;
-  uint8_t tile_row = 1;
+  // Alle vier Kacheln (3 Zellen breit) vertikal untereinander, ab Zeile 0:
+  // auf dem 4-Spalten-Grid (B4) direkt rechts neben dem Back-Button, auf
+  // breiteren Grids (8-Zoll/Tab5, 7 Spalten) horizontal mittig.
+  static constexpr uint8_t kSettingsMenuTileSpanW = 3;
+  const uint8_t tile_col = (GRID_COLS <= kSettingsMenuTileSpanW + 1)
+                               ? GRID_COLS - kSettingsMenuTileSpanW
+                               : (GRID_COLS - kSettingsMenuTileSpanW) / 2;
 
-  next_settings_tile_cell(settings_col, settings_row, kSettingsMenuTileSpanW, tile_col, tile_row);
-  create_settings_menu_tile(tab, tile_col, tile_row, "monitor", tr().display_label,
+  create_settings_menu_tile(tab, tile_col, 0, "monitor", tr().display_label,
                             &settings_tile_display_title,
                             &settings_tile_display_summary,
                             SettingsPopupKind::Display);
 
-  lv_obj_t* wifi_info = nullptr;
-  next_settings_tile_cell(settings_col, settings_row, kSettingsMenuTileSpanW, tile_col, tile_row);
-  lv_obj_t* wifi_tile =
-      create_settings_menu_tile(tab, tile_col, tile_row, "wifi", tr().wifi_label,
-                                &settings_tile_wifi_title, nullptr,
-                                SettingsPopupKind::Wifi,
-                                &wifi_info);
+  create_settings_menu_tile(tab, tile_col, 1, "wifi", tr().wifi_label,
+                            &settings_tile_wifi_title,
+                            &settings_tile_wifi_summary,
+                            SettingsPopupKind::Wifi);
 
-  next_settings_tile_cell(settings_col, settings_row, kSettingsMenuTileSpanW, tile_col, tile_row);
-  create_settings_menu_tile(tab, tile_col, tile_row, "translate", tr().admin_settings_language,
+  create_settings_menu_tile(tab, tile_col, 2, "translate", tr().admin_settings_language,
                             &settings_tile_locale_title,
                             &settings_tile_locale_summary,
                             SettingsPopupKind::Localization);
 
-  next_settings_tile_cell(settings_col, settings_row, kSettingsMenuTileSpanW, tile_col, tile_row);
-  create_settings_menu_tile(tab, tile_col, tile_row, "chip", "Firmware",
+  create_settings_menu_tile(tab, tile_col, 3, "chip", "Firmware",
                             &settings_tile_firmware_title,
                             &settings_tile_firmware_summary,
                             SettingsPopupKind::Firmware);
-
-  if (wifi_tile) {
-    lv_obj_t* wifi_info_parent = wifi_info ? wifi_info : wifi_tile;
-    wifi_status_label = lv_label_create(wifi_info_parent);
-    lv_label_set_long_mode(wifi_status_label, LV_LABEL_LONG_CLIP);
-    lv_obj_set_width(wifi_status_label, LV_PCT(100));
-    lv_obj_set_style_text_align(wifi_status_label, LV_TEXT_ALIGN_LEFT, 0);
-    lv_obj_set_style_text_font(wifi_status_label, &ui_font_20, 0);
-    lv_obj_set_style_text_color(wifi_status_label, lv_color_hex(0xFF6B6B), 0);
-
-    wifi_ssid_label = lv_label_create(wifi_info_parent);
-    lv_label_set_long_mode(wifi_ssid_label, LV_LABEL_LONG_CLIP);
-    lv_obj_set_width(wifi_ssid_label, LV_PCT(100));
-    lv_obj_set_style_text_align(wifi_ssid_label, LV_TEXT_ALIGN_LEFT, 0);
-    lv_obj_set_style_text_font(wifi_ssid_label, &ui_font_20, 0);
-    lv_obj_set_style_text_color(wifi_ssid_label, lv_color_hex(0xA8A8A8), 0);
-
-    wifi_ip_label = lv_label_create(wifi_info_parent);
-    lv_label_set_long_mode(wifi_ip_label, LV_LABEL_LONG_CLIP);
-    lv_obj_set_width(wifi_ip_label, LV_PCT(100));
-    lv_obj_set_style_text_align(wifi_ip_label, LV_TEXT_ALIGN_LEFT, 0);
-    lv_obj_set_style_text_font(wifi_ip_label, &ui_font_20, 0);
-    lv_obj_set_style_text_color(wifi_ip_label, lv_color_hex(0xA8A8A8), 0);
-
-  }
 
   mains_wake_btn = nullptr;
   mains_wake_label = nullptr;
@@ -2280,58 +2335,16 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   battery_icon_label = nullptr;
   battery_percent_label = nullptr;
   update_settings_tile_summaries();
-  if (ap_mode_active) {
-    String ap_ssid = WiFi.softAPSSID();
-    settings_update_wifi_status_ap(ap_ssid.length() ? ap_ssid.c_str() : nullptr,
-                                   webConfigApPassword());
-  } else {
-    String ssid = WiFi.SSID();
-    String ip = WiFi.localIP().toString();
-    settings_update_wifi_status(WiFi.status() == WL_CONNECTED,
-                                ssid.length() ? ssid.c_str() : nullptr,
-                                ip.length() ? ip.c_str() : nullptr);
-  }
 }
 
-// Kachel-Zeilen ohne "Status:/SSID:/IP:"-Praefixe - die Werte erklaeren sich
-// selbst ("Verbunden" gruen, darunter Netzname und IP). Offline werden die
-// leeren Zeilen ganz ausgeblendet statt "---" zu zeigen.
-void settings_update_wifi_status(bool connected, const char* ssid, const char* ip) {
-  if (!wifi_status_label || !wifi_ssid_label || !wifi_ip_label) return;
-
-  if (connected) {
-    lv_label_set_text(wifi_status_label, tr().wifi_connected);
-    lv_obj_set_style_text_color(wifi_status_label, lv_color_hex(0x51CF66), 0);
-    lv_label_set_text(wifi_ssid_label, ssid ? ssid : "---");
-    lv_label_set_text(wifi_ip_label, ip ? ip : "---");
-    lv_obj_clear_flag(wifi_ssid_label, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(wifi_ip_label, LV_OBJ_FLAG_HIDDEN);
-  } else {
-    lv_label_set_text(wifi_status_label, tr().wifi_offline);
-    lv_obj_set_style_text_color(wifi_status_label, lv_color_hex(0xFF6B6B), 0);
-    lv_obj_add_flag(wifi_ssid_label, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(wifi_ip_label, LV_OBJ_FLAG_HIDDEN);
-  }
-  // Infobox im offenen WLAN-Popup lebendig halten (z.B. Auto-Reconnect
-  // nach "AP beenden" wird sofort sichtbar)
+// Die Kacheln zeigen keine Live-Statuswerte mehr (nur Beschreibungen) - die
+// Aufrufe aus dem Hauptloop halten aber die Infobox im offenen WLAN-Popup
+// aktuell (z.B. wird der Auto-Reconnect nach "AP beenden" sofort sichtbar).
+void settings_update_wifi_status(bool, const char*, const char*) {
   wifi_update_conn_status_label();
 }
 
-void settings_update_wifi_status_ap(const char* ssid, const char* password) {
-  if (!wifi_status_label || !wifi_ssid_label || !wifi_ip_label) return;
-
-  lv_obj_clear_flag(wifi_ssid_label, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_clear_flag(wifi_ip_label, LV_OBJ_FLAG_HIDDEN);
-
-  static char status_buf[96];
-  snprintf(status_buf, sizeof(status_buf), tr().wifi_status_ap_format, password ? password : "12345678");
-  lv_label_set_text(wifi_status_label, status_buf);
-  lv_obj_set_style_text_color(wifi_status_label, lv_color_hex(0xFFC04D), 0);
-
-  lv_label_set_text(wifi_ssid_label, ssid ? ssid : webConfigApSsid());
-
-  String ip_str = WiFi.softAPIP().toString();
-  lv_label_set_text(wifi_ip_label, ip_str.length() ? ip_str.c_str() : "192.168.4.1");
+void settings_update_wifi_status_ap(const char*, const char*) {
   wifi_update_conn_status_label();
 }
 
@@ -2365,7 +2378,6 @@ void settings_refresh_language() {
   if (settings_tile_locale_title) lv_label_set_text(settings_tile_locale_title, s.admin_settings_language);
   if (settings_tile_firmware_title) lv_label_set_text(settings_tile_firmware_title, "Firmware");
   if (settings_popup_title) lv_label_set_text(settings_popup_title, popup_title_for_kind(settings_popup_kind));
-  if (settings_popup_save_label) lv_label_set_text(settings_popup_save_label, s.save);
   if (display_section_label) lv_label_set_text(display_section_label, s.display_label);
   if (brightness_title_label) lv_label_set_text(brightness_title_label, s.brightness_label);
   if (wifi_section_label) lv_label_set_text(wifi_section_label, s.wifi_label);
@@ -2376,17 +2388,7 @@ void settings_refresh_language() {
 
   update_wake_button(mains_wake_label, mains_wake_sub_label, kWakeModeTouch);
   update_wake_button(battery_wake_label, battery_wake_sub_label, kWakeModeTouch);
+  // Aktualisiert auch die Infobox im ggf. offenen WLAN-Popup
   settings_update_ap_mode(ap_mode_active);
   update_settings_tile_summaries();
-
-  if (ap_mode_active) {
-    String ssid = WiFi.softAPSSID();
-    settings_update_wifi_status_ap(ssid.length() ? ssid.c_str() : nullptr, webConfigApPassword());
-  } else {
-    String ssid = WiFi.SSID();
-    String ip = WiFi.localIP().toString();
-    settings_update_wifi_status(WiFi.status() == WL_CONNECTED,
-                                ssid.length() ? ssid.c_str() : nullptr,
-                                ip.length() ? ip.c_str() : nullptr);
-  }
 }

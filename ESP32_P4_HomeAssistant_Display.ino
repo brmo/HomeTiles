@@ -193,6 +193,25 @@ static void set_hotspot_mode(bool enable) {
   hotspot_mode_change_pending = true;
 }
 
+// WLAN-Reconnect mit neuen Zugangsdaten (WLAN-Popup "Verbinden"): wie beim
+// Hotspot-Wechsel nur ein Flag setzen - die eigentliche Netzwerkarbeit laeuft
+// im Hauptloop statt im LVGL-Event-Callback.
+static bool wifi_reconnect_pending = false;
+
+static void request_wifi_reconnect() {
+  wifi_reconnect_pending = true;
+}
+
+static void apply_wifi_reconnect() {
+  esp_wifi_scan_stop();
+  if (networkManager.isMqttConnected()) networkManager.disconnectMqtt();
+  // Alte Verbindung trennen; connectWifi() liest die frisch gespeicherten
+  // Zugangsdaten aus der Config. Danach uebernimmt networkManager.update()
+  // (WebAdmin/NTP/MQTT wie bei jedem normalen Verbindungsaufbau).
+  WiFi.disconnect();
+  networkManager.connectWifi();
+}
+
 static bool init_nvs() {
   esp_err_t err = nvs_flash_init();
   if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -355,6 +374,7 @@ void setup() {
   Serial.flush();
   ui_scene_cb = mqttPublishScene;
   ui_hotspot_cb = set_hotspot_mode;
+  settings_set_wifi_reconnect_callback(request_wifi_reconnect);
   ui_build_waiter = xTaskGetCurrentTaskHandle();
   xTaskCreatePinnedToCore(build_ui_task, "buildUI", 24576, nullptr, 2, nullptr, ARDUINO_RUNNING_CORE);
   if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(30000)) == 0) {
@@ -468,6 +488,11 @@ void loop() {
   if (hotspot_mode_change_pending) {
     hotspot_mode_change_pending = false;
     apply_hotspot_mode(hotspot_mode_requested);
+  }
+
+  if (wifi_reconnect_pending) {
+    wifi_reconnect_pending = false;
+    apply_wifi_reconnect();
   }
 
   const bool ota_in_progress = webAdminOtaInProgress();

@@ -233,6 +233,16 @@ struct Strings {
   const char* wifi_connect_btn;
   const char* wifi_saved_restarting;
   const char* wifi_save_failed;
+
+  // Lokalisierung: Bildschirmtastatur-Layout (Optionstexte "Deutsch (QWERTZ)"/
+  // "English (QWERTY)" sind Eigennamen und brauchen keine Uebersetzung)
+  const char* keyboard_layout_label;
+
+  // Settings-Kacheln: Kurzbeschreibung, was sich hinter der Kachel verbirgt
+  const char* settings_tile_desc_display;
+  const char* settings_tile_desc_wifi;
+  const char* settings_tile_desc_locale;
+  const char* settings_tile_desc_firmware_fmt;  // %s = Firmware-Version
 };
 
 const Strings& strings(const char* language_code);

@@ -47,6 +47,7 @@ struct DeviceConfig {
   char timezone[CONFIG_TIMEZONE_MAX];
   uint8_t global_time_format;
   uint8_t global_date_format;
+  uint8_t keyboard_layout;  // 0=Auto (folgt Sprache), 1=Deutsch QWERTZ, 2=English QWERTY
   bool configured;  // Flag ob Konfiguration vorhanden ist
 
   // Display & Power Settings
