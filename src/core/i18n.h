@@ -243,6 +243,9 @@ struct Strings {
   const char* settings_tile_desc_wifi;
   const char* settings_tile_desc_locale;
   const char* settings_tile_desc_firmware_fmt;  // %s = Firmware-Version
+
+  // Display-Popup: Beschriftung im Rotations-Button
+  const char* display_rotate_btn_text;
 };
 
 const Strings& strings(const char* language_code);

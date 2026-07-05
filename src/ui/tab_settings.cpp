@@ -20,6 +20,7 @@
 static lv_obj_t *brightness_label = nullptr;
 static lv_obj_t *display_rotate_btn = nullptr;
 static lv_obj_t *display_rotate_label = nullptr;
+static lv_obj_t *display_rotate_text_label = nullptr;
 static lv_obj_t *display_rotate_sub_label = nullptr;
 static bool display_rotated_180 = false;
 static uint8_t display_rotation_quarters = Device::kRotationDefault;
@@ -879,6 +880,7 @@ static void reset_popup_refs() {
   brightness_title_label = nullptr;
   display_rotate_btn = nullptr;
   display_rotate_label = nullptr;
+  display_rotate_text_label = nullptr;
   display_rotate_sub_label = nullptr;
   sleep_slider = nullptr;
   sleep_time_label = nullptr;
@@ -1549,25 +1551,24 @@ static void build_display_popup(lv_obj_t* parent) {
       create_display_row_label(sleep_row, sleep_buf, 150, LV_TEXT_ALIGN_RIGHT);
   lv_obj_set_style_text_color(sleep_time_label, lv_color_white(), 0);
 
-  lv_obj_t* rotate_row = create_display_control_row(form);
-  create_display_row_label(rotate_row, "Rotation", 210);
-
-  // Button exakt in der Slider-Spalte (flex_grow + 150er-Blindspalte rechts
-  // wie die Wert-Labels) - vorher hing seine linke Kante frei in der Luft.
-  display_rotate_btn = create_popup_button(rotate_row, "", 0x2E7D32, on_display_rotate_clicked);
-  lv_obj_set_width(display_rotate_btn, 1);
-  lv_obj_set_flex_grow(display_rotate_btn, 1);
+  // Rotation als vollbreiter Button mit Icon + Beschriftung im Button
+  // (statt "Rotation"-Label links neben einem Icon-Button)
+  display_rotate_btn = create_popup_button(form, "", 0x2E7D32, on_display_rotate_clicked);
+  lv_obj_set_width(display_rotate_btn, LV_PCT(100));
   lv_obj_set_height(display_rotate_btn, 76);
+  lv_obj_set_flex_flow(display_rotate_btn, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(display_rotate_btn, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(display_rotate_btn, 14, 0);
+  // Das von create_popup_button angelegte Label wird zum Icon (Flex-Layout
+  // ueberstimmt dessen lv_obj_center)
   display_rotate_label = lv_obj_get_child(display_rotate_btn, 0);
   if (FONT_MDI_ICONS) lv_obj_set_style_text_font(display_rotate_label, FONT_MDI_ICONS, 0);
+  display_rotate_text_label = lv_label_create(display_rotate_btn);
+  lv_label_set_text(display_rotate_text_label, tr().display_rotate_btn_text);
+  lv_obj_set_style_text_font(display_rotate_text_label, &ui_font_28, 0);
+  lv_obj_set_style_text_color(display_rotate_text_label, lv_color_white(), 0);
   update_display_rotate_label();
-
-  // Blindspalte in Wert-Label-Breite: rechte Buttonkante endet dadurch exakt
-  // dort, wo auch die Slider enden
-  lv_obj_t* rotate_pad = lv_obj_create(rotate_row);
-  style_plain_container(rotate_pad);
-  lv_obj_clear_flag(rotate_pad, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_size(rotate_pad, 150, 1);
 }
 
 // Tastatur bleibt naeher am Card-Rand als das restliche Formular: statt der
@@ -1754,20 +1755,21 @@ static void build_wifi_popup(lv_obj_t* parent) {
 
 #if LV_USE_QRCODE
   wifi_ap_qr = lv_qrcode_create(info_box);
-  lv_qrcode_set_size(wifi_ap_qr, 280);
+  lv_qrcode_set_size(wifi_ap_qr, 320);
   lv_qrcode_set_dark_color(wifi_ap_qr, lv_color_black());
   lv_qrcode_set_light_color(wifi_ap_qr, lv_color_white());
   lv_qrcode_set_quiet_zone(wifi_ap_qr, true);
   lv_obj_add_flag(wifi_ap_qr, LV_OBJ_FLAG_HIDDEN);
 #endif
 
-  // Mittig, hoeher, aber nicht mehr vollbreit
+  // Volle Inhaltsbreite (Content ist auf Lesebreite gedeckelt)
   ap_mode_btn = create_popup_button(wifi_list_view, ap_mode_active ? tr().ap_disable : tr().ap_enable,
                                     ap_mode_active ? 0xC62828 : 0xFF9800,
                                     on_popup_ap_mode_clicked);
-  lv_obj_set_size(ap_mode_btn, 360, 76);
+  lv_obj_set_width(ap_mode_btn, LV_PCT(100));
+  lv_obj_set_height(ap_mode_btn, 76);
   ap_mode_btn_label = lv_obj_get_child(ap_mode_btn, 0);
-  if (ap_mode_btn_label) lv_obj_set_style_text_font(ap_mode_btn_label, &ui_font_24, 0);
+  if (ap_mode_btn_label) lv_obj_set_style_text_font(ap_mode_btn_label, &ui_font_28, 0);
 
   // ===== Eingabe-Ansicht: SSID-/Passwort-Zeilen, Verbinden-Button unten =====
   wifi_entry_view = lv_obj_create(parent);
@@ -1814,12 +1816,13 @@ static void build_wifi_popup(lv_obj_t* parent) {
   // Speichern oben rechts. Nutzt denselben Save-Dispatch wie die Tastatur-
   // Enter-Taste (on_settings_popup_save_clicked -> save_wifi_popup).
   // Direkt unter den Feldern (nicht mehr an den unteren Rand gedrueckt),
-  // kompakt und mittig wie der AP-Button.
+  // volle Inhaltsbreite wie der AP-Button.
   lv_obj_t* wifi_connect_btn = create_popup_button(wifi_entry_view, tr().wifi_connect_btn, 0x2E7D32,
                                                    on_settings_popup_save_clicked);
-  lv_obj_set_size(wifi_connect_btn, 360, 76);
+  lv_obj_set_width(wifi_connect_btn, LV_PCT(100));
+  lv_obj_set_height(wifi_connect_btn, 76);
   lv_obj_t* connect_label = lv_obj_get_child(wifi_connect_btn, 0);
-  if (connect_label) lv_obj_set_style_text_font(connect_label, &ui_font_24, 0);
+  if (connect_label) lv_obj_set_style_text_font(connect_label, &ui_font_28, 0);
 
   // Restplatz zwischen Button und Tastaturbereich
   create_flex_spacer(wifi_entry_view);
@@ -1939,14 +1942,14 @@ static void build_localization_popup(lv_obj_t* parent) {
                                                   keyboard_options.c_str(),
                                                   cfg.keyboard_layout > 2 ? 0 : cfg.keyboard_layout);
 
-  // Speichern unten, kompakt und mittig wie AP-/Verbinden-Button (das
-  // Formular darueber bekommt per flex_grow die Resthoehe; zentriert wird
-  // ueber die Querachse von settings_popup_content)
+  // Speichern unten in voller Inhaltsbreite wie AP-/Verbinden-Button (das
+  // Formular darueber bekommt per flex_grow die Resthoehe)
   lv_obj_t* save_btn = create_popup_button(parent, tr().save, 0x2E7D32,
                                            on_settings_popup_save_clicked);
-  lv_obj_set_size(save_btn, 360, 76);
+  lv_obj_set_width(save_btn, LV_PCT(100));
+  lv_obj_set_height(save_btn, 76);
   lv_obj_t* save_btn_label = lv_obj_get_child(save_btn, 0);
-  if (save_btn_label) lv_obj_set_style_text_font(save_btn_label, &ui_font_24, 0);
+  if (save_btn_label) lv_obj_set_style_text_font(save_btn_label, &ui_font_28, 0);
 }
 
 static void build_firmware_popup(lv_obj_t* parent) {
@@ -2380,6 +2383,7 @@ void settings_refresh_language() {
   if (settings_popup_title) lv_label_set_text(settings_popup_title, popup_title_for_kind(settings_popup_kind));
   if (display_section_label) lv_label_set_text(display_section_label, s.display_label);
   if (brightness_title_label) lv_label_set_text(brightness_title_label, s.brightness_label);
+  if (display_rotate_text_label) lv_label_set_text(display_rotate_text_label, s.display_rotate_btn_text);
   if (wifi_section_label) lv_label_set_text(wifi_section_label, s.wifi_label);
   if (sleep_section_label) lv_label_set_text(sleep_section_label, s.sleep_label);
   if (sleep_label) lv_label_set_text(sleep_label, s.sleep_label);

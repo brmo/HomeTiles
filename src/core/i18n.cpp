@@ -236,7 +236,9 @@ static const Strings kStringsDe = {
     "Helligkeit, Standby & Rotation",
     "Netzwerk & Access Point",
     "Sprache, Zeitzone & Tastatur",
-    "Version %s"};
+    "Version %s",
+
+    "Drehen"};
 
 static const Strings kStringsEn = {
     "en",
@@ -472,7 +474,9 @@ static const Strings kStringsEn = {
     "Brightness, standby & rotation",
     "Network & access point",
     "Language, time zone & keyboard",
-    "Version %s"};
+    "Version %s",
+
+    "Rotate"};
 
 const char* normalize_language_code(const char* language_code) {
   if (!language_code || !language_code[0]) return kStringsEn.code;
