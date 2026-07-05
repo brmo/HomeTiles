@@ -62,10 +62,8 @@ static lv_obj_t *settings_popup_save_label = nullptr;
 static lv_obj_t *settings_popup_content = nullptr;
 static lv_obj_t *settings_popup_keyboard = nullptr;
 static lv_obj_t *settings_popup_active_ta = nullptr;
-static lv_timer_t *settings_popup_content_timer = nullptr;
 static SettingsPopupKind settings_popup_kind = SettingsPopupKind::Display;
 static bool settings_popup_restart_pending = false;
-static constexpr uint32_t kSettingsPopupContentDelayMs = 24;
 
 static lv_obj_t *wifi_ssid_ta = nullptr;
 static lv_obj_t *wifi_pass_ta = nullptr;
@@ -232,12 +230,14 @@ static bool sleep_index_is_never(int32_t index) {
   return index >= static_cast<int32_t>(kSleepOptionsSecCount);
 }
 
-static void format_sleep_label_for_index(char* buf, size_t len, int32_t index) {
+static void format_sleep_popup_value_for_index(char* buf, size_t len, int32_t index) {
   if (sleep_index_is_never(index)) {
     snprintf(buf, len, "%s", tr().sleep_never);
     return;
   }
-  format_sleep_label(buf, len, sleep_seconds_from_index(index));
+  char value[16];
+  format_sleep_label(value, sizeof(value), sleep_seconds_from_index(index));
+  snprintf(buf, len, "%s %s", tr().sleep_after, value);
 }
 
 static void update_display_rotate_label() {
@@ -458,8 +458,8 @@ static void on_sleep_slider(lv_event_t *e) {
   lv_event_code_t code = lv_event_get_code(e);
   int32_t index = lv_slider_get_value(slider);
 
-  static char buf[16];
-  format_sleep_label_for_index(buf, sizeof(buf), index);
+  static char buf[32];
+  format_sleep_popup_value_for_index(buf, sizeof(buf), index);
   if (sleep_time_label) lv_label_set_text(sleep_time_label, buf);
 
   if (code == LV_EVENT_RELEASED) {
@@ -610,10 +610,22 @@ static lv_obj_t *create_slider_row(lv_obj_t *parent) {
 }
 
 static void style_settings_slider(lv_obj_t *slider) {
+  if (!slider) return;
   lv_obj_set_height(slider, kSettingsSliderHeight);
   lv_obj_set_style_width(slider, kSettingsSliderKnobSize, LV_PART_KNOB);
   lv_obj_set_style_height(slider, kSettingsSliderKnobSize, LV_PART_KNOB);
   lv_obj_set_ext_click_area(slider, kSettingsSliderClickPad);
+  lv_obj_set_style_bg_color(slider, lv_color_white(), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(slider, LV_OPA_20, LV_PART_MAIN);
+  lv_obj_set_style_radius(slider, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(slider, lv_color_white(), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_opa(slider, LV_OPA_COVER, LV_PART_INDICATOR);
+  lv_obj_set_style_radius(slider, LV_RADIUS_CIRCLE, LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(slider, lv_color_white(), LV_PART_KNOB);
+  lv_obj_set_style_bg_opa(slider, LV_OPA_COVER, LV_PART_KNOB);
+  lv_obj_set_style_radius(slider, LV_RADIUS_CIRCLE, LV_PART_KNOB);
+  lv_obj_set_style_border_width(slider, 0, LV_PART_KNOB);
+  lv_obj_clear_flag(slider, LV_OBJ_FLAG_SCROLLABLE);
 }
 
 struct SettingsTimezoneOption {
@@ -692,6 +704,12 @@ static void style_plain_container(lv_obj_t* obj) {
   lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_bg_opa(obj, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_opa(obj, LV_OPA_TRANSP, 0);
+  // border_opa=TRANSP macht die Border nur unsichtbar - LVGL zieht ihre
+  // Breite (Theme-Default) trotzdem von lv_obj_get_content_width/height ab
+  // (siehe lv_obj_get_style_space_left/right in lv_obj_style.h). Ohne dieses
+  // Nullen wird verschachtelter Content (z.B. settings_popup_content ->
+  // Spacer) unbemerkt schmaler als sein Elternobjekt.
+  lv_obj_set_style_border_width(obj, 0, 0);
   lv_obj_set_style_outline_opa(obj, LV_OPA_TRANSP, 0);
   lv_obj_set_style_shadow_opa(obj, LV_OPA_TRANSP, 0);
   lv_obj_set_style_pad_all(obj, 0, 0);
@@ -800,6 +818,35 @@ static lv_obj_t* create_form_row(lv_obj_t* parent) {
   return row;
 }
 
+static lv_obj_t* create_display_control_row(lv_obj_t* parent) {
+  lv_obj_t* row = create_form_row(parent);
+  lv_obj_set_height(row, 84);
+  lv_obj_set_style_pad_column(row, 18, 0);
+  return row;
+}
+
+static lv_obj_t* create_display_row_label(lv_obj_t* parent, const char* text,
+                                          lv_coord_t width,
+                                          lv_text_align_t align = LV_TEXT_ALIGN_LEFT) {
+  lv_obj_t* label = lv_label_create(parent);
+  lv_label_set_text(label, text);
+  lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(label, width);
+  lv_obj_set_style_text_align(label, align, 0);
+  lv_obj_set_style_text_font(label, &ui_font_20, 0);
+  lv_obj_set_style_text_color(label, lv_color_white(), 0);
+  return label;
+}
+
+static lv_obj_t* create_flex_spacer(lv_obj_t* parent) {
+  lv_obj_t* spacer = lv_obj_create(parent);
+  style_plain_container(spacer);
+  lv_obj_set_width(spacer, 1);
+  lv_obj_set_height(spacer, 1);
+  lv_obj_set_flex_grow(spacer, 1);
+  return spacer;
+}
+
 static lv_obj_t* create_field_box(lv_obj_t* parent, const char* label_text) {
   lv_obj_t* box = lv_obj_create(parent);
   style_plain_container(box);
@@ -818,16 +865,32 @@ static lv_obj_t* create_field_box(lv_obj_t* parent, const char* label_text) {
   return box;
 }
 
+// Tastatur erscheint erst, wenn ein Feld antippt wird (statt permanent unten
+// zu stehen), und wechselt fuer reine Zahlen-/IP-Felder auf LVGLs eingebautes
+// Ziffernblock-Layout statt der vollen QWERTZ-Tastatur.
 static void on_popup_textarea_focused(lv_event_t* e) {
   lv_obj_t* ta = static_cast<lv_obj_t*>(lv_event_get_target(e));
   if (!settings_popup_keyboard || !ta) return;
+  const bool numeric = lv_event_get_user_data(e) != nullptr;
+  lv_keyboard_set_mode(settings_popup_keyboard,
+                       numeric ? LV_KEYBOARD_MODE_NUMBER : LV_KEYBOARD_MODE_TEXT_LOWER);
   ui_keyboard_set_target(settings_popup_keyboard, ta, settings_popup_active_ta);
   settings_popup_active_ta = ta;
+  lv_obj_clear_flag(settings_popup_keyboard, LV_OBJ_FLAG_HIDDEN);
+}
+
+// Tippt der Nutzer ausserhalb eines Feldes (auch Checkbox/Save/X-Button:
+// per Default click-focusable), feuert LVGL hier DEFOCUSED, bevor der
+// eigentliche Klick verarbeitet wird - blendet die Tastatur also zuverlaessig
+// aus, ohne dass jeder Button das separat anstossen muesste.
+static void on_popup_textarea_defocused(lv_event_t*) {
+  if (settings_popup_keyboard) lv_obj_add_flag(settings_popup_keyboard, LV_OBJ_FLAG_HIDDEN);
 }
 
 static lv_obj_t* create_textarea_field(lv_obj_t* parent, const char* label_text,
                                        const char* value, const char* placeholder,
-                                       uint16_t max_len, bool password) {
+                                       uint16_t max_len, bool password,
+                                       bool numeric = false) {
   lv_obj_t* box = create_field_box(parent, label_text);
   lv_obj_t* ta = lv_textarea_create(box);
   lv_obj_set_width(ta, LV_PCT(100));
@@ -836,7 +899,16 @@ static lv_obj_t* create_textarea_field(lv_obj_t* parent, const char* label_text,
   lv_textarea_set_password_mode(ta, password);
   lv_textarea_set_placeholder_text(ta, placeholder ? placeholder : "");
   lv_textarea_set_text(ta, value ? value : "");
-  lv_obj_add_event_cb(ta, on_popup_textarea_focused, LV_EVENT_FOCUSED, nullptr);
+  // PRESSED zusaetzlich zu FOCUSED: FOCUSED haengt an LVGLs interner
+  // "last_pressed"-Objektverfolgung fuers Klick-Fokus-Tracking und feuert in
+  // manchen Abfolgen (z.B. Tastatur-Ausblenden-Taste, die selbst nicht
+  // click-focusable ist, direkt gefolgt von einem neuen Feld) nicht
+  // zuverlaessig. PRESSED reagiert dagegen immer sofort auf den Touch.
+  lv_obj_add_event_cb(ta, on_popup_textarea_focused, LV_EVENT_PRESSED,
+                      numeric ? reinterpret_cast<void*>(1) : nullptr);
+  lv_obj_add_event_cb(ta, on_popup_textarea_focused, LV_EVENT_FOCUSED,
+                      numeric ? reinterpret_cast<void*>(1) : nullptr);
+  lv_obj_add_event_cb(ta, on_popup_textarea_defocused, LV_EVENT_DEFOCUSED, nullptr);
   return ta;
 }
 
@@ -910,7 +982,6 @@ static void reset_popup_refs() {
   settings_popup_content = nullptr;
   settings_popup_keyboard = nullptr;
   settings_popup_active_ta = nullptr;
-  settings_popup_content_timer = nullptr;
   settings_popup_restart_pending = false;
 
   brightness_label = nullptr;
@@ -949,10 +1020,6 @@ static void reset_popup_refs() {
 
 static void close_settings_popup() {
   if (settings_popup_restart_pending) return;
-  if (settings_popup_content_timer) {
-    lv_timer_del(settings_popup_content_timer);
-    settings_popup_content_timer = nullptr;
-  }
   if (settings_popup_overlay) {
     lv_obj_del(settings_popup_overlay);
   }
@@ -1097,12 +1164,23 @@ static void on_settings_popup_save_clicked(lv_event_t*) {
   save_settings_popup();
 }
 
+static void hide_popup_keyboard() {
+  if (settings_popup_active_ta) {
+    lv_obj_remove_state(settings_popup_active_ta, LV_STATE_FOCUSED);
+    settings_popup_active_ta = nullptr;
+  }
+  if (settings_popup_keyboard) lv_obj_add_flag(settings_popup_keyboard, LV_OBJ_FLAG_HIDDEN);
+}
+
 static void on_popup_keyboard_event(lv_event_t* e) {
   const lv_event_code_t code = lv_event_get_code(e);
   if (code == LV_EVENT_READY) {
     save_settings_popup();
   } else if (code == LV_EVENT_CANCEL) {
-    close_settings_popup();
+    // Die kleine Tastatur-Taste unten links soll nur die Tastatur einklappen,
+    // nicht das ganze Popup schliessen (frueher: close_settings_popup(), was
+    // ungesicherte Aenderungen verworfen hat).
+    hide_popup_keyboard();
   }
 }
 
@@ -1123,52 +1201,32 @@ static void build_display_popup(lv_obj_t* parent) {
   lv_obj_t* form = create_form_area(parent);
   lv_obj_clear_flag(form, LV_OBJ_FLAG_SCROLLABLE);
 
-  lv_obj_t* brightness_box = lv_obj_create(form);
-  style_plain_container(brightness_box);
-  lv_obj_set_width(brightness_box, LV_PCT(100));
-  lv_obj_set_height(brightness_box, 112);
-  lv_obj_set_flex_flow(brightness_box, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(brightness_box, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_t* brightness_row = create_display_control_row(form);
+  brightness_title_label =
+      create_display_row_label(brightness_row, tr().brightness_label, 160);
 
-  brightness_title_label = lv_label_create(brightness_box);
-  lv_label_set_text(brightness_title_label, tr().brightness_label);
-  lv_obj_set_style_text_font(brightness_title_label, &ui_font_20, 0);
-  lv_obj_set_style_text_color(brightness_title_label, lv_color_white(), 0);
-
-  lv_obj_t* brightness_slider = lv_slider_create(brightness_box);
+  lv_obj_t* brightness_slider = lv_slider_create(brightness_row);
   style_settings_slider(brightness_slider);
-  lv_obj_set_width(brightness_slider, LV_PCT(78));
+  lv_obj_set_width(brightness_slider, 1);
+  lv_obj_set_flex_grow(brightness_slider, 1);
   lv_slider_set_range(brightness_slider, kSettingsBrightnessPctMin, kSettingsBrightnessPctMax);
   const int current_brightness_pct = brightness_pct_from_raw(BoardHAL::getBrightness());
   lv_slider_set_value(brightness_slider, current_brightness_pct, LV_ANIM_OFF);
   lv_obj_add_event_cb(brightness_slider, on_brightness, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(brightness_slider, on_brightness, LV_EVENT_RELEASED, nullptr);
 
-  brightness_label = lv_label_create(brightness_box);
   static char bright_buf[16];
   snprintf(bright_buf, sizeof(bright_buf), "%d%%", current_brightness_pct);
-  lv_label_set_text(brightness_label, bright_buf);
-  lv_obj_set_style_text_font(brightness_label, &ui_font_20, 0);
-  lv_obj_set_style_text_color(brightness_label, lv_color_white(), 0);
+  brightness_label =
+      create_display_row_label(brightness_row, bright_buf, 112, LV_TEXT_ALIGN_RIGHT);
 
-  lv_obj_t* control_row = create_form_row(form);
-  lv_obj_set_height(control_row, 120);
+  lv_obj_t* sleep_row = create_display_control_row(form);
+  sleep_label = create_display_row_label(sleep_row, tr().sleep_label, 160);
 
-  lv_obj_t* sleep_box = lv_obj_create(control_row);
-  style_plain_container(sleep_box);
-  lv_obj_set_height(sleep_box, 112);
-  lv_obj_set_flex_grow(sleep_box, 1);
-  lv_obj_set_flex_flow(sleep_box, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(sleep_box, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-  sleep_label = lv_label_create(sleep_box);
-  lv_label_set_text(sleep_label, tr().sleep_after);
-  lv_obj_set_style_text_font(sleep_label, &ui_font_20, 0);
-  lv_obj_set_style_text_color(sleep_label, lv_color_white(), 0);
-
-  sleep_slider = lv_slider_create(sleep_box);
+  sleep_slider = lv_slider_create(sleep_row);
   style_settings_slider(sleep_slider);
-  lv_obj_set_width(sleep_slider, LV_PCT(82));
+  lv_obj_set_width(sleep_slider, 1);
+  lv_obj_set_flex_grow(sleep_slider, 1);
   lv_slider_set_range(sleep_slider, 0, sleep_slider_max_index());
   int32_t sleep_index = cfg.auto_sleep_enabled
                             ? sleep_index_from_seconds(cfg.auto_sleep_seconds)
@@ -1177,32 +1235,71 @@ static void build_display_popup(lv_obj_t* parent) {
   lv_obj_add_event_cb(sleep_slider, on_sleep_slider, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(sleep_slider, on_sleep_slider, LV_EVENT_RELEASED, nullptr);
 
-  sleep_time_label = lv_label_create(sleep_box);
-  static char sleep_buf[16];
-  format_sleep_label_for_index(sleep_buf, sizeof(sleep_buf), sleep_index);
-  lv_label_set_text(sleep_time_label, sleep_buf);
-  lv_obj_set_style_text_font(sleep_time_label, &ui_font_20, 0);
-  lv_obj_set_style_text_color(sleep_time_label, lv_color_white(), 0);
+  static char sleep_buf[32];
+  format_sleep_popup_value_for_index(sleep_buf, sizeof(sleep_buf), sleep_index);
+  sleep_time_label =
+      create_display_row_label(sleep_row, sleep_buf, 128, LV_TEXT_ALIGN_RIGHT);
 
-  lv_obj_t* rotate_box = lv_obj_create(control_row);
-  style_plain_container(rotate_box);
-  lv_obj_set_height(rotate_box, 112);
-  lv_obj_set_flex_grow(rotate_box, 1);
-  lv_obj_set_flex_flow(rotate_box, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(rotate_box, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_row(rotate_box, 8, 0);
+  lv_obj_t* rotate_row = create_display_control_row(form);
+  create_display_row_label(rotate_row, "Rotation", 160);
+  create_flex_spacer(rotate_row);
 
-  lv_obj_t* rotate_title = lv_label_create(rotate_box);
-  lv_label_set_text(rotate_title, "Rotation");
-  lv_obj_set_style_text_font(rotate_title, &ui_font_20, 0);
-  lv_obj_set_style_text_color(rotate_title, lv_color_white(), 0);
-
-  display_rotate_btn = create_popup_button(rotate_box, "", 0x3B82F6, on_display_rotate_clicked);
-  lv_obj_set_width(display_rotate_btn, LV_PCT(72));
+  display_rotate_btn = create_popup_button(rotate_row, "", 0x2E7D32, on_display_rotate_clicked);
+  lv_obj_set_width(display_rotate_btn, LV_PCT(42));
   lv_obj_set_height(display_rotate_btn, 64);
   display_rotate_label = lv_obj_get_child(display_rotate_btn, 0);
   if (FONT_MDI_ICONS) lv_obj_set_style_text_font(display_rotate_label, FONT_MDI_ICONS, 0);
   update_display_rotate_label();
+}
+
+// Tastatur bleibt naeher am Card-Rand als das restliche Formular: statt der
+// normalen 20px Card-Padding nur kKeyboardInset auf allen drei Seiten
+// (links/rechts/unten). Dafuer wird sie direkt in settings_popup_card
+// (ignore-layout, wie Save-/Close-Button) statt in settings_popup_content
+// gehaengt - andernfalls wuerde settings_popup_content (pad=0) das Ausbrechen
+// aus seiner eigenen Box abschneiden.
+static constexpr int kPopupCardPad = 20;  // muss zu settings_popup_card passen
+static constexpr int kKeyboardInset = 11;
+static constexpr int kKeyboardBleed = kPopupCardPad - kKeyboardInset;
+
+// content_parent = settings_popup_content (Breite/Hoehe zur Laufzeit
+// gemessen statt aus SCREEN_WIDTH/HEIGHT hochgerechnet - Letzteres passte
+// nicht zur tatsaechlichen Kartenbreite und liess rechts keinen Rand).
+static void create_popup_keyboard(lv_obj_t* content_parent) {
+  // Platzhalter in der normalen Flex-Spalte (wie "form" ein Kind von
+  // content_parent): sorgt dafuer, dass "form" wie vorher schrumpft und die
+  // unteren Feld-/Button-Reihen nicht von der jetzt frei positionierten
+  // Tastatur verdeckt werden.
+  lv_obj_t* spacer = lv_obj_create(content_parent);
+  style_plain_container(spacer);
+  lv_obj_clear_flag(spacer, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_width(spacer, LV_PCT(100));
+  lv_obj_set_height(spacer, LV_PCT(42));
+  lv_obj_update_layout(content_parent);
+  const int reserved_w = lv_obj_get_width(spacer);
+  const int reserved_h = lv_obj_get_height(spacer);
+
+  lv_obj_t* kb = ui_keyboard_create(settings_popup_card);
+  lv_obj_add_flag(kb, LV_OBJ_FLAG_IGNORE_LAYOUT);
+  const int kb_w = reserved_w + (kKeyboardBleed * 2);
+  const int kb_h = reserved_h + kKeyboardBleed;
+  lv_obj_set_size(kb, kb_w, kb_h);
+  // LVGL rechnet bei lv_obj_align IMMER das Padding des Elternobjekts (card)
+  // mit ein - auch bei TOP_LEFT (lv_obj_move_to addiert space_left/top des
+  // Parents unconditional). BOTTOM_LEFT mit negativem Offset ist also der
+  // richtige Weg: card_pad(20) + (-bleed) = Inset links, card_pad(20) - bleed
+  // via ph-h+bleed = Inset unten, Breite (siehe reserved_w) sorgt fuer Inset
+  // rechts - vorausgesetzt style_plain_container nullt auch border_width
+  // (nicht nur border_opa), sonst zaehlt LVGLs unsichtbare Theme-Border
+  // zusaetzlich zum Padding und macht reserved_w schmaler als die Card
+  // tatsaechlich ist (siehe style_plain_container-Kommentar).
+  lv_obj_align(kb, LV_ALIGN_BOTTOM_LEFT, -kKeyboardBleed, kKeyboardBleed);
+  lv_obj_add_event_cb(kb, on_popup_keyboard_event, LV_EVENT_ALL, nullptr);
+
+  // Erst sichtbar, sobald ein Feld fokussiert wird (on_popup_textarea_focused) -
+  // kein Auto-Fokus eines Feldes beim Oeffnen mehr.
+  lv_obj_add_flag(kb, LV_OBJ_FLAG_HIDDEN);
+  settings_popup_keyboard = kb;
 }
 
 static void build_wifi_popup(lv_obj_t* parent) {
@@ -1234,15 +1331,15 @@ static void build_wifi_popup(lv_obj_t* parent) {
 
   lv_obj_t* row2 = create_form_row(form);
   wifi_ip_ta = create_textarea_field(row2, tr().wifi_static_ip_label, cfg.wifi_static_ip,
-                                     "192.168.1.50", CONFIG_IP_ADDR_MAX - 1, false);
+                                     "192.168.1.50", CONFIG_IP_ADDR_MAX - 1, false, true);
   wifi_gateway_ta = create_textarea_field(row2, tr().wifi_gateway_label, cfg.wifi_gateway,
-                                          "192.168.1.1", CONFIG_IP_ADDR_MAX - 1, false);
+                                          "192.168.1.1", CONFIG_IP_ADDR_MAX - 1, false, true);
 
   lv_obj_t* row3 = create_form_row(form);
   wifi_subnet_ta = create_textarea_field(row3, tr().wifi_subnet_label, cfg.wifi_subnet,
-                                         "255.255.255.0", CONFIG_IP_ADDR_MAX - 1, false);
+                                         "255.255.255.0", CONFIG_IP_ADDR_MAX - 1, false, true);
   wifi_dns_ta = create_textarea_field(row3, tr().wifi_dns_label, cfg.wifi_dns,
-                                      "192.168.1.1", CONFIG_IP_ADDR_MAX - 1, false);
+                                      "192.168.1.1", CONFIG_IP_ADDR_MAX - 1, false, true);
 
   lv_obj_t* hint = lv_label_create(form);
   lv_label_set_text(hint, tr().wifi_dhcp_hint);
@@ -1256,12 +1353,7 @@ static void build_wifi_popup(lv_obj_t* parent) {
   ap_mode_btn_label = lv_obj_get_child(ap_mode_btn, 0);
   update_wifi_static_enabled();
 
-  settings_popup_keyboard = ui_keyboard_create(parent);
-  lv_obj_set_width(settings_popup_keyboard, LV_PCT(100));
-  lv_obj_set_height(settings_popup_keyboard, LV_PCT(42));
-  lv_obj_add_event_cb(settings_popup_keyboard, on_popup_keyboard_event, LV_EVENT_ALL, nullptr);
-  ui_keyboard_set_target(settings_popup_keyboard, wifi_ssid_ta, nullptr);
-  settings_popup_active_ta = wifi_ssid_ta;
+  create_popup_keyboard(parent);
 }
 
 static void build_mqtt_popup(lv_obj_t* parent) {
@@ -1275,7 +1367,7 @@ static void build_mqtt_popup(lv_obj_t* parent) {
   mqtt_host_ta = create_textarea_field(row1, tr().mqtt_host, cfg.mqtt_host,
                                        "192.168.1.10", CONFIG_MQTT_HOST_MAX - 1, false);
   mqtt_port_ta = create_textarea_field(row1, tr().mqtt_port, port_buf,
-                                       "1883", 5, false);
+                                       "1883", 5, false, true);
 
   lv_obj_t* row2 = create_form_row(form);
   mqtt_user_ta = create_textarea_field(row2, tr().mqtt_username, cfg.mqtt_user,
@@ -1307,12 +1399,7 @@ static void build_mqtt_popup(lv_obj_t* parent) {
   lv_obj_set_style_text_font(hint, &ui_font_16, 0);
   lv_obj_set_style_text_color(hint, lv_color_hex(0xA0A0A0), 0);
 
-  settings_popup_keyboard = ui_keyboard_create(parent);
-  lv_obj_set_width(settings_popup_keyboard, LV_PCT(100));
-  lv_obj_set_height(settings_popup_keyboard, LV_PCT(42));
-  lv_obj_add_event_cb(settings_popup_keyboard, on_popup_keyboard_event, LV_EVENT_ALL, nullptr);
-  ui_keyboard_set_target(settings_popup_keyboard, mqtt_host_ta, nullptr);
-  settings_popup_active_ta = mqtt_host_ta;
+  create_popup_keyboard(parent);
 }
 
 static String format_options_text(bool time_format) {
@@ -1433,16 +1520,6 @@ static void build_popup_content(SettingsPopupKind kind, lv_obj_t* parent) {
   }
 }
 
-static void on_settings_popup_content_timer(lv_timer_t* t) {
-  if (settings_popup_content_timer == t) {
-    settings_popup_content_timer = nullptr;
-  }
-  lv_timer_del(t);
-  if (!settings_popup_overlay || !settings_popup_content) return;
-  build_popup_content(settings_popup_kind, settings_popup_content);
-  lv_obj_invalidate(settings_popup_content);
-}
-
 static bool popup_kind_has_save(SettingsPopupKind kind) {
   return kind == SettingsPopupKind::Wifi ||
          kind == SettingsPopupKind::Mqtt ||
@@ -1460,6 +1537,7 @@ static void open_settings_popup(SettingsPopupKind kind) {
   lv_obj_set_style_bg_color(settings_popup_overlay, lv_color_hex(0x0A0A0A), 0);
   lv_obj_set_style_bg_opa(settings_popup_overlay, LV_OPA_COVER, 0);
   lv_obj_set_style_border_opa(settings_popup_overlay, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(settings_popup_overlay, 0, 0);
   lv_obj_set_style_radius(settings_popup_overlay, 0, 0);
   lv_obj_set_style_pad_all(settings_popup_overlay, Device::kGridPad, 0);
   lv_obj_clear_flag(settings_popup_overlay, LV_OBJ_FLAG_SCROLLABLE);
@@ -1471,8 +1549,9 @@ static void open_settings_popup(SettingsPopupKind kind) {
   lv_obj_center(settings_popup_card);
   lv_obj_set_style_bg_color(settings_popup_card, lv_color_hex(0x2A2A2A), 0);
   lv_obj_set_style_border_opa(settings_popup_card, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(settings_popup_card, 0, 0);
   lv_obj_set_style_radius(settings_popup_card, 22, 0);
-  lv_obj_set_style_clip_corner(settings_popup_card, true, 0);
+  lv_obj_set_style_clip_corner(settings_popup_card, false, 0);
   lv_obj_set_style_pad_all(settings_popup_card, 20, 0);
   lv_obj_set_style_pad_row(settings_popup_card, 8, 0);
   lv_obj_clear_flag(settings_popup_card, LV_OBJ_FLAG_SCROLLABLE);
@@ -1480,43 +1559,38 @@ static void open_settings_popup(SettingsPopupKind kind) {
 
   lv_obj_t* header = lv_obj_create(settings_popup_card);
   lv_obj_set_width(header, LV_PCT(100));
-  lv_obj_set_height(header, 96);
+  // Hoehe so gewaehlt, dass LEFT_MID-Kinder (Icon/Titel) exakt auf der
+  // Mittelachse der Speichern/X-Buttons landen (beide Buttons zentrieren
+  // sich bei content-y=42; siehe deren align-Offsets weiter unten).
+  lv_obj_set_height(header, 84);
   style_plain_container(header);
-  lv_obj_set_style_pad_column(header, 14, 0);
-  lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-  lv_obj_t* title_group = lv_obj_create(header);
-  style_plain_container(title_group);
-  lv_obj_set_height(title_group, LV_PCT(100));
-  lv_obj_set_flex_grow(title_group, 1);
-  lv_obj_set_flex_flow(title_group, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(title_group, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_column(title_group, 16, 0);
-
-  lv_obj_t* header_icon = lv_label_create(title_group);
+  lv_obj_t* header_icon = lv_label_create(header);
   lv_label_set_text(header_icon, getMdiChar(popup_icon_for_kind(kind)).c_str());
   if (FONT_MDI_ICONS) lv_obj_set_style_text_font(header_icon, FONT_MDI_ICONS, 0);
   lv_obj_set_style_text_color(header_icon, lv_color_white(), 0);
+  lv_obj_align(header_icon, LV_ALIGN_LEFT_MID, 8, 0);
 
-  settings_popup_title = lv_label_create(title_group);
+  settings_popup_title = lv_label_create(header);
   lv_label_set_text(settings_popup_title, popup_title_for_kind(kind));
   lv_label_set_long_mode(settings_popup_title, LV_LABEL_LONG_DOT);
-  lv_obj_set_width(settings_popup_title, LV_PCT(72));
-  lv_obj_set_flex_grow(settings_popup_title, 1);
+  lv_obj_set_width(settings_popup_title, popup_kind_has_save(kind) ? LV_PCT(46) : LV_PCT(62));
   lv_obj_set_style_text_font(settings_popup_title, &ui_font_24, 0);
   lv_obj_set_style_text_color(settings_popup_title, lv_color_white(), 0);
+  lv_obj_align(settings_popup_title, LV_ALIGN_LEFT_MID, 78, 0);
 
-  settings_popup_save_btn = create_popup_button(header, tr().save, 0x2E7D32,
+  settings_popup_save_btn = create_popup_button(settings_popup_card, tr().save, 0x2E7D32,
                                                 on_settings_popup_save_clicked);
+  lv_obj_add_flag(settings_popup_save_btn, LV_OBJ_FLAG_IGNORE_LAYOUT);
   lv_obj_set_width(settings_popup_save_btn, 150);
-  lv_obj_set_style_margin_right(settings_popup_save_btn, 18, 0);
+  lv_obj_align(settings_popup_save_btn, LV_ALIGN_TOP_RIGHT, -108, 10);
   settings_popup_save_label = lv_obj_get_child(settings_popup_save_btn, 0);
   if (!popup_kind_has_save(kind)) {
     lv_obj_add_flag(settings_popup_save_btn, LV_OBJ_FLAG_HIDDEN);
   }
 
-  lv_obj_t* close_btn = lv_button_create(header);
+  lv_obj_t* close_btn = lv_button_create(settings_popup_card);
+  lv_obj_add_flag(close_btn, LV_OBJ_FLAG_IGNORE_LAYOUT);
   lv_obj_set_size(close_btn, 96, 96);
   lv_obj_set_style_bg_opa(close_btn, LV_OPA_TRANSP, 0);
   lv_obj_set_style_bg_color(close_btn, lv_color_hex(0xFFFFFF), LV_STATE_PRESSED);
@@ -1526,6 +1600,7 @@ static void open_settings_popup(SettingsPopupKind kind) {
   lv_obj_set_style_shadow_opa(close_btn, LV_OPA_TRANSP, 0);
   lv_obj_set_style_radius(close_btn, 16, 0);
   lv_obj_set_style_pad_all(close_btn, 0, 0);
+  lv_obj_align(close_btn, LV_ALIGN_TOP_RIGHT, 6, -6);
   lv_obj_set_ext_click_area(close_btn, 8);
   lv_obj_add_flag(close_btn, LV_OBJ_FLAG_PRESS_LOCK);
   lv_obj_clear_flag(close_btn, LV_OBJ_FLAG_SCROLLABLE);
@@ -1544,18 +1619,13 @@ static void open_settings_popup(SettingsPopupKind kind) {
   lv_obj_set_style_pad_row(settings_popup_content, 8, 0);
   lv_obj_set_flex_flow(settings_popup_content, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(settings_popup_content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  build_popup_content(settings_popup_kind, settings_popup_content);
 
   lv_obj_move_foreground(settings_popup_overlay);
   lv_obj_invalidate(settings_popup_overlay);
 
   if (lv_display_t* disp = lv_display_get_default()) {
     lv_refr_now(disp);
-  }
-
-  settings_popup_content_timer =
-      lv_timer_create(on_settings_popup_content_timer, kSettingsPopupContentDelayMs, nullptr);
-  if (settings_popup_content_timer) {
-    lv_timer_set_repeat_count(settings_popup_content_timer, 1);
   }
 }
 
@@ -1940,7 +2010,7 @@ void settings_refresh_language() {
   if (brightness_title_label) lv_label_set_text(brightness_title_label, s.brightness_label);
   if (wifi_section_label) lv_label_set_text(wifi_section_label, s.wifi_label);
   if (sleep_section_label) lv_label_set_text(sleep_section_label, s.sleep_label);
-  if (sleep_label) lv_label_set_text(sleep_label, s.sleep_after);
+  if (sleep_label) lv_label_set_text(sleep_label, s.sleep_label);
   if (ap_yes_label_obj) lv_label_set_text(ap_yes_label_obj, s.yes);
   if (ap_no_label_obj) lv_label_set_text(ap_no_label_obj, s.no);
   if (wifi_choose_btn_label) lv_label_set_text(wifi_choose_btn_label, s.wifi_choose_btn);

@@ -11,7 +11,10 @@ namespace {
 // lv_keyboard.c) plus oe/ae/ue/ss, weil deutsche SSIDs/Passwoerter/Hostnamen
 // sie brauchen koennen. Struktur (Zeilen, Tastengewichte, Sondertasten-Flags)
 // 1:1 vom LVGL-Original uebernommen, nur die drei Buchstabenreihen erweitert.
-// LV_BUTTONMATRIX_CTRL_POPOVER zeigt die Taste beim Druecken vergroessert an,
+// LV_BUTTONMATRIX_CTRL_POPOVER zeigt die Taste beim Druecken vergroessert an -
+// wirkt aber erst zusammen mit lv_keyboard_set_popovers(kb, true) (siehe
+// ui_keyboard_create): lv_keyboard_update_ctrl_map() entfernt das Flag sonst
+// wieder aus jeder per lv_keyboard_set_map() gesetzten Control-Map.
 // LV_BUTTONMATRIX_CTRL_CHECKED = dauerhaft dunklerer "Sondertasten"-Look
 // (siehe kb_draw_task_cb). Muessen als static ueberleben, da die Buttonmatrix
 // nur den Pointer haelt statt den Text zu kopieren.
@@ -194,6 +197,11 @@ lv_obj_t* ui_keyboard_create(lv_obj_t* parent) {
 
   lv_obj_add_flag(kb, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
   lv_obj_add_event_cb(kb, kb_draw_task_cb, LV_EVENT_DRAW_TASK_ADDED, nullptr);
+
+  // Vergroesserte Tasten-Vorschau beim Halten (wie Android/iOS); die
+  // POPOVER-Flags in den Control-Maps oben werden ohne diesen Aufruf von
+  // LVGL wieder entfernt.
+  lv_keyboard_set_popovers(kb, true);
   return kb;
 }
 
