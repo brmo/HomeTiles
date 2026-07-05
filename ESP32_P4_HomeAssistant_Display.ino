@@ -7,6 +7,7 @@
 #include <freertos/idf_additions.h>  // xTaskCreatePinnedToCoreWithCaps (PSRAM-Task-Stack)
 #include <nvs_flash.h>
 #include <esp_err.h>
+#include <esp_wifi.h>  // esp_wifi_scan_stop (AP-Wechsel bricht laufenden Scan ab)
 #include <esp_ota_ops.h>
 #include <esp_heap_caps.h>
 
@@ -148,6 +149,8 @@ static void apply_hotspot_mode(bool enable) {
     if (networkManager.isMqttConnected()) networkManager.disconnectMqtt();
     if (webAdminServer.isRunning()) webAdminServer.stop();
     settings_update_ap_mode(true);
+    // Laufender Async-Scan (WLAN-Popup) wuerde den Moduswechsel stoeren
+    esp_wifi_scan_stop();
     if (webConfigServer.start()) {
       ap_mode_started_at = millis();
       ap_mode_disable_block_until = ap_mode_started_at + 1500;
@@ -177,6 +180,9 @@ static void apply_hotspot_mode(bool enable) {
   settings_update_ap_mode(false);
   if (configManager.isConfigured()) {
     if (WiFi.status() != WL_CONNECTED) {
+      // WiFi.begin() laeuft ins Leere, solange noch ein Scan aktiv ist -
+      // genau deshalb verband sich das Geraet nach "AP beenden" nicht mehr.
+      esp_wifi_scan_stop();
       networkManager.connectWifi();
     }
   }

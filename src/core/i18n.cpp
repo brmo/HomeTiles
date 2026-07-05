@@ -62,7 +62,7 @@ static const Strings kStringsDe = {
     "Verbunden",
     "Getrennt",
     "Offline",
-    "Status: AP (PW: %s)",
+    "AP aktiv (PW: %s)",
     "WLAN",
     "SSID",
     "IP",
@@ -219,17 +219,15 @@ static const Strings kStringsDe = {
     "Update erfolgreich installiert. Das Gerät startet jetzt neu.",
     "Firmware-Update fehlgeschlagen",
 
-    // WLAN-Auswahl direkt am Geraet (wifi_setup_popup)
-    "WLAN wählen",
+    // WLAN-Auswahl direkt am Geraet (Settings-Popup, siehe tab_settings.cpp)
     "Suche Netzwerke...",
     "Keine Netzwerke gefunden",
     "Neu suchen",
-    "Manuell eingeben...",
+    "Manuell",
     "offen",
     "Passwort für %s",
-    "Verbinden",
     "Zurück",
-    "Passwort anzeigen",
+    "Verbinden",
     "Gespeichert – Gerät startet neu...",
     "Speichern fehlgeschlagen"};
 
@@ -293,7 +291,7 @@ static const Strings kStringsEn = {
     "Connected",
     "Disconnected",
     "Offline",
-    "Status: AP (PW: %s)",
+    "AP active (PW: %s)",
     "WiFi",
     "SSID",
     "IP",
@@ -450,17 +448,15 @@ static const Strings kStringsEn = {
     "Update installed successfully. The device is restarting now.",
     "Firmware update failed",
 
-    // On-device WiFi selection (wifi_setup_popup)
-    "Choose WiFi",
+    // On-device WiFi selection (Settings popup, see tab_settings.cpp)
     "Scanning for networks...",
     "No networks found",
     "Scan again",
-    "Enter manually...",
+    "Manual",
     "open",
     "Password for %s",
-    "Connect",
     "Back",
-    "Show password",
+    "Connect",
     "Saved - device is restarting...",
     "Saving failed"};
 

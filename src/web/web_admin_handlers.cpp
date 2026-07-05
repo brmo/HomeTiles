@@ -1174,7 +1174,6 @@ void WebAdminServer::handleSaveMQTT() {
   if (configManager.save(cfg)) {
     settings_refresh_language();
     uiManager.scheduleNtpSync(0);
-    settings_show_mqtt_warning(!configManager.hasMqttConfig());
     // Reload grids im Loop (nicht im Web-Handler)
     tiles_request_reload_all();
     server.sendHeader("Location", "/");

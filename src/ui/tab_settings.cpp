@@ -16,7 +16,6 @@
 #include "src/types/clock/clock_format.h"
 #include "src/web/web_config.h"
 #include "src/ui/ui_keyboard.h"
-#include "src/ui/wifi_setup_popup.h"
 
 static lv_obj_t *brightness_label = nullptr;
 static lv_obj_t *display_rotate_btn = nullptr;
@@ -39,7 +38,6 @@ static hotspot_callback_t g_hotspot_callback = nullptr;
 enum class SettingsPopupKind : uint8_t {
   Display,
   Wifi,
-  Mqtt,
   Localization,
   Firmware,
 };
@@ -47,8 +45,6 @@ enum class SettingsPopupKind : uint8_t {
 static lv_obj_t *settings_tile_display_title = nullptr;
 static lv_obj_t *settings_tile_display_summary = nullptr;
 static lv_obj_t *settings_tile_wifi_title = nullptr;
-static lv_obj_t *settings_tile_mqtt_title = nullptr;
-static lv_obj_t *settings_tile_mqtt_summary = nullptr;
 static lv_obj_t *settings_tile_locale_title = nullptr;
 static lv_obj_t *settings_tile_locale_summary = nullptr;
 static lv_obj_t *settings_tile_firmware_title = nullptr;
@@ -62,26 +58,35 @@ static lv_obj_t *settings_popup_save_label = nullptr;
 static lv_obj_t *settings_popup_content = nullptr;
 static lv_obj_t *settings_popup_keyboard = nullptr;
 static lv_obj_t *settings_popup_active_ta = nullptr;
+// Icon-Label im X-Button oben rechts: wird in der WLAN-Eingabe-Ansicht zum
+// Zurueck-Pfeil umfunktioniert (siehe on_settings_popup_close_clicked).
+static lv_obj_t *settings_popup_close_icon = nullptr;
+// Platzhalter, der in der Content-Spalte den Bereich der frei positionierten
+// Tastatur reserviert - wird in der WLAN-Listen-Ansicht ausgeblendet, damit
+// die Netzwerkliste die volle Hoehe nutzen kann.
+static lv_obj_t *settings_popup_kb_spacer = nullptr;
 static SettingsPopupKind settings_popup_kind = SettingsPopupKind::Display;
 static bool settings_popup_restart_pending = false;
 
 static lv_obj_t *wifi_ssid_ta = nullptr;
 static lv_obj_t *wifi_pass_ta = nullptr;
-static lv_obj_t *wifi_static_cb = nullptr;
-static lv_obj_t *wifi_ip_ta = nullptr;
-static lv_obj_t *wifi_gateway_ta = nullptr;
-static lv_obj_t *wifi_subnet_ta = nullptr;
-static lv_obj_t *wifi_dns_ta = nullptr;
-static lv_obj_t *wifi_show_pass_cb = nullptr;
-
-static lv_obj_t *mqtt_host_ta = nullptr;
-static lv_obj_t *mqtt_port_ta = nullptr;
-static lv_obj_t *mqtt_user_ta = nullptr;
-static lv_obj_t *mqtt_pass_ta = nullptr;
-static lv_obj_t *mqtt_client_id_ta = nullptr;
-static lv_obj_t *mqtt_base_ta = nullptr;
-static lv_obj_t *mqtt_ha_prefix_ta = nullptr;
-static lv_obj_t *mqtt_show_pass_cb = nullptr;
+static lv_obj_t *wifi_pass_eye_icon = nullptr;
+static lv_obj_t *wifi_list_view = nullptr;
+static lv_obj_t *wifi_entry_view = nullptr;
+static lv_obj_t *wifi_conn_status_label = nullptr;
+static lv_obj_t *wifi_scan_status_label = nullptr;
+static lv_obj_t *wifi_list_container = nullptr;
+static lv_obj_t *wifi_manual_row = nullptr;
+static lv_obj_t *wifi_manual_gap = nullptr;
+static lv_obj_t *wifi_ap_qr = nullptr;
+static lv_timer_t *wifi_scan_timer = nullptr;
+struct WifiScanEntry { char ssid[33]; int16_t rssi; bool open; };
+static WifiScanEntry wifi_scan_results[24];
+static size_t wifi_scan_result_count = 0;
+static char wifi_selected_ssid[33] = {};
+static bool wifi_selected_open = false;
+static bool wifi_manual_mode = false;
+static char wifi_known_fallback_ssid[33] = {};
 
 static lv_obj_t *locale_language_dd = nullptr;
 static lv_obj_t *locale_timezone_dd = nullptr;
@@ -98,8 +103,6 @@ static lv_obj_t *wifi_ssid_label = nullptr;
 static lv_obj_t *wifi_ip_label = nullptr;
 static lv_obj_t *ap_mode_btn = nullptr;
 static lv_obj_t *ap_mode_btn_label = nullptr;
-static lv_obj_t *wifi_choose_btn = nullptr;
-static lv_obj_t *wifi_choose_btn_label = nullptr;
 static lv_obj_t *ap_confirm_row = nullptr;
 static lv_obj_t *ap_confirm_yes_btn = nullptr;
 static lv_obj_t *ap_confirm_no_btn = nullptr;
@@ -154,6 +157,9 @@ void settings_update_ap_mode(bool running);
 void settings_refresh_language();
 static void update_settings_tile_summaries();
 static void open_settings_popup(SettingsPopupKind kind);
+static void wifi_stop_scan_timer();
+static void wifi_show_list_view();
+static void wifi_update_conn_status_label();
 
 static void style_settings_button(lv_obj_t *btn, uint32_t base_color) {
   if (!btn) return;
@@ -293,18 +299,6 @@ static void update_wake_button(lv_obj_t *main_label, lv_obj_t *sub_label, uint8_
   if (sub_label) {
     lv_label_set_text(sub_label, tr().no_imu_hint);
   }
-}
-
-static void format_status_line(char* buf, size_t len, const char* value) {
-  snprintf(buf, len, "Status: %s", value ? value : "---");
-}
-
-static void format_ssid_line(char* buf, size_t len, const char* value) {
-  snprintf(buf, len, "%s: %s", tr().ssid_label, value ? value : "---");
-}
-
-static void format_ip_line(char* buf, size_t len, const char* value) {
-  snprintf(buf, len, "%s: %s", tr().ip_label, value ? value : "---");
 }
 
 void settings_sync_display_rotation(bool rotated) {
@@ -525,11 +519,6 @@ static void on_confirm_yes_clicked(lv_event_t *e) {
 static void on_confirm_no_clicked(lv_event_t *e) {
   ap_mode_click_block_until = millis() + 400;
   hide_ap_confirm_row();
-}
-
-static void on_wifi_choose_clicked(lv_event_t *e) {
-  (void)e;
-  wifi_setup_popup_open();
 }
 
 static void on_ap_mode_clicked(lv_event_t *e) {
@@ -782,7 +771,7 @@ static lv_obj_t* create_popup_button(lv_obj_t* parent, const char* text, uint32_
   lv_obj_set_style_border_opa(btn, LV_OPA_TRANSP, 0);
   lv_obj_set_style_outline_opa(btn, LV_OPA_TRANSP, 0);
   lv_obj_set_style_shadow_opa(btn, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_radius(btn, 14, 0);
+  lv_obj_set_style_radius(btn, 20, 0);
   lv_obj_set_style_pad_all(btn, 0, 0);
   if (cb) lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* label = lv_label_create(btn);
@@ -879,37 +868,21 @@ static void on_popup_textarea_focused(lv_event_t* e) {
   lv_obj_clear_flag(settings_popup_keyboard, LV_OBJ_FLAG_HIDDEN);
 }
 
+// In der WLAN-Eingabe-Ansicht ist die Tastatur fester Bestandteil des Screens
+// (der Verbinden-Button sitzt direkt darueber) - dort darf sie weder ueber die
+// Einklapp-Taste noch durch Tippen neben ein Feld verschwinden.
+static bool wifi_keyboard_locked() {
+  return settings_popup_kind == SettingsPopupKind::Wifi && wifi_entry_view &&
+         !lv_obj_has_flag(wifi_entry_view, LV_OBJ_FLAG_HIDDEN);
+}
+
 // Tippt der Nutzer ausserhalb eines Feldes (auch Checkbox/Save/X-Button:
 // per Default click-focusable), feuert LVGL hier DEFOCUSED, bevor der
 // eigentliche Klick verarbeitet wird - blendet die Tastatur also zuverlaessig
 // aus, ohne dass jeder Button das separat anstossen muesste.
 static void on_popup_textarea_defocused(lv_event_t*) {
+  if (wifi_keyboard_locked()) return;
   if (settings_popup_keyboard) lv_obj_add_flag(settings_popup_keyboard, LV_OBJ_FLAG_HIDDEN);
-}
-
-static lv_obj_t* create_textarea_field(lv_obj_t* parent, const char* label_text,
-                                       const char* value, const char* placeholder,
-                                       uint16_t max_len, bool password,
-                                       bool numeric = false) {
-  lv_obj_t* box = create_field_box(parent, label_text);
-  lv_obj_t* ta = lv_textarea_create(box);
-  lv_obj_set_width(ta, LV_PCT(100));
-  style_popup_textarea(ta);
-  lv_textarea_set_max_length(ta, max_len);
-  lv_textarea_set_password_mode(ta, password);
-  lv_textarea_set_placeholder_text(ta, placeholder ? placeholder : "");
-  lv_textarea_set_text(ta, value ? value : "");
-  // PRESSED zusaetzlich zu FOCUSED: FOCUSED haengt an LVGLs interner
-  // "last_pressed"-Objektverfolgung fuers Klick-Fokus-Tracking und feuert in
-  // manchen Abfolgen (z.B. Tastatur-Ausblenden-Taste, die selbst nicht
-  // click-focusable ist, direkt gefolgt von einem neuen Feld) nicht
-  // zuverlaessig. PRESSED reagiert dagegen immer sofort auf den Touch.
-  lv_obj_add_event_cb(ta, on_popup_textarea_focused, LV_EVENT_PRESSED,
-                      numeric ? reinterpret_cast<void*>(1) : nullptr);
-  lv_obj_add_event_cb(ta, on_popup_textarea_focused, LV_EVENT_FOCUSED,
-                      numeric ? reinterpret_cast<void*>(1) : nullptr);
-  lv_obj_add_event_cb(ta, on_popup_textarea_defocused, LV_EVENT_DEFOCUSED, nullptr);
-  return ta;
 }
 
 static lv_obj_t* create_dropdown_field(lv_obj_t* parent, const char* label_text,
@@ -926,54 +899,6 @@ static lv_obj_t* create_dropdown_field(lv_obj_t* parent, const char* label_text,
   return dd;
 }
 
-static void set_obj_disabled(lv_obj_t* obj, bool disabled) {
-  if (!obj) return;
-  if (disabled) {
-    lv_obj_add_state(obj, LV_STATE_DISABLED);
-  } else {
-    lv_obj_remove_state(obj, LV_STATE_DISABLED);
-  }
-}
-
-static void update_wifi_static_enabled() {
-  const bool enabled = wifi_static_cb && lv_obj_has_state(wifi_static_cb, LV_STATE_CHECKED);
-  set_obj_disabled(wifi_ip_ta, !enabled);
-  set_obj_disabled(wifi_gateway_ta, !enabled);
-  set_obj_disabled(wifi_subnet_ta, !enabled);
-  set_obj_disabled(wifi_dns_ta, !enabled);
-}
-
-static void on_wifi_static_toggled(lv_event_t*) {
-  update_wifi_static_enabled();
-}
-
-static void on_wifi_show_pass_toggled(lv_event_t*) {
-  if (!wifi_pass_ta || !wifi_show_pass_cb) return;
-  lv_textarea_set_password_mode(wifi_pass_ta,
-                                !lv_obj_has_state(wifi_show_pass_cb, LV_STATE_CHECKED));
-}
-
-static void on_mqtt_show_pass_toggled(lv_event_t*) {
-  if (!mqtt_pass_ta || !mqtt_show_pass_cb) return;
-  lv_textarea_set_password_mode(mqtt_pass_ta,
-                                !lv_obj_has_state(mqtt_show_pass_cb, LV_STATE_CHECKED));
-}
-
-static void copy_textarea(char* dst, size_t dst_size, lv_obj_t* ta, bool trim_value) {
-  if (!dst || dst_size == 0) return;
-  String value = ta ? String(lv_textarea_get_text(ta)) : String("");
-  if (trim_value) value.trim();
-  strncpy(dst, value.c_str(), dst_size - 1);
-  dst[dst_size - 1] = '\0';
-}
-
-static void trim_trailing_slashes(String& value) {
-  value.trim();
-  while (value.endsWith("/")) {
-    value.remove(value.length() - 1);
-  }
-}
-
 static void reset_popup_refs() {
   settings_popup_card = nullptr;
   settings_popup_title = nullptr;
@@ -982,6 +907,8 @@ static void reset_popup_refs() {
   settings_popup_content = nullptr;
   settings_popup_keyboard = nullptr;
   settings_popup_active_ta = nullptr;
+  settings_popup_close_icon = nullptr;
+  settings_popup_kb_spacer = nullptr;
   settings_popup_restart_pending = false;
 
   brightness_label = nullptr;
@@ -996,21 +923,16 @@ static void reset_popup_refs() {
 
   wifi_ssid_ta = nullptr;
   wifi_pass_ta = nullptr;
-  wifi_static_cb = nullptr;
-  wifi_ip_ta = nullptr;
-  wifi_gateway_ta = nullptr;
-  wifi_subnet_ta = nullptr;
-  wifi_dns_ta = nullptr;
-  wifi_show_pass_cb = nullptr;
-
-  mqtt_host_ta = nullptr;
-  mqtt_port_ta = nullptr;
-  mqtt_user_ta = nullptr;
-  mqtt_pass_ta = nullptr;
-  mqtt_client_id_ta = nullptr;
-  mqtt_base_ta = nullptr;
-  mqtt_ha_prefix_ta = nullptr;
-  mqtt_show_pass_cb = nullptr;
+  wifi_pass_eye_icon = nullptr;
+  wifi_list_view = nullptr;
+  wifi_entry_view = nullptr;
+  wifi_conn_status_label = nullptr;
+  wifi_scan_status_label = nullptr;
+  wifi_list_container = nullptr;
+  wifi_manual_row = nullptr;
+  wifi_manual_gap = nullptr;
+  wifi_ap_qr = nullptr;
+  wifi_manual_mode = false;
 
   locale_language_dd = nullptr;
   locale_timezone_dd = nullptr;
@@ -1020,6 +942,8 @@ static void reset_popup_refs() {
 
 static void close_settings_popup() {
   if (settings_popup_restart_pending) return;
+  wifi_stop_scan_timer();
+  WiFi.scanDelete();
   if (settings_popup_overlay) {
     lv_obj_del(settings_popup_overlay);
   }
@@ -1028,6 +952,15 @@ static void close_settings_popup() {
 }
 
 static void on_settings_popup_close_clicked(lv_event_t*) {
+  if (settings_popup_restart_pending) return;
+  // In der WLAN-Eingabe-Ansicht ist der Kopf-Button ein Zurueck-Pfeil (Icon
+  // wird in wifi_show_entry_view getauscht) und fuehrt zur Liste zurueck -
+  // erst von dort schliesst er das Popup wirklich.
+  if (settings_popup_kind == SettingsPopupKind::Wifi && wifi_entry_view &&
+      !lv_obj_has_flag(wifi_entry_view, LV_OBJ_FLAG_HIDDEN)) {
+    wifi_show_list_view();
+    return;
+  }
   close_settings_popup();
 }
 
@@ -1049,28 +982,412 @@ static void mark_popup_restarting() {
   lv_timer_set_repeat_count(t, 1);
 }
 
-static void save_wifi_popup() {
-  String ssid_text = wifi_ssid_ta ? String(lv_textarea_get_text(wifi_ssid_ta)) : String("");
-  ssid_text.trim();
-  if (!ssid_text.length()) return;
+// WLAN-Liste/Eingabe-Statemachine, portiert aus dem vormals unverdrahteten
+// wifi_setup_popup.cpp (Scan/Liste/Verbinden-Logik unveraendert uebernommen),
+// aber an die bereits gefixte Tastatur (create_popup_keyboard) gehaengt statt
+// eine zweite, eigene Tastatur-Instanz mit eigenen (ungefixten) Raendern zu
+// bauen.
+static void wifi_show_entry_view(bool manual, const char* ssid, bool open_network);
+static void wifi_show_list_view();
+
+static void wifi_stop_scan_timer() {
+  if (wifi_scan_timer) {
+    lv_timer_del(wifi_scan_timer);
+    wifi_scan_timer = nullptr;
+  }
+}
+
+// "Suche Netzwerke..." erscheint NUR, solange die Liste komplett leer ist
+// (allererster Scan ohne bekanntes Netz) - sobald Zeilen stehen, laeuft jeder
+// weitere Scan unsichtbar im Hintergrund, statt permanent einen Ladehinweis
+// einzublenden. Der Container wird dabei nie vorab geleert (siehe
+// wifi_on_scan_timer), damit die Liste nicht kurz leer aufblitzt.
+static bool wifi_list_is_empty() {
+  return !wifi_list_container || lv_obj_get_child_count(wifi_list_container) == 0;
+}
+
+static void wifi_show_scanning_state() {
+  if (!wifi_scan_status_label) return;
+  if (wifi_list_is_empty()) {
+    lv_label_set_text(wifi_scan_status_label, tr().wifi_scan_searching);
+    lv_obj_clear_flag(wifi_scan_status_label, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(wifi_scan_status_label, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
+static void wifi_show_scan_finished_state() {
+  if (!wifi_scan_status_label) return;
+  if (wifi_list_is_empty()) {
+    lv_label_set_text(wifi_scan_status_label, tr().wifi_scan_none);
+    lv_obj_clear_flag(wifi_scan_status_label, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(wifi_scan_status_label, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
+static void on_wifi_manual_clicked(lv_event_t*) {
+  wifi_show_entry_view(true, nullptr, false);
+}
+
+static void on_wifi_network_row_clicked(lv_event_t* e) {
+  const size_t index = reinterpret_cast<uintptr_t>(lv_event_get_user_data(e));
+  if (index >= wifi_scan_result_count) return;
+  wifi_show_entry_view(false, wifi_scan_results[index].ssid, wifi_scan_results[index].open);
+}
+
+static void on_wifi_known_row_clicked(lv_event_t*) {
+  wifi_show_entry_view(false, wifi_known_fallback_ssid, false);
+}
+
+static lv_obj_t* wifi_create_row(lv_obj_t* parent, const char* name_text, bool show_check,
+                                 bool show_lock) {
+  lv_obj_t* row = lv_button_create(parent);
+  lv_obj_set_width(row, LV_PCT(100));
+  lv_obj_set_height(row, 72);
+  style_settings_button(row, 0x3A3A3A);
+  lv_obj_set_style_border_opa(row, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_outline_opa(row, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_shadow_opa(row, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_radius(row, 20, 0);
+  lv_obj_set_style_pad_hor(row, 20, 0);
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(row, 12, 0);
+
+  if (show_check) {
+    lv_obj_t* check = lv_label_create(row);
+    lv_label_set_text(check, getMdiChar("check").c_str());
+    if (FONT_MDI_ICONS) lv_obj_set_style_text_font(check, FONT_MDI_ICONS, 0);
+    lv_obj_set_style_text_color(check, lv_color_hex(0x51CF66), 0);
+  }
+
+  lv_obj_t* name = lv_label_create(row);
+  lv_label_set_text(name, name_text);
+  lv_obj_set_style_text_font(name, &ui_font_24, 0);
+  lv_obj_set_style_text_color(name, lv_color_white(), 0);
+  lv_obj_set_flex_grow(name, 1);
+  lv_label_set_long_mode(name, LV_LABEL_LONG_CLIP);
+
+  if (show_lock) {
+    lv_obj_t* lock = lv_label_create(row);
+    lv_label_set_text(lock, getMdiChar("lock").c_str());
+    if (FONT_MDI_ICONS) lv_obj_set_style_text_font(lock, FONT_MDI_ICONS, 0);
+    lv_obj_set_style_text_color(lock, lv_color_hex(0x888888), 0);
+  }
+  return row;
+}
+
+// Bekanntes/verbundenes Netz wird IMMER angezeigt, auch bevor/ohne dass ein
+// Scan es findet (versteckte SSIDs tauchen bei WiFi.scanNetworks() per
+// Default gar nicht erst auf) - sonst verschwindet ein gerade manuell
+// verbundenes Netz aus der Liste, sobald der naechste Scan durchlaeuft.
+static void wifi_populate_list() {
+  if (!wifi_list_container) return;
+  lv_obj_clean(wifi_list_container);
+
+  const bool sta_connected = !ap_mode_active && WiFi.status() == WL_CONNECTED;
+  const String current_ssid = sta_connected ? WiFi.SSID()
+                                            : String(configManager.getConfig().wifi_ssid);
+
+  bool current_in_results = false;
+  for (size_t i = 0; i < wifi_scan_result_count; ++i) {
+    const bool is_current = current_ssid.length() && current_ssid == wifi_scan_results[i].ssid;
+    if (is_current) current_in_results = true;
+    lv_obj_t* row = wifi_create_row(wifi_list_container, wifi_scan_results[i].ssid,
+                                    is_current && sta_connected, !wifi_scan_results[i].open);
+    lv_obj_add_event_cb(row, on_wifi_network_row_clicked, LV_EVENT_CLICKED,
+                        reinterpret_cast<void*>(static_cast<uintptr_t>(i)));
+  }
+
+  if (current_ssid.length() && !current_in_results) {
+    strncpy(wifi_known_fallback_ssid, current_ssid.c_str(), sizeof(wifi_known_fallback_ssid) - 1);
+    wifi_known_fallback_ssid[sizeof(wifi_known_fallback_ssid) - 1] = '\0';
+    lv_obj_t* row = wifi_create_row(wifi_list_container, wifi_known_fallback_ssid,
+                                    sta_connected, true);
+    lv_obj_add_event_cb(row, on_wifi_known_row_clicked, LV_EVENT_CLICKED, nullptr);
+  }
+}
+
+static void wifi_on_scan_timer(lv_timer_t*) {
+  int16_t n = WiFi.scanComplete();
+  if (n == WIFI_SCAN_RUNNING) return;
+  wifi_stop_scan_timer();
+
+  wifi_scan_result_count = 0;
+  for (int16_t i = 0; i < n && wifi_scan_result_count < 24; ++i) {
+    String ssid = WiFi.SSID(i);
+    if (!ssid.length()) continue;
+    const int16_t rssi = static_cast<int16_t>(WiFi.RSSI(i));
+    const bool open = (WiFi.encryptionType(i) == WIFI_AUTH_OPEN);
+
+    bool duplicate = false;
+    for (size_t k = 0; k < wifi_scan_result_count; ++k) {
+      if (strcmp(wifi_scan_results[k].ssid, ssid.c_str()) == 0) {
+        duplicate = true;
+        if (rssi > wifi_scan_results[k].rssi) {
+          wifi_scan_results[k].rssi = rssi;
+          wifi_scan_results[k].open = open;
+        }
+        break;
+      }
+    }
+    if (duplicate) continue;
+
+    WifiScanEntry& entry = wifi_scan_results[wifi_scan_result_count++];
+    strncpy(entry.ssid, ssid.c_str(), sizeof(entry.ssid) - 1);
+    entry.ssid[sizeof(entry.ssid) - 1] = '\0';
+    entry.rssi = rssi;
+    entry.open = open;
+  }
+  WiFi.scanDelete();
+
+  // Nach Signalstaerke sortieren
+  for (size_t i = 1; i < wifi_scan_result_count; ++i) {
+    WifiScanEntry key = wifi_scan_results[i];
+    size_t j = i;
+    while (j > 0 && wifi_scan_results[j - 1].rssi < key.rssi) {
+      wifi_scan_results[j] = wifi_scan_results[j - 1];
+      --j;
+    }
+    wifi_scan_results[j] = key;
+  }
+
+  wifi_populate_list();
+  wifi_show_scan_finished_state();
+}
+
+// Alte Ergebnisse bleiben absichtlich stehen (siehe wifi_show_scanning_state) -
+// nur der Zaehler wird NICHT vorab genullt, damit die Liste bis zum
+// naechsten fertigen Scan nicht kurz leer aufblitzt.
+static void wifi_start_scan() {
+  wifi_stop_scan_timer();
+  // Erst die Liste fuellen (bekanntes Netz erscheint sofort), dann
+  // entscheiden, ob der "Suche..."-Hinweis ueberhaupt noetig ist.
+  wifi_populate_list();
+  // Kein Scan im AP-Modus: WiFi.scanNetworks() schaltet STA dazu und ein
+  // noch laufender Scan laesst spaeter WiFi.begin()/den Portal-Betrieb ins
+  // Leere laufen (deshalb verband sich das Geraet nach "AP beenden" nicht
+  // mehr automatisch).
+  if (ap_mode_active) {
+    wifi_show_scan_finished_state();
+    return;
+  }
+  wifi_show_scanning_state();
+  WiFi.scanDelete();
+  const int16_t r = WiFi.scanNetworks(/*async=*/true);
+  if (r == WIFI_SCAN_FAILED) {
+    wifi_show_scan_finished_state();
+    return;
+  }
+  wifi_scan_timer = lv_timer_create(wifi_on_scan_timer, 500, nullptr);
+}
+
+static void wifi_update_conn_status_label() {
+  if (!wifi_conn_status_label) return;
+  static char buf[96];
+
+  // Im AP-Modus sind Scan und Netzwerkliste nutzlos (Scans sind waehrend des
+  // Portal-Betriebs abgeschaltet, siehe wifi_start_scan) - die Liste weicht
+  // der grossen Infobox mit Zugangsdaten + QR-Code.
+  const bool ap = ap_mode_active;
+  if (wifi_list_container) {
+    if (ap) lv_obj_add_flag(wifi_list_container, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_clear_flag(wifi_list_container, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (wifi_manual_gap) {
+    if (ap) lv_obj_add_flag(wifi_manual_gap, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_clear_flag(wifi_manual_gap, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (wifi_manual_row) {
+    if (ap) lv_obj_add_flag(wifi_manual_row, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_clear_flag(wifi_manual_row, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (ap && wifi_scan_status_label) lv_obj_add_flag(wifi_scan_status_label, LV_OBJ_FLAG_HIDDEN);
+
+  if (ap) {
+    static char ap_status[64];
+    snprintf(ap_status, sizeof(ap_status), tr().wifi_status_ap_format, webConfigApPassword());
+    // Direkt nach dem Einschalten liefert softAPIP() noch "0.0.0.0" -
+    // dann die AP-Standard-IP anzeigen statt Muell.
+    String ap_ip = WiFi.softAPIP().toString();
+    const bool ip_valid = ap_ip.length() && ap_ip != "0.0.0.0";
+    snprintf(buf, sizeof(buf), "%s\n%s: %s - %s: %s", ap_status,
+             tr().ssid_label, webConfigApSsid(),
+             tr().ip_label, ip_valid ? ap_ip.c_str() : "192.168.4.1");
+    lv_label_set_text(wifi_conn_status_label, buf);
+    lv_obj_set_style_text_color(wifi_conn_status_label, lv_color_hex(0xFFC04D), 0);
+#if LV_USE_QRCODE
+    if (wifi_ap_qr) {
+      // Handy-Kameras verbinden sich damit direkt mit dem Hotspot
+      static char qr_buf[128];
+      snprintf(qr_buf, sizeof(qr_buf), "WIFI:T:WPA;S:%s;P:%s;;",
+               webConfigApSsid(), webConfigApPassword());
+      lv_qrcode_update(wifi_ap_qr, qr_buf, strlen(qr_buf));
+      lv_obj_clear_flag(wifi_ap_qr, LV_OBJ_FLAG_HIDDEN);
+    }
+#endif
+    return;
+  }
+
+#if LV_USE_QRCODE
+  if (wifi_ap_qr) lv_obj_add_flag(wifi_ap_qr, LV_OBJ_FLAG_HIDDEN);
+#endif
+  if (WiFi.status() == WL_CONNECTED) {
+    String ssid = WiFi.SSID();
+    String ip = WiFi.localIP().toString();
+    snprintf(buf, sizeof(buf), "%s: %s (%s)", tr().wifi_connected,
+             ssid.length() ? ssid.c_str() : "---", ip.c_str());
+    lv_label_set_text(wifi_conn_status_label, buf);
+    lv_obj_set_style_text_color(wifi_conn_status_label, lv_color_hex(0x51CF66), 0);
+  } else {
+    lv_label_set_text(wifi_conn_status_label, tr().wifi_offline);
+    lv_obj_set_style_text_color(wifi_conn_status_label, lv_color_hex(0xFF6B6B), 0);
+  }
+}
+
+// Jeder Aufruf (Erstoeffnen wie auch "Zurueck" aus der Eingabe-Ansicht)
+// stoesst einen frischen Scan an - ersetzt den frueheren separaten
+// Rescan-Icon-Button, den der Nutzer als unnoetigen Ballast empfand.
+static void wifi_show_list_view() {
+  if (wifi_list_view) lv_obj_clear_flag(wifi_list_view, LV_OBJ_FLAG_HIDDEN);
+  if (wifi_entry_view) lv_obj_add_flag(wifi_entry_view, LV_OBJ_FLAG_HIDDEN);
+  if (settings_popup_keyboard) lv_obj_add_flag(settings_popup_keyboard, LV_OBJ_FLAG_HIDDEN);
+  // Ohne Tastatur braucht die Liste den reservierten Bereich nicht -
+  // ausgeblendet nutzt sie die volle Popup-Hoehe.
+  if (settings_popup_kb_spacer) lv_obj_add_flag(settings_popup_kb_spacer, LV_OBJ_FLAG_HIDDEN);
+  if (settings_popup_close_icon) {
+    lv_label_set_text(settings_popup_close_icon, getMdiChar("window-close").c_str());
+  }
+  settings_popup_active_ta = nullptr;
+  wifi_update_conn_status_label();
+  wifi_start_scan();
+}
+
+static void wifi_show_entry_view(bool manual, const char* ssid, bool open_network) {
+  wifi_manual_mode = manual;
+  wifi_selected_open = open_network;
+  if (ssid) {
+    strncpy(wifi_selected_ssid, ssid, sizeof(wifi_selected_ssid) - 1);
+    wifi_selected_ssid[sizeof(wifi_selected_ssid) - 1] = '\0';
+  } else {
+    wifi_selected_ssid[0] = '\0';
+  }
+  const bool hide_password = !manual && open_network;
+
+  // Einheitliches Layout: das SSID-Feld ist IMMER sichtbar. Aus der Liste
+  // kommend ist es vorbefuellt und nicht antippbar (nur bei "Manuell"
+  // editierbar) - dezente Farben signalisieren den Nur-Lese-Zustand.
+  if (wifi_ssid_ta) {
+    lv_textarea_set_text(wifi_ssid_ta, manual ? "" : wifi_selected_ssid);
+    if (manual) {
+      lv_obj_add_flag(wifi_ssid_ta, LV_OBJ_FLAG_CLICKABLE);
+      lv_obj_set_style_text_color(wifi_ssid_ta, lv_color_white(), 0);
+      lv_obj_set_style_bg_color(wifi_ssid_ta, lv_color_hex(0x1E1E1E), 0);
+    } else {
+      lv_obj_clear_flag(wifi_ssid_ta, LV_OBJ_FLAG_CLICKABLE);
+      lv_obj_set_style_text_color(wifi_ssid_ta, lv_color_hex(0xB8B8B8), 0);
+      lv_obj_set_style_bg_color(wifi_ssid_ta, lv_color_hex(0x2A2A2A), 0);
+    }
+  }
+
+  if (wifi_pass_ta) {
+    // Bereits gespeichertes Passwort vorausfuellen, wenn das angetippte Netz
+    // das aktuell konfigurierte ist - sonst wirkt das Feld beim erneuten
+    // Oeffnen des eigenen Netzes so, als waere gar kein Passwort hinterlegt.
+    const DeviceConfig& known_cfg = configManager.getConfig();
+    const bool is_known_ssid = !manual && wifi_selected_ssid[0] &&
+                              strcmp(wifi_selected_ssid, known_cfg.wifi_ssid) == 0;
+    lv_textarea_set_text(wifi_pass_ta, is_known_ssid ? known_cfg.wifi_pass : "");
+    lv_textarea_set_password_mode(wifi_pass_ta, true);
+    if (wifi_pass_eye_icon) lv_label_set_text(wifi_pass_eye_icon, getMdiChar("eye").c_str());
+    lv_obj_t* pass_box = lv_obj_get_parent(wifi_pass_ta);
+    if (pass_box) {
+      if (hide_password) lv_obj_add_flag(pass_box, LV_OBJ_FLAG_HIDDEN);
+      else lv_obj_clear_flag(pass_box, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+
+  if (wifi_list_view) lv_obj_add_flag(wifi_list_view, LV_OBJ_FLAG_HIDDEN);
+  if (wifi_entry_view) lv_obj_clear_flag(wifi_entry_view, LV_OBJ_FLAG_HIDDEN);
+
+  // Kopf-Button wird zum Zurueck-Pfeil (statt eines eigenen Zurueck-Links im
+  // Body) - Klick-Logik siehe on_settings_popup_close_clicked.
+  if (settings_popup_close_icon) {
+    lv_label_set_text(settings_popup_close_icon, getMdiChar("arrow-left").c_str());
+  }
+
+  // Anders als bei jedem anderen Popup-Feld wird die Tastatur hier sofort
+  // gezeigt statt erst beim Antippen eines Feldes - dieser Screen dient fast
+  // ausschliesslich der Texteingabe. Der Layout-Platzhalter wandert synchron
+  // mit, damit der Verbinden-Button nicht unter der Tastatur landet.
+  if (settings_popup_keyboard) {
+    if (hide_password) {
+      lv_obj_add_flag(settings_popup_keyboard, LV_OBJ_FLAG_HIDDEN);
+      if (settings_popup_kb_spacer) lv_obj_add_flag(settings_popup_kb_spacer, LV_OBJ_FLAG_HIDDEN);
+      settings_popup_active_ta = nullptr;
+    } else {
+      lv_keyboard_set_mode(settings_popup_keyboard, LV_KEYBOARD_MODE_TEXT_LOWER);
+      lv_obj_t* first = manual ? wifi_ssid_ta : wifi_pass_ta;
+      lv_obj_t* second = manual ? wifi_pass_ta : wifi_ssid_ta;
+      ui_keyboard_set_target(settings_popup_keyboard, first, second);
+      settings_popup_active_ta = first;
+      if (settings_popup_kb_spacer) lv_obj_clear_flag(settings_popup_kb_spacer, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_clear_flag(settings_popup_keyboard, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+}
+
+static void on_wifi_pass_eye_clicked(lv_event_t* e) {
+  lv_obj_t* icon = static_cast<lv_obj_t*>(lv_event_get_target(e));
+  lv_obj_t* ta = icon ? lv_obj_get_parent(icon) : nullptr;
+  if (!ta) return;
+  const bool currently_masked = lv_textarea_get_password_mode(ta);
+  lv_textarea_set_password_mode(ta, !currently_masked);
+  lv_label_set_text(icon, getMdiChar(currently_masked ? "eye-off" : "eye").c_str());
+}
+
+static void wifi_do_connect() {
+  if (settings_popup_restart_pending) return;
+  const char* ssid = wifi_manual_mode && wifi_ssid_ta ? lv_textarea_get_text(wifi_ssid_ta)
+                                                      : wifi_selected_ssid;
+  const char* pass = wifi_pass_ta ? lv_textarea_get_text(wifi_pass_ta) : "";
+  if (!ssid || !ssid[0]) return;
+  // Gesichertes Netz ohne Passwort: nicht speichern (wuerde nach dem
+  // Neustart nur in einer toten Verbindung enden)
+  if (!wifi_manual_mode && !wifi_selected_open && (!pass || !pass[0])) return;
+
+  // Unveraenderte Zugangsdaten: kein unnoetiges Speichern+Neustarten.
+  // Aus dem AP-Modus heraus reicht "AP aus" - der Hauptloop verbindet dann
+  // automatisch neu (apply_hotspot_mode).
+  const DeviceConfig& cur = configManager.getConfig();
+  if (strcmp(cur.wifi_ssid, ssid) == 0 && strcmp(cur.wifi_pass, pass ? pass : "") == 0) {
+    if (ap_mode_active) {
+      wifi_stop_scan_timer();
+      WiFi.scanDelete();
+      if (g_hotspot_callback) g_hotspot_callback(false);
+      close_settings_popup();
+      return;
+    }
+    if (WiFi.status() == WL_CONNECTED) {
+      close_settings_popup();
+      return;
+    }
+    // offline mit denselben Daten: unten regulaer speichern + neu starten
+  }
 
   DeviceConfig cfg = configManager.getConfig();
-  strncpy(cfg.wifi_ssid, ssid_text.c_str(), sizeof(cfg.wifi_ssid) - 1);
-  cfg.wifi_ssid[sizeof(cfg.wifi_ssid) - 1] = '\0';
-  copy_textarea(cfg.wifi_pass, sizeof(cfg.wifi_pass), wifi_pass_ta, false);
-  const bool use_static =
-      wifi_static_cb && lv_obj_has_state(wifi_static_cb, LV_STATE_CHECKED);
-  if (use_static) {
-    copy_textarea(cfg.wifi_static_ip, sizeof(cfg.wifi_static_ip), wifi_ip_ta, true);
-    copy_textarea(cfg.wifi_gateway, sizeof(cfg.wifi_gateway), wifi_gateway_ta, true);
-    copy_textarea(cfg.wifi_subnet, sizeof(cfg.wifi_subnet), wifi_subnet_ta, true);
-    copy_textarea(cfg.wifi_dns, sizeof(cfg.wifi_dns), wifi_dns_ta, true);
-  } else {
-    cfg.wifi_static_ip[0] = '\0';
-    cfg.wifi_gateway[0] = '\0';
-    cfg.wifi_subnet[0] = '\0';
-    cfg.wifi_dns[0] = '\0';
-  }
+  strncpy(cfg.wifi_ssid, ssid, CONFIG_WIFI_SSID_MAX - 1);
+  cfg.wifi_ssid[CONFIG_WIFI_SSID_MAX - 1] = '\0';
+  strncpy(cfg.wifi_pass, pass ? pass : "", CONFIG_WIFI_PASS_MAX - 1);
+  cfg.wifi_pass[CONFIG_WIFI_PASS_MAX - 1] = '\0';
+  // Netzwechsel setzt auf DHCP zurueck, damit eine alte statische IP das
+  // Geraet im neuen Netz nicht aussperrt (statische IP gibt's nur noch im
+  // Web-Admin).
+  cfg.wifi_static_ip[0] = '\0';
+  cfg.wifi_gateway[0] = '\0';
+  cfg.wifi_subnet[0] = '\0';
+  cfg.wifi_dns[0] = '\0';
 
   if (!configManager.save(cfg)) {
     if (settings_popup_title) lv_label_set_text(settings_popup_title, tr().wifi_save_failed);
@@ -1079,41 +1396,13 @@ static void save_wifi_popup() {
   mark_popup_restarting();
 }
 
-static void save_mqtt_popup() {
-  DeviceConfig cfg = configManager.getConfig();
-  copy_textarea(cfg.mqtt_host, sizeof(cfg.mqtt_host), mqtt_host_ta, true);
-
-  String port_text = mqtt_port_ta ? String(lv_textarea_get_text(mqtt_port_ta)) : String("");
-  port_text.trim();
-  int port = port_text.length() ? port_text.toInt() : 1883;
-  if (port <= 0 || port > 65535) port = 1883;
-  cfg.mqtt_port = static_cast<uint16_t>(port);
-
-  copy_textarea(cfg.mqtt_user, sizeof(cfg.mqtt_user), mqtt_user_ta, true);
-  copy_textarea(cfg.mqtt_pass, sizeof(cfg.mqtt_pass), mqtt_pass_ta, false);
-  copy_textarea(cfg.mqtt_client_id, sizeof(cfg.mqtt_client_id), mqtt_client_id_ta, true);
-
-  String base = mqtt_base_ta ? String(lv_textarea_get_text(mqtt_base_ta)) : String("");
-  trim_trailing_slashes(base);
-  if (!base.length()) base = "tab5";
-  strncpy(cfg.mqtt_base_topic, base.c_str(), sizeof(cfg.mqtt_base_topic) - 1);
-  cfg.mqtt_base_topic[sizeof(cfg.mqtt_base_topic) - 1] = '\0';
-
-  String ha_prefix = mqtt_ha_prefix_ta ? String(lv_textarea_get_text(mqtt_ha_prefix_ta)) : String("");
-  trim_trailing_slashes(ha_prefix);
-  if (!ha_prefix.length()) ha_prefix = "ha/statestream";
-  strncpy(cfg.ha_prefix, ha_prefix.c_str(), sizeof(cfg.ha_prefix) - 1);
-  cfg.ha_prefix[sizeof(cfg.ha_prefix) - 1] = '\0';
-
-  if (!configManager.save(cfg)) {
-    if (settings_popup_title) lv_label_set_text(settings_popup_title, tr().save_failed);
-    return;
+// Kopf bleibt immer gleich (Icon+"WLAN"+Speichern+X, siehe open_settings_popup) -
+// "Speichern" verbindet nur, wenn der Eingabe-Screen offen ist, auf dem
+// Listen-Screen tut es nichts.
+static void save_wifi_popup() {
+  if (wifi_entry_view && !lv_obj_has_flag(wifi_entry_view, LV_OBJ_FLAG_HIDDEN)) {
+    wifi_do_connect();
   }
-
-  mqttPublishDeviceSettings();
-  settings_show_mqtt_warning(!configManager.hasMqttConfig());
-  update_settings_tile_summaries();
-  close_settings_popup();
 }
 
 static void save_localization_popup() {
@@ -1149,9 +1438,6 @@ static void save_settings_popup() {
     case SettingsPopupKind::Wifi:
       save_wifi_popup();
       break;
-    case SettingsPopupKind::Mqtt:
-      save_mqtt_popup();
-      break;
     case SettingsPopupKind::Localization:
       save_localization_popup();
       break;
@@ -1179,7 +1465,9 @@ static void on_popup_keyboard_event(lv_event_t* e) {
   } else if (code == LV_EVENT_CANCEL) {
     // Die kleine Tastatur-Taste unten links soll nur die Tastatur einklappen,
     // nicht das ganze Popup schliessen (frueher: close_settings_popup(), was
-    // ungesicherte Aenderungen verworfen hat).
+    // ungesicherte Aenderungen verworfen hat). In der WLAN-Eingabe bleibt die
+    // Tastatur grundsaetzlich stehen.
+    if (wifi_keyboard_locked()) return;
     hide_popup_keyboard();
   }
 }
@@ -1189,6 +1477,10 @@ static void on_popup_ap_mode_clicked(lv_event_t*) {
       (int32_t)(millis() - ap_mode_click_block_until) < 0) {
     return;
   }
+  // Laufenden Scan sofort beenden - der eigentliche Moduswechsel passiert
+  // asynchron im Hauptloop und darf nicht mit einem Scan kollidieren.
+  wifi_stop_scan_timer();
+  WiFi.scanDelete();
   if (g_hotspot_callback) {
     g_hotspot_callback(!ap_mode_active);
   }
@@ -1278,6 +1570,9 @@ static void create_popup_keyboard(lv_obj_t* content_parent) {
   lv_obj_update_layout(content_parent);
   const int reserved_w = lv_obj_get_width(spacer);
   const int reserved_h = lv_obj_get_height(spacer);
+  // Erst NACH der Messung merken/ausblendbar machen - die Tastaturgroesse
+  // haengt von der sichtbaren 42%-Hoehe ab.
+  settings_popup_kb_spacer = spacer;
 
   lv_obj_t* kb = ui_keyboard_create(settings_popup_card);
   lv_obj_add_flag(kb, LV_OBJ_FLAG_IGNORE_LAYOUT);
@@ -1302,104 +1597,194 @@ static void create_popup_keyboard(lv_obj_t* content_parent) {
   settings_popup_keyboard = kb;
 }
 
-static void build_wifi_popup(lv_obj_t* parent) {
-  const DeviceConfig& cfg = configManager.getConfig();
-  lv_obj_t* form = create_form_area(parent);
+// Eingabezeile "Label | Textfeld" in EINER Reihe (statt Label ueber dem
+// Feld) - kompakter, damit auf dem 4-Zoll-B4 nichts abgeschnitten wird.
+// Feldhoehe bewusst LV_SIZE_CONTENT + pad_ver statt fester Pixel: so sitzen
+// Text und Cursor konstruktionsbedingt exakt mittig.
+static lv_obj_t* wifi_create_entry_row(lv_obj_t* parent, const char* label_text,
+                                       lv_obj_t** ta_out, uint16_t max_len,
+                                       bool password) {
+  lv_obj_t* row = lv_obj_create(parent);
+  style_plain_container(row);
+  lv_obj_set_width(row, LV_PCT(100));
+  lv_obj_set_height(row, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(row, 14, 0);
 
-  lv_obj_t* row1 = create_form_row(form);
-  wifi_ssid_ta = create_textarea_field(row1, tr().ssid_label, cfg.wifi_ssid,
-                                       tr().ap_wifi_ssid_placeholder,
-                                       CONFIG_WIFI_SSID_MAX - 1, false);
-  wifi_pass_ta = create_textarea_field(row1, tr().wifi_password_label, cfg.wifi_pass,
-                                       tr().wifi_password_label,
-                                       CONFIG_WIFI_PASS_MAX - 1, true);
+  lv_obj_t* label = lv_label_create(row);
+  lv_label_set_text(label, label_text);
+  lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
+  lv_obj_set_width(label, 160);
+  lv_obj_set_style_text_font(label, &ui_font_24, 0);
+  lv_obj_set_style_text_color(label, lv_color_hex(0xC8C8C8), 0);
 
-  wifi_show_pass_cb = lv_checkbox_create(form);
-  lv_checkbox_set_text(wifi_show_pass_cb, tr().wifi_show_password);
-  lv_obj_set_style_text_font(wifi_show_pass_cb, &ui_font_20, 0);
-  lv_obj_set_style_text_color(wifi_show_pass_cb, lv_color_hex(0xC8C8C8), 0);
-  lv_obj_add_event_cb(wifi_show_pass_cb, on_wifi_show_pass_toggled, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_t* ta = lv_textarea_create(row);
+  style_popup_textarea(ta);
+  // flex_grow im ROW-Elternobjekt = restliche Breite (Hauptachse)
+  lv_obj_set_flex_grow(ta, 1);
+  lv_textarea_set_max_length(ta, max_len);
+  lv_textarea_set_password_mode(ta, password);
+  lv_textarea_set_placeholder_text(ta, "");
+  lv_textarea_set_text(ta, "");
+  // PRESSED zusaetzlich zu FOCUSED: FOCUSED haengt an LVGLs interner
+  // "last_pressed"-Objektverfolgung und feuert in manchen Abfolgen nicht
+  // zuverlaessig - PRESSED reagiert dagegen immer sofort auf den Touch.
+  lv_obj_add_event_cb(ta, on_popup_textarea_focused, LV_EVENT_PRESSED, nullptr);
+  lv_obj_add_event_cb(ta, on_popup_textarea_focused, LV_EVENT_FOCUSED, nullptr);
+  lv_obj_add_event_cb(ta, on_popup_textarea_defocused, LV_EVENT_DEFOCUSED, nullptr);
 
-  wifi_static_cb = lv_checkbox_create(form);
-  lv_checkbox_set_text(wifi_static_cb, tr().wifi_static_ip_label);
-  lv_obj_set_style_text_font(wifi_static_cb, &ui_font_20, 0);
-  lv_obj_set_style_text_color(wifi_static_cb, lv_color_hex(0xC8C8C8), 0);
-  const bool has_static = cfg.wifi_static_ip[0] || cfg.wifi_gateway[0] ||
-                          cfg.wifi_subnet[0] || cfg.wifi_dns[0];
-  if (has_static) lv_obj_add_state(wifi_static_cb, LV_STATE_CHECKED);
-  lv_obj_add_event_cb(wifi_static_cb, on_wifi_static_toggled, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_set_height(ta, LV_SIZE_CONTENT);
+  lv_obj_set_style_pad_ver(ta, 20, 0);
+  lv_obj_set_style_pad_left(ta, 20, 0);
+  lv_obj_set_style_radius(ta, 18, 0);
+  lv_obj_set_style_text_font(ta, &ui_font_28, 0);
+  // lv_textarea ist intern scrollbar - ohne das hier zeigt LVGL einen
+  // Scrollbalken an der Feldkante.
+  lv_obj_set_scrollbar_mode(ta, LV_SCROLLBAR_MODE_OFF);
 
-  lv_obj_t* row2 = create_form_row(form);
-  wifi_ip_ta = create_textarea_field(row2, tr().wifi_static_ip_label, cfg.wifi_static_ip,
-                                     "192.168.1.50", CONFIG_IP_ADDR_MAX - 1, false, true);
-  wifi_gateway_ta = create_textarea_field(row2, tr().wifi_gateway_label, cfg.wifi_gateway,
-                                          "192.168.1.1", CONFIG_IP_ADDR_MAX - 1, false, true);
-
-  lv_obj_t* row3 = create_form_row(form);
-  wifi_subnet_ta = create_textarea_field(row3, tr().wifi_subnet_label, cfg.wifi_subnet,
-                                         "255.255.255.0", CONFIG_IP_ADDR_MAX - 1, false, true);
-  wifi_dns_ta = create_textarea_field(row3, tr().wifi_dns_label, cfg.wifi_dns,
-                                      "192.168.1.1", CONFIG_IP_ADDR_MAX - 1, false, true);
-
-  lv_obj_t* hint = lv_label_create(form);
-  lv_label_set_text(hint, tr().wifi_dhcp_hint);
-  lv_obj_set_style_text_font(hint, &ui_font_16, 0);
-  lv_obj_set_style_text_color(hint, lv_color_hex(0xA0A0A0), 0);
-
-  ap_mode_btn = create_popup_button(form, ap_mode_active ? tr().ap_disable : tr().ap_enable,
-                                    ap_mode_active ? 0xC62828 : 0xFF9800,
-                                    on_popup_ap_mode_clicked);
-  lv_obj_set_width(ap_mode_btn, LV_PCT(100));
-  ap_mode_btn_label = lv_obj_get_child(ap_mode_btn, 0);
-  update_wifi_static_enabled();
-
-  create_popup_keyboard(parent);
+  *ta_out = ta;
+  return row;
 }
 
-static void build_mqtt_popup(lv_obj_t* parent) {
-  const DeviceConfig& cfg = configManager.getConfig();
-  lv_obj_t* form = create_form_area(parent);
+static void build_wifi_popup(lv_obj_t* parent) {
+  // ===== Listen-Ansicht: Liste kompakt oben (Manuell direkt darunter),
+  // Infobox + AP-Button als Fussbereich unten =====
+  wifi_list_view = lv_obj_create(parent);
+  style_plain_container(wifi_list_view);
+  lv_obj_set_width(wifi_list_view, LV_PCT(100));
+  lv_obj_set_flex_grow(wifi_list_view, 1);
+  lv_obj_clear_flag(wifi_list_view, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_flex_flow(wifi_list_view, LV_FLEX_FLOW_COLUMN);
+  // Querachse CENTER: zentriert den (nicht mehr vollbreiten) AP-Button,
+  // vollbreite Kinder sind davon unbeeindruckt.
+  lv_obj_set_flex_align(wifi_list_view, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_row(wifi_list_view, 10, 0);
 
-  char port_buf[8];
-  snprintf(port_buf, sizeof(port_buf), "%u", cfg.mqtt_port ? cfg.mqtt_port : 1883);
+  wifi_scan_status_label = lv_label_create(wifi_list_view);
+  lv_label_set_text(wifi_scan_status_label, tr().wifi_scan_searching);
+  lv_obj_set_style_text_font(wifi_scan_status_label, &ui_font_20, 0);
+  lv_obj_set_style_text_color(wifi_scan_status_label, lv_color_hex(0xA0A0A0), 0);
 
-  lv_obj_t* row1 = create_form_row(form);
-  mqtt_host_ta = create_textarea_field(row1, tr().mqtt_host, cfg.mqtt_host,
-                                       "192.168.1.10", CONFIG_MQTT_HOST_MAX - 1, false);
-  mqtt_port_ta = create_textarea_field(row1, tr().mqtt_port, port_buf,
-                                       "1883", 5, false, true);
+  // Liste ist nur so hoch wie ihr Inhalt (max. knapp die halbe Ansicht,
+  // darueber hinaus scrollt sie) - so rueckt "Manuell" direkt unter die
+  // Ergebnisse statt am unteren Rand zu kleben.
+  wifi_list_container = lv_obj_create(wifi_list_view);
+  style_plain_container(wifi_list_container);
+  lv_obj_set_width(wifi_list_container, LV_PCT(100));
+  lv_obj_set_height(wifi_list_container, LV_SIZE_CONTENT);
+  lv_obj_set_style_max_height(wifi_list_container, LV_PCT(44), 0);
+  lv_obj_add_flag(wifi_list_container, LV_OBJ_FLAG_SCROLLABLE);
+  // Scrollen per Touch bleibt, nur der Balken verschwindet.
+  lv_obj_set_scrollbar_mode(wifi_list_container, LV_SCROLLBAR_MODE_OFF);
+  lv_obj_set_flex_flow(wifi_list_container, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(wifi_list_container, 8, 0);
 
-  lv_obj_t* row2 = create_form_row(form);
-  mqtt_user_ta = create_textarea_field(row2, tr().mqtt_username, cfg.mqtt_user,
-                                       tr().mqtt_username, CONFIG_MQTT_USER_MAX - 1, false);
-  mqtt_pass_ta = create_textarea_field(row2, tr().mqtt_password, cfg.mqtt_pass,
-                                       tr().mqtt_password, CONFIG_MQTT_PASS_MAX - 1, true);
+  // Ausserhalb des scrollbaren Containers - steht immer fest unter der Liste
+  // (statt bei jedem Rescan mit den Ergebnissen neu erzeugt zu werden) und ist
+  // durch den Gap optisch abgesetzt.
+  wifi_manual_gap = lv_obj_create(wifi_list_view);
+  style_plain_container(wifi_manual_gap);
+  lv_obj_clear_flag(wifi_manual_gap, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_width(wifi_manual_gap, LV_PCT(100));
+  lv_obj_set_height(wifi_manual_gap, 6);
 
-  mqtt_show_pass_cb = lv_checkbox_create(form);
-  lv_checkbox_set_text(mqtt_show_pass_cb, tr().wifi_show_password);
-  lv_obj_set_style_text_font(mqtt_show_pass_cb, &ui_font_20, 0);
-  lv_obj_set_style_text_color(mqtt_show_pass_cb, lv_color_hex(0xC8C8C8), 0);
-  lv_obj_add_event_cb(mqtt_show_pass_cb, on_mqtt_show_pass_toggled, LV_EVENT_VALUE_CHANGED, nullptr);
+  wifi_manual_row = wifi_create_row(wifi_list_view, tr().wifi_manual_entry, false, false);
+  lv_obj_add_event_cb(wifi_manual_row, on_wifi_manual_clicked, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* manual_chevron = lv_label_create(wifi_manual_row);
+  lv_label_set_text(manual_chevron, getMdiChar("chevron-right").c_str());
+  if (FONT_MDI_ICONS) lv_obj_set_style_text_font(manual_chevron, FONT_MDI_ICONS, 0);
+  lv_obj_set_style_text_color(manual_chevron, lv_color_hex(0x888888), 0);
 
-  lv_obj_t* row3 = create_form_row(form);
-  mqtt_client_id_ta = create_textarea_field(row3, tr().mqtt_client_id, cfg.mqtt_client_id,
-                                            tr().mqtt_client_id_placeholder,
-                                            CONFIG_MQTT_CLIENT_ID_MAX - 1, false);
+  // Spacer drueckt den Fussbereich (Infobox + AP-Button) nach unten.
+  create_flex_spacer(wifi_list_view);
 
-  lv_obj_t* row4 = create_form_row(form);
-  mqtt_base_ta = create_textarea_field(row4, tr().mqtt_base_topic,
-                                       cfg.mqtt_base_topic[0] ? cfg.mqtt_base_topic : "tab5",
-                                       "tab5", CONFIG_MQTT_BASE_MAX - 1, false);
-  mqtt_ha_prefix_ta = create_textarea_field(row4, tr().ha_prefix,
-                                            cfg.ha_prefix[0] ? cfg.ha_prefix : "ha/statestream",
-                                            "ha/statestream", CONFIG_HA_PREFIX_MAX - 1, false);
+  // Infobox: abgesetzte Karte mit Verbindungsstatus; im AP-Modus zusaetzlich
+  // QR-Code zum direkten Verbinden mit dem Hotspot.
+  lv_obj_t* info_box = lv_obj_create(wifi_list_view);
+  style_plain_container(info_box);
+  lv_obj_set_width(info_box, LV_PCT(100));
+  lv_obj_set_height(info_box, LV_SIZE_CONTENT);
+  lv_obj_set_style_bg_color(info_box, lv_color_hex(0x333333), 0);
+  lv_obj_set_style_bg_opa(info_box, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(info_box, 20, 0);
+  lv_obj_set_style_pad_all(info_box, 18, 0);
+  lv_obj_set_style_pad_row(info_box, 16, 0);
+  lv_obj_set_flex_flow(info_box, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(info_box, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
 
-  lv_obj_t* hint = lv_label_create(form);
-  lv_label_set_text(hint, tr().mqtt_client_id_hint);
-  lv_obj_set_style_text_font(hint, &ui_font_16, 0);
-  lv_obj_set_style_text_color(hint, lv_color_hex(0xA0A0A0), 0);
+  wifi_conn_status_label = lv_label_create(info_box);
+  lv_obj_set_width(wifi_conn_status_label, LV_PCT(100));
+  lv_label_set_long_mode(wifi_conn_status_label, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_align(wifi_conn_status_label, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_text_font(wifi_conn_status_label, &ui_font_24, 0);
 
+#if LV_USE_QRCODE
+  wifi_ap_qr = lv_qrcode_create(info_box);
+  lv_qrcode_set_size(wifi_ap_qr, 150);
+  lv_qrcode_set_dark_color(wifi_ap_qr, lv_color_black());
+  lv_qrcode_set_light_color(wifi_ap_qr, lv_color_white());
+  lv_qrcode_set_quiet_zone(wifi_ap_qr, true);
+  lv_obj_add_flag(wifi_ap_qr, LV_OBJ_FLAG_HIDDEN);
+#endif
+
+  // Mittig, hoeher, aber nicht mehr vollbreit
+  ap_mode_btn = create_popup_button(wifi_list_view, ap_mode_active ? tr().ap_disable : tr().ap_enable,
+                                    ap_mode_active ? 0xC62828 : 0xFF9800,
+                                    on_popup_ap_mode_clicked);
+  lv_obj_set_size(ap_mode_btn, 360, 76);
+  ap_mode_btn_label = lv_obj_get_child(ap_mode_btn, 0);
+  if (ap_mode_btn_label) lv_obj_set_style_text_font(ap_mode_btn_label, &ui_font_24, 0);
+
+  // ===== Eingabe-Ansicht: SSID-/Passwort-Zeilen, Verbinden-Button unten =====
+  wifi_entry_view = lv_obj_create(parent);
+  style_plain_container(wifi_entry_view);
+  lv_obj_set_width(wifi_entry_view, LV_PCT(100));
+  lv_obj_set_flex_grow(wifi_entry_view, 1);
+  lv_obj_clear_flag(wifi_entry_view, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_flex_flow(wifi_entry_view, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(wifi_entry_view, 14, 0);
+  lv_obj_add_flag(wifi_entry_view, LV_OBJ_FLAG_HIDDEN);
+
+  wifi_create_entry_row(wifi_entry_view, tr().ssid_label, &wifi_ssid_ta,
+                        CONFIG_WIFI_SSID_MAX - 1, false);
+  wifi_create_entry_row(wifi_entry_view, tr().wifi_password_label, &wifi_pass_ta,
+                        CONFIG_WIFI_PASS_MAX - 1, true);
+  lv_obj_set_style_pad_right(wifi_pass_ta, 64, 0);
+  wifi_pass_eye_icon = lv_label_create(wifi_pass_ta);
+  lv_label_set_text(wifi_pass_eye_icon, getMdiChar("eye").c_str());
+  if (FONT_MDI_ICONS) lv_obj_set_style_text_font(wifi_pass_eye_icon, FONT_MDI_ICONS, 0);
+  lv_obj_set_style_text_color(wifi_pass_eye_icon, lv_color_hex(0x888888), 0);
+  // FLOATING: sonst zaehlt das Icon in die LV_SIZE_CONTENT-Hoehe des Feldes
+  // hinein. lv_obj_align rechnet das Eltern-Padding mit ein (siehe
+  // create_popup_keyboard) - der positive Offset kompensiert pad_right(64),
+  // damit das Icon wirklich an der Feldkante sitzt (18px Abstand) statt links
+  // neben dem Textbereich zu haengen.
+  lv_obj_add_flag(wifi_pass_eye_icon, LV_OBJ_FLAG_FLOATING);
+  lv_obj_align(wifi_pass_eye_icon, LV_ALIGN_RIGHT_MID, 64 - 18, 0);
+  lv_obj_add_flag(wifi_pass_eye_icon, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(wifi_pass_eye_icon, on_wifi_pass_eye_clicked, LV_EVENT_CLICKED, nullptr);
+
+  // Spacer drueckt den Verbinden-Button an den unteren Rand der Ansicht
+  // (direkt ueber die Tastatur) - "alle Buttons nach unten".
+  create_flex_spacer(wifi_entry_view);
+
+  // Eigener, klar beschrifteter Verbinden-Button statt des generischen
+  // Speichern oben rechts. Nutzt denselben Save-Dispatch wie die Tastatur-
+  // Enter-Taste (on_settings_popup_save_clicked -> save_wifi_popup).
+  lv_obj_t* wifi_connect_btn = create_popup_button(wifi_entry_view, tr().wifi_connect_btn, 0x2E7D32,
+                                                   on_settings_popup_save_clicked);
+  lv_obj_set_width(wifi_connect_btn, LV_PCT(100));
+  lv_obj_set_height(wifi_connect_btn, 72);
+  lv_obj_t* connect_label = lv_obj_get_child(wifi_connect_btn, 0);
+  if (connect_label) lv_obj_set_style_text_font(connect_label, &ui_font_24, 0);
+
+  // Tastatur zuerst (legt den Platzhalter an), dann die Listen-Ansicht
+  // aktivieren - die blendet den Platzhalter direkt wieder aus.
   create_popup_keyboard(parent);
+  wifi_show_list_view();
 }
 
 static String format_options_text(bool time_format) {
@@ -1474,8 +1859,6 @@ static const char* popup_title_for_kind(SettingsPopupKind kind) {
       return tr().display_label;
     case SettingsPopupKind::Wifi:
       return tr().wifi_label;
-    case SettingsPopupKind::Mqtt:
-      return tr().admin_settings_mqtt;
     case SettingsPopupKind::Localization:
       return tr().admin_settings_language;
     case SettingsPopupKind::Firmware:
@@ -1490,8 +1873,6 @@ static const char* popup_icon_for_kind(SettingsPopupKind kind) {
       return "monitor";
     case SettingsPopupKind::Wifi:
       return "wifi";
-    case SettingsPopupKind::Mqtt:
-      return "server";
     case SettingsPopupKind::Localization:
       return "translate";
     case SettingsPopupKind::Firmware:
@@ -1508,9 +1889,6 @@ static void build_popup_content(SettingsPopupKind kind, lv_obj_t* parent) {
     case SettingsPopupKind::Wifi:
       build_wifi_popup(parent);
       break;
-    case SettingsPopupKind::Mqtt:
-      build_mqtt_popup(parent);
-      break;
     case SettingsPopupKind::Localization:
       build_localization_popup(parent);
       break;
@@ -1522,7 +1900,6 @@ static void build_popup_content(SettingsPopupKind kind, lv_obj_t* parent) {
 
 static bool popup_kind_has_save(SettingsPopupKind kind) {
   return kind == SettingsPopupKind::Wifi ||
-         kind == SettingsPopupKind::Mqtt ||
          kind == SettingsPopupKind::Localization;
 }
 
@@ -1571,10 +1948,17 @@ static void open_settings_popup(SettingsPopupKind kind) {
   lv_obj_set_style_text_color(header_icon, lv_color_white(), 0);
   lv_obj_align(header_icon, LV_ALIGN_LEFT_MID, 8, 0);
 
+  // WiFi hat unten in der Eingabe-Ansicht einen eigenen, klar beschrifteten
+  // "Verbinden"-Button (siehe build_wifi_popup) - der generische Speichern
+  // oben rechts war dort nur verwirrend ("was macht der Button ueberhaupt"),
+  // weil er in der Listen-Ansicht nichts tut. Fuer Localization bleibt er wie
+  // gehabt oben.
+  const bool show_top_save = popup_kind_has_save(kind) && kind != SettingsPopupKind::Wifi;
+
   settings_popup_title = lv_label_create(header);
   lv_label_set_text(settings_popup_title, popup_title_for_kind(kind));
   lv_label_set_long_mode(settings_popup_title, LV_LABEL_LONG_DOT);
-  lv_obj_set_width(settings_popup_title, popup_kind_has_save(kind) ? LV_PCT(46) : LV_PCT(62));
+  lv_obj_set_width(settings_popup_title, show_top_save ? LV_PCT(46) : LV_PCT(62));
   lv_obj_set_style_text_font(settings_popup_title, &ui_font_24, 0);
   lv_obj_set_style_text_color(settings_popup_title, lv_color_white(), 0);
   lv_obj_align(settings_popup_title, LV_ALIGN_LEFT_MID, 78, 0);
@@ -1585,7 +1969,7 @@ static void open_settings_popup(SettingsPopupKind kind) {
   lv_obj_set_width(settings_popup_save_btn, 150);
   lv_obj_align(settings_popup_save_btn, LV_ALIGN_TOP_RIGHT, -108, 10);
   settings_popup_save_label = lv_obj_get_child(settings_popup_save_btn, 0);
-  if (!popup_kind_has_save(kind)) {
+  if (!show_top_save) {
     lv_obj_add_flag(settings_popup_save_btn, LV_OBJ_FLAG_HIDDEN);
   }
 
@@ -1598,7 +1982,7 @@ static void open_settings_popup(SettingsPopupKind kind) {
   lv_obj_set_style_border_opa(close_btn, LV_OPA_TRANSP, 0);
   lv_obj_set_style_outline_opa(close_btn, LV_OPA_TRANSP, 0);
   lv_obj_set_style_shadow_opa(close_btn, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_radius(close_btn, 16, 0);
+  lv_obj_set_style_radius(close_btn, 20, 0);
   lv_obj_set_style_pad_all(close_btn, 0, 0);
   lv_obj_align(close_btn, LV_ALIGN_TOP_RIGHT, 6, -6);
   lv_obj_set_ext_click_area(close_btn, 8);
@@ -1610,6 +1994,7 @@ static void open_settings_popup(SettingsPopupKind kind) {
   lv_obj_set_style_text_color(close_label, lv_color_white(), 0);
   lv_label_set_text(close_label, getMdiChar("window-close").c_str());
   lv_obj_center(close_label);
+  settings_popup_close_icon = close_label;
 
   settings_popup_content = lv_obj_create(settings_popup_card);
   lv_obj_set_width(settings_popup_content, LV_PCT(100));
@@ -1617,6 +2002,10 @@ static void open_settings_popup(SettingsPopupKind kind) {
   style_plain_container(settings_popup_content);
   lv_obj_set_style_pad_all(settings_popup_content, 0, 0);
   lv_obj_set_style_pad_row(settings_popup_content, 8, 0);
+  // Luft zum Header: der X/Zurueck-Button (96px + ext_click_area) ragt unter
+  // die Header-Kante - ohne Abstand ueberlappt sein Press-Highlight den
+  // Inhalt oben rechts.
+  lv_obj_set_style_pad_top(settings_popup_content, 14, 0);
   lv_obj_set_flex_flow(settings_popup_content, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(settings_popup_content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
   build_popup_content(settings_popup_kind, settings_popup_content);
@@ -1694,7 +2083,7 @@ static lv_obj_t* create_settings_menu_tile(lv_obj_t* parent, uint8_t col, uint8_
   lv_obj_set_style_pad_ver(info, 8, 0);
   lv_obj_set_flex_flow(info, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(info, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_row(info, 3, 0);
+  lv_obj_set_style_pad_row(info, 4, 0);
   if (info_container_out) *info_container_out = info;
 
   if (summary_label_out) {
@@ -1703,7 +2092,7 @@ static lv_obj_t* create_settings_menu_tile(lv_obj_t* parent, uint8_t col, uint8_
     lv_label_set_long_mode(summary, LV_LABEL_LONG_CLIP);
     lv_obj_set_width(summary, LV_PCT(100));
     lv_obj_set_style_text_align(summary, LV_TEXT_ALIGN_LEFT, 0);
-    lv_obj_set_style_text_font(summary, &ui_font_16, 0);
+    lv_obj_set_style_text_font(summary, &ui_font_20, 0);
     lv_obj_set_style_text_color(summary, lv_color_hex(0xA8A8A8), 0);
     *summary_label_out = summary;
   }
@@ -1721,28 +2110,22 @@ static void update_settings_tile_summaries() {
     } else {
       snprintf(sleep_buf, sizeof(sleep_buf), "%s", tr().sleep_never);
     }
-    snprintf(buf, sizeof(buf), "%d%% / %s", brightness_pct_from_raw(BoardHAL::getBrightness()), sleep_buf);
+    // Eine Info pro Zeile mit Beschriftung statt kryptischem "51% / Nie"
+    snprintf(buf, sizeof(buf), "%s: %d%%\n%s: %s", tr().brightness_label,
+             brightness_pct_from_raw(BoardHAL::getBrightness()),
+             tr().sleep_label, sleep_buf);
     lv_label_set_text(settings_tile_display_summary, buf);
-  }
-
-  if (settings_tile_mqtt_summary) {
-    const bool mqtt_configured = cfg.mqtt_host[0] != '\0';
-    if (mqtt_configured) {
-      snprintf(buf, sizeof(buf), "%s:%u", cfg.mqtt_host, cfg.mqtt_port ? cfg.mqtt_port : 1883);
-    } else {
-      snprintf(buf, sizeof(buf), "%s", tr().mqtt_not_configured);
-    }
-    lv_label_set_text(settings_tile_mqtt_summary, buf);
-    lv_obj_set_style_text_color(settings_tile_mqtt_summary,
-                                lv_color_hex(mqtt_configured ? 0xA8A8A8 : 0xFFC04D),
-                                0);
   }
 
   if (settings_tile_locale_summary) {
     const char* language = (i18n::normalize_language_code(cfg.language)[0] == 'd')
                                ? tr().language_option_german
                                : tr().language_option_english;
-    snprintf(buf, sizeof(buf), "%s / %s", language, timezone_label_for_code(cfg.timezone));
+    // Nur der Stadtname - das volle "UTC+1 / UTC+2 - Berlin" wurde auf der
+    // Kachel abgeschnitten ("Deutsch / UTC+1 / U").
+    const char* tz_label = timezone_label_for_code(cfg.timezone);
+    const char* city = strstr(tz_label, " - ");
+    snprintf(buf, sizeof(buf), "%s\n%s", language, city ? city + 3 : tz_label);
     lv_label_set_text(settings_tile_locale_summary, buf);
   }
 
@@ -1819,8 +2202,6 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   display_rotate_sub_label = nullptr;
   sleep_slider = nullptr;
   sleep_time_label = nullptr;
-  wifi_choose_btn = nullptr;
-  wifi_choose_btn_label = nullptr;
   ap_mode_btn = nullptr;
   ap_mode_btn_label = nullptr;
   ap_confirm_row = nullptr;
@@ -1852,12 +2233,6 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
                                 &wifi_info);
 
   next_settings_tile_cell(settings_col, settings_row, kSettingsMenuTileSpanW, tile_col, tile_row);
-  create_settings_menu_tile(tab, tile_col, tile_row, "server", tr().admin_settings_mqtt,
-                            &settings_tile_mqtt_title,
-                            &settings_tile_mqtt_summary,
-                            SettingsPopupKind::Mqtt);
-
-  next_settings_tile_cell(settings_col, settings_row, kSettingsMenuTileSpanW, tile_col, tile_row);
   create_settings_menu_tile(tab, tile_col, tile_row, "translate", tr().admin_settings_language,
                             &settings_tile_locale_title,
                             &settings_tile_locale_summary,
@@ -1875,21 +2250,21 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
     lv_label_set_long_mode(wifi_status_label, LV_LABEL_LONG_CLIP);
     lv_obj_set_width(wifi_status_label, LV_PCT(100));
     lv_obj_set_style_text_align(wifi_status_label, LV_TEXT_ALIGN_LEFT, 0);
-    lv_obj_set_style_text_font(wifi_status_label, &ui_font_16, 0);
+    lv_obj_set_style_text_font(wifi_status_label, &ui_font_20, 0);
     lv_obj_set_style_text_color(wifi_status_label, lv_color_hex(0xFF6B6B), 0);
 
     wifi_ssid_label = lv_label_create(wifi_info_parent);
     lv_label_set_long_mode(wifi_ssid_label, LV_LABEL_LONG_CLIP);
     lv_obj_set_width(wifi_ssid_label, LV_PCT(100));
     lv_obj_set_style_text_align(wifi_ssid_label, LV_TEXT_ALIGN_LEFT, 0);
-    lv_obj_set_style_text_font(wifi_ssid_label, &ui_font_16, 0);
+    lv_obj_set_style_text_font(wifi_ssid_label, &ui_font_20, 0);
     lv_obj_set_style_text_color(wifi_ssid_label, lv_color_hex(0xA8A8A8), 0);
 
     wifi_ip_label = lv_label_create(wifi_info_parent);
     lv_label_set_long_mode(wifi_ip_label, LV_LABEL_LONG_CLIP);
     lv_obj_set_width(wifi_ip_label, LV_PCT(100));
     lv_obj_set_style_text_align(wifi_ip_label, LV_TEXT_ALIGN_LEFT, 0);
-    lv_obj_set_style_text_font(wifi_ip_label, &ui_font_16, 0);
+    lv_obj_set_style_text_font(wifi_ip_label, &ui_font_20, 0);
     lv_obj_set_style_text_color(wifi_ip_label, lv_color_hex(0xA8A8A8), 0);
 
   }
@@ -1916,34 +2291,30 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
                                 ssid.length() ? ssid.c_str() : nullptr,
                                 ip.length() ? ip.c_str() : nullptr);
   }
-  settings_show_mqtt_warning(!configManager.hasMqttConfig());
 }
 
+// Kachel-Zeilen ohne "Status:/SSID:/IP:"-Praefixe - die Werte erklaeren sich
+// selbst ("Verbunden" gruen, darunter Netzname und IP). Offline werden die
+// leeren Zeilen ganz ausgeblendet statt "---" zu zeigen.
 void settings_update_wifi_status(bool connected, const char* ssid, const char* ip) {
   if (!wifi_status_label || !wifi_ssid_label || !wifi_ip_label) return;
 
-  static char buf[128];
-
   if (connected) {
-    format_status_line(buf, sizeof(buf), tr().wifi_connected);
-    lv_label_set_text(wifi_status_label, buf);
+    lv_label_set_text(wifi_status_label, tr().wifi_connected);
     lv_obj_set_style_text_color(wifi_status_label, lv_color_hex(0x51CF66), 0);
-
-    format_ssid_line(buf, sizeof(buf), ssid ? ssid : "---");
-    lv_label_set_text(wifi_ssid_label, buf);
-
-    format_ip_line(buf, sizeof(buf), ip ? ip : "---");
-    lv_label_set_text(wifi_ip_label, buf);
-
+    lv_label_set_text(wifi_ssid_label, ssid ? ssid : "---");
+    lv_label_set_text(wifi_ip_label, ip ? ip : "---");
+    lv_obj_clear_flag(wifi_ssid_label, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(wifi_ip_label, LV_OBJ_FLAG_HIDDEN);
   } else {
-    format_status_line(buf, sizeof(buf), tr().wifi_offline);
-    lv_label_set_text(wifi_status_label, buf);
+    lv_label_set_text(wifi_status_label, tr().wifi_offline);
     lv_obj_set_style_text_color(wifi_status_label, lv_color_hex(0xFF6B6B), 0);
-    format_ssid_line(buf, sizeof(buf), "---");
-    lv_label_set_text(wifi_ssid_label, buf);
-    format_ip_line(buf, sizeof(buf), "---");
-    lv_label_set_text(wifi_ip_label, buf);
+    lv_obj_add_flag(wifi_ssid_label, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(wifi_ip_label, LV_OBJ_FLAG_HIDDEN);
   }
+  // Infobox im offenen WLAN-Popup lebendig halten (z.B. Auto-Reconnect
+  // nach "AP beenden" wird sofort sichtbar)
+  wifi_update_conn_status_label();
 }
 
 void settings_update_wifi_status_ap(const char* ssid, const char* password) {
@@ -1957,24 +2328,11 @@ void settings_update_wifi_status_ap(const char* ssid, const char* password) {
   lv_label_set_text(wifi_status_label, status_buf);
   lv_obj_set_style_text_color(wifi_status_label, lv_color_hex(0xFFC04D), 0);
 
-  static char buf[128];
-  format_ssid_line(buf, sizeof(buf), ssid ? ssid : webConfigApSsid());
-  lv_label_set_text(wifi_ssid_label, buf);
+  lv_label_set_text(wifi_ssid_label, ssid ? ssid : webConfigApSsid());
 
   String ip_str = WiFi.softAPIP().toString();
-  format_ip_line(buf, sizeof(buf), ip_str.length() ? ip_str.c_str() : "192.168.4.1");
-  lv_label_set_text(wifi_ip_label, buf);
-}
-
-void settings_show_mqtt_warning(bool show) {
-  if (settings_tile_mqtt_summary) {
-    update_settings_tile_summaries();
-    lv_obj_set_style_text_color(settings_tile_mqtt_summary,
-                                lv_color_hex(show ? 0xFFC04D : 0xA8A8A8),
-                                0);
-  }
-  if (wifi_ssid_label) lv_obj_clear_flag(wifi_ssid_label, LV_OBJ_FLAG_HIDDEN);
-  if (wifi_ip_label) lv_obj_clear_flag(wifi_ip_label, LV_OBJ_FLAG_HIDDEN);
+  lv_label_set_text(wifi_ip_label, ip_str.length() ? ip_str.c_str() : "192.168.4.1");
+  wifi_update_conn_status_label();
 }
 
 void settings_update_ap_mode(bool running) {
@@ -1994,6 +2352,9 @@ void settings_update_ap_mode(bool running) {
   if (running) {
     hide_ap_confirm_row();
   }
+  // Statuszeile im WLAN-Popup sofort nachziehen (AP aktiv + IP bzw. wieder
+  // Verbunden/Offline) - vorher gab der Toggle dort kein Feedback.
+  wifi_update_conn_status_label();
 }
 
 void settings_refresh_language() {
@@ -2001,7 +2362,6 @@ void settings_refresh_language() {
 
   if (settings_tile_display_title) lv_label_set_text(settings_tile_display_title, s.display_label);
   if (settings_tile_wifi_title) lv_label_set_text(settings_tile_wifi_title, s.wifi_label);
-  if (settings_tile_mqtt_title) lv_label_set_text(settings_tile_mqtt_title, s.admin_settings_mqtt);
   if (settings_tile_locale_title) lv_label_set_text(settings_tile_locale_title, s.admin_settings_language);
   if (settings_tile_firmware_title) lv_label_set_text(settings_tile_firmware_title, "Firmware");
   if (settings_popup_title) lv_label_set_text(settings_popup_title, popup_title_for_kind(settings_popup_kind));
@@ -2013,14 +2373,11 @@ void settings_refresh_language() {
   if (sleep_label) lv_label_set_text(sleep_label, s.sleep_label);
   if (ap_yes_label_obj) lv_label_set_text(ap_yes_label_obj, s.yes);
   if (ap_no_label_obj) lv_label_set_text(ap_no_label_obj, s.no);
-  if (wifi_choose_btn_label) lv_label_set_text(wifi_choose_btn_label, s.wifi_choose_btn);
 
   update_wake_button(mains_wake_label, mains_wake_sub_label, kWakeModeTouch);
   update_wake_button(battery_wake_label, battery_wake_sub_label, kWakeModeTouch);
   settings_update_ap_mode(ap_mode_active);
   update_settings_tile_summaries();
-
-  settings_show_mqtt_warning(!configManager.hasMqttConfig());
 
   if (ap_mode_active) {
     String ssid = WiFi.softAPSSID();
