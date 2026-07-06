@@ -27,6 +27,14 @@ The project supports multiple ESP32-P4 touch displays and combines:
 New to this? The [Home Assistant Setup Guide](docs/home-assistant-setup.md) walks through
 the whole chain: MQTT broker, bridge integration, and connecting the display.
 
+## Documentation
+
+- [Home Assistant Setup Guide](docs/home-assistant-setup.md) — MQTT broker, bridge integration, first connection
+- [Tile Types](docs/tiles.md) — every tile type and what it needs
+- [Firmware Updates](docs/updating.md) — on-device updater, web OTA, factory flash
+- [FAQ & Troubleshooting](docs/faq.md) — common questions and known quirks
+- [BOARD_SETTINGS.md](BOARD_SETTINGS.md) — Arduino IDE build settings per device
+
 ## Highlights Of The v0.2.x Releases
 
 - All three supported devices are now covered by every release
