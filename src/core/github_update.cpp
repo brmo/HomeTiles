@@ -16,12 +16,12 @@
 namespace {
 
 constexpr size_t kInstallReadChunk = 2048;
-constexpr size_t kInstallRangeBytes = 64 * 1024;
+constexpr size_t kInstallStageBytes = 32 * 1024;
 constexpr size_t kSocketRxBufferBytes = 4 * 1024;
 constexpr size_t kMaxHttpLineLen = 4096;
 constexpr uint32_t kConnectTimeoutMs = 10000;
 constexpr uint32_t kReadTimeoutMs = 20000;
-constexpr uint32_t kReadPaceMs = 4;
+constexpr uint32_t kReadPaceMs = 0;
 
 struct ParsedHttpsUrl {
   String host;
@@ -263,7 +263,11 @@ bool fetchHttpRange(const String& start_url, size_t from, size_t to,
         }
         received += static_cast<size_t>(r);
         last_data_ms = millis();
-        delay(kReadPaceMs);
+        if (kReadPaceMs > 0) {
+          delay(kReadPaceMs);
+        } else {
+          yield();
+        }
       } else {
         if (!client.connected() || millis() - last_data_ms > kReadTimeoutMs) {
           client.stop();
@@ -289,6 +293,14 @@ struct HeadBufferCtx {
 };
 
 bool storeHeadBytes(const uint8_t* data, size_t len, void* raw_ctx) {
+  auto* ctx = static_cast<HeadBufferCtx*>(raw_ctx);
+  if (!ctx || !ctx->data || ctx->len + len > ctx->capacity) return false;
+  memcpy(ctx->data + ctx->len, data, len);
+  ctx->len += len;
+  return true;
+}
+
+bool storeBufferBytes(const uint8_t* data, size_t len, void* raw_ctx) {
   auto* ctx = static_cast<HeadBufferCtx*>(raw_ctx);
   if (!ctx || !ctx->data || ctx->len + len > ctx->capacity) return false;
   memcpy(ctx->data + ctx->len, data, len);
@@ -412,21 +424,26 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
                      Device::profile().key + ".bin";
   Serial.printf("[Update] Lade %s\n", url.c_str());
 
-  // Lesepuffer im PSRAM, um das knappe interne RAM (TLS!) nicht zusaetzlich
-  // zu belasten. Der GitHub/CDN-Download wird absichtlich in Range-Requests
-  // zerlegt: so ist waehrend Update.begin() keine offene Body-Verbindung aktiv
-  // und SDIO-WLAN kann beim Flash-Erase nicht mit RX-Puffern geflutet werden.
-  uint8_t* buf = static_cast<uint8_t*>(
+  // Netzwerk-Lesepuffer und OTA-Staging liegen im PSRAM. Der GitHub/CDN-
+  // Download wird absichtlich in Range-Requests zerlegt und erst in PSRAM
+  // gepuffert. Update.write() laeuft danach ohne offene HTTPS-Verbindung, damit
+  // Flash-Writes SDIO-WLAN nicht mit RX-Puffern blockieren koennen.
+  uint8_t* net_buf = static_cast<uint8_t*>(
       heap_caps_malloc(kInstallReadChunk, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  if (!buf) buf = static_cast<uint8_t*>(malloc(kInstallReadChunk));
-  if (!buf) {
+  if (!net_buf) net_buf = static_cast<uint8_t*>(malloc(kInstallReadChunk));
+  uint8_t* stage_buf = static_cast<uint8_t*>(
+      heap_caps_malloc(kInstallStageBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!stage_buf) stage_buf = static_cast<uint8_t*>(malloc(kInstallStageBytes));
+  if (!net_buf || !stage_buf) {
+    if (net_buf) free(net_buf);
+    if (stage_buf) free(stage_buf);
     error_out = "alloc failed";
     return false;
   }
-  Serial.printf("[Update] Range-Download: %uB TCP RX, %uB Lesechunk, %uKB Requests\n",
+  Serial.printf("[Update] Staged Range-Download: %uB TCP RX, %uB Lesechunk, %uKB Stage\n",
                 static_cast<unsigned>(kSocketRxBufferBytes),
                 static_cast<unsigned>(kInstallReadChunk),
-                static_cast<unsigned>(kInstallRangeBytes / 1024));
+                static_cast<unsigned>(kInstallStageBytes / 1024));
 
   bool failed = false;
   bool update_started = false;
@@ -434,9 +451,11 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
 
   uint8_t image_head[firmware_meta::kDeviceDescriptorImageBytes] = {0};
   HeadBufferCtx head_ctx{image_head, sizeof(image_head), 0};
-  if (!fetchHttpRange(url, 0, sizeof(image_head) - 1, buf, kInstallReadChunk,
+  if (!fetchHttpRange(url, 0, sizeof(image_head) - 1, net_buf, kInstallReadChunk,
                       storeHeadBytes, &head_ctx, total_sz, error_out)) {
     failed = true;
+  } else {
+    delay(20);
   }
 
   if (!failed) {
@@ -491,14 +510,16 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
 
       while (!failed && write_ctx.written < total_sz) {
         const size_t range_start = write_ctx.written;
-        size_t range_end = range_start + kInstallRangeBytes - 1;
+        size_t range_end = range_start + kInstallStageBytes - 1;
         if (range_end >= total_sz || range_end < range_start) {
           range_end = total_sz - 1;
         }
+        const size_t expected_len = range_end - range_start + 1;
 
         size_t range_total = 0;
-        if (!fetchHttpRange(url, range_start, range_end, buf, kInstallReadChunk,
-                            writeUpdateBytes, &write_ctx, range_total,
+        HeadBufferCtx stage_ctx{stage_buf, kInstallStageBytes, 0};
+        if (!fetchHttpRange(url, range_start, range_end, net_buf, kInstallReadChunk,
+                            storeBufferBytes, &stage_ctx, range_total,
                             error_out)) {
           failed = true;
           break;
@@ -508,11 +529,23 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
           failed = true;
           break;
         }
+        if (stage_ctx.len != expected_len) {
+          error_out = "staged range incomplete";
+          failed = true;
+          break;
+        }
+        delay(20);
+        if (!writeUpdateBytes(stage_buf, stage_ctx.len, &write_ctx)) {
+          if (!error_out.length()) error_out = Update.errorString();
+          failed = true;
+          break;
+        }
       }
     }
   }
 
-  free(buf);
+  free(stage_buf);
+  free(net_buf);
 
   if (failed) {
     if (update_started) Update.abort();
