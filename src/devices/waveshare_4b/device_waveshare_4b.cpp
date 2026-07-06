@@ -40,22 +40,10 @@ void pulse_panel_reset() {
 
   const gpio_num_t rst_pin = static_cast<gpio_num_t>(display_cfg.lcd_rst);
   gpio_set_direction(rst_pin, GPIO_MODE_OUTPUT);
-  gpio_set_level(rst_pin, 1);
-  delay(5);
   gpio_set_level(rst_pin, 0);
-  delay(20);
-  gpio_set_level(rst_pin, 1);
   delay(120);
-}
-
-void hold_panel_reset_low() {
-  if (display_cfg.lcd_rst < 0) {
-    return;
-  }
-
-  const gpio_num_t rst_pin = static_cast<gpio_num_t>(display_cfg.lcd_rst);
-  gpio_set_direction(rst_pin, GPIO_MODE_OUTPUT);
-  gpio_set_level(rst_pin, 0);
+  gpio_set_level(rst_pin, 1);
+  delay(300);
 }
 
 void apply_backlight(uint8_t value) {
@@ -180,15 +168,15 @@ bool DeviceWaveshare4B::init() {
   }
   apply_backlight(0);
 
-  if (!init_touch()) {
-    return false;
-  }
-  Serial.println("[Device/Waveshare4B] Touch OK");
-
   if (!init_display()) {
     return false;
   }
   Serial.println("[Device/Waveshare4B] Display OK");
+
+  if (!init_touch()) {
+    return false;
+  }
+  Serial.println("[Device/Waveshare4B] Touch OK");
 
   setBrightness(g_brightness);
   Serial.println("[Device/Waveshare4B] Init complete");
@@ -305,14 +293,18 @@ void DeviceWaveshare4B::prepareForRestart() {
   if (g_gfx) {
     g_gfx->fillScreen(0x0000);
     g_gfx->flush();
-    g_gfx->displayOff();
   }
 
-  hold_panel_reset_low();
   apply_backlight(0);
   ledc_stop(LEDC_LOW_SPEED_MODE, kBacklightChannel, kBacklightActiveLow ? 1u : 0u);
   gpio_set_direction(kBacklightPin, GPIO_MODE_OUTPUT);
   gpio_set_level(kBacklightPin, kBacklightActiveLow ? 1 : 0);
+
+  if (display_cfg.lcd_rst >= 0) {
+    const gpio_num_t rst_pin = static_cast<gpio_num_t>(display_cfg.lcd_rst);
+    gpio_set_direction(rst_pin, GPIO_MODE_OUTPUT);
+    gpio_set_level(rst_pin, 1);
+  }
 }
 
 bool DeviceWaveshare4B::initSDCard() {
