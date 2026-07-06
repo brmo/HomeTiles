@@ -380,32 +380,45 @@ CheckResult checkLatest() {
   WiFiClientSecure client;
   client.setInsecure();
 
-  HTTPClient http;
-  http.setConnectTimeout(8000);
-  http.setTimeout(8000);
-  const String url = String(kRepoUrl) + "/releases/latest";
-  if (!http.begin(client, url)) return result;
-  // Redirect NICHT folgen: der Location-Header traegt bereits den Tag.
-  http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
-  const char* kCollect[] = {"Location"};
-  http.collectHeaders(kCollect, 1);
+  // Redirects NICHT pauschal folgen: der Location-Header traegt den Tag.
+  // Nach einem Repo-Rename liefert GitHub aber ERST eine Umleitung auf den
+  // neuen Repo-Pfad (.../releases/latest) - dieser Kette manuell folgen,
+  // bis eine Tag-URL auftaucht, sonst verlieren ausgelieferte Geraete beim
+  // Umbenennen des Repos dauerhaft ihre Update-Suche.
+  String url = String(kRepoUrl) + "/releases/latest";
+  String tag;
+  for (int hop = 0; hop < 4; ++hop) {
+    HTTPClient http;
+    http.setConnectTimeout(8000);
+    http.setTimeout(8000);
+    if (!http.begin(client, url)) return result;
+    http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+    const char* kCollect[] = {"Location"};
+    http.collectHeaders(kCollect, 1);
 
-  const int code = http.GET();
-  const String location = http.header("Location");
-  http.end();
+    const int code = http.GET();
+    const String location = http.header("Location");
+    http.end();
 
-  if (code < 300 || code >= 400 || !location.length()) {
-    Serial.printf("[Update] Check fehlgeschlagen: HTTP %d\n", code);
-    return result;
+    if (code < 300 || code >= 400 || !location.length()) {
+      Serial.printf("[Update] Check fehlgeschlagen: HTTP %d\n", code);
+      return result;
+    }
+
+    const int tag_pos = location.indexOf("/releases/tag/");
+    if (tag_pos >= 0) {
+      tag = location.substring(tag_pos + strlen("/releases/tag/"));
+      break;
+    }
+    if (location.indexOf("/releases/latest") < 0) {
+      // Weder Tag- noch latest-Pfad: Repo ohne Releases (leitet auf
+      // /releases um) oder etwas Unerwartetes.
+      Serial.printf("[Update] Kein Release gefunden (%s)\n", location.c_str());
+      return result;
+    }
+    url = location;  // Rename-Redirect: neue Repo-URL erneut anfragen
   }
 
-  const int tag_pos = location.indexOf("/releases/tag/");
-  if (tag_pos < 0) {
-    // Repo ohne Releases leitet auf /releases um
-    Serial.printf("[Update] Kein Release gefunden (%s)\n", location.c_str());
-    return result;
-  }
-  const String tag = location.substring(tag_pos + strlen("/releases/tag/"));
   if (!tag.length() || tag.length() >= sizeof(result.latest_tag)) {
     Serial.printf("[Update] Unerwarteter Tag: '%s'\n", tag.c_str());
     return result;
