@@ -6,6 +6,7 @@
 #include <WiFiClientSecure.h>
 #include <esp_heap_caps.h>
 #include <lwip/sockets.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "src/core/firmware_metadata.h"
@@ -13,6 +14,20 @@
 #include "src/devices/device.h"
 
 namespace {
+
+constexpr size_t kInstallReadChunk = 2048;
+constexpr size_t kInstallRangeBytes = 64 * 1024;
+constexpr size_t kSocketRxBufferBytes = 4 * 1024;
+constexpr size_t kMaxHttpLineLen = 4096;
+constexpr uint32_t kConnectTimeoutMs = 10000;
+constexpr uint32_t kReadTimeoutMs = 20000;
+constexpr uint32_t kReadPaceMs = 4;
+
+struct ParsedHttpsUrl {
+  String host;
+  String path;
+  uint16_t port = 443;
+};
 
 // "v0.3.1" / "0.3.1" -> {0,3,1}; fehlende Teile bleiben 0.
 void parseVersion(const char* s, int out[3]) {
@@ -36,6 +51,289 @@ bool isNewerThanCurrent(const char* tag) {
     if (latest[i] != current[i]) return latest[i] > current[i];
   }
   return false;
+}
+
+bool parseHttpsUrl(const String& url, ParsedHttpsUrl& out) {
+  constexpr const char* kPrefix = "https://";
+  if (!url.startsWith(kPrefix)) return false;
+
+  const int host_start = strlen(kPrefix);
+  int path_start = url.indexOf('/', host_start);
+  if (path_start < 0) path_start = url.length();
+
+  String host_port = url.substring(host_start, path_start);
+  if (!host_port.length()) return false;
+
+  out.port = 443;
+  const int colon = host_port.lastIndexOf(':');
+  if (colon > 0) {
+    out.host = host_port.substring(0, colon);
+    const int parsed_port = atoi(host_port.substring(colon + 1).c_str());
+    if (parsed_port <= 0 || parsed_port > 65535) return false;
+    out.port = static_cast<uint16_t>(parsed_port);
+  } else {
+    out.host = host_port;
+  }
+
+  out.path = (path_start < url.length()) ? url.substring(path_start) : "/";
+  return out.host.length() && out.path.length();
+}
+
+bool readHttpLine(WiFiClientSecure& client, String& line, uint32_t timeout_ms) {
+  line = "";
+  const uint32_t start_ms = millis();
+  while (millis() - start_ms < timeout_ms) {
+    while (client.available() > 0) {
+      const char c = static_cast<char>(client.read());
+      if (c == '\r') continue;
+      if (c == '\n') return true;
+      if (line.length() < kMaxHttpLineLen) line += c;
+    }
+    if (!client.connected() && !client.available()) return line.length() > 0;
+    delay(1);
+  }
+  return false;
+}
+
+bool parseStatusCode(const String& status_line, int& code) {
+  const int first_space = status_line.indexOf(' ');
+  if (first_space < 0 || first_space + 4 > status_line.length()) return false;
+  code = atoi(status_line.substring(first_space + 1, first_space + 4).c_str());
+  return code > 0;
+}
+
+size_t parseSizeT(const String& value) {
+  return static_cast<size_t>(strtoul(value.c_str(), nullptr, 10));
+}
+
+bool parseContentRangeTotal(const String& value, size_t& total) {
+  const int slash = value.lastIndexOf('/');
+  if (slash < 0 || slash + 1 >= value.length()) return false;
+  const String total_part = value.substring(slash + 1);
+  if (total_part == "*") return false;
+  total = parseSizeT(total_part);
+  return total > 0;
+}
+
+String resolveRedirectUrl(const String& current_url,
+                          const ParsedHttpsUrl& current,
+                          const String& location) {
+  if (location.startsWith("https://")) return location;
+  if (location.startsWith("//")) return String("https:") + location;
+  if (location.startsWith("/")) {
+    return String("https://") + current.host + location;
+  }
+
+  const int slash = current_url.lastIndexOf('/');
+  if (slash > strlen("https://")) {
+    return current_url.substring(0, slash + 1) + location;
+  }
+  return String("https://") + current.host + "/" + location;
+}
+
+typedef bool (*RangeDataFn)(const uint8_t* data, size_t len, void* ctx);
+
+bool fetchHttpRange(const String& start_url, size_t from, size_t to,
+                    uint8_t* buf, size_t buf_len, RangeDataFn on_data,
+                    void* ctx, size_t& content_total, String& error_out) {
+  if (!buf || !buf_len || !on_data || to < from) {
+    error_out = "invalid range request";
+    return false;
+  }
+
+  String url = start_url;
+  for (int redirect = 0; redirect < 5; ++redirect) {
+    ParsedHttpsUrl parsed;
+    if (!parseHttpsUrl(url, parsed)) {
+      error_out = "bad https url";
+      return false;
+    }
+
+    WiFiClientSecure client;
+    client.setInsecure();
+    client.setTimeout(15000);
+    if (!client.connect(parsed.host.c_str(), parsed.port, kConnectTimeoutMs)) {
+      error_out = String("connect failed: ") + parsed.host;
+      return false;
+    }
+
+    int rcvbuf = static_cast<int>(kSocketRxBufferBytes);
+    if (client.fd() >= 0) {
+      client.setSocketOption(SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
+    }
+
+    client.printf("GET %s HTTP/1.1\r\n", parsed.path.c_str());
+    client.printf("Host: %s\r\n", parsed.host.c_str());
+    client.print("User-Agent: esp32-p4-homeassistant-display\r\n");
+    client.print("Accept: application/octet-stream\r\n");
+    client.print("Accept-Encoding: identity\r\n");
+    client.printf("Range: bytes=%u-%u\r\n",
+                  static_cast<unsigned>(from), static_cast<unsigned>(to));
+    client.print("Connection: close\r\n\r\n");
+
+    String line;
+    if (!readHttpLine(client, line, kReadTimeoutMs)) {
+      client.stop();
+      error_out = "no http status";
+      return false;
+    }
+
+    int status_code = 0;
+    if (!parseStatusCode(line, status_code)) {
+      client.stop();
+      error_out = "bad http status";
+      return false;
+    }
+
+    String location;
+    size_t content_length = 0;
+    bool has_content_length = false;
+    size_t range_total = 0;
+
+    bool header_complete = false;
+    while (readHttpLine(client, line, kReadTimeoutMs)) {
+      if (!line.length()) {
+        header_complete = true;
+        break;
+      }
+      const int colon = line.indexOf(':');
+      if (colon <= 0) continue;
+      String name = line.substring(0, colon);
+      name.toLowerCase();
+      String value = line.substring(colon + 1);
+      value.trim();
+      if (name == "location") {
+        location = value;
+      } else if (name == "content-length") {
+        content_length = parseSizeT(value);
+        has_content_length = content_length > 0;
+      } else if (name == "content-range") {
+        parseContentRangeTotal(value, range_total);
+      }
+    }
+    if (!header_complete) {
+      client.stop();
+      error_out = "header timeout";
+      return false;
+    }
+
+    if (status_code >= 300 && status_code < 400 && location.length()) {
+      client.stop();
+      url = resolveRedirectUrl(url, parsed, location);
+      continue;
+    }
+
+    if (status_code != 206) {
+      client.stop();
+      error_out = String("HTTP ") + status_code;
+      return false;
+    }
+    if (!range_total) {
+      client.stop();
+      error_out = "missing content-range";
+      return false;
+    }
+    content_total = range_total;
+
+    const size_t expected = to - from + 1;
+    if (has_content_length && content_length != expected) {
+      client.stop();
+      error_out = "range length mismatch";
+      return false;
+    }
+
+    size_t received = 0;
+    uint32_t last_data_ms = millis();
+    while (received < expected) {
+      const int avail = client.available();
+      if (avail > 0) {
+        size_t want = expected - received;
+        if (want > buf_len) want = buf_len;
+        if (want > static_cast<size_t>(avail)) want = static_cast<size_t>(avail);
+
+        const int r = client.read(buf, want);
+        if (r <= 0) {
+          delay(1);
+          continue;
+        }
+        if (!on_data(buf, static_cast<size_t>(r), ctx)) {
+          client.stop();
+          if (!error_out.length()) error_out = "write failed";
+          return false;
+        }
+        received += static_cast<size_t>(r);
+        last_data_ms = millis();
+        delay(kReadPaceMs);
+      } else {
+        if (!client.connected() || millis() - last_data_ms > kReadTimeoutMs) {
+          client.stop();
+          error_out = client.connected() ? "timeout" : "connection lost";
+          return false;
+        }
+        delay(10);
+      }
+    }
+
+    client.stop();
+    return true;
+  }
+
+  error_out = "too many redirects";
+  return false;
+}
+
+struct HeadBufferCtx {
+  uint8_t* data = nullptr;
+  size_t capacity = 0;
+  size_t len = 0;
+};
+
+bool storeHeadBytes(const uint8_t* data, size_t len, void* raw_ctx) {
+  auto* ctx = static_cast<HeadBufferCtx*>(raw_ctx);
+  if (!ctx || !ctx->data || ctx->len + len > ctx->capacity) return false;
+  memcpy(ctx->data + ctx->len, data, len);
+  ctx->len += len;
+  return true;
+}
+
+struct UpdateWriteCtx {
+  size_t written = 0;
+  size_t total = 0;
+  size_t next_progress_log = 512 * 1024;
+  uint32_t last_progress_ms = 0;
+  GithubUpdate::ProgressFn progress = nullptr;
+  String* error = nullptr;
+};
+
+void reportInstallProgress(UpdateWriteCtx& ctx, bool force) {
+  if (!ctx.progress) return;
+  const uint32_t now_ms = millis();
+  if (force || now_ms - ctx.last_progress_ms >= 500 ||
+      (ctx.total && ctx.written >= ctx.total)) {
+    ctx.last_progress_ms = now_ms;
+    ctx.progress(ctx.written, ctx.total);
+  }
+}
+
+bool writeUpdateBytes(const uint8_t* data, size_t len, void* raw_ctx) {
+  auto* ctx = static_cast<UpdateWriteCtx*>(raw_ctx);
+  if (!ctx || !data) return false;
+  const size_t bytes_written = Update.write(const_cast<uint8_t*>(data), len);
+  if (bytes_written != len) {
+    if (ctx->error) *ctx->error = Update.errorString();
+    return false;
+  }
+
+  ctx->written += bytes_written;
+  if (ctx->written >= ctx->next_progress_log ||
+      (ctx->total && ctx->written >= ctx->total)) {
+    Serial.printf("[Update] Install progress: %u / %u bytes\n",
+                  static_cast<unsigned>(ctx->written),
+                  static_cast<unsigned>(ctx->total));
+    ctx->next_progress_log += 512 * 1024;
+  }
+  reportInstallProgress(*ctx, false);
+  return true;
 }
 
 }  // namespace
@@ -114,116 +412,44 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
                      Device::profile().key + ".bin";
   Serial.printf("[Update] Lade %s\n", url.c_str());
 
-  WiFiClientSecure client;
-  client.setInsecure();
-
-  HTTPClient http;
-  http.setConnectTimeout(10000);
-  http.setTimeout(15000);
-  http.setReuse(false);
-  if (!http.begin(client, url)) {
-    error_out = "begin failed";
-    return false;
-  }
-  // GitHub leitet Release-Downloads auf objects.githubusercontent.com um
-  http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
-  http.addHeader("Accept-Encoding", "identity");
-  http.addHeader("Connection", "close");
-
-  const int code = http.GET();
-  if (code != HTTP_CODE_OK) {
-    http.end();
-    error_out = String("HTTP ") + code;
-    Serial.printf("[Update] Download fehlgeschlagen: %s (Asset-Name/Tag pruefen?)\n",
-                  error_out.c_str());
-    return false;
-  }
-
-  int rcvbuf = 8 * 1024;
-  if (client.fd() >= 0) {
-    const int sock_res =
-        client.setSocketOption(SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
-    Serial.printf("[Update] TCP RX-Puffer auf %d Bytes %s\n",
-                  rcvbuf, sock_res == 0 ? "begrenzt" : "nicht geaendert");
-  }
-
-  const int total = http.getSize();  // -1 = unbekannt (chunked)
-  const size_t total_sz = (total > 0) ? static_cast<size_t>(total) : 0;
-  if (total_sz && total_sz < firmware_meta::kDeviceDescriptorImageBytes) {
-    http.end();
-    error_out = "image too small";
-    return false;
-  }
-
   // Lesepuffer im PSRAM, um das knappe interne RAM (TLS!) nicht zusaetzlich
-  // zu belasten. Kleine Happen + kurze Pausen wirken wie das 8KB-RX-Fenster
-  // beim stabilen Web-OTA und verhindern, dass SDIO-WLAN bei Flash-Writes mit
-  // zu vielen RX-Puffern gleichzeitig geflutet wird.
-  constexpr size_t kChunk = 2048;
-  constexpr uint32_t kReadPaceMs = 4;
+  // zu belasten. Der GitHub/CDN-Download wird absichtlich in Range-Requests
+  // zerlegt: so ist waehrend Update.begin() keine offene Body-Verbindung aktiv
+  // und SDIO-WLAN kann beim Flash-Erase nicht mit RX-Puffern geflutet werden.
   uint8_t* buf = static_cast<uint8_t*>(
-      heap_caps_malloc(kChunk, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  if (!buf) buf = static_cast<uint8_t*>(malloc(kChunk));
+      heap_caps_malloc(kInstallReadChunk, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!buf) buf = static_cast<uint8_t*>(malloc(kInstallReadChunk));
   if (!buf) {
-    Update.abort();
-    http.end();
     error_out = "alloc failed";
     return false;
   }
+  Serial.printf("[Update] Range-Download: %uB TCP RX, %uB Lesechunk, %uKB Requests\n",
+                static_cast<unsigned>(kSocketRxBufferBytes),
+                static_cast<unsigned>(kInstallReadChunk),
+                static_cast<unsigned>(kInstallRangeBytes / 1024));
 
-  auto* stream = http.getStreamPtr();
-  size_t written_total = 0;
-  size_t next_progress_log = 512 * 1024;
-  uint32_t last_data_ms = millis();
-  uint32_t last_progress_ms = 0;
   bool failed = false;
   bool update_started = false;
-
-  auto report_progress = [&](bool force) {
-    if (!progress) return;
-    const uint32_t now_ms = millis();
-    if (force || now_ms - last_progress_ms >= 500 ||
-        (total_sz && written_total >= total_sz)) {
-      last_progress_ms = now_ms;
-      progress(written_total, total_sz);
-    }
-  };
+  size_t total_sz = 0;
 
   uint8_t image_head[firmware_meta::kDeviceDescriptorImageBytes] = {0};
-  size_t image_head_len = 0;
-  while (!failed && image_head_len < sizeof(image_head)) {
-    const int avail = stream->available();
-    if (avail > 0) {
-      size_t want = sizeof(image_head) - image_head_len;
-      if (want > kChunk) want = kChunk;
-      if (want > static_cast<size_t>(avail)) want = static_cast<size_t>(avail);
+  HeadBufferCtx head_ctx{image_head, sizeof(image_head), 0};
+  if (!fetchHttpRange(url, 0, sizeof(image_head) - 1, buf, kInstallReadChunk,
+                      storeHeadBytes, &head_ctx, total_sz, error_out)) {
+    failed = true;
+  }
 
-      const int r = stream->read(buf, want);
-      if (r <= 0) {
-        delay(1);
-        continue;
-      }
-      memcpy(image_head + image_head_len, buf, static_cast<size_t>(r));
-      image_head_len += static_cast<size_t>(r);
-      last_data_ms = millis();
-      report_progress(false);
-      delay(kReadPaceMs);
-    } else {
-      if (!http.connected() ||
-          millis() - last_data_ms > 20000UL) {
-        error_out = http.connected() ? "timeout" : "connection lost";
-        failed = true;
-        break;
-      }
-      report_progress(false);
-      delay(10);
+  if (!failed) {
+    if (total_sz < firmware_meta::kDeviceDescriptorImageBytes) {
+      error_out = "image too small";
+      failed = true;
     }
   }
 
   if (!failed) {
     firmware_meta::DeviceDescriptor incoming_desc{};
     if (!firmware_meta::parseDeviceDescriptorFromImage(
-            image_head, image_head_len, incoming_desc)) {
+            image_head, head_ctx.len, incoming_desc)) {
       error_out = "firmware metadata missing or invalid";
       failed = true;
     } else if (strcmp(incoming_desc.device_key,
@@ -242,82 +468,57 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
   }
 
   if (!failed) {
-    if (!Update.begin(total_sz ? total_sz : UPDATE_SIZE_UNKNOWN, U_FLASH)) {
+    if (!Update.begin(total_sz, U_FLASH)) {
       error_out = Update.errorString();
       failed = true;
       Serial.printf("[Update] Update.begin fehlgeschlagen: %s\n",
                     error_out.c_str());
     } else {
       update_started = true;
-      Serial.printf("[Update] Update.begin OK, Groesse: %d\n", total);
-      if (Update.write(image_head, image_head_len) != image_head_len) {
-        error_out = Update.errorString();
+      Serial.printf("[Update] Update.begin OK, Groesse: %u\n",
+                    static_cast<unsigned>(total_sz));
+      UpdateWriteCtx write_ctx;
+      write_ctx.written = 0;
+      write_ctx.total = total_sz;
+      write_ctx.progress = progress;
+      write_ctx.error = &error_out;
+      if (!writeUpdateBytes(image_head, head_ctx.len, &write_ctx)) {
+        if (!error_out.length()) error_out = Update.errorString();
         failed = true;
       } else {
-        written_total = image_head_len;
-        report_progress(true);
+        reportInstallProgress(write_ctx, true);
       }
-    }
-  }
 
-  while (http.connected() && (total < 0 || written_total < total_sz)) {
-    if (failed) break;
-    const int avail = stream->available();
-    if (avail) {
-      size_t want = (static_cast<size_t>(avail) > kChunk)
-                        ? kChunk
-                        : static_cast<size_t>(avail);
-      if (total_sz) {
-        const size_t remaining = total_sz - written_total;
-        if (want > remaining) want = remaining;
-      }
-      const int r = stream->read(buf, want);
-      if (r <= 0) continue;
-      if (Update.write(buf, r) != static_cast<size_t>(r)) {
-        error_out = Update.errorString();
-        failed = true;
-        break;
-      }
-      written_total += r;
-      last_data_ms = millis();
-      if (written_total >= next_progress_log ||
-          (total_sz && written_total >= total_sz)) {
-        if (total_sz) {
-          Serial.printf("[Update] Install progress: %u / %u bytes\n",
-                        static_cast<unsigned>(written_total),
-                        static_cast<unsigned>(total_sz));
-        } else {
-          Serial.printf("[Update] Install progress: %u bytes written\n",
-                        static_cast<unsigned>(written_total));
+      while (!failed && write_ctx.written < total_sz) {
+        const size_t range_start = write_ctx.written;
+        size_t range_end = range_start + kInstallRangeBytes - 1;
+        if (range_end >= total_sz || range_end < range_start) {
+          range_end = total_sz - 1;
         }
-        next_progress_log += 512 * 1024;
+
+        size_t range_total = 0;
+        if (!fetchHttpRange(url, range_start, range_end, buf, kInstallReadChunk,
+                            writeUpdateBytes, &write_ctx, range_total,
+                            error_out)) {
+          failed = true;
+          break;
+        }
+        if (range_total != total_sz) {
+          error_out = "image size changed";
+          failed = true;
+          break;
+        }
       }
-      report_progress(false);
-      delay(kReadPaceMs);
-    } else {
-      if (millis() - last_data_ms > 20000UL) {
-        error_out = "timeout";
-        failed = true;
-        break;
-      }
-      report_progress(false);
-      delay(10);
     }
   }
-  free(buf);
 
-  if (!failed && total_sz && written_total < total_sz) {
-    error_out = "connection lost";
-    failed = true;
-  }
+  free(buf);
 
   if (failed) {
     if (update_started) Update.abort();
-    http.end();
     Serial.printf("[Update] Install fehlgeschlagen: %s\n", error_out.c_str());
     return false;
   }
-  http.end();
 
   if (!Update.end(true)) {
     error_out = Update.errorString();
@@ -325,7 +526,7 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
     return false;
   }
   Serial.printf("[Update] %u Bytes installiert - bereit zum Neustart\n",
-                static_cast<unsigned>(written_total));
+                static_cast<unsigned>(total_sz));
   return true;
 }
 
