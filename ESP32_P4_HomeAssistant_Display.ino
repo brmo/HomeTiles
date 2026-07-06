@@ -251,12 +251,18 @@ static void fw_install_progress(size_t written, size_t total) {
 
 static void apply_fw_install() {
   Serial.printf("[Update] Install angefordert: %s\n", fw_install_tag);
-  // Eingaben sperren und internes RAM freimachen: TLS braucht ~45KB -
-  // deshalb wie beim Web-OTA MQTT trennen/Puffer schrumpfen und den
-  // Web-Admin-Server stoppen.
+  // Internes RAM freimachen, exakt wie prepareDisplayForOtaInstall() beim
+  // Web-OTA: Das 72KB-SRAM-Draw-Band haelt genau das interne DMA-RAM, das
+  // esp-hosted fuer den Dauer-RX-Strom des Downloads braucht - ohne den
+  // Tausch ins PSRAM crasht der erste Datenburst mit "sdio_push_data_to_
+  // queue (pkt_rxbuff)" (so beim ersten Testlauf passiert; TLS legt weitere
+  // ~45KB obendrauf). Anders als beim Web-OTA bleibt das Display AN, damit
+  // der Fortschrittsbalken sichtbar ist - nur langsamer gerendert.
   displayManager.setInputEnabled(false);
+  displayManager.setBufferLines(8);  // unter SRAM-Minimum -> PSRAM-Puffer
   networkManager.prepareMqttForOta();
   if (webAdminServer.isRunning()) webAdminServer.stop();
+  log_memory_status("before-github-ota");
   lv_refr_now(displayManager.getDisplay());
 
   String err;
@@ -273,12 +279,15 @@ static void apply_fw_install() {
 
   Serial.printf("[Update] Fehlgeschlagen: %s\n", err.c_str());
   settings_fw_install_failed(err.c_str());
-  // Zurueck in den Normalbetrieb
+  // Zurueck in den Normalbetrieb (Gegenstueck zur Vorbereitung oben)
   networkManager.restoreMqttBufferNormal();
+  displayManager.setBufferLines(SCREEN_HEIGHT / Device::kDisplayFlushBands);
   if (networkManager.isWifiConnected() && !webAdminServer.isRunning()) {
     webAdminServer.start();
   }
   displayManager.setInputEnabled(true);
+  lv_obj_invalidate(lv_screen_active());
+  lv_refr_now(displayManager.getDisplay());
 }
 
 static bool init_nvs() {
