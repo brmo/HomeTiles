@@ -403,7 +403,7 @@ void setup() {
   Serial.begin(115200);
   delay(2000);
   Serial.println("\n\n=== WAVESHARE P4 STARTUP ===");
-  Serial.printf("[Setup] Firmware: esp32-p4-homeassistant-display-%s-%s\n", FW_VERSION, Device::profile().key);
+  Serial.printf("[Setup] Firmware: hometiles-%s-%s\n", FW_VERSION, Device::profile().key);
   confirm_running_ota_if_needed();
   log_memory_status("boot-start");
   Serial.flush();

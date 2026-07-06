@@ -165,7 +165,7 @@ bool fetchHttpRange(const String& start_url, size_t from, size_t to,
 
     client.printf("GET %s HTTP/1.1\r\n", parsed.path.c_str());
     client.printf("Host: %s\r\n", parsed.host.c_str());
-    client.print("User-Agent: esp32-p4-homeassistant-display\r\n");
+    client.print("User-Agent: hometiles\r\n");
     client.print("Accept: application/octet-stream\r\n");
     client.print("Accept-Encoding: identity\r\n");
     client.printf("Range: bytes=%u-%u\r\n",
@@ -447,7 +447,7 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
   if (Update.isRunning()) Update.abort();
 
   const String url = String(kRepoUrl) + "/releases/download/" + tag +
-                     "/esp32-p4-homeassistant-display-" + tag + "-" +
+                     "/hometiles-" + tag + "-" +
                      Device::profile().key + ".bin";
   Serial.printf("[Update] Lade %s\n", url.c_str());
 

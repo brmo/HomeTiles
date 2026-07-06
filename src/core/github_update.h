@@ -9,8 +9,11 @@
 //
 // Namenskonvention der GitHub-Releases (MUSS beim Anlegen eingehalten werden):
 //   Tag:   vX.Y.Z (gleiches Format wie FW_VERSION in version.txt)
-//   Asset: esp32-p4-homeassistant-display-<tag>-<geraete-key>.bin
-//   z.B.   esp32-p4-homeassistant-display-v0.3.0-waveshare_touch_lcd_8.bin
+//   Asset: hometiles-<tag>-<geraete-key>.bin
+//   z.B.   hometiles-v0.2.10-waveshare_touch_lcd_8.bin
+//   (bis v0.2.9 hiess das Schema esp32-p4-homeassistant-display-*; Releases
+//   muessen die alten Asset-Namen mitliefern, solange Geraete <= v0.2.9
+//   im Umlauf sind, sonst laufen deren Updates ins 404)
 // Die Geraete-Keys sind: waveshare_touch_lcd_8, waveshare_4b, m5stacks_tab5.
 namespace GithubUpdate {
 

@@ -609,7 +609,7 @@ String WebAdminServer::getAdminPage() {
   const String admin_panel_title =
       String(Device::displayName()) + (is_german ? " Admin-Panel" : " Admin Panel");
   const String current_firmware_name =
-      String("esp32-p4-homeassistant-display-") + FW_VERSION + "-" + Device::profile().key;
+      String("hometiles-") + FW_VERSION + "-" + Device::profile().key;
   const HaBridgeConfigData& ha = haBridgeConfig.get();
   const auto sensorOptions = parseSensorList(ha.sensors_text);
   const auto energyOptions = parseSensorList(ha.energy_text);
