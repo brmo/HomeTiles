@@ -21,6 +21,9 @@ The project supports multiple ESP32-P4 touch displays and combines:
 - The Home Assistant bridge/integration:
   [ESP32-P4 HomeAssistant Display Bridge](https://github.com/GalusPeres/ESP32-P4-HomeAssistant-Display-Bridge)
 
+New to this? The [Home Assistant Setup Guide](docs/home-assistant-setup.md) walks through
+the whole chain: MQTT broker, bridge integration, and connecting the display.
+
 ## Highlights Of The v0.2.x Releases
 
 - All three supported devices are now covered by every release
@@ -150,8 +153,8 @@ latest GitHub release and installs it directly.
 4. The device IP address is shown in the on-device WLAN settings.
 5. Open the web admin panel through that IP address.
 6. Enter your MQTT settings in the web interface.
-7. Set up the Home Assistant bridge/integration so the device receives entity data:
-   [ESP32-P4 HomeAssistant Display Bridge](https://github.com/GalusPeres/ESP32-P4-HomeAssistant-Display-Bridge)
+7. Set up the Home Assistant bridge/integration so the device receives entity data —
+   see the [Home Assistant Setup Guide](docs/home-assistant-setup.md) for the full walkthrough.
 8. Configure your tiles, folders, and layout.
 
 Optional:
@@ -165,6 +168,8 @@ This firmware expects the Home Assistant side to be provided by the MQTT bridge/
 
 That integration handles the Home Assistant-side MQTT communication and entity bridge.
 For Energy tiles, Home Assistant energy statistics, live icon updates, and popup history, use the current bridge release.
+
+Step-by-step instructions (broker, integration, display): [Home Assistant Setup Guide](docs/home-assistant-setup.md)
 
 ## Repository Structure
 
