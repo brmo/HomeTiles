@@ -1,6 +1,11 @@
 #include "src/core/board_hal.h"
 
 #include "src/devices/device.h"
+#include "src/devices/device_select.h"
+
+#if defined(DEVICE_WAVESHARE_4B)
+#include <esp_private/system_internal.h>
+#endif
 
 bool BoardHAL::init() {
   return Device::init();
@@ -69,6 +74,17 @@ void BoardHAL::displayWaitDisplay() {
 
 void BoardHAL::prepareForRestart() {
   Device::prepareForRestart();
+}
+
+void BoardHAL::restart() {
+  Serial.flush();
+#if defined(DEVICE_WAVESHARE_4B)
+  Serial.println("[BoardHAL] Neustart via no-OS restart");
+  Serial.flush();
+  esp_restart_noos();
+#else
+  ESP.restart();
+#endif
 }
 
 bool BoardHAL::initSDCard() {

@@ -1385,7 +1385,7 @@ void WebAdminServer::handleRestart() {
   Serial.println("[WebAdmin] Restart requested");
   prepareDisplayForRestart();
   delay(200);
-  ESP.restart();
+  BoardHAL::restart();
 }
 
 void WebAdminServer::handleGetTiles() {
@@ -2529,7 +2529,7 @@ void webAdminServiceOta() {
   }
   prepareDisplayForRestart();
   delay(50);
-  ESP.restart();
+  BoardHAL::restart();
 }
 
 void WebAdminServer::handleCreateScreenshot() {

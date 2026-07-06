@@ -32,6 +32,7 @@ void displayPowerSaveOn();
 void displayPowerSaveOff();
 void displayWaitDisplay();
 void prepareForRestart();
+void restart();
 
 bool initSDCard();
 

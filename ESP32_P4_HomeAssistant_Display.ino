@@ -282,7 +282,7 @@ static void apply_fw_install() {
     Serial.println("[Update] Erfolgreich - Neustart");
     BoardHAL::prepareForRestart();
     delay(800);  // Erfolgsmeldung kurz stehen lassen
-    ESP.restart();
+    BoardHAL::restart();
     return;
   }
 
@@ -306,7 +306,7 @@ static void apply_system_reboot() {
   lv_refr_now(displayManager.getDisplay());
   BoardHAL::prepareForRestart();
   delay(800);
-  ESP.restart();
+  BoardHAL::restart();
 }
 
 static bool init_nvs() {
@@ -665,7 +665,7 @@ void loop() {
       displayManager.setInputEnabled(false);
       BoardHAL::prepareForRestart();
       delay(200);
-      ESP.restart();
+      BoardHAL::restart();
     }
 
     if (ap_mode_started_at != 0 && (uint32_t)(now - ap_mode_started_at) > AP_MODE_TIMEOUT_MS) {

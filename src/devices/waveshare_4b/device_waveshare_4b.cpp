@@ -8,6 +8,8 @@
 #include <LittleFS.h>
 #include <driver/gpio.h>
 #include <driver/ledc.h>
+#include <esp_err.h>
+#include <esp_ldo_regulator.h>
 
 #include "src/devices/waveshare_4b/waveshare_sdmmc.h"
 #include "src/devices/waveshare_4b/vendor/displays_config.h"
@@ -21,17 +23,35 @@ constexpr ledc_timer_t kBacklightTimer = LEDC_TIMER_1;
 constexpr uint32_t kBacklightFreq = 5000;
 constexpr ledc_timer_bit_t kBacklightBits = LEDC_TIMER_10_BIT;
 constexpr bool kBacklightActiveLow = true;
+constexpr int kMipiPhyLdoChannel = 3;
+constexpr int kMipiPhyLdoVoltageMv = 2500;
+constexpr int kPanelPowerLdoChannel = 4;
+constexpr int kPanelPowerLdoVoltageMv = 3300;
 
 Arduino_ESP32DSIPanel* g_dsi_panel = nullptr;
 Arduino_DSI_Display* g_gfx = nullptr;
 esp_lcd_touch_handle_t g_touch = nullptr;
+esp_ldo_channel_handle_t g_panel_power_ldo = nullptr;
 
 uint8_t g_brightness = 150;
 bool g_backlight_ready = false;
+bool g_panel_power_cycled = false;
 bool g_sd_init_attempted = false;
 bool g_sd_available = false;
 uint32_t g_sd_retry_tick_ms = 0;
 bool g_littlefs_ready = false;
+
+void apply_backlight(uint8_t value);
+
+void hold_panel_reset_low() {
+  if (display_cfg.lcd_rst < 0) {
+    return;
+  }
+
+  const gpio_num_t rst_pin = static_cast<gpio_num_t>(display_cfg.lcd_rst);
+  gpio_set_direction(rst_pin, GPIO_MODE_OUTPUT);
+  gpio_set_level(rst_pin, 0);
+}
 
 void pulse_panel_reset() {
   if (display_cfg.lcd_rst < 0) {
@@ -41,9 +61,97 @@ void pulse_panel_reset() {
   const gpio_num_t rst_pin = static_cast<gpio_num_t>(display_cfg.lcd_rst);
   gpio_set_direction(rst_pin, GPIO_MODE_OUTPUT);
   gpio_set_level(rst_pin, 0);
+  gpio_hold_dis(rst_pin);
   delay(120);
   gpio_set_level(rst_pin, 1);
   delay(300);
+}
+
+bool acquire_panel_power() {
+  if (!g_panel_power_ldo) {
+    esp_ldo_channel_config_t ldo_cfg = {};
+    ldo_cfg.chan_id = kPanelPowerLdoChannel;
+    ldo_cfg.voltage_mv = kPanelPowerLdoVoltageMv;
+    const esp_err_t err = esp_ldo_acquire_channel(&ldo_cfg, &g_panel_power_ldo);
+    if (err != ESP_OK) {
+      Serial.printf("[Device/Waveshare4B] Panel LDO init failed: %s (0x%x)\n",
+                    esp_err_to_name(err),
+                    static_cast<unsigned>(err));
+      return false;
+    }
+    Serial.println("[Device/Waveshare4B] Panel LDO OK");
+  }
+  return true;
+}
+
+bool power_cycle_mipi_phy() {
+  esp_ldo_channel_handle_t phy_ldo = nullptr;
+  esp_ldo_channel_config_t ldo_cfg = {};
+  ldo_cfg.chan_id = kMipiPhyLdoChannel;
+  ldo_cfg.voltage_mv = kMipiPhyLdoVoltageMv;
+
+  const esp_err_t acquire_err = esp_ldo_acquire_channel(&ldo_cfg, &phy_ldo);
+  if (acquire_err != ESP_OK) {
+    Serial.printf("[Device/Waveshare4B] MIPI PHY LDO cycle skipped: %s (0x%x)\n",
+                  esp_err_to_name(acquire_err),
+                  static_cast<unsigned>(acquire_err));
+    return false;
+  }
+
+  Serial.println("[Device/Waveshare4B] MIPI PHY power cycle");
+  const esp_err_t release_err = esp_ldo_release_channel(phy_ldo);
+  if (release_err != ESP_OK) {
+    Serial.printf("[Device/Waveshare4B] MIPI PHY LDO release failed: %s (0x%x)\n",
+                  esp_err_to_name(release_err),
+                  static_cast<unsigned>(release_err));
+    return false;
+  }
+
+  delay(150);
+  return true;
+}
+
+bool power_cycle_panel() {
+  hold_panel_reset_low();
+  apply_backlight(0);
+
+  if (!acquire_panel_power()) {
+    return false;
+  }
+
+  Serial.println("[Device/Waveshare4B] Panel power cycle");
+  const esp_err_t release_err = esp_ldo_release_channel(g_panel_power_ldo);
+  if (release_err != ESP_OK) {
+    Serial.printf("[Device/Waveshare4B] Panel LDO release failed: %s (0x%x)\n",
+                  esp_err_to_name(release_err),
+                  static_cast<unsigned>(release_err));
+  }
+  g_panel_power_ldo = nullptr;
+
+  delay(350);
+
+  if (!acquire_panel_power()) {
+    return false;
+  }
+
+  delay(150);
+  g_panel_power_cycled = true;
+  return true;
+}
+
+bool init_display_power() {
+  power_cycle_mipi_phy();
+
+  if (!g_panel_power_cycled && !power_cycle_panel()) {
+    return false;
+  }
+
+  if (!acquire_panel_power()) {
+    return false;
+  }
+
+  delay(50);
+  return true;
 }
 
 void apply_backlight(uint8_t value) {
@@ -102,6 +210,9 @@ bool init_display() {
     return true;
   }
 
+  if (!init_display_power()) {
+    return false;
+  }
   pulse_panel_reset();
 
   g_dsi_panel = new Arduino_ESP32DSIPanel(
@@ -293,6 +404,7 @@ void DeviceWaveshare4B::prepareForRestart() {
   if (g_gfx) {
     g_gfx->fillScreen(0x0000);
     g_gfx->flush();
+    g_gfx->displayOff();
   }
 
   apply_backlight(0);
@@ -301,9 +413,15 @@ void DeviceWaveshare4B::prepareForRestart() {
   gpio_set_level(kBacklightPin, kBacklightActiveLow ? 1 : 0);
 
   if (display_cfg.lcd_rst >= 0) {
+    Serial.println("[Device/Waveshare4B] Holding panel reset low for restart");
+    hold_panel_reset_low();
     const gpio_num_t rst_pin = static_cast<gpio_num_t>(display_cfg.lcd_rst);
-    gpio_set_direction(rst_pin, GPIO_MODE_OUTPUT);
-    gpio_set_level(rst_pin, 1);
+    const esp_err_t hold_err = gpio_hold_en(rst_pin);
+    if (hold_err != ESP_OK) {
+      Serial.printf("[Device/Waveshare4B] Panel reset hold failed: %s (0x%x)\n",
+                    esp_err_to_name(hold_err),
+                    static_cast<unsigned>(hold_err));
+    }
   }
 }
 
