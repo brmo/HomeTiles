@@ -116,6 +116,13 @@ static void tab5_note_flush(uint32_t pixels, uint32_t flush_us, uint32_t push_us
 static constexpr size_t kInternalDrawReserveBytes = 150 * 1024;  // keep free for WiFi/SDIO/lwIP
 static constexpr size_t kInternalDrawMaxBytes     = 72 * 1024;   // cap one SRAM band
 static constexpr size_t kInternalDrawMinLines     = 16;          // below this SRAM isn't worth it
+// Restore nach OTA-Vorbereitung: zur Laufzeit besitzen WLAN/MQTT/Server ihr
+// RAM bereits - die grosse Boot-Reserve wuerde es doppelt einrechnen und das
+// SRAM-Band verweigern. Folge (Tab5-Log 2026-07-06): nach jedem fehl-
+// geschlagenen Update rendert das Geraet bis zum Reboot langsam aus dem
+// PSRAM. ~80KB Rest-Luft entsprechen dem gemessen stabilen Betriebspunkt
+// (DMA free ~100KB bei aktivem Band).
+static constexpr size_t kInternalDrawRestoreReserveBytes = 80 * 1024;
 
 static inline void commit_display_if_last(lv_display_t* lv_disp) {
 #if defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
@@ -201,6 +208,11 @@ void DisplayManager::setReverseFlushOnce() {
 }
 
 bool DisplayManager::allocDrawBuffers(size_t requested_lines, lv_display_render_mode_t mode) {
+  return allocDrawBuffers(requested_lines, mode, kInternalDrawReserveBytes);
+}
+
+bool DisplayManager::allocDrawBuffers(size_t requested_lines, lv_display_render_mode_t mode,
+                                      size_t internal_reserve_bytes) {
   if (!disp || requested_lines == 0) return false;
   if (g_bytes_per_pixel == 0) {
     g_bytes_per_pixel = lv_color_format_get_size(lv_display_get_color_format(disp));
@@ -219,8 +231,16 @@ bool DisplayManager::allocDrawBuffers(size_t requested_lines, lv_display_render_
   const size_t free_internal =
       heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
   const size_t budget =
-      (free_internal > kInternalDrawReserveBytes) ? (free_internal - kInternalDrawReserveBytes) : 0;
+      (free_internal > internal_reserve_bytes) ? (free_internal - internal_reserve_bytes) : 0;
   size_t cap_bytes = budget < kInternalDrawMaxBytes ? budget : kInternalDrawMaxBytes;
+  // Fragmentierung beruecksichtigen: nach laengerer Laufzeit ist der groesste
+  // zusammenhaengende DMA-Block oft kleiner als die freie Summe (Tab5-Log:
+  // 171KB frei, largest nur 69KB). Lieber ein paar Zeilen weniger im SRAM
+  // als der komplette Rueckfall ins langsame PSRAM.
+  const size_t largest_block =
+      heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+  const size_t largest_usable = (largest_block > 2048) ? (largest_block - 2048) : 0;
+  if (cap_bytes > largest_usable) cap_bytes = largest_usable;
   size_t sram_lines = cap_bytes / line_bytes;
   if (sram_lines > requested_lines) sram_lines = requested_lines;
   if (sram_lines >= kInternalDrawMinLines) {
@@ -278,6 +298,16 @@ bool DisplayManager::allocDrawBuffers(size_t requested_lines, lv_display_render_
 
 bool DisplayManager::setBufferLines(size_t lines) {
   return setBufferLines(lines, LV_DISPLAY_RENDER_MODE_PARTIAL);
+}
+
+bool DisplayManager::restoreBufferLinesAfterOta(size_t lines) {
+  if (!disp || lines == 0) return false;
+  lv_refr_now(disp);
+  // Immer neu allozieren (kein Gleichheits-Kurzschluss wie in
+  // setBufferLines): der aktuelle Zustand ist der kleine OTA-PSRAM-Puffer,
+  // Ziel ist das schnelle SRAM-Band mit Laufzeit-Reserve.
+  return allocDrawBuffers(lines, LV_DISPLAY_RENDER_MODE_PARTIAL,
+                          kInternalDrawRestoreReserveBytes);
 }
 
 bool DisplayManager::setBufferLines(size_t lines, lv_display_render_mode_t render_mode) {

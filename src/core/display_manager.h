@@ -29,6 +29,11 @@ public:
   void setReverseFlushOnce();
   bool setBufferLines(size_t lines);
   bool setBufferLines(size_t lines, lv_display_render_mode_t render_mode);
+  // Nach OTA-Vorbereitung (setBufferLines(8)) zurueck zum schnellen Band:
+  // nutzt eine kleinere interne Reserve als beim Boot, weil WLAN/MQTT ihr
+  // RAM zur Laufzeit schon besitzen - sonst faellt der Puffer nach jedem
+  // fehlgeschlagenen Update bis zum Reboot ins langsame PSRAM zurueck.
+  bool restoreBufferLinesAfterOta(size_t lines);
   size_t getBufferLines() const;
   lv_display_render_mode_t getRenderMode() const;
   uint32_t getFullScreenFlushSeq() const;
@@ -47,6 +52,8 @@ private:
   // Allocates LVGL draw buffers, preferring a small fast internal-SRAM band and
   // falling back to the previous PSRAM double buffer when internal RAM is scarce.
   static bool allocDrawBuffers(size_t requested_lines, lv_display_render_mode_t mode);
+  static bool allocDrawBuffers(size_t requested_lines, lv_display_render_mode_t mode,
+                               size_t internal_reserve_bytes);
 };
 
 extern DisplayManager displayManager;

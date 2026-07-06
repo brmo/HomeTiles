@@ -291,7 +291,7 @@ static void apply_fw_install() {
   // Zurueck in den Normalbetrieb (Gegenstueck zur Vorbereitung oben)
   networkManager.restoreMqttBufferNormal();
   BoardHAL::displayPowerSaveOff();
-  displayManager.setBufferLines(SCREEN_HEIGHT / Device::kDisplayFlushBands);
+  displayManager.restoreBufferLinesAfterOta(SCREEN_HEIGHT / Device::kDisplayFlushBands);
   if (networkManager.isWifiConnected() && !webAdminServer.isRunning()) {
     webAdminServer.start();
   }

@@ -355,7 +355,10 @@ void restoreDisplayAfterOtaFailure() {
   networkManager.restoreMqttBufferNormal();
   BoardHAL::displayPowerSaveOff();
   if (g_ota_display_reduced) {
-    displayManager.setBufferLines(SCREEN_HEIGHT / Device::kDisplayFlushBands);
+    // Laufzeit-Restore mit kleiner Reserve: die normale setBufferLines-
+    // Verhandlung (Boot-Reserve 150KB) verweigert das SRAM-Band zur
+    // Laufzeit und liesse das Geraet bis zum Reboot im PSRAM-Rendering.
+    displayManager.restoreBufferLinesAfterOta(SCREEN_HEIGHT / Device::kDisplayFlushBands);
     g_ota_display_reduced = false;
   }
   displayManager.setInputEnabled(true);
