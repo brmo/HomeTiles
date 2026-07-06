@@ -1,5 +1,8 @@
 ## ESP32-P4 Home Assistant Display
 
+<!-- TODO Bild da? Dann diese Zeile aktivieren und die b4-Zeile darunter loeschen:
+<img align="right" width="38%" src="docs/images/8inch-home.png" alt="Home dashboard on the Waveshare 8 inch display">
+-->
 <img align="right" width="38%" src="docs/images/b4-home.png" alt="Waveshare B4 home dashboard">
 
 Tile-based ESP32-P4 firmware for Home Assistant dashboards with a fully configurable web interface.
@@ -32,7 +35,9 @@ the whole chain: MQTT broker, bridge integration, and connecting the display.
 - Major rendering performance improvements on the M5Stack Tab5 and the Waveshare 8" display (hardware-accelerated rotation, faster draw paths)
 - General UI polish across tiles and popups
 
-<!-- TODO screenshots: Settings-Kachelseite + System-Popup mit Update-Button, WLAN-Popup (Netzliste), AP-Ansicht mit QR -->
+<!-- TODO Bilder da? Dann diesen Block aktivieren:
+<img src="docs/images/8inch-settings.png" alt="On-device settings" width="32%"> <img src="docs/images/8inch-system-update.png" alt="System popup with available update" width="32%"> <img src="docs/images/8inch-wifi-list.png" alt="On-device WiFi network list" width="32%">
+-->
 
 ## Overview
 
@@ -55,9 +60,52 @@ Device-specific Arduino IDE settings are documented in [BOARD_SETTINGS.md](BOARD
 
 ## Screenshots
 
-The screenshots below were captured on the Waveshare B4. They are meant as example views of the UI; the same firmware and web admin panel run on all supported devices.
+<!-- ============================================================
+TODO: Neue Screenshot-Sektion - aktivieren, sobald die Bilder in
+docs/images/ liegen, dann die ALTE Sektion darunter loeschen.
 
-<!-- TODO: Screenshots sind vom alten UI-Stand - neue Aufnahmen folgen (Home 8-Zoll + B4/Tab5, Settings, System-Update, WLAN, Energy Tag+Woche, Licht, Wetter, Web-Admin) -->
+<img src="docs/images/8inch-home.png" alt="Home dashboard, Waveshare 8 inch" width="32%"> <img src="docs/images/tab5-home.png" alt="Home dashboard, M5Stack Tab5" width="32%"> <img src="docs/images/b4-home.png" alt="Home dashboard, Waveshare 4B" width="32%">
+
+The same firmware runs on all supported devices - shown here on the Waveshare 8", the M5Stack Tab5, and the Waveshare 4B. The remaining screenshots were captured on the 8" display.
+
+### Main Views
+
+Folder view, on-device settings, and the built-in firmware updater:
+
+<img src="docs/images/8inch-folder.png" alt="Folder view" width="32%"> <img src="docs/images/8inch-settings.png" alt="On-device settings" width="32%"> <img src="docs/images/8inch-system-update.png" alt="System popup with available update" width="32%">
+
+### On-Device WiFi Setup
+
+Network scan with on-screen keyboard, and Access Point mode with QR code:
+
+<img src="docs/images/8inch-wifi-list.png" alt="WiFi network list" width="32%"> <img src="docs/images/8inch-wifi-ap.png" alt="Access Point mode with QR code" width="32%">
+
+### Popups
+
+Energy statistics (day and week) and sensor history:
+
+<img src="docs/images/8inch-energy-day.png" alt="Energy popup day view" width="32%"> <img src="docs/images/8inch-energy-week.png" alt="Energy popup week view" width="32%"> <img src="docs/images/8inch-sensor-history.png" alt="Sensor history popup" width="32%">
+
+Light control, media player, and weather forecast:
+
+<img src="docs/images/8inch-light.png" alt="Light popup" width="32%"> <img src="docs/images/8inch-media.png" alt="Media player popup" width="32%"> <img src="docs/images/8inch-weather.png" alt="Weather popup" width="32%">
+
+### Web Admin
+
+Built-in web admin interface for tiles, folders, WiFi, MQTT, and layout configuration:
+
+<p>
+  <img src="docs/images/web-admin-layout.png" alt="Web admin layout editor" width="100%">
+</p>
+
+microSD file manager:
+
+<p>
+  <img src="docs/images/web-admin-files.png" alt="Web admin file manager" width="100%">
+</p>
+============================================================ -->
+
+The screenshots below were captured on the Waveshare B4 with an older firmware version; new ones are coming. The same firmware and web admin panel run on all supported devices.
 
 ### Main Views
 
