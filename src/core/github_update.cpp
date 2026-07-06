@@ -16,7 +16,7 @@
 namespace {
 
 constexpr size_t kInstallReadChunk = 2048;
-constexpr size_t kInstallStageBytes = 32 * 1024;
+constexpr size_t kInstallStageBytes = 512 * 1024;
 constexpr size_t kSocketRxBufferBytes = 4 * 1024;
 constexpr size_t kMaxHttpLineLen = 4096;
 constexpr uint32_t kConnectTimeoutMs = 10000;
