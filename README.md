@@ -29,7 +29,10 @@ the whole chain: MQTT broker, bridge integration, and connecting the display.
 
 ## Documentation
 
+**Full documentation: https://galusperes.github.io/ESP32-P4-HomeAssistant-Display/**
+
 - [Home Assistant Setup Guide](docs/home-assistant-setup.md) — MQTT broker, bridge integration, first connection
+- [Bridge Integration](docs/bridge.md) — installation, panel settings, entity configuration
 - [Tile Types](docs/tiles.md) — every tile type and what it needs
 - [Firmware Updates](docs/updating.md) — on-device updater, web OTA, factory flash
 - [FAQ & Troubleshooting](docs/faq.md) — common questions and known quirks

@@ -67,7 +67,7 @@ The bridge is a custom integration: [ESP32-P4 HomeAssistant Display Bridge](http
 ## Step 4: Connect The Display To The Broker
 
 1. Get the display onto your WiFi (on-device: **Settings → WLAN**, pick your network and
-   enter the password — or use Access Point mode, see the [README](../README.md#first-setup)).
+   enter the password — or use Access Point mode: password `12345678`, QR code shown on screen).
 2. Open the display's web admin panel in a browser: `http://<display-ip>/`
    (the IP is shown in the on-device WLAN settings).
 3. Enter the MQTT settings:

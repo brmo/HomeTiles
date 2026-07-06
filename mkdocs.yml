@@ -1,0 +1,46 @@
+site_name: ESP32-P4 HomeAssistant Display
+site_description: Tile-based ESP32-P4 firmware for Home Assistant dashboards
+site_url: https://galusperes.github.io/ESP32-P4-HomeAssistant-Display/
+repo_url: https://github.com/GalusPeres/ESP32-P4-HomeAssistant-Display
+repo_name: GalusPeres/ESP32-P4-HomeAssistant-Display
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+  features:
+    - navigation.instant
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - search.suggest
+  icon:
+    repo: fontawesome/brands/github
+
+nav:
+  - Home: index.md
+  - Home Assistant Setup: home-assistant-setup.md
+  - Bridge Integration: bridge.md
+  - Tile Types: tiles.md
+  - Firmware Updates: updating.md
+  - FAQ & Troubleshooting: faq.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - toc:
+      permalink: true
+  - pymdownx.superfences
