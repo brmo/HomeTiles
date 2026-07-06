@@ -4,37 +4,32 @@
 
 Tile-based ESP32-P4 firmware for Home Assistant dashboards with a fully configurable web interface.
 
-The project currently supports multiple ESP32-P4 display devices and combines:
+The project supports multiple ESP32-P4 touch displays and combines:
 
-- OTA firmware updates from the built-in web interface
-- touch-first dashboard UI
+- touch-first, tile-based dashboard UI
 - MQTT-based Home Assistant integration
-- on-device web configuration
-- LittleFS-backed runtime storage with optional microSD support for screenshots
+- on-device settings: WiFi setup, display, language, firmware updates
+- firmware updates directly on the device (GitHub releases) or via the web interface
+- full dashboard configuration through the built-in web admin panel
 
 <br clear="both">
 
 ## Requirements
 
-**Important:** This firmware requires the Home Assistant bridge/integration:
-[ESP32-P4 HomeAssistant Display Bridge](https://github.com/GalusPeres/ESP32-P4-HomeAssistant-Display-Bridge)
-
 - Home Assistant
 - MQTT broker
-- Home Assistant bridge/integration:
+- The Home Assistant bridge/integration:
   [ESP32-P4 HomeAssistant Display Bridge](https://github.com/GalusPeres/ESP32-P4-HomeAssistant-Display-Bridge)
 
-## New In v0.1.7
+## Highlights Of The v0.2.x Releases
 
-- Web admin now includes a microSD file manager for upload, download, rename, delete, and folder creation
-- File manager uses breadcrumb navigation, selectable rows, and a clear microSD availability indicator
-- LittleFS access is intentionally blocked in the file manager to avoid accidental changes to runtime data
+- All three supported devices are now covered by every release
+- Firmware updates directly from the device: Settings → System checks GitHub for new releases and installs them over the air
+- Reworked on-device settings: WiFi network scan with on-screen keyboard, Access Point mode with QR code, display/brightness/sleep options, language and time settings, restart button
+- Major rendering performance improvements on the M5Stack Tab5 and the Waveshare 8" display (hardware-accelerated rotation, faster draw paths)
+- General UI polish across tiles and popups
 
-Popup examples from the Waveshare B4:
-
-<img src="docs/images/b4-light-popup-brightness-off.png" alt="Light popup on off view" width="24%"> <img src="docs/images/b4-light-popup-brightness.png" alt="Light popup brightness view" width="24%"> <img src="docs/images/b4-light-popup-color.png" alt="Light popup color view" width="24%"> <img src="docs/images/b4-light-popup-temperature.png" alt="Light popup temperature view" width="24%">
-
-<img src="docs/images/b4-sensor-popup-water-24h.png" alt="Sensor popup water 24 hour view" width="32%"> <img src="docs/images/b4-sensor-popup-water-7d.png" alt="Sensor popup water 7 day view" width="32%"> <img src="docs/images/b4-weather-popup.png" alt="Weather popup" width="32%">
+<!-- TODO screenshots: Settings-Kachelseite + System-Popup mit Update-Button, WLAN-Popup (Netzliste), AP-Ansicht mit QR -->
 
 ## Overview
 
@@ -49,14 +44,17 @@ Everything visible on the dashboard is tile-based and managed from the built-in 
 
 ## Supported Devices
 
-- [M5Stacks Tab5](https://shop.m5stack.com/products/m5stack-tab5-iot-development-kit-esp32-p4)
-- [Waveshare B4](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4b.htm)
+- [M5Stack Tab5](https://shop.m5stack.com/products/m5stack-tab5-iot-development-kit-esp32-p4)
+- [Waveshare ESP32-P4-WIFI6-Touch-LCD-4B](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4b.htm)
+- [Waveshare ESP32-P4-WIFI6-Touch-LCD-8 (8 inch)](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-7-8-10.1.htm)
 
 Device-specific Arduino IDE settings are documented in [BOARD_SETTINGS.md](BOARD_SETTINGS.md).
 
 ## Screenshots
 
-The screenshots below were captured on the Waveshare B4. They are meant as example views of the UI; the same firmware and web admin panel also run on the M5Stacks Tab5.
+The screenshots below were captured on the Waveshare B4. They are meant as example views of the UI; the same firmware and web admin panel run on all supported devices.
+
+<!-- TODO: Screenshots sind vom alten UI-Stand - neue Aufnahmen folgen (Home 8-Zoll + B4/Tab5, Settings, System-Update, WLAN, Energy Tag+Woche, Licht, Wetter, Web-Admin) -->
 
 ### Main Views
 
@@ -84,22 +82,26 @@ Built-in web admin interface for tiles, folders, WiFi, MQTT, and layout configur
 
 ## Features
 
-- OTA firmware updates directly from the built-in web admin panel
+- Firmware updates directly on the device (checks GitHub releases, installs over the air)
+- OTA firmware upload from the built-in web admin panel
 - Fully tile-configurable dashboard via the built-in web admin panel
 - Drag-and-drop tile layout editing in the web admin panel
 - MQTT-based Home Assistant communication
-- Access Point based first-time setup
-- Device-local WiFi and MQTT configuration
-- English and German UI/admin support
-- Home Assistant energy statistics tile with 24h and 7d popup charts
-- Runtime storage on internal LittleFS
-- Optional screenshot export to microSD from the web interface
+- On-device WiFi setup: network scan with on-screen keyboard, or Access Point mode with QR code
+- On-device settings for display brightness, sleep, orientation, language, time zone, and time format
+- English and German UI/admin support, 12h/24h time formats
+- Home Assistant energy statistics tile with day and week popup charts
+- Media player tile with cover art and playback controls
+- microSD file manager in the web admin (upload, download, rename, delete, folders)
+- Runtime storage on internal LittleFS; microSD is optional
+- Screenshot export to microSD from the web interface
 - Tile types currently include:
   - clock
   - counter
   - energy
   - empty
   - key
+  - media
   - navigate
   - scene
   - sensor
@@ -111,23 +113,27 @@ Built-in web admin interface for tiles, folders, WiFi, MQTT, and layout configur
 
 ### Option 1: Prebuilt Binaries
 
-If release binaries are available, download the files matching your device:
+Download the files matching your device from the [latest release](https://github.com/GalusPeres/ESP32-P4-HomeAssistant-Display/releases/latest):
 
-- `...m5stacks-tab5-factory.bin`
-- `...m5stacks-tab5-update.bin`
-- `...waveshare-b4-factory.bin`
-- `...waveshare-b4-update.bin`
+| Device | First flash | OTA update file |
+| --- | --- | --- |
+| M5Stack Tab5 | `...-m5stacks_tab5-factory.bin` | `...-m5stacks_tab5.bin` |
+| Waveshare 4B | `...-waveshare_4b-factory.bin` | `...-waveshare_4b.bin` |
+| Waveshare 8" | `...-waveshare_touch_lcd_8-factory.bin` | `...-waveshare_touch_lcd_8.bin` |
 
 Use:
-- `factory.bin` for a clean first flash
-- `update.bin` for updating an existing device
+- `factory.bin` for a clean first flash (ESP Flash Download Tool at address `0x00000`)
+- the plain `.bin` for OTA updates of an existing device (web admin upload)
 
-When using the ESP Flash Download Tool:
-- flash `factory.bin` at `0x00000`
-- flash `update.bin` at `0x10000`
-- a manual reset after flashing may be required
+A manual reset after flashing may be required.
 
-### Option 2: Build From Source
+### Option 2: Update From The Device
+
+Devices already running a recent v0.2.x firmware can update themselves:
+open `Settings` → `System` → check for updates. The device finds the
+latest GitHub release and installs it directly.
+
+### Option 3: Build From Source
 
 1. Open [ESP32_P4_HomeAssistant_Display.ino](ESP32_P4_HomeAssistant_Display.ino) in the Arduino IDE.
 2. Select the target device in [src/devices/device_select.h](src/devices/device_select.h).
@@ -136,23 +142,20 @@ When using the ESP Flash Download Tool:
 
 ## First Setup
 
-1. Flash the firmware.
-2. Boot the device.
-3. Activate AP mode on the device to continue setup.
-4. Connect your phone or computer to the temporary device WiFi Access Point.
-5. Use password `12345678`.
-6. Open the captive portal and enter your WiFi credentials.
-7. After saving, the device restarts and connects to your WiFi network.
-8. Open the on-device `Settings` tab and note the displayed IP address.
-9. Open the web admin panel through that IP address.
-10. Enter your MQTT settings in the web interface.
-11. Set up the Home Assistant bridge/integration so the device receives entity data:
-     [ESP32-P4 HomeAssistant Display Bridge](https://github.com/GalusPeres/ESP32-P4-HomeAssistant-Display-Bridge)
-12. Configure your tiles, folders, and layout.
+1. Flash the firmware and boot the device.
+2. Open `Settings` → `WLAN` on the device. Either:
+   - pick your network from the scan list and enter the password with the on-screen keyboard, or
+   - enable Access Point mode: connect to the device hotspot (password `12345678`, QR code shown on screen) and enter your WiFi credentials in the captive portal.
+3. After saving, the device restarts and connects to your WiFi network.
+4. The device IP address is shown in the on-device WLAN settings.
+5. Open the web admin panel through that IP address.
+6. Enter your MQTT settings in the web interface.
+7. Set up the Home Assistant bridge/integration so the device receives entity data:
+   [ESP32-P4 HomeAssistant Display Bridge](https://github.com/GalusPeres/ESP32-P4-HomeAssistant-Display-Bridge)
+8. Configure your tiles, folders, and layout.
 
 Optional:
-- Insert a FAT32-formatted microSD card if you want to use screenshot export from the web interface.
-- A microSD card can also be useful for one-time migration from older SD-based setups.
+- Insert a FAT32-formatted microSD card if you want to use the file manager or screenshot export from the web interface.
 
 ## Home Assistant Integration
 
@@ -174,16 +177,12 @@ For Energy tiles, Home Assistant energy statistics, live icon updates, and popup
 
 ## Known Issues
 
-- Waveshare B4: software restart is currently unreliable. The display may remain black after a restart even though the firmware continues to run. Workaround: press the hardware reset button once.
-- Waveshare B4: tile edits can briefly flash blue after the move from SD-backed storage to LittleFS. This appears to be caused by writes to internal flash during live updates. Runtime Home Assistant icon changes no longer write icon metadata to flash.
-- M5Stacks Tab5: Access Point mode is currently only reliable with a battery installed. Without a battery, keep brightness at the lowest available level; otherwise the device can crash.
+- M5Stack Tab5: Access Point mode is currently only reliable with a battery installed. Without a battery, keep brightness at the lowest available level; otherwise the device can crash.
 
 ## Notes
 
-- A microSD card is no longer required for normal runtime operation.
-- A microSD card is currently only needed for screenshot export and optional migration from older SD-based setups.
+- A microSD card is not required for normal operation; it is only used for the web file manager and screenshot export.
 - Board selection and board settings must match the target device.
-- In general, the M5Stacks Tab5 currently feels noticeably slower than the Waveshare B4. This may be related to the display driver or another device-specific bottleneck. If you know the cause or a fix, help is welcome.
 - A Windows Electron companion app also exists under `electron-app/`. It can be used to send PC-side data to the device, for example Microsoft Flight Simulator values, system metrics, or simulated keyboard input/commands for Windows. This still needs proper documentation and its own release packaging.
 
 ## License
