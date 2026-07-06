@@ -1,4 +1,4 @@
-## ESP32-P4 Home Assistant Display
+## <img src="docs/images/favicon.svg" width="34" alt="" align="top"> ESP32-P4 Home Assistant Display
 
 <!-- TODO Bild da? Dann diese Zeile aktivieren und die b4-Zeile darunter loeschen:
 <img align="right" width="38%" src="docs/images/8inch-home.png" alt="Home dashboard on the Waveshare 8 inch display">

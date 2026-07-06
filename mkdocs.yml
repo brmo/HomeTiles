@@ -10,6 +10,7 @@ theme:
     text: Inter
     code: JetBrains Mono
   favicon: images/favicon.svg
+  logo: images/logo.svg
   palette:
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
@@ -35,7 +36,6 @@ theme:
     - search.suggest
   icon:
     repo: fontawesome/brands/github
-    logo: material/view-grid-plus
 
 nav:
   - Home: index.md
