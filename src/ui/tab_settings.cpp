@@ -10,6 +10,8 @@
 #include "src/ui/tab_tiles_unified.h"
 #include "src/fonts/ui_fonts.h"
 #include "src/core/firmware_version.h"
+#include "src/core/github_update.h"
+#include "src/devices/device.h"
 #include "src/network/mqtt_handlers.h"
 #include "src/core/display_manager.h"
 #include "src/core/i18n.h"
@@ -36,6 +38,8 @@ static uint8_t wake_mode_mains = kWakeModeTouch;
 static uint8_t wake_mode_battery = kWakeModeTouch;
 static hotspot_callback_t g_hotspot_callback = nullptr;
 static wifi_reconnect_callback_t g_wifi_reconnect_callback = nullptr;
+static fw_check_callback_t g_fw_check_callback = nullptr;
+static fw_install_callback_t g_fw_install_callback = nullptr;
 
 enum class SettingsPopupKind : uint8_t {
   Display,
@@ -79,6 +83,15 @@ static lv_obj_t *wifi_list_container = nullptr;
 static lv_obj_t *wifi_manual_row = nullptr;
 static lv_obj_t *wifi_manual_gap = nullptr;
 static lv_obj_t *wifi_ap_qr = nullptr;
+// AP-Infobox: Zugangsdaten als buendig ausgerichtete Beschriftung/Wert-Zeilen
+// statt Fliesstext; der QR-Code waechst einmalig auf den freien Platz (der
+// Spacer der Listen-Ansicht dient dabei als Mass).
+static lv_obj_t *wifi_ap_info_rows = nullptr;
+static lv_obj_t *wifi_ap_ssid_val = nullptr;
+static lv_obj_t *wifi_ap_pw_val = nullptr;
+static lv_obj_t *wifi_ap_ip_val = nullptr;
+static lv_obj_t *wifi_list_spacer = nullptr;
+static bool wifi_ap_qr_sized = false;
 static lv_timer_t *wifi_scan_timer = nullptr;
 struct WifiScanEntry { char ssid[33]; int16_t rssi; bool open; };
 static WifiScanEntry wifi_scan_results[24];
@@ -96,6 +109,23 @@ static lv_obj_t *locale_timezone_dd = nullptr;
 static lv_obj_t *locale_time_format_dd = nullptr;
 static lv_obj_t *locale_date_format_dd = nullptr;
 static lv_obj_t *locale_keyboard_dd = nullptr;
+
+// System-Popup (Version/Geraet, GitHub-QR, Update-Suche + OTA-Install)
+static lv_obj_t *system_info_rows = nullptr;
+static lv_obj_t *system_status_label = nullptr;
+static lv_obj_t *system_progress_bar = nullptr;
+static lv_obj_t *system_check_btn = nullptr;
+static lv_obj_t *system_check_btn_label = nullptr;
+static lv_obj_t *system_github_btn = nullptr;
+static lv_obj_t *system_qr = nullptr;
+static lv_obj_t *system_spacer = nullptr;
+static bool system_qr_sized = false;
+static bool system_check_running = false;
+static bool system_install_running = false;
+// Ueberdauern das Popup bewusst: ein bekanntes Check-Ergebnis wird beim
+// Wiederoeffnen sofort wieder angezeigt (Button + Statuszeile).
+static char system_latest_tag[24] = {};
+static bool system_update_available = false;
 
 static const i18n::Strings& tr() {
   return i18n::strings(configManager.getConfig().language);
@@ -806,9 +836,9 @@ static lv_obj_t* create_display_control_row(lv_obj_t* parent) {
   return row;
 }
 
-// Gleiche Optik wie die WLAN-/Lokalisierungs-Zeilen: Beschriftung links in
-// gedecktem Grau, Werte (rechts) werden an den Aufrufstellen auf Weiss
-// umgestellt.
+// Beschriftung links und Wert rechts einheitlich in Weiss und derselben
+// 24er-Groesse - das gedeckte Grau der Beschriftungen wirkte neben den
+// weissen Werten wie eine zweite Hierarchie-Ebene (User-Feedback).
 static lv_obj_t* create_display_row_label(lv_obj_t* parent, const char* text,
                                           lv_coord_t width,
                                           lv_text_align_t align = LV_TEXT_ALIGN_LEFT) {
@@ -818,7 +848,7 @@ static lv_obj_t* create_display_row_label(lv_obj_t* parent, const char* text,
   lv_obj_set_width(label, width);
   lv_obj_set_style_text_align(label, align, 0);
   lv_obj_set_style_text_font(label, &ui_font_24, 0);
-  lv_obj_set_style_text_color(label, lv_color_hex(0xC8C8C8), 0);
+  lv_obj_set_style_text_color(label, lv_color_white(), 0);
   return label;
 }
 
@@ -899,6 +929,12 @@ static void reset_popup_refs() {
   wifi_manual_row = nullptr;
   wifi_manual_gap = nullptr;
   wifi_ap_qr = nullptr;
+  wifi_ap_info_rows = nullptr;
+  wifi_ap_ssid_val = nullptr;
+  wifi_ap_pw_val = nullptr;
+  wifi_ap_ip_val = nullptr;
+  wifi_list_spacer = nullptr;
+  wifi_ap_qr_sized = false;
   wifi_manual_mode = false;
 
   locale_language_dd = nullptr;
@@ -906,6 +942,19 @@ static void reset_popup_refs() {
   locale_time_format_dd = nullptr;
   locale_date_format_dd = nullptr;
   locale_keyboard_dd = nullptr;
+
+  system_info_rows = nullptr;
+  system_status_label = nullptr;
+  system_progress_bar = nullptr;
+  system_check_btn = nullptr;
+  system_check_btn_label = nullptr;
+  system_github_btn = nullptr;
+  system_qr = nullptr;
+  system_spacer = nullptr;
+  system_qr_sized = false;
+  system_check_running = false;
+  system_install_running = false;
+  // system_latest_tag/system_update_available bleiben absichtlich stehen
 }
 
 static void close_settings_popup() {
@@ -1175,19 +1224,39 @@ static void wifi_update_conn_status_label() {
   if (ap && wifi_scan_status_label) lv_obj_add_flag(wifi_scan_status_label, LV_OBJ_FLAG_HIDDEN);
 
   if (ap) {
-    static char ap_status[64];
-    snprintf(ap_status, sizeof(ap_status), tr().wifi_status_ap_format, webConfigApPassword());
+    // Ueberschrift + Zugangsdaten-Zeilen (SSID/Passwort/IP buendig
+    // untereinander) statt des frueheren Fliesstexts mit "(PW: ...)".
+    lv_label_set_text(wifi_conn_status_label, tr().wifi_ap_active);
+    lv_obj_set_style_text_font(wifi_conn_status_label, &ui_font_28, 0);
+    lv_obj_set_style_text_color(wifi_conn_status_label, lv_color_hex(0xFFC04D), 0);
     // Direkt nach dem Einschalten liefert softAPIP() noch "0.0.0.0" -
     // dann die AP-Standard-IP anzeigen statt Muell.
     String ap_ip = WiFi.softAPIP().toString();
     const bool ip_valid = ap_ip.length() && ap_ip != "0.0.0.0";
-    snprintf(buf, sizeof(buf), "%s\n%s: %s - %s: %s", ap_status,
-             tr().ssid_label, webConfigApSsid(),
-             tr().ip_label, ip_valid ? ap_ip.c_str() : "192.168.4.1");
-    lv_label_set_text(wifi_conn_status_label, buf);
-    lv_obj_set_style_text_color(wifi_conn_status_label, lv_color_hex(0xFFC04D), 0);
+    if (wifi_ap_info_rows) {
+      lv_obj_clear_flag(wifi_ap_info_rows, LV_OBJ_FLAG_HIDDEN);
+      if (wifi_ap_ssid_val) lv_label_set_text(wifi_ap_ssid_val, webConfigApSsid());
+      if (wifi_ap_pw_val) lv_label_set_text(wifi_ap_pw_val, webConfigApPassword());
+      if (wifi_ap_ip_val) {
+        lv_label_set_text(wifi_ap_ip_val, ip_valid ? ap_ip.c_str() : "192.168.4.1");
+      }
+    }
 #if LV_USE_QRCODE
     if (wifi_ap_qr) {
+      if (!wifi_ap_qr_sized) {
+        // Einmal pro Popup (der Hauptloop ruft im AP-Betrieb jede Runde hier
+        // an): Mit noch verstecktem QR layouten - der flex-grow-Spacer traegt
+        // dann genau den Restplatz, den der QR-Code einnehmen darf (abzueglich
+        // pad_row der Infobox + etwas Luft).
+        if (wifi_list_view) lv_obj_update_layout(wifi_list_view);
+        int target = 320;
+        if (wifi_list_spacer) target = lv_obj_get_height(wifi_list_spacer) - 24;
+        const int max_w = lv_obj_get_content_width(lv_obj_get_parent(wifi_ap_qr));
+        if (target > max_w) target = max_w;
+        if (target < 240) target = 240;
+        lv_qrcode_set_size(wifi_ap_qr, target);
+        wifi_ap_qr_sized = true;
+      }
       // Handy-Kameras verbinden sich damit direkt mit dem Hotspot
       static char qr_buf[128];
       snprintf(qr_buf, sizeof(qr_buf), "WIFI:T:WPA;S:%s;P:%s;;",
@@ -1202,6 +1271,8 @@ static void wifi_update_conn_status_label() {
 #if LV_USE_QRCODE
   if (wifi_ap_qr) lv_obj_add_flag(wifi_ap_qr, LV_OBJ_FLAG_HIDDEN);
 #endif
+  if (wifi_ap_info_rows) lv_obj_add_flag(wifi_ap_info_rows, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_set_style_text_font(wifi_conn_status_label, &ui_font_24, 0);
   if (WiFi.status() == WL_CONNECTED) {
     String ssid = WiFi.SSID();
     String ip = WiFi.localIP().toString();
@@ -1508,9 +1579,11 @@ static void build_display_popup(lv_obj_t* parent) {
   lv_obj_set_style_pad_top(form, 48, 0);
   lv_obj_set_style_pad_row(form, 26, 0);
 
+  // Schmalere Beschriftungs-/Wertspalten als frueher (210/150): der
+  // Slider dazwischen bekommt den gewonnenen Platz.
   lv_obj_t* brightness_row = create_display_control_row(form);
   brightness_title_label =
-      create_display_row_label(brightness_row, tr().brightness_label, 210);
+      create_display_row_label(brightness_row, tr().brightness_label, 170);
 
   lv_obj_t* brightness_slider = lv_slider_create(brightness_row);
   style_settings_slider(brightness_slider);
@@ -1527,11 +1600,10 @@ static void build_display_popup(lv_obj_t* parent) {
   // Gleiche Wertspaltenbreite wie beim Sleep-Slider, damit beide Slider
   // exakt gleich lang sind
   brightness_label =
-      create_display_row_label(brightness_row, bright_buf, 150, LV_TEXT_ALIGN_RIGHT);
-  lv_obj_set_style_text_color(brightness_label, lv_color_white(), 0);
+      create_display_row_label(brightness_row, bright_buf, 130, LV_TEXT_ALIGN_RIGHT);
 
   lv_obj_t* sleep_row = create_display_control_row(form);
-  sleep_label = create_display_row_label(sleep_row, tr().sleep_label, 210);
+  sleep_label = create_display_row_label(sleep_row, tr().sleep_label, 170);
 
   sleep_slider = lv_slider_create(sleep_row);
   style_settings_slider(sleep_slider);
@@ -1548,8 +1620,7 @@ static void build_display_popup(lv_obj_t* parent) {
   static char sleep_buf[32];
   format_sleep_popup_value_for_index(sleep_buf, sizeof(sleep_buf), sleep_index);
   sleep_time_label =
-      create_display_row_label(sleep_row, sleep_buf, 150, LV_TEXT_ALIGN_RIGHT);
-  lv_obj_set_style_text_color(sleep_time_label, lv_color_white(), 0);
+      create_display_row_label(sleep_row, sleep_buf, 130, LV_TEXT_ALIGN_RIGHT);
 
   // Rotation als vollbreiter Button mit Icon + Beschriftung im Button
   // (statt "Rotation"-Label links neben einem Icon-Button)
@@ -1633,6 +1704,28 @@ static void create_popup_keyboard(lv_obj_t* content_parent) {
 // Feld) - kompakter, damit auf dem 4-Zoll-B4 nichts abgeschnitten wird.
 // Feldhoehe bewusst LV_SIZE_CONTENT + pad_ver statt fester Pixel: so sitzen
 // Text und Cursor konstruktionsbedingt exakt mittig.
+// Eine "Beschriftung:  Wert"-Zeile mit fester Beschriftungsspalte, damit die
+// Werte aller Zeilen an derselben Kante beginnen (AP-Infobox und System-
+// Popup). Rueckgabe ist das Wert-Label; der Aufrufer befuellt es.
+static lv_obj_t* create_info_value_row(lv_obj_t* parent, const char* label_text) {
+  lv_obj_t* row = lv_obj_create(parent);
+  style_plain_container(row);
+  lv_obj_set_size(row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+
+  lv_obj_t* label = lv_label_create(row);
+  lv_label_set_text_fmt(label, "%s:", label_text);
+  lv_obj_set_width(label, 160);
+  lv_obj_set_style_text_font(label, &ui_font_24, 0);
+  lv_obj_set_style_text_color(label, lv_color_hex(0xC8C8C8), 0);
+
+  lv_obj_t* value = lv_label_create(row);
+  lv_label_set_text(value, "-");
+  lv_obj_set_style_text_font(value, &ui_font_24, 0);
+  lv_obj_set_style_text_color(value, lv_color_white(), 0);
+  return value;
+}
+
 static lv_obj_t* wifi_create_entry_row(lv_obj_t* parent, const char* label_text,
                                        lv_obj_t** ta_out, uint16_t max_len,
                                        bool password) {
@@ -1729,8 +1822,10 @@ static void build_wifi_popup(lv_obj_t* parent) {
   if (FONT_MDI_ICONS) lv_obj_set_style_text_font(manual_chevron, FONT_MDI_ICONS, 0);
   lv_obj_set_style_text_color(manual_chevron, lv_color_hex(0x888888), 0);
 
-  // Spacer drueckt den Fussbereich (Infobox + AP-Button) nach unten.
-  create_flex_spacer(wifi_list_view);
+  // Spacer drueckt den Fussbereich (Infobox + AP-Button) nach unten; im
+  // AP-Modus misst wifi_update_conn_status_label an seiner Hoehe, wie gross
+  // der QR-Code werden darf.
+  wifi_list_spacer = create_flex_spacer(wifi_list_view);
 
   // Infobox: abgesetzte Karte mit Verbindungsstatus; im AP-Modus zusaetzlich
   // QR-Code zum direkten Verbinden mit dem Hotspot.
@@ -1752,6 +1847,19 @@ static void build_wifi_popup(lv_obj_t* parent) {
   lv_label_set_long_mode(wifi_conn_status_label, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_align(wifi_conn_status_label, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_font(wifi_conn_status_label, &ui_font_24, 0);
+
+  // Zugangsdaten im AP-Modus: Beschriftungsspalte fest, Werte dahinter -
+  // SSID/Passwort/IP stehen dadurch buendig untereinander. Block selbst ist
+  // SIZE_CONTENT und wird von der Infobox mittig gesetzt.
+  wifi_ap_info_rows = lv_obj_create(info_box);
+  style_plain_container(wifi_ap_info_rows);
+  lv_obj_set_size(wifi_ap_info_rows, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(wifi_ap_info_rows, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(wifi_ap_info_rows, 8, 0);
+  lv_obj_add_flag(wifi_ap_info_rows, LV_OBJ_FLAG_HIDDEN);
+  wifi_ap_ssid_val = create_info_value_row(wifi_ap_info_rows, tr().ssid_label);
+  wifi_ap_pw_val = create_info_value_row(wifi_ap_info_rows, tr().wifi_password_label);
+  wifi_ap_ip_val = create_info_value_row(wifi_ap_info_rows, tr().ip_label);
 
 #if LV_USE_QRCODE
   wifi_ap_qr = lv_qrcode_create(info_box);
@@ -1952,29 +2060,195 @@ static void build_localization_popup(lv_obj_t* parent) {
   if (save_btn_label) lv_obj_set_style_text_font(save_btn_label, &ui_font_28, 0);
 }
 
-static void build_firmware_popup(lv_obj_t* parent) {
+// ===== System-Popup: Version/Geraet, GitHub-QR, Update-Suche + OTA-Install =====
+
+static void system_set_buttons_enabled(bool enabled) {
+  lv_obj_t* btns[] = {system_check_btn, system_github_btn};
+  for (lv_obj_t* btn : btns) {
+    if (!btn) continue;
+    lv_obj_set_style_opa(btn, enabled ? LV_OPA_COVER : LV_OPA_50, 0);
+    if (enabled) {
+      lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+    } else {
+      lv_obj_clear_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+    }
+  }
+}
+
+static void system_show_status(const char* text, uint32_t color) {
+  if (!system_status_label) return;
+  lv_label_set_text(system_status_label, text);
+  lv_obj_set_style_text_color(system_status_label, lv_color_hex(color), 0);
+  lv_obj_clear_flag(system_status_label, LV_OBJ_FLAG_HIDDEN);
+}
+
+// Der gruene Haupt-Button ist zweistufig: erst "Nach Updates suchen", nach
+// einem positiven Check "Auf vX.Y.Z aktualisieren".
+static void system_update_check_btn_text() {
+  if (!system_check_btn_label) return;
+  if (system_update_available && system_latest_tag[0]) {
+    char buf[48];
+    snprintf(buf, sizeof(buf), tr().system_install_btn_fmt, system_latest_tag);
+    lv_label_set_text(system_check_btn_label, buf);
+  } else {
+    lv_label_set_text(system_check_btn_label, tr().system_check_updates_btn);
+  }
+}
+
+// GitHub-QR ein-/ausblenden; waehrend der QR sichtbar ist, weichen ihm die
+// Info-Zeilen und die Statuszeile. Groesse wird beim ersten Einblenden am
+// freien Platz gemessen (gleicher Spacer-Trick wie beim AP-QR).
+static void system_show_qr(bool show) {
+#if LV_USE_QRCODE
+  if (!system_qr) return;
+  if (show) {
+    if (system_info_rows) lv_obj_add_flag(system_info_rows, LV_OBJ_FLAG_HIDDEN);
+    if (system_status_label) lv_obj_add_flag(system_status_label, LV_OBJ_FLAG_HIDDEN);
+    if (!system_qr_sized) {
+      if (settings_popup_content) lv_obj_update_layout(settings_popup_content);
+      int target = 280;
+      if (system_spacer) target = lv_obj_get_height(system_spacer) - 26;
+      const int max_w = lv_obj_get_content_width(lv_obj_get_parent(system_qr));
+      if (target > max_w) target = max_w;
+      if (target < 240) target = 240;
+      lv_qrcode_set_size(system_qr, target);
+      lv_qrcode_update(system_qr, GithubUpdate::kRepoUrl, strlen(GithubUpdate::kRepoUrl));
+      system_qr_sized = true;
+    }
+    lv_obj_clear_flag(system_qr, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(system_qr, LV_OBJ_FLAG_HIDDEN);
+    if (system_info_rows) lv_obj_clear_flag(system_info_rows, LV_OBJ_FLAG_HIDDEN);
+    if (system_status_label) lv_obj_clear_flag(system_status_label, LV_OBJ_FLAG_HIDDEN);
+  }
+#else
+  (void)show;
+#endif
+}
+
+static void on_system_github_clicked(lv_event_t*) {
+  if (system_install_running) return;
+#if LV_USE_QRCODE
+  if (!system_qr) return;
+  system_show_qr(lv_obj_has_flag(system_qr, LV_OBJ_FLAG_HIDDEN));
+#endif
+}
+
+static void on_system_check_clicked(lv_event_t*) {
+  if (system_check_running || system_install_running) return;
+  system_show_qr(false);  // Status/Fortschritt brauchen den Platz
+
+  if (system_update_available && system_latest_tag[0]) {
+    // Zweite Stufe: Install im Hauptloop anstossen. Der Sketch legt MQTT/
+    // Web-Admin still, laedt das Release-Asset und startet bei Erfolg neu.
+    if (!g_fw_install_callback) return;
+    system_install_running = true;
+    system_set_buttons_enabled(false);
+    system_show_status(tr().system_downloading, 0xC8C8C8);
+    if (system_progress_bar) {
+      lv_bar_set_value(system_progress_bar, 0, LV_ANIM_OFF);
+      lv_obj_clear_flag(system_progress_bar, LV_OBJ_FLAG_HIDDEN);
+    }
+    g_fw_install_callback(system_latest_tag);
+    return;
+  }
+
+  if (!g_fw_check_callback) return;
+  system_check_running = true;
+  system_set_buttons_enabled(false);
+  system_show_status(tr().system_checking, 0xC8C8C8);
+  g_fw_check_callback();
+}
+
+static void build_system_popup(lv_obj_t* parent) {
   lv_obj_t* box = lv_obj_create(parent);
   style_plain_container(box);
   lv_obj_set_width(box, LV_PCT(100));
   lv_obj_set_flex_grow(box, 1);
+  lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(box, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_flex_align(box, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  // Gleiche Anmutung wie das Display-Formular: fester Abstand von oben
+  lv_obj_set_style_pad_top(box, 48, 0);
   lv_obj_set_style_pad_row(box, 18, 0);
 
-  lv_obj_t* icon = lv_label_create(box);
-  lv_label_set_text(icon, getMdiChar("chip").c_str());
-  if (FONT_MDI_ICONS) lv_obj_set_style_text_font(icon, FONT_MDI_ICONS, 0);
-  lv_obj_set_style_text_color(icon, lv_color_white(), 0);
+  // Version + Geraet als buendige Beschriftung/Wert-Zeilen (wie AP-Infobox)
+  system_info_rows = lv_obj_create(box);
+  style_plain_container(system_info_rows);
+  lv_obj_set_size(system_info_rows, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(system_info_rows, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(system_info_rows, 8, 0);
+  lv_obj_t* version_val = create_info_value_row(system_info_rows, "Version");
+  lv_label_set_text(version_val, FW_VERSION);
+  lv_obj_t* device_val = create_info_value_row(system_info_rows, tr().system_device_label);
+  lv_label_set_text(device_val, Device::displayName());
 
-  lv_obj_t* label = lv_label_create(box);
-  lv_label_set_text(label, "Version");
-  lv_obj_set_style_text_font(label, &ui_font_24, 0);
-  lv_obj_set_style_text_color(label, lv_color_hex(0xC8C8C8), 0);
+#if LV_USE_QRCODE
+  system_qr = lv_qrcode_create(box);
+  lv_qrcode_set_size(system_qr, 280);
+  lv_qrcode_set_dark_color(system_qr, lv_color_black());
+  lv_qrcode_set_light_color(system_qr, lv_color_white());
+  lv_qrcode_set_quiet_zone(system_qr, true);
+  lv_obj_add_flag(system_qr, LV_OBJ_FLAG_HIDDEN);
+#endif
 
-  lv_obj_t* version = lv_label_create(box);
-  lv_label_set_text(version, FW_VERSION);
-  lv_obj_set_style_text_font(version, &ui_font_32, 0);
-  lv_obj_set_style_text_color(version, lv_color_white(), 0);
+  system_status_label = lv_label_create(box);
+  lv_obj_set_width(system_status_label, LV_PCT(100));
+  lv_label_set_long_mode(system_status_label, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_align(system_status_label, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_text_font(system_status_label, &ui_font_24, 0);
+  lv_obj_set_style_text_color(system_status_label, lv_color_hex(0xC8C8C8), 0);
+  if (system_update_available && system_latest_tag[0]) {
+    // Bekanntes Check-Ergebnis aus einer frueheren Runde direkt anzeigen
+    char buf[64];
+    snprintf(buf, sizeof(buf), tr().system_update_available_fmt, system_latest_tag);
+    lv_label_set_text(system_status_label, buf);
+    lv_obj_set_style_text_color(system_status_label, lv_color_hex(0x51CF66), 0);
+  } else {
+    lv_label_set_text(system_status_label, "");
+  }
+
+  system_progress_bar = lv_bar_create(box);
+  lv_obj_set_size(system_progress_bar, LV_PCT(100), 18);
+  lv_obj_set_style_bg_color(system_progress_bar, lv_color_hex(0x1E1E1E), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(system_progress_bar, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(system_progress_bar, 9, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(system_progress_bar, lv_color_hex(0x2E7D32), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_opa(system_progress_bar, LV_OPA_COVER, LV_PART_INDICATOR);
+  lv_obj_set_style_radius(system_progress_bar, 9, LV_PART_INDICATOR);
+  lv_bar_set_range(system_progress_bar, 0, 100);
+  lv_obj_add_flag(system_progress_bar, LV_OBJ_FLAG_HIDDEN);
+
+  // Drueckt die Buttons nach unten; dient beim QR-Einblenden als Platz-Mass
+  system_spacer = create_flex_spacer(box);
+
+  system_check_btn = create_popup_button(box, "", 0x2E7D32, on_system_check_clicked);
+  lv_obj_set_width(system_check_btn, LV_PCT(100));
+  lv_obj_set_height(system_check_btn, 76);
+  system_check_btn_label = lv_obj_get_child(system_check_btn, 0);
+  if (system_check_btn_label) {
+    lv_obj_set_style_text_font(system_check_btn_label, &ui_font_28, 0);
+  }
+  system_update_check_btn_text();
+
+  // GitHub-Button: Icon + Schriftzug im Button (wie der Drehen-Button)
+  system_github_btn = create_popup_button(box, "", 0x424242, on_system_github_clicked);
+  lv_obj_set_width(system_github_btn, LV_PCT(100));
+  lv_obj_set_height(system_github_btn, 76);
+  lv_obj_set_flex_flow(system_github_btn, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(system_github_btn, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(system_github_btn, 14, 0);
+  lv_obj_t* gh_icon = lv_obj_get_child(system_github_btn, 0);
+  if (gh_icon) {
+    lv_label_set_text(gh_icon, getMdiChar("github").c_str());
+    if (FONT_MDI_ICONS) lv_obj_set_style_text_font(gh_icon, FONT_MDI_ICONS, 0);
+  }
+  lv_obj_t* gh_text = lv_label_create(system_github_btn);
+  lv_label_set_text(gh_text, "GitHub");
+  lv_obj_set_style_text_font(gh_text, &ui_font_28, 0);
+  lv_obj_set_style_text_color(gh_text, lv_color_white(), 0);
 }
 
 static const char* popup_title_for_kind(SettingsPopupKind kind) {
@@ -1986,7 +2260,7 @@ static const char* popup_title_for_kind(SettingsPopupKind kind) {
     case SettingsPopupKind::Localization:
       return tr().admin_settings_language;
     case SettingsPopupKind::Firmware:
-      return "Firmware";
+      return "System";
   }
   return "";
 }
@@ -2017,7 +2291,7 @@ static void build_popup_content(SettingsPopupKind kind, lv_obj_t* parent) {
       build_localization_popup(parent);
       break;
     case SettingsPopupKind::Firmware:
-      build_firmware_popup(parent);
+      build_system_popup(parent);
       break;
   }
 }
@@ -2244,6 +2518,63 @@ void settings_set_wifi_reconnect_callback(wifi_reconnect_callback_t cb) {
   g_wifi_reconnect_callback = cb;
 }
 
+void settings_set_fw_check_callback(fw_check_callback_t cb) {
+  g_fw_check_callback = cb;
+}
+
+void settings_set_fw_install_callback(fw_install_callback_t cb) {
+  g_fw_install_callback = cb;
+}
+
+// Alle vier Rueckmeldungen laufen auf dem Loop-Task (LVGL-Owner) und
+// tolerieren ein inzwischen geschlossenes Popup (Statics sind dann genullt,
+// die Helper pruefen selbst).
+void settings_fw_check_result(bool ok, const char* latest_tag, bool update_available) {
+  system_check_running = false;
+  system_update_available = ok && update_available;
+  if (ok && latest_tag && latest_tag[0]) {
+    snprintf(system_latest_tag, sizeof(system_latest_tag), "%s", latest_tag);
+  }
+  system_set_buttons_enabled(true);
+  system_update_check_btn_text();
+  if (!system_status_label) return;
+  if (!ok) {
+    system_show_status(tr().system_check_failed, 0xFF6B6B);
+  } else if (system_update_available) {
+    char buf[64];
+    snprintf(buf, sizeof(buf), tr().system_update_available_fmt, system_latest_tag);
+    system_show_status(buf, 0x51CF66);
+  } else {
+    system_show_status(tr().system_up_to_date, 0x51CF66);
+  }
+}
+
+void settings_fw_install_progress(size_t written, size_t total) {
+  if (!system_progress_bar || total == 0) return;
+  lv_bar_set_value(system_progress_bar,
+                   static_cast<int32_t>((written * 100ULL) / total), LV_ANIM_OFF);
+}
+
+void settings_fw_install_done() {
+  system_install_running = false;
+  if (system_progress_bar) lv_bar_set_value(system_progress_bar, 100, LV_ANIM_OFF);
+  system_show_status(tr().system_installed_restarting, 0x51CF66);
+}
+
+void settings_fw_install_failed(const char* error) {
+  system_install_running = false;
+  system_set_buttons_enabled(true);
+  if (system_progress_bar) lv_obj_add_flag(system_progress_bar, LV_OBJ_FLAG_HIDDEN);
+  if (!system_status_label) return;
+  char buf[96];
+  if (error && error[0]) {
+    snprintf(buf, sizeof(buf), "%s (%s)", tr().system_install_failed, error);
+  } else {
+    snprintf(buf, sizeof(buf), "%s", tr().system_install_failed);
+  }
+  system_show_status(buf, 0xFF6B6B);
+}
+
 void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   g_hotspot_callback = hotspot_cb;
   ap_mode_confirm_pending = false;
@@ -2322,7 +2653,7 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
                             &settings_tile_locale_summary,
                             SettingsPopupKind::Localization);
 
-  create_settings_menu_tile(tab, tile_col, 3, "chip", "Firmware",
+  create_settings_menu_tile(tab, tile_col, 3, "chip", "System",
                             &settings_tile_firmware_title,
                             &settings_tile_firmware_summary,
                             SettingsPopupKind::Firmware);
@@ -2379,7 +2710,7 @@ void settings_refresh_language() {
   if (settings_tile_display_title) lv_label_set_text(settings_tile_display_title, s.display_label);
   if (settings_tile_wifi_title) lv_label_set_text(settings_tile_wifi_title, s.wifi_label);
   if (settings_tile_locale_title) lv_label_set_text(settings_tile_locale_title, s.admin_settings_language);
-  if (settings_tile_firmware_title) lv_label_set_text(settings_tile_firmware_title, "Firmware");
+  if (settings_tile_firmware_title) lv_label_set_text(settings_tile_firmware_title, "System");
   if (settings_popup_title) lv_label_set_text(settings_popup_title, popup_title_for_kind(settings_popup_kind));
   if (display_section_label) lv_label_set_text(display_section_label, s.display_label);
   if (brightness_title_label) lv_label_set_text(brightness_title_label, s.brightness_label);

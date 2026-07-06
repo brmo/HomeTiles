@@ -35,6 +35,9 @@ Thumbs.db
 .tmp_fonts/
 libraries/
 
+# SD-Karten-Inhalte (Animationen etc. bleiben lokal, nicht im Repo)
+sd-card/
+
 # SimConnect bridge
 simconnect-bridge/bin/
 simconnect-bridge/obj/

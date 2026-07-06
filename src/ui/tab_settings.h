@@ -13,6 +13,19 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb = nullptr);
 typedef void (*wifi_reconnect_callback_t)();
 void settings_set_wifi_reconnect_callback(wifi_reconnect_callback_t cb);
 
+// Update-ueber-GitHub (System-Popup): Klicks setzen nur Callbacks ab; der
+// Sketch fuehrt Check/Install auf dem Loop-Task aus (Pending-Flag-Muster,
+// nie TLS/Netzwerk direkt im LVGL-Event-Callback).
+typedef void (*fw_check_callback_t)();
+typedef void (*fw_install_callback_t)(const char* tag);
+void settings_set_fw_check_callback(fw_check_callback_t cb);
+void settings_set_fw_install_callback(fw_install_callback_t cb);
+// Rueckmeldungen vom Loop-Task; tolerieren ein inzwischen geschlossenes Popup.
+void settings_fw_check_result(bool ok, const char* latest_tag, bool update_available);
+void settings_fw_install_progress(size_t written, size_t total);
+void settings_fw_install_done();
+void settings_fw_install_failed(const char* error);
+
 // Update WiFi-Status (aufgerufen von main loop)
 void settings_update_wifi_status(bool connected, const char* ssid, const char* ip);
 void settings_update_wifi_status_ap(const char* ssid, const char* password);

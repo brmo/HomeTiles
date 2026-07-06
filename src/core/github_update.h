@@ -1,0 +1,43 @@
+#ifndef GITHUB_UPDATE_H
+#define GITHUB_UPDATE_H
+
+#include <Arduino.h>
+
+// Update-ueber-GitHub: Versions-Check ueber den /releases/latest-Redirect
+// (Location-Header genuegt - kein JSON, keine API, kein Rate-Limit) und
+// OTA-Install per HTTPS-Download des Release-Assets in die Update-Partition.
+//
+// Namenskonvention der GitHub-Releases (MUSS beim Anlegen eingehalten werden):
+//   Tag:   vX.Y.Z (gleiches Format wie FW_VERSION in version.txt)
+//   Asset: esp32-p4-homeassistant-display-<tag>-<geraete-key>.bin
+//   z.B.   esp32-p4-homeassistant-display-v0.3.0-waveshare_touch_lcd_8.bin
+// Die Geraete-Keys sind: waveshare_touch_lcd_8, waveshare_4b, m5stacks_tab5.
+namespace GithubUpdate {
+
+constexpr const char* kRepoUrl =
+    "https://github.com/GalusPeres/ESP32-P4-HomeAssistant-Display";
+
+struct CheckResult {
+  bool ok = false;                // Anfrage erfolgreich beantwortet
+  bool update_available = false;  // latest_tag ist neuer als FW_VERSION
+  char latest_tag[24] = {};       // z.B. "v0.3.0"
+};
+
+// Blockiert 1-3 Sekunden (TLS-Handshake) - nur vom Loop-Task aufrufen,
+// nie direkt aus einem LVGL-Event-Callback (Pending-Flag-Muster wie beim
+// Hotspot-Toggle).
+CheckResult checkLatest();
+
+// Fortschritt in Bytes; total bleibt 0, solange die Groesse unbekannt ist.
+// Der Callback ist auch der LVGL-Pump-Takt des Aufrufers.
+typedef void (*ProgressFn)(size_t written, size_t total);
+
+// Laedt das Asset des laufenden Geraeteprofils und schreibt es in die
+// OTA-Partition. Blockiert minutenlang; der Aufrufer legt vorher MQTT und
+// Web-Admin still (TLS braucht ~45KB internes RAM) und startet bei true
+// selbst neu. Bei false steht der Grund in error_out.
+bool install(const char* tag, ProgressFn progress, String& error_out);
+
+}  // namespace GithubUpdate
+
+#endif  // GITHUB_UPDATE_H

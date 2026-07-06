@@ -65,7 +65,7 @@ struct Strings {
   const char* wifi_connected;
   const char* wifi_disconnected;
   const char* wifi_offline;
-  const char* wifi_status_ap_format;
+  const char* wifi_ap_active;
   const char* wifi_label;
   const char* ssid_label;
   const char* ip_label;
@@ -246,6 +246,18 @@ struct Strings {
 
   // Display-Popup: Beschriftung im Rotations-Button
   const char* display_rotate_btn_text;
+
+  // System-Popup (ehem. Firmware): Geraete-Zeile, GitHub-Update-Suche + OTA
+  const char* system_device_label;
+  const char* system_check_updates_btn;
+  const char* system_checking;
+  const char* system_up_to_date;
+  const char* system_update_available_fmt;  // %s = neue Version (Release-Tag)
+  const char* system_install_btn_fmt;       // %s = neue Version (Release-Tag)
+  const char* system_check_failed;
+  const char* system_downloading;
+  const char* system_install_failed;
+  const char* system_installed_restarting;
 };
 
 const Strings& strings(const char* language_code);

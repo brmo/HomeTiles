@@ -62,7 +62,7 @@ static const Strings kStringsDe = {
     "Verbunden",
     "Getrennt",
     "Offline",
-    "AP aktiv (PW: %s)",
+    "AP aktiv",
     "WLAN",
     "SSID",
     "IP",
@@ -238,7 +238,18 @@ static const Strings kStringsDe = {
     "Sprache, Zeitzone & Tastatur",
     "Version %s",
 
-    "Drehen"};
+    "Drehen",
+
+    "Gerät",
+    "Nach Updates suchen",
+    "Suche nach Updates...",
+    "Firmware ist aktuell",
+    "Update %s verfügbar",
+    "Auf %s aktualisieren",
+    "Suche fehlgeschlagen",
+    "Update wird geladen...",
+    "Update fehlgeschlagen",
+    "Installiert! Neustart..."};
 
 static const Strings kStringsEn = {
     "en",
@@ -300,7 +311,7 @@ static const Strings kStringsEn = {
     "Connected",
     "Disconnected",
     "Offline",
-    "AP active (PW: %s)",
+    "AP active",
     "WiFi",
     "SSID",
     "IP",
@@ -476,7 +487,18 @@ static const Strings kStringsEn = {
     "Language, time zone & keyboard",
     "Version %s",
 
-    "Rotate"};
+    "Rotate",
+
+    "Device",
+    "Check for updates",
+    "Checking for updates...",
+    "Firmware is up to date",
+    "Update %s available",
+    "Update to %s",
+    "Check failed",
+    "Downloading update...",
+    "Update failed",
+    "Installed! Restarting..."};
 
 const char* normalize_language_code(const char* language_code) {
   if (!language_code || !language_code[0]) return kStringsEn.code;

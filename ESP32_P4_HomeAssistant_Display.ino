@@ -16,6 +16,7 @@
 #include "src/core/power_manager.h"
 #include "src/core/config_manager.h"
 #include "src/core/firmware_version.h"
+#include "src/core/github_update.h"
 #include "src/core/lvgl_tick_service.h"
 #include "src/ui/ui_manager.h"
 #include "src/ui/sensor_popup.h"
@@ -212,6 +213,74 @@ static void apply_wifi_reconnect() {
   networkManager.connectWifi();
 }
 
+// Update-ueber-GitHub (System-Popup): Check und Install laufen blockierend
+// auf dem Loop-Task - die Klick-Handler im Popup setzen nur diese Flags
+// (gleiches Muster wie Hotspot-Toggle und WLAN-Reconnect).
+static bool fw_check_pending = false;
+static bool fw_install_pending = false;
+static char fw_install_tag[24] = {};
+
+static void request_fw_check() {
+  fw_check_pending = true;
+}
+
+static void request_fw_install(const char* tag) {
+  snprintf(fw_install_tag, sizeof(fw_install_tag), "%s", tag ? tag : "");
+  fw_install_pending = true;
+}
+
+static void apply_fw_check() {
+  // Die "Suche..."-Statuszeile noch auf den Schirm bringen, bevor der
+  // TLS-Handshake den Loop fuer 1-3 Sekunden blockiert
+  lv_refr_now(displayManager.getDisplay());
+  GithubUpdate::CheckResult res = GithubUpdate::checkLatest();
+  settings_fw_check_result(res.ok, res.latest_tag, res.update_available);
+}
+
+static void fw_install_progress(size_t written, size_t total) {
+  settings_fw_install_progress(written, total);
+  displayManager.resetActivityTimer();  // kein Display-Sleep mitten im Update
+  // Balken/Status sichtbar halten; der Helper zieht auch den LVGL-Tick nach
+  static uint32_t last_pump_ms = 0;
+  const uint32_t now_ms = millis();
+  if (now_ms - last_pump_ms >= 100) {
+    last_pump_ms = now_ms;
+    lvglServiceDuringBlockingWork();
+  }
+}
+
+static void apply_fw_install() {
+  Serial.printf("[Update] Install angefordert: %s\n", fw_install_tag);
+  // Eingaben sperren und internes RAM freimachen: TLS braucht ~45KB -
+  // deshalb wie beim Web-OTA MQTT trennen/Puffer schrumpfen und den
+  // Web-Admin-Server stoppen.
+  displayManager.setInputEnabled(false);
+  networkManager.prepareMqttForOta();
+  if (webAdminServer.isRunning()) webAdminServer.stop();
+  lv_refr_now(displayManager.getDisplay());
+
+  String err;
+  const bool ok = GithubUpdate::install(fw_install_tag, fw_install_progress, err);
+  if (ok) {
+    settings_fw_install_done();
+    lv_refr_now(displayManager.getDisplay());
+    Serial.println("[Update] Erfolgreich - Neustart");
+    BoardHAL::prepareForRestart();
+    delay(800);  // Erfolgsmeldung kurz stehen lassen
+    ESP.restart();
+    return;
+  }
+
+  Serial.printf("[Update] Fehlgeschlagen: %s\n", err.c_str());
+  settings_fw_install_failed(err.c_str());
+  // Zurueck in den Normalbetrieb
+  networkManager.restoreMqttBufferNormal();
+  if (networkManager.isWifiConnected() && !webAdminServer.isRunning()) {
+    webAdminServer.start();
+  }
+  displayManager.setInputEnabled(true);
+}
+
 static bool init_nvs() {
   esp_err_t err = nvs_flash_init();
   if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -375,6 +444,8 @@ void setup() {
   ui_scene_cb = mqttPublishScene;
   ui_hotspot_cb = set_hotspot_mode;
   settings_set_wifi_reconnect_callback(request_wifi_reconnect);
+  settings_set_fw_check_callback(request_fw_check);
+  settings_set_fw_install_callback(request_fw_install);
   ui_build_waiter = xTaskGetCurrentTaskHandle();
   xTaskCreatePinnedToCore(build_ui_task, "buildUI", 24576, nullptr, 2, nullptr, ARDUINO_RUNNING_CORE);
   if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(30000)) == 0) {
@@ -495,6 +566,15 @@ void loop() {
     apply_wifi_reconnect();
   }
 
+  if (fw_check_pending) {
+    fw_check_pending = false;
+    apply_fw_check();
+  }
+  if (fw_install_pending) {
+    fw_install_pending = false;
+    apply_fw_install();
+  }
+
   const bool ota_in_progress = webAdminOtaInProgress();
 
   if (ota_in_progress) {
@@ -539,6 +619,11 @@ void loop() {
     }
 
     webConfigServer.handle();
+    // Ordner-Taps setzen nur ein Pending-Flag (tiles_switch_to_folder);
+    // konsumiert wird es ausschliesslich hier bzw. im normalen Loop-Pfad.
+    // Ohne diesen Aufruf war die Ordner-Navigation im AP-Betrieb tot und der
+    // aufgestaute Wechsel feuerte nach AP-Ende verspaetet nach.
+    tiles_process_reload_requests();
     settings_update_ap_mode(true);
     settings_update_wifi_status_ap(webConfigApSsid(), webConfigApPassword());
     settings_update_power_status();
