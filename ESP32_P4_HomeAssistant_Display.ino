@@ -10,6 +10,7 @@
 #include <esp_wifi.h>  // esp_wifi_scan_stop (AP-Wechsel bricht laufenden Scan ab)
 #include <esp_ota_ops.h>
 #include <esp_heap_caps.h>
+#include <esp_system.h>  // esp_reset_reason (Tab5-Brownout-Drossel)
 
 #include "src/core/board_hal.h"
 #include "src/core/display_manager.h"
@@ -52,6 +53,18 @@ static bool ota_display_suspended = false;
 static TaskHandle_t ui_build_waiter = nullptr;
 static scene_publish_cb_t ui_scene_cb = nullptr;
 static hotspot_start_cb_t ui_hotspot_cb = nullptr;
+
+#if defined(DEVICE_M5STACKS_TAB5)
+// Brownout-Schutz (User-Log 2026-07-06): volles Backlight + Funk-Lastspitze
+// (AP-Start oder STA-Verbinden) loest den Brownout-Detektor aus - inklusive
+// Bootschleife, weil die gespeicherte Helligkeit VOR dem WLAN-Start gesetzt
+// wird. Backlight in diesen Phasen deckeln; der Config-Wert (Slider) bleibt
+// unberuehrt, der Loop stellt ihn nach dem Verbinden wieder her.
+static constexpr uint8_t kTab5SafeBrightness = 140;
+static constexpr uint32_t kTab5BrightnessRestoreTimeoutMs = 30000;
+static bool tab5_brightness_capped = false;
+static uint32_t tab5_brightness_cap_wait_since = 0;
+#endif
 
 static void log_memory_status(const char* tag) {
   const uint32_t heap_free = ESP.getFreeHeap();
@@ -150,6 +163,15 @@ static void apply_hotspot_mode(bool enable) {
     if (networkManager.isMqttConnected()) networkManager.disconnectMqtt();
     if (webAdminServer.isRunning()) webAdminServer.stop();
     settings_update_ap_mode(true);
+#if defined(DEVICE_M5STACKS_TAB5)
+    // Vor dem Funk-Moduswechsel deckeln: AP-Start bei vollem Backlight
+    // reisst die Versorgung in den Brownout.
+    if (BoardHAL::getBrightness() > kTab5SafeBrightness) {
+      BoardHAL::setBrightness(kTab5SafeBrightness);
+      tab5_brightness_capped = true;
+    }
+    tab5_brightness_cap_wait_since = millis();
+#endif
     // Laufender Async-Scan (WLAN-Popup) wuerde den Moduswechsel stoeren
     esp_wifi_scan_stop();
     if (webConfigServer.start()) {
@@ -179,6 +201,12 @@ static void apply_hotspot_mode(bool enable) {
   ap_mode_started_at = 0;
   ap_mode_disable_block_until = 0;
   settings_update_ap_mode(false);
+#if defined(DEVICE_M5STACKS_TAB5)
+  // Deckel NICHT sofort aufheben - der Reconnect-Burst gleich unten wuerde
+  // sonst wieder bei Volllast zuschlagen. Der Loop stellt die Helligkeit
+  // wieder her, sobald das WLAN steht (oder nach Timeout).
+  if (tab5_brightness_capped) tab5_brightness_cap_wait_since = millis();
+#endif
   if (configManager.isConfigured()) {
     if (WiFi.status() != WL_CONNECTED) {
       // WiFi.begin() laeuft ins Leere, solange noch ein Scan aktiv ist -
@@ -462,7 +490,20 @@ void setup() {
   Serial.flush();
   {
     const DeviceConfig& dcfg = configManager.getConfig();
-    BoardHAL::setBrightness(dcfg.display_brightness);
+    uint8_t boot_brightness = dcfg.display_brightness;
+#if defined(DEVICE_M5STACKS_TAB5)
+    // Brownout-Bootschleife durchbrechen: nach einem BOD-Reset wuerde das
+    // volle Backlight schon beim ersten WLAN-Verbinden den naechsten
+    // Brownout ausloesen (Helligkeit wird VOR dem Funk-Start gesetzt).
+    if (esp_reset_reason() == ESP_RST_BROWNOUT &&
+        boot_brightness > kTab5SafeBrightness) {
+      boot_brightness = kTab5SafeBrightness;
+      tab5_brightness_capped = true;
+      tab5_brightness_cap_wait_since = millis();
+      Serial.println("[Setup] Brownout-Reset erkannt: Helligkeit gedrosselt bis WLAN steht");
+    }
+#endif
+    BoardHAL::setBrightness(boot_brightness);
   }
   Serial.println("[Setup] Brightness OK");
   Serial.flush();
@@ -681,6 +722,18 @@ void loop() {
     }
     return;
   }
+
+#if defined(DEVICE_M5STACKS_TAB5)
+  // Brownout-Deckel aufheben, sobald der Funk die kritische Phase hinter
+  // sich hat (verbunden) oder nichts mehr kommt (Timeout, z.B. Router weg).
+  if (tab5_brightness_capped &&
+      (WiFi.status() == WL_CONNECTED ||
+       (uint32_t)(now - tab5_brightness_cap_wait_since) > kTab5BrightnessRestoreTimeoutMs)) {
+    tab5_brightness_capped = false;
+    BoardHAL::setBrightness(configManager.getConfig().display_brightness);
+    Serial.println("[Power] Brownout-Helligkeitsdrossel aufgehoben");
+  }
+#endif
 
   if (first_run) Serial.println("[Loop] powerManager.update()...");
   powerManager.update(displayManager.getLastActivityTime());
