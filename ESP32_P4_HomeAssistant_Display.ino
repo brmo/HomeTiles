@@ -218,6 +218,7 @@ static void apply_wifi_reconnect() {
 // (gleiches Muster wie Hotspot-Toggle und WLAN-Reconnect).
 static bool fw_check_pending = false;
 static bool fw_install_pending = false;
+static bool system_reboot_pending = false;
 static char fw_install_tag[24] = {};
 
 static void request_fw_check() {
@@ -227,6 +228,10 @@ static void request_fw_check() {
 static void request_fw_install(const char* tag) {
   snprintf(fw_install_tag, sizeof(fw_install_tag), "%s", tag ? tag : "");
   fw_install_pending = true;
+}
+
+static void request_system_reboot() {
+  system_reboot_pending = true;
 }
 
 static void apply_fw_check() {
@@ -293,6 +298,15 @@ static void apply_fw_install() {
   displayManager.setInputEnabled(true);
   lv_obj_invalidate(lv_screen_active());
   lv_refr_now(displayManager.getDisplay());
+}
+
+static void apply_system_reboot() {
+  Serial.println("[System] Neustart angefordert");
+  displayManager.setInputEnabled(false);
+  lv_refr_now(displayManager.getDisplay());
+  BoardHAL::prepareForRestart();
+  delay(800);
+  ESP.restart();
 }
 
 static bool init_nvs() {
@@ -460,6 +474,7 @@ void setup() {
   settings_set_wifi_reconnect_callback(request_wifi_reconnect);
   settings_set_fw_check_callback(request_fw_check);
   settings_set_fw_install_callback(request_fw_install);
+  settings_set_system_reboot_callback(request_system_reboot);
   ui_build_waiter = xTaskGetCurrentTaskHandle();
   xTaskCreatePinnedToCore(build_ui_task, "buildUI", 24576, nullptr, 2, nullptr, ARDUINO_RUNNING_CORE);
   if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(30000)) == 0) {
@@ -587,6 +602,10 @@ void loop() {
   if (fw_install_pending) {
     fw_install_pending = false;
     apply_fw_install();
+  }
+  if (system_reboot_pending) {
+    system_reboot_pending = false;
+    apply_system_reboot();
   }
 
   const bool ota_in_progress = webAdminOtaInProgress();

@@ -40,6 +40,7 @@ static hotspot_callback_t g_hotspot_callback = nullptr;
 static wifi_reconnect_callback_t g_wifi_reconnect_callback = nullptr;
 static fw_check_callback_t g_fw_check_callback = nullptr;
 static fw_install_callback_t g_fw_install_callback = nullptr;
+static system_reboot_callback_t g_system_reboot_callback = nullptr;
 
 enum class SettingsPopupKind : uint8_t {
   Display,
@@ -117,6 +118,7 @@ static lv_obj_t *system_progress_bar = nullptr;
 static lv_obj_t *system_check_btn = nullptr;
 static lv_obj_t *system_check_btn_label = nullptr;
 static lv_obj_t *system_github_btn = nullptr;
+static lv_obj_t *system_reboot_btn = nullptr;
 static lv_obj_t *system_qr = nullptr;
 static lv_obj_t *system_spacer = nullptr;
 static bool system_qr_sized = false;
@@ -949,6 +951,7 @@ static void reset_popup_refs() {
   system_check_btn = nullptr;
   system_check_btn_label = nullptr;
   system_github_btn = nullptr;
+  system_reboot_btn = nullptr;
   system_qr = nullptr;
   system_spacer = nullptr;
   system_qr_sized = false;
@@ -2063,7 +2066,7 @@ static void build_localization_popup(lv_obj_t* parent) {
 // ===== System-Popup: Version/Geraet, GitHub-QR, Update-Suche + OTA-Install =====
 
 static void system_set_buttons_enabled(bool enabled) {
-  lv_obj_t* btns[] = {system_check_btn, system_github_btn};
+  lv_obj_t* btns[] = {system_check_btn, system_github_btn, system_reboot_btn};
   for (lv_obj_t* btn : btns) {
     if (!btn) continue;
     lv_obj_set_style_opa(btn, enabled ? LV_OPA_COVER : LV_OPA_50, 0);
@@ -2096,14 +2099,16 @@ static void system_update_check_btn_text() {
 }
 
 // GitHub-QR ein-/ausblenden; waehrend der QR sichtbar ist, weichen ihm die
-// Info-Zeilen und die Statuszeile. Groesse wird beim ersten Einblenden am
-// freien Platz gemessen (gleicher Spacer-Trick wie beim AP-QR).
+// Info-Zeilen, die Statuszeile und die normalen Aktionen. Groesse wird beim
+// ersten Einblenden am freien Platz gemessen (gleicher Spacer-Trick wie beim AP-QR).
 static void system_show_qr(bool show) {
 #if LV_USE_QRCODE
   if (!system_qr) return;
   if (show) {
     if (system_info_rows) lv_obj_add_flag(system_info_rows, LV_OBJ_FLAG_HIDDEN);
     if (system_status_label) lv_obj_add_flag(system_status_label, LV_OBJ_FLAG_HIDDEN);
+    if (system_check_btn) lv_obj_add_flag(system_check_btn, LV_OBJ_FLAG_HIDDEN);
+    if (system_reboot_btn) lv_obj_add_flag(system_reboot_btn, LV_OBJ_FLAG_HIDDEN);
     if (!system_qr_sized) {
       if (settings_popup_content) lv_obj_update_layout(settings_popup_content);
       int target = 280;
@@ -2120,6 +2125,8 @@ static void system_show_qr(bool show) {
     lv_obj_add_flag(system_qr, LV_OBJ_FLAG_HIDDEN);
     if (system_info_rows) lv_obj_clear_flag(system_info_rows, LV_OBJ_FLAG_HIDDEN);
     if (system_status_label) lv_obj_clear_flag(system_status_label, LV_OBJ_FLAG_HIDDEN);
+    if (system_check_btn) lv_obj_clear_flag(system_check_btn, LV_OBJ_FLAG_HIDDEN);
+    if (system_reboot_btn) lv_obj_clear_flag(system_reboot_btn, LV_OBJ_FLAG_HIDDEN);
   }
 #else
   (void)show;
@@ -2132,6 +2139,17 @@ static void on_system_github_clicked(lv_event_t*) {
   if (!system_qr) return;
   system_show_qr(lv_obj_has_flag(system_qr, LV_OBJ_FLAG_HIDDEN));
 #endif
+}
+
+static void on_system_reboot_clicked(lv_event_t*) {
+  if (system_check_running || system_install_running) return;
+  if (!g_system_reboot_callback) return;
+  system_show_qr(false);
+  system_install_running = true;
+  system_set_buttons_enabled(false);
+  system_show_status(settings_language_is_german() ? "Neustart..." : "Restarting...",
+                     0xC8C8C8);
+  g_system_reboot_callback();
 }
 
 static void on_system_check_clicked(lv_event_t*) {
@@ -2231,6 +2249,24 @@ static void build_system_popup(lv_obj_t* parent) {
     lv_obj_set_style_text_font(system_check_btn_label, &ui_font_28, 0);
   }
   system_update_check_btn_text();
+
+  system_reboot_btn = create_popup_button(box, "", 0x424242, on_system_reboot_clicked);
+  lv_obj_set_width(system_reboot_btn, LV_PCT(100));
+  lv_obj_set_height(system_reboot_btn, 76);
+  lv_obj_set_flex_flow(system_reboot_btn, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(system_reboot_btn, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(system_reboot_btn, 14, 0);
+  lv_obj_t* reboot_icon = lv_obj_get_child(system_reboot_btn, 0);
+  if (reboot_icon) {
+    lv_label_set_text(reboot_icon, getMdiChar("restart").c_str());
+    if (FONT_MDI_ICONS) lv_obj_set_style_text_font(reboot_icon, FONT_MDI_ICONS, 0);
+  }
+  lv_obj_t* reboot_text = lv_label_create(system_reboot_btn);
+  lv_label_set_text(reboot_text, tr().restart_button);
+  lv_label_set_long_mode(reboot_text, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_font(reboot_text, &ui_font_28, 0);
+  lv_obj_set_style_text_color(reboot_text, lv_color_white(), 0);
 
   // GitHub-Button: Icon + Schriftzug im Button (wie der Drehen-Button)
   system_github_btn = create_popup_button(box, "", 0x424242, on_system_github_clicked);
@@ -2524,6 +2560,10 @@ void settings_set_fw_check_callback(fw_check_callback_t cb) {
 
 void settings_set_fw_install_callback(fw_install_callback_t cb) {
   g_fw_install_callback = cb;
+}
+
+void settings_set_system_reboot_callback(system_reboot_callback_t cb) {
+  g_system_reboot_callback = cb;
 }
 
 // Alle vier Rueckmeldungen laufen auf dem Loop-Task (LVGL-Owner) und
