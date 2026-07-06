@@ -1,0 +1,38 @@
+/* Kompaktere, technischere Typografie als die Material-Defaults */
+
+.md-typeset {
+  font-size: 0.72rem;      /* Default 0.8rem (16px) -> ~14.4px */
+  line-height: 1.65;
+}
+
+.md-typeset h1 {
+  font-size: 1.7em;        /* Default 2em */
+  font-weight: 700;
+  margin-bottom: 0.8em;
+}
+
+.md-typeset h2 {
+  font-size: 1.3em;        /* Default 1.5625em */
+  font-weight: 700;
+  margin-top: 1.4em;
+}
+
+.md-typeset h3 {
+  font-size: 1.05em;
+  font-weight: 600;
+}
+
+/* Navigation und Inhaltsverzeichnis eine Spur kompakter */
+.md-nav {
+  font-size: 0.66rem;
+}
+
+/* Tabellen lesbarer: etwas groesser als der Material-Mini-Default */
+.md-typeset table:not([class]) {
+  font-size: 0.66rem;
+}
+
+/* Code-Bloecke leicht verkleinert */
+.md-typeset pre > code {
+  font-size: 0.9em;
+}

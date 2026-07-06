@@ -6,6 +6,9 @@ repo_name: GalusPeres/ESP32-P4-HomeAssistant-Display
 
 theme:
   name: material
+  font:
+    text: Inter
+    code: JetBrains Mono
   palette:
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
@@ -37,6 +40,9 @@ nav:
   - Tile Types: tiles.md
   - Firmware Updates: updating.md
   - FAQ & Troubleshooting: faq.md
+
+extra_css:
+  - stylesheets/extra.css
 
 markdown_extensions:
   - admonition
