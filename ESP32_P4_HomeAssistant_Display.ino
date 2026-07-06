@@ -713,6 +713,18 @@ void loop() {
       set_hotspot_mode(false);
     }
 
+#if defined(DEVICE_M5STACKS_TAB5)
+    // Deckel im AP-Betrieb aktiv durchsetzen: der Helligkeits-Slider im
+    // Display-Popup bleibt hier erreichbar und wuerde den Brownout-Schutz
+    // sonst aushebeln. Der Config-Wert bleibt gespeichert und wird nach
+    // AP-Ende wiederhergestellt.
+    if (BoardHAL::getBrightness() > kTab5SafeBrightness) {
+      BoardHAL::setBrightness(kTab5SafeBrightness);
+      tab5_brightness_capped = true;
+      tab5_brightness_cap_wait_since = millis();
+    }
+#endif
+
     delay(1);
 
     if (first_run) {
@@ -726,12 +738,17 @@ void loop() {
 #if defined(DEVICE_M5STACKS_TAB5)
   // Brownout-Deckel aufheben, sobald der Funk die kritische Phase hinter
   // sich hat (verbunden) oder nichts mehr kommt (Timeout, z.B. Router weg).
-  if (tab5_brightness_capped &&
-      (WiFi.status() == WL_CONNECTED ||
-       (uint32_t)(now - tab5_brightness_cap_wait_since) > kTab5BrightnessRestoreTimeoutMs)) {
-    tab5_brightness_capped = false;
-    BoardHAL::setBrightness(configManager.getConfig().display_brightness);
-    Serial.println("[Power] Brownout-Helligkeitsdrossel aufgehoben");
+  if (tab5_brightness_capped) {
+    if (WiFi.status() == WL_CONNECTED ||
+        (uint32_t)(now - tab5_brightness_cap_wait_since) > kTab5BrightnessRestoreTimeoutMs) {
+      tab5_brightness_capped = false;
+      BoardHAL::setBrightness(configManager.getConfig().display_brightness);
+      Serial.println("[Power] Brownout-Helligkeitsdrossel aufgehoben");
+    } else if (BoardHAL::getBrightness() > kTab5SafeBrightness) {
+      // Auch waehrend der Wartephase durchsetzen (Slider-Aenderung im
+      // Reconnect-Fenster wuerde den Schutz sonst umgehen).
+      BoardHAL::setBrightness(kTab5SafeBrightness);
+    }
   }
 #endif
 
