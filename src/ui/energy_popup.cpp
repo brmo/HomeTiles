@@ -11,6 +11,7 @@
 #include "src/tiles/mdi_icons.h"
 #include "src/tiles/tile_renderer_fonts.h"
 #include "src/tiles/tile_renderer_shared.h"
+#include "src/types/clock/clock_format.h"
 #include "src/types/energy/energy_data.h"
 #include "src/ui/light_popup.h"
 #include "src/ui/sensor_popup.h"
@@ -250,11 +251,19 @@ String week_x_label_for_entry(const EnergyEntryData& entry, uint8_t index) {
 }
 
 String day_marker_label(uint8_t hour) {
+  const unsigned h = static_cast<unsigned>(hour % 24);
+  const DeviceConfig& cfg = configManager.getConfig();
+  const uint8_t time_format = clock_tile::resolve_time_format(
+      clock_tile::TIME_FORMAT_AUTO, cfg.global_time_format, cfg.language);
   char buf[12];
-  if (is_german()) {
-    snprintf(buf, sizeof(buf), "%u Uhr", static_cast<unsigned>(hour % 24));
+  if (time_format == clock_tile::TIME_FORMAT_12H) {
+    unsigned hour12 = h % 12;
+    if (hour12 == 0) hour12 = 12;
+    snprintf(buf, sizeof(buf), "%u %s", hour12, (h < 12) ? "AM" : "PM");
+  } else if (is_german()) {
+    snprintf(buf, sizeof(buf), "%u Uhr", h);
   } else {
-    snprintf(buf, sizeof(buf), "%u:00", static_cast<unsigned>(hour % 24));
+    snprintf(buf, sizeof(buf), "%u:00", h);
   }
   return String(buf);
 }
