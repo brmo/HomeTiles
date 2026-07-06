@@ -17,6 +17,7 @@ namespace {
 
 constexpr size_t kInstallReadChunk = 2048;
 constexpr size_t kInstallStageBytes = 512 * 1024;
+constexpr size_t kInstallWriteSliceBytes = 16 * 1024;
 constexpr size_t kSocketRxBufferBytes = 4 * 1024;
 constexpr size_t kMaxHttpLineLen = 4096;
 constexpr uint32_t kConnectTimeoutMs = 10000;
@@ -330,13 +331,26 @@ void reportInstallProgress(UpdateWriteCtx& ctx, bool force) {
 bool writeUpdateBytes(const uint8_t* data, size_t len, void* raw_ctx) {
   auto* ctx = static_cast<UpdateWriteCtx*>(raw_ctx);
   if (!ctx || !data) return false;
-  const size_t bytes_written = Update.write(const_cast<uint8_t*>(data), len);
-  if (bytes_written != len) {
-    if (ctx->error) *ctx->error = Update.errorString();
-    return false;
+  // In Scheiben schreiben statt der ganzen Stage am Stueck: waehrend
+  // Update.write blockiert der Loop-Task sekundenlang im Flash-Erase/Write
+  // und der esp-hosted-SDIO-Treiber kann eingehende WLAN-Frames nicht mehr
+  // ablegen -> assert pkt_rxbuff (sdio_drv.c:928) mitten im Install. Die
+  // Pausen zwischen den Scheiben lassen ihn die RX-Queue leeren; mit den
+  // alten 32KB-Stages war das Fenster kurz genug, mit 512KB nicht mehr.
+  size_t offset = 0;
+  while (offset < len) {
+    size_t slice = len - offset;
+    if (slice > kInstallWriteSliceBytes) slice = kInstallWriteSliceBytes;
+    const size_t bytes_written =
+        Update.write(const_cast<uint8_t*>(data + offset), slice);
+    if (bytes_written != slice) {
+      if (ctx->error) *ctx->error = Update.errorString();
+      return false;
+    }
+    ctx->written += bytes_written;
+    offset += slice;
+    if (offset < len) delay(2);
   }
-
-  ctx->written += bytes_written;
   if (ctx->written >= ctx->next_progress_log ||
       (ctx->total && ctx->written >= ctx->total)) {
     Serial.printf("[Update] Install progress: %u / %u bytes\n",
