@@ -5,7 +5,10 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <esp_heap_caps.h>
+#include <lwip/sockets.h>
+#include <string.h>
 
+#include "src/core/firmware_metadata.h"
 #include "src/core/firmware_version.h"
 #include "src/devices/device.h"
 
@@ -117,12 +120,15 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
   HTTPClient http;
   http.setConnectTimeout(10000);
   http.setTimeout(15000);
+  http.setReuse(false);
   if (!http.begin(client, url)) {
     error_out = "begin failed";
     return false;
   }
   // GitHub leitet Release-Downloads auf objects.githubusercontent.com um
   http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
+  http.addHeader("Accept-Encoding", "identity");
+  http.addHeader("Connection", "close");
 
   const int code = http.GET();
   if (code != HTTP_CODE_OK) {
@@ -133,19 +139,28 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
     return false;
   }
 
+  int rcvbuf = 8 * 1024;
+  if (client.fd() >= 0) {
+    const int sock_res =
+        client.setSocketOption(SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
+    Serial.printf("[Update] TCP RX-Puffer auf %d Bytes %s\n",
+                  rcvbuf, sock_res == 0 ? "begrenzt" : "nicht geaendert");
+  }
+
   const int total = http.getSize();  // -1 = unbekannt (chunked)
   const size_t total_sz = (total > 0) ? static_cast<size_t>(total) : 0;
-  if (!Update.begin(total_sz ? total_sz : UPDATE_SIZE_UNKNOWN, U_FLASH)) {
-    error_out = Update.errorString();
+  if (total_sz && total_sz < firmware_meta::kDeviceDescriptorImageBytes) {
     http.end();
-    Serial.printf("[Update] Update.begin fehlgeschlagen: %s\n", error_out.c_str());
+    error_out = "image too small";
     return false;
   }
-  Serial.printf("[Update] Update.begin OK, Groesse: %d\n", total);
 
   // Lesepuffer im PSRAM, um das knappe interne RAM (TLS!) nicht zusaetzlich
-  // zu belasten; 8KB-Happen geben dem Progress-Callback einen steten Takt.
-  constexpr size_t kChunk = 8192;
+  // zu belasten. Kleine Happen + kurze Pausen wirken wie das 8KB-RX-Fenster
+  // beim stabilen Web-OTA und verhindern, dass SDIO-WLAN bei Flash-Writes mit
+  // zu vielen RX-Puffern gleichzeitig geflutet wird.
+  constexpr size_t kChunk = 2048;
+  constexpr uint32_t kReadPaceMs = 4;
   uint8_t* buf = static_cast<uint8_t*>(
       heap_caps_malloc(kChunk, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (!buf) buf = static_cast<uint8_t*>(malloc(kChunk));
@@ -158,13 +173,105 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
 
   auto* stream = http.getStreamPtr();
   size_t written_total = 0;
+  size_t next_progress_log = 512 * 1024;
   uint32_t last_data_ms = millis();
+  uint32_t last_progress_ms = 0;
   bool failed = false;
+  bool update_started = false;
+
+  auto report_progress = [&](bool force) {
+    if (!progress) return;
+    const uint32_t now_ms = millis();
+    if (force || now_ms - last_progress_ms >= 500 ||
+        (total_sz && written_total >= total_sz)) {
+      last_progress_ms = now_ms;
+      progress(written_total, total_sz);
+    }
+  };
+
+  uint8_t image_head[firmware_meta::kDeviceDescriptorImageBytes] = {0};
+  size_t image_head_len = 0;
+  while (!failed && image_head_len < sizeof(image_head)) {
+    const int avail = stream->available();
+    if (avail > 0) {
+      size_t want = sizeof(image_head) - image_head_len;
+      if (want > kChunk) want = kChunk;
+      if (want > static_cast<size_t>(avail)) want = static_cast<size_t>(avail);
+
+      const int r = stream->read(buf, want);
+      if (r <= 0) {
+        delay(1);
+        continue;
+      }
+      memcpy(image_head + image_head_len, buf, static_cast<size_t>(r));
+      image_head_len += static_cast<size_t>(r);
+      last_data_ms = millis();
+      report_progress(false);
+      delay(kReadPaceMs);
+    } else {
+      if (!http.connected() ||
+          millis() - last_data_ms > 20000UL) {
+        error_out = http.connected() ? "timeout" : "connection lost";
+        failed = true;
+        break;
+      }
+      report_progress(false);
+      delay(10);
+    }
+  }
+
+  if (!failed) {
+    firmware_meta::DeviceDescriptor incoming_desc{};
+    if (!firmware_meta::parseDeviceDescriptorFromImage(
+            image_head, image_head_len, incoming_desc)) {
+      error_out = "firmware metadata missing or invalid";
+      failed = true;
+    } else if (strcmp(incoming_desc.device_key,
+                      firmware_meta::currentDeviceKey()) != 0) {
+      error_out = String("device mismatch: got ") +
+                  incoming_desc.display_name + ", expected " +
+                  firmware_meta::currentDisplayName();
+      failed = true;
+    } else if (strcmp(incoming_desc.project_key,
+                      firmware_meta::currentProjectKey()) != 0) {
+      error_out = String("project mismatch: got ") +
+                  incoming_desc.project_key + ", expected " +
+                  firmware_meta::currentProjectKey();
+      failed = true;
+    }
+  }
+
+  if (!failed) {
+    if (!Update.begin(total_sz ? total_sz : UPDATE_SIZE_UNKNOWN, U_FLASH)) {
+      error_out = Update.errorString();
+      failed = true;
+      Serial.printf("[Update] Update.begin fehlgeschlagen: %s\n",
+                    error_out.c_str());
+    } else {
+      update_started = true;
+      Serial.printf("[Update] Update.begin OK, Groesse: %d\n", total);
+      if (Update.write(image_head, image_head_len) != image_head_len) {
+        error_out = Update.errorString();
+        failed = true;
+      } else {
+        written_total = image_head_len;
+        report_progress(true);
+      }
+    }
+  }
 
   while (http.connected() && (total < 0 || written_total < total_sz)) {
-    const size_t avail = stream->available();
+    if (failed) break;
+    const int avail = stream->available();
     if (avail) {
-      const int r = stream->readBytes(buf, (avail > kChunk) ? kChunk : avail);
+      size_t want = (static_cast<size_t>(avail) > kChunk)
+                        ? kChunk
+                        : static_cast<size_t>(avail);
+      if (total_sz) {
+        const size_t remaining = total_sz - written_total;
+        if (want > remaining) want = remaining;
+      }
+      const int r = stream->read(buf, want);
       if (r <= 0) continue;
       if (Update.write(buf, r) != static_cast<size_t>(r)) {
         error_out = Update.errorString();
@@ -173,14 +280,27 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
       }
       written_total += r;
       last_data_ms = millis();
-      if (progress) progress(written_total, total_sz);
+      if (written_total >= next_progress_log ||
+          (total_sz && written_total >= total_sz)) {
+        if (total_sz) {
+          Serial.printf("[Update] Install progress: %u / %u bytes\n",
+                        static_cast<unsigned>(written_total),
+                        static_cast<unsigned>(total_sz));
+        } else {
+          Serial.printf("[Update] Install progress: %u bytes written\n",
+                        static_cast<unsigned>(written_total));
+        }
+        next_progress_log += 512 * 1024;
+      }
+      report_progress(false);
+      delay(kReadPaceMs);
     } else {
       if (millis() - last_data_ms > 20000UL) {
         error_out = "timeout";
         failed = true;
         break;
       }
-      if (progress) progress(written_total, total_sz);
+      report_progress(false);
       delay(10);
     }
   }
@@ -192,7 +312,7 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
   }
 
   if (failed) {
-    Update.abort();
+    if (update_started) Update.abort();
     http.end();
     Serial.printf("[Update] Install fehlgeschlagen: %s\n", error_out.c_str());
     return false;

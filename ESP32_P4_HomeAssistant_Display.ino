@@ -238,38 +238,42 @@ static void apply_fw_check() {
 }
 
 static void fw_install_progress(size_t written, size_t total) {
-  settings_fw_install_progress(written, total);
   displayManager.resetActivityTimer();  // kein Display-Sleep mitten im Update
-  // Balken/Status sichtbar halten; der Helper zieht auch den LVGL-Tick nach
-  static uint32_t last_pump_ms = 0;
+
+  // GitHub-OTA laeuft im selben "Display aus, Hintergrund still"-Modus wie
+  // Web-OTA. Keine LVGL-Timer pumpen: Animationen/Flushes erzeugen sonst
+  // zusaetzliche DMA- und CPU-Last genau waehrend des SDIO-RX-Stroms.
+  static uint32_t last_ui_ms = 0;
+  static size_t last_written = 0;
   const uint32_t now_ms = millis();
-  if (now_ms - last_pump_ms >= 100) {
-    last_pump_ms = now_ms;
-    lvglServiceDuringBlockingWork();
+  if (written < last_written || written == 0 || written == total ||
+      now_ms - last_ui_ms >= 500) {
+    last_written = written;
+    last_ui_ms = now_ms;
+    settings_fw_install_progress(written, total);
   }
+  delay(1);
 }
 
 static void apply_fw_install() {
   Serial.printf("[Update] Install angefordert: %s\n", fw_install_tag);
   // Internes RAM freimachen, exakt wie prepareDisplayForOtaInstall() beim
-  // Web-OTA: Das 72KB-SRAM-Draw-Band haelt genau das interne DMA-RAM, das
-  // esp-hosted fuer den Dauer-RX-Strom des Downloads braucht - ohne den
-  // Tausch ins PSRAM crasht der erste Datenburst mit "sdio_push_data_to_
-  // queue (pkt_rxbuff)" (so beim ersten Testlauf passiert; TLS legt weitere
-  // ~45KB obendrauf). Anders als beim Web-OTA bleibt das Display AN, damit
-  // der Fortschrittsbalken sichtbar ist - nur langsamer gerendert.
+  // Web-OTA: Display aus, Draw-Puffer nach PSRAM, MQTT still. Das ist weniger
+  // huebsch als ein live gerenderter Balken, aber der Web-OTA-Pfad ist damit
+  // stabil und der ESP32-P4-SDIO-WLAN-Treiber braucht diesen Freiraum.
   displayManager.setInputEnabled(false);
+  lv_refr_now(displayManager.getDisplay());
+  BoardHAL::displayPowerSaveOn();
   displayManager.setBufferLines(8);  // unter SRAM-Minimum -> PSRAM-Puffer
   networkManager.prepareMqttForOta();
   if (webAdminServer.isRunning()) webAdminServer.stop();
   log_memory_status("before-github-ota");
-  lv_refr_now(displayManager.getDisplay());
+  delay(20);
 
   String err;
   const bool ok = GithubUpdate::install(fw_install_tag, fw_install_progress, err);
   if (ok) {
     settings_fw_install_done();
-    lv_refr_now(displayManager.getDisplay());
     Serial.println("[Update] Erfolgreich - Neustart");
     BoardHAL::prepareForRestart();
     delay(800);  // Erfolgsmeldung kurz stehen lassen
@@ -281,6 +285,7 @@ static void apply_fw_install() {
   settings_fw_install_failed(err.c_str());
   // Zurueck in den Normalbetrieb (Gegenstueck zur Vorbereitung oben)
   networkManager.restoreMqttBufferNormal();
+  BoardHAL::displayPowerSaveOff();
   displayManager.setBufferLines(SCREEN_HEIGHT / Device::kDisplayFlushBands);
   if (networkManager.isWifiConnected() && !webAdminServer.isRunning()) {
     webAdminServer.start();
