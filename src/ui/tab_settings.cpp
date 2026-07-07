@@ -2187,8 +2187,18 @@ static lv_obj_t* create_hometiles_logo_mark(lv_obj_t* parent, int32_t size) {
   lv_obj_clear_flag(mark, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_size(mark, size, size);
 
-  const int32_t gap = size / 12;
-  const int32_t cell = (size - gap) / 2;
+  // 1:1 aus docs/images/logo.svg (viewBox 48x48) skaliert: drei 17er-Kacheln
+  // bei Rand/Luecke 4/6 mit rx=4, plus ein Plus-Balkenkreuz (Dicke 5, Spann-
+  // weite 18) anstelle eines generischen MDI-Icons -- vorher stimmten weder
+  // die Kachel/Luecken-Verhaeltnisse noch die Plus-Form mit dem echten Logo
+  // ueberein.
+  auto scaled = [&](float v) {
+    return static_cast<int32_t>(v * static_cast<float>(size) / 48.0f + 0.5f);
+  };
+  const int32_t margin = scaled(4.0f);
+  const int32_t cell = scaled(17.0f);
+  const int32_t gap = scaled(6.0f);
+  const int32_t radius = scaled(4.0f);
 
   auto make_square = [&](int32_t x, int32_t y) {
     lv_obj_t* sq = lv_obj_create(mark);
@@ -2196,25 +2206,30 @@ static lv_obj_t* create_hometiles_logo_mark(lv_obj_t* parent, int32_t size) {
     lv_obj_clear_flag(sq, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_size(sq, cell, cell);
     lv_obj_set_pos(sq, x, y);
-    lv_obj_set_style_radius(sq, cell / 4, 0);
+    lv_obj_set_style_radius(sq, radius, 0);
     lv_obj_set_style_bg_color(sq, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(sq, LV_OPA_COVER, 0);
   };
-  make_square(0, 0);
-  make_square(cell + gap, 0);
-  make_square(0, cell + gap);
+  make_square(margin, margin);
+  make_square(margin + cell + gap, margin);
+  make_square(margin, margin + cell + gap);
 
-  lv_obj_t* plus_slot = lv_obj_create(mark);
-  style_plain_container(plus_slot);
-  lv_obj_clear_flag(plus_slot, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_size(plus_slot, cell, cell);
-  lv_obj_set_pos(plus_slot, cell + gap, cell + gap);
+  const int32_t bar_thick = scaled(5.0f);
+  const int32_t bar_span = scaled(18.0f);
+  const int32_t plus_cx = scaled(35.5f);
+  const int32_t plus_cy = scaled(35.0f);
 
-  lv_obj_t* plus = lv_label_create(plus_slot);
-  lv_label_set_text(plus, getMdiChar("plus").c_str());
-  if (FONT_MDI_ICONS) lv_obj_set_style_text_font(plus, FONT_MDI_ICONS, 0);
-  lv_obj_set_style_text_color(plus, lv_color_hex(0x26A69A), 0);
-  lv_obj_center(plus);
+  auto make_bar = [&](int32_t w, int32_t h) {
+    lv_obj_t* bar = lv_obj_create(mark);
+    style_plain_container(bar);
+    lv_obj_clear_flag(bar, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(bar, w, h);
+    lv_obj_set_pos(bar, plus_cx - w / 2, plus_cy - h / 2);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(0x26A69A), 0);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+  };
+  make_bar(bar_thick, bar_span);
+  make_bar(bar_span, bar_thick);
 
   return mark;
 }
