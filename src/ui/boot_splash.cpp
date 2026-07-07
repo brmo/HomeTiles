@@ -39,7 +39,16 @@ lv_obj_t* create_logo(lv_obj_t* parent, int32_t size) {
 void show() {
   if (g_overlay) return;
 
-  g_overlay = lv_obj_create(lv_screen_active());
+  // lv_screen_active() ist sonst LVGL's Default-Theme-Hintergrund (hell),
+  // der erst durch uiManager.buildUI() auf Schwarz gesetzt wird. Da hide()
+  // das Overlay komplett loescht, bevor buildUI() laeuft, wuerde sonst kurz
+  // dieser helle Default-Hintergrund durchscheinen -- deshalb hier schon
+  // vorab auf die gleiche Farbe wie buildUI() setzen.
+  lv_obj_t* scr = lv_screen_active();
+  lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+
+  g_overlay = lv_obj_create(scr);
   lv_obj_set_size(g_overlay, LV_PCT(100), LV_PCT(100));
   lv_obj_set_pos(g_overlay, 0, 0);
   // Gleicher Grauton wie die System-Popup-Karte (settings_popup_card in

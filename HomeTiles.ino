@@ -69,7 +69,7 @@ static uint32_t tab5_brightness_cap_wait_since = 0;
 
 // Splash-Screen bleibt mindestens so lange stehen, dass Version/Geraet
 // tatsaechlich lesbar sind, auch wenn der restliche Boot schneller fertig ist.
-static constexpr uint32_t kBootSplashMinVisibleMs = 1800;
+static constexpr uint32_t kBootSplashMinVisibleMs = 2500;
 
 static void log_memory_status(const char* tag) {
   const uint32_t heap_free = ESP.getFreeHeap();
@@ -471,6 +471,11 @@ void setup() {
   // spaeteren Wake unten, weil dieses Panel einen einzelnen Refresh nicht
   // zuverlaessig vollstaendig durchzeichnet.
   BootSplash::show();
+  // Layout (Flex-Positionen, Bild-Skalierung/Pivot) VOR dem ersten Refresh
+  // fertigrechnen -- sonst kann der allererste Frame einen halbfertigen
+  // Zwischenzustand zeigen (verzerrt wirkendes Icon/Text), bevor sich beim
+  // naechsten Refresh die endgueltige Position einstellt.
+  lv_obj_update_layout(lv_screen_active());
   BoardHAL::displayWake();
   lv_obj_invalidate(lv_screen_active());
 #if defined(DEVICE_M5STACKS_TAB5)
