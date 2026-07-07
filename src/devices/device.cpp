@@ -61,7 +61,7 @@ void displayWake() {
 }
 
 void displayWakeDark() {
-#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
+#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8) || defined(DEVICE_M5STACKS_TAB5)
   DeviceImpl::displayWakeDark();
 #else
   DeviceImpl::displayWake();

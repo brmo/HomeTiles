@@ -70,7 +70,7 @@ static uint32_t tab5_brightness_cap_wait_since = 0;
 // Splash-Screen bleibt mindestens so lange stehen, dass Version/Geraet
 // tatsaechlich lesbar sind, auch wenn der restliche Boot schneller fertig ist.
 static constexpr uint32_t kBootSplashMinVisibleMs = 2500;
-#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
+#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8) || defined(DEVICE_M5STACKS_TAB5)
 static constexpr uint32_t kBootBlackWarmupMs = 90;
 static constexpr uint32_t kBootBlackGapMs = 60;
 #endif
@@ -98,7 +98,7 @@ static void log_memory_status(const char* tag) {
   Serial.flush();
 }
 
-#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
+#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8) || defined(DEVICE_M5STACKS_TAB5)
 static void boot_black_warmup(const char* label) {
   Serial.printf("[Boot] Black display warmup: %s\n", label ? label : "?");
   Serial.flush();
@@ -481,7 +481,7 @@ void setup() {
   Serial.println("[Setup] Display OK");
   log_memory_status("after-display");
   Serial.flush();
-#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
+#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8) || defined(DEVICE_M5STACKS_TAB5)
   boot_black_warmup("after-display");
 #endif
 
@@ -513,11 +513,11 @@ void setup() {
   Serial.flush();
 
   // Ab hier gibt es einen aktiven LVGL-Screen -- kurz die Begruessung zeigen,
-  // waehrend der Rest bootet. Das Waveshare-8"-DPI-Panel zeigt den aktiven
-  // Framebuffer direkt; waere es waehrend der ersten Splash-Refreshes sichtbar,
+  // waehrend der Rest bootet. Die grossen DSI/DPI-Panels zeigen den aktiven
+  // Framebuffer direkt; waere er waehrend der ersten Splash-Refreshes sichtbar,
   // koennen die LVGL-Flush-Streifen fuer wenige Millisekunden als Treppen-Flash
-  // aufblitzen. Deshalb Panel aus, Splash fertig rendern, dann erst sichtbar.
-#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
+  // aufblitzen. Deshalb Panel dunkel, Splash fertig rendern, dann erst sichtbar.
+#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8) || defined(DEVICE_M5STACKS_TAB5)
   BoardHAL::displaySleep();
   delay(kBootBlackGapMs);
   BoardHAL::displayFillScreen(0x0000);
@@ -529,7 +529,7 @@ void setup() {
   // Zwischenzustand zeigen (verzerrt wirkendes Icon/Text), bevor sich beim
   // naechsten Refresh die endgueltige Position einstellt.
   lv_obj_update_layout(lv_screen_active());
-#if !defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
+#if !defined(DEVICE_WAVESHARE_TOUCH_LCD_8) && !defined(DEVICE_M5STACKS_TAB5)
   BoardHAL::displayWake();
 #endif
   lv_obj_invalidate(lv_screen_active());
@@ -549,7 +549,7 @@ void setup() {
   lv_refr_now(displayManager.getDisplay());
   BoardHAL::displayWaitDisplay();
 #endif
-#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
+#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8) || defined(DEVICE_M5STACKS_TAB5)
   BoardHAL::displayWake();
   BoardHAL::displayWaitDisplay();
 #endif

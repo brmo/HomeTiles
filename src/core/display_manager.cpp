@@ -581,7 +581,7 @@ bool DisplayManager::init() {
   // Waveshare: Display is already initialised by BoardHAL::init().
   // 720×720 square display – no rotation needed by default.
   BoardHAL::displayFillScreen(0x0000);  // black
-#if !defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
+#if !defined(DEVICE_M5STACKS_TAB5) && !defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
   BoardHAL::setBrightness(150);  // Wird spaeter vom Power Manager gesteuert
 #endif
   rotation = Device::kRotationDefault;

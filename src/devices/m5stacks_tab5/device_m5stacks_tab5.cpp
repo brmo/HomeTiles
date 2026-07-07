@@ -247,7 +247,12 @@ bool init_display() {
   Serial.flush();
 
   auto cfg = M5.config();
+  // M5Unified remembers the current M5GFX brightness before init and restores
+  // it at the end of begin(). Force that saved value to 0 to avoid a short
+  // pre-splash backlight blink on Tab5.
+  M5.Display.setBrightness(0);
   M5.begin(cfg);
+  M5.Display.setBrightness(0);
   Wire.setClock(400000);
 
   if (M5.getBoard() == m5::board_t::board_unknown) {
@@ -260,7 +265,6 @@ bool init_display() {
   M5.Display.setBrightness(0);
   M5.Display.fillScreen(0x0000);
   M5.Display.waitDMA();
-  M5.Display.setBrightness(g_brightness);
 
   g_display_ready = true;
   init_tab5_ppa();
@@ -423,7 +427,7 @@ bool DeviceM5StacksTab5::init() {
     return false;
   }
 
-  setBrightness(g_brightness);
+  M5.Display.setBrightness(0);
 
   Serial.println("[Device/M5StacksTab5] Init complete");
   Serial.flush();
@@ -539,6 +543,15 @@ void DeviceM5StacksTab5::displayWake() {
 
   M5.Display.wakeup();
   M5.Display.setBrightness(g_brightness);
+}
+
+void DeviceM5StacksTab5::displayWakeDark() {
+  if (!g_display_ready) {
+    return;
+  }
+
+  M5.Display.wakeup();
+  M5.Display.setBrightness(0);
 }
 
 void DeviceM5StacksTab5::displayPowerSaveOn() {
