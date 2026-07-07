@@ -18,6 +18,7 @@
 #include "src/types/clock/clock_format.h"
 #include "src/web/web_config.h"
 #include "src/ui/ui_keyboard.h"
+#include "src/ui/hometiles_logo.h"
 
 static lv_obj_t *brightness_label = nullptr;
 static lv_obj_t *display_rotate_btn = nullptr;
@@ -2178,60 +2179,20 @@ static void on_system_check_clicked(lv_event_t*) {
   g_fw_check_callback();
 }
 
-// HomeTiles-Logo als reine LVGL-Primitive nachgebaut (drei weisse Kacheln +
-// tealfarbenes Plus in der vierten) -- gleiche Optik wie docs/images/logo.svg,
-// ohne dass ein Bild-Asset in ein Display-Farbformat konvertiert werden muss.
+// HomeTiles-Logo als kompiliertes Bild (hometiles_logo_dsc): eine 1:1-
+// Rasterisierung von docs/images/logo.svg (96x96 ARGB8888, siehe
+// release-helper/gen_logo.py). Eine fruehere Fassung baute das Logo aus
+// reinen LVGL-Formen nach, traf aber weder die Kachel/Luecken-Proportionen
+// noch die Plus-Form exakt -- hier wird nur noch auf die Zielgroesse skaliert.
 static lv_obj_t* create_hometiles_logo_mark(lv_obj_t* parent, int32_t size) {
-  lv_obj_t* mark = lv_obj_create(parent);
-  style_plain_container(mark);
-  lv_obj_clear_flag(mark, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_size(mark, size, size);
-
-  // 1:1 aus docs/images/logo.svg (viewBox 48x48) skaliert: drei 17er-Kacheln
-  // bei Rand/Luecke 4/6 mit rx=4, plus ein Plus-Balkenkreuz (Dicke 5, Spann-
-  // weite 18) anstelle eines generischen MDI-Icons -- vorher stimmten weder
-  // die Kachel/Luecken-Verhaeltnisse noch die Plus-Form mit dem echten Logo
-  // ueberein.
-  auto scaled = [&](float v) {
-    return static_cast<int32_t>(v * static_cast<float>(size) / 48.0f + 0.5f);
-  };
-  const int32_t margin = scaled(4.0f);
-  const int32_t cell = scaled(17.0f);
-  const int32_t gap = scaled(6.0f);
-  const int32_t radius = scaled(4.0f);
-
-  auto make_square = [&](int32_t x, int32_t y) {
-    lv_obj_t* sq = lv_obj_create(mark);
-    style_plain_container(sq);
-    lv_obj_clear_flag(sq, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_size(sq, cell, cell);
-    lv_obj_set_pos(sq, x, y);
-    lv_obj_set_style_radius(sq, radius, 0);
-    lv_obj_set_style_bg_color(sq, lv_color_white(), 0);
-    lv_obj_set_style_bg_opa(sq, LV_OPA_COVER, 0);
-  };
-  make_square(margin, margin);
-  make_square(margin + cell + gap, margin);
-  make_square(margin, margin + cell + gap);
-
-  const int32_t bar_thick = scaled(5.0f);
-  const int32_t bar_span = scaled(18.0f);
-  const int32_t plus_cx = scaled(35.5f);
-  const int32_t plus_cy = scaled(35.0f);
-
-  auto make_bar = [&](int32_t w, int32_t h) {
-    lv_obj_t* bar = lv_obj_create(mark);
-    style_plain_container(bar);
-    lv_obj_clear_flag(bar, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_size(bar, w, h);
-    lv_obj_set_pos(bar, plus_cx - w / 2, plus_cy - h / 2);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(0x26A69A), 0);
-    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-  };
-  make_bar(bar_thick, bar_span);
-  make_bar(bar_span, bar_thick);
-
-  return mark;
+  lv_obj_t* img = lv_image_create(parent);
+  lv_image_set_src(img, &hometiles_logo_dsc);
+  lv_image_set_antialias(img, true);
+  const uint32_t zoom = static_cast<uint32_t>(
+      (static_cast<int64_t>(size) * 256) / hometiles_logo_dsc.header.w);
+  lv_image_set_scale(img, zoom);
+  lv_obj_clear_flag(img, LV_OBJ_FLAG_CLICKABLE);
+  return img;
 }
 
 static void build_system_popup(lv_obj_t* parent) {
