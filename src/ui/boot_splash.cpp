@@ -51,30 +51,40 @@ void show() {
                         LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_row(g_overlay, 24, 0);
 
-  // Marke: Icon, Titel, Version -- identischer Aufbau wie im System-Popup.
+  // Marke: Icon links, rechts daneben Titel+Version -- identischer Aufbau
+  // wie im System-Popup.
   lv_obj_t* brand = lv_obj_create(g_overlay);
   lv_obj_set_style_bg_opa(brand, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(brand, 0, 0);
   lv_obj_set_style_pad_all(brand, 0, 0);
   lv_obj_clear_flag(brand, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_size(brand, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-  lv_obj_set_flex_flow(brand, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_flow(brand, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(brand, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_row(brand, 6, 0);
+  lv_obj_set_style_pad_column(brand, 18, 0);
   create_logo(brand, 100);
 
-  lv_obj_t* title = lv_label_create(brand);
+  lv_obj_t* brand_text = lv_obj_create(brand);
+  lv_obj_set_style_bg_opa(brand_text, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(brand_text, 0, 0);
+  lv_obj_set_style_pad_all(brand_text, 0, 0);
+  lv_obj_clear_flag(brand_text, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_size(brand_text, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(brand_text, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(brand_text, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
+                        LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_row(brand_text, 2, 0);
+
+  lv_obj_t* title = lv_label_create(brand_text);
   lv_label_set_text(title, "HomeTiles");
   lv_obj_set_style_text_font(title, &ui_font_40, 0);
   lv_obj_set_style_text_color(title, lv_color_white(), 0);
-  lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
 
-  lv_obj_t* version_caption = lv_label_create(brand);
+  lv_obj_t* version_caption = lv_label_create(brand_text);
   lv_label_set_text(version_caption, FW_VERSION);
   lv_obj_set_style_text_font(version_caption, &ui_font_24, 0);
   lv_obj_set_style_text_color(version_caption, lv_color_hex(0xA8A8A8), 0);
-  lv_obj_set_style_text_align(version_caption, LV_TEXT_ALIGN_CENTER, 0);
 
   lv_obj_t* device_label = lv_label_create(g_overlay);
   lv_label_set_text(device_label, Device::displayName());
