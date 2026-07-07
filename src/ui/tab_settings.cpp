@@ -2218,7 +2218,7 @@ static void build_system_popup(lv_obj_t* parent) {
   lv_obj_set_flex_align(brand, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_column(brand, 18, 0);
-  create_hometiles_logo_mark(brand, 76);
+  create_hometiles_logo_mark(brand, 100);
 
   lv_obj_t* brand_text = lv_obj_create(brand);
   style_plain_container(brand_text);

@@ -24,7 +24,7 @@ TEAL = (0x26, 0xA6, 0x9A, 255)
 V_BAR = (33, 26, 38, 44)
 H_BAR = (26.5, 32.5, 44.5, 37.5)
 
-NATIVE = 96            # final asset size (2x of the 48-unit design)
+NATIVE = 144            # final asset size (3x of the 48-unit design)
 SUPERSAMPLE = 8         # supersample factor for antialiasing
 WORK = NATIVE * SUPERSAMPLE
 SCALE = WORK / 48.0
