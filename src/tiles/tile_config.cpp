@@ -415,11 +415,15 @@ static bool writeGridSd(uint16_t folder_id, const PackedQuarterGridV7* packed, s
   if (!ensureTileGridDir()) return false;
 
   String filePath = tileGridFile(folder_id);
-  if (storageFS().exists(filePath)) {
-    storageFS().remove(filePath);
-  }
+  // Atomar schreiben: erst vollstaendig in eine .tmp-Datei, dann per rename
+  // ueber die Zieldatei ziehen (LittleFS ersetzt das Ziel atomar). Frueher
+  // wurde die alte Datei zuerst geloescht und dann neu gefuellt - ein Crash
+  // oder Stromausfall dazwischen liess sie leer/halb zurueck, das Grid war
+  // beim naechsten Boot nicht mehr ladbar und der ganze Ordner blockiert.
+  String tmpPath = filePath + ".tmp";
+  if (storageFS().exists(tmpPath)) storageFS().remove(tmpPath);
 
-  File f = storageFS().open(filePath, FILE_WRITE);
+  File f = storageFS().open(tmpPath, FILE_WRITE);
   if (!f) {
     return false;
   }
@@ -434,7 +438,21 @@ static bool writeGridSd(uint16_t folder_id, const PackedQuarterGridV7* packed, s
                   static_cast<unsigned>(folder_id),
                   static_cast<unsigned>(written),
                   static_cast<unsigned>(expected));
+    storageFS().remove(tmpPath);
     return false;
+  }
+
+  // rename ersetzt das Ziel atomar; erst ab hier ist die alte Datei weg.
+  if (!storageFS().rename(tmpPath, filePath)) {
+    // Fallback fuer FS-Backends ohne atomares Ersetzen (LittleFS kann es):
+    // nur hier entsteht ein kurzes Fenster, in dem die Zieldatei fehlt.
+    if (storageFS().exists(filePath)) storageFS().remove(filePath);
+    if (!storageFS().rename(tmpPath, filePath)) {
+      Serial.printf("[TileConfig] Storage rename failed: folder=%u\n",
+                    static_cast<unsigned>(folder_id));
+      storageFS().remove(tmpPath);
+      return false;
+    }
   }
 
   return true;
@@ -2247,20 +2265,26 @@ bool TileConfig::saveFolders() const {
     return false;
   }
   if (!ensureTileGridDir()) return false;
-  if (storageFS().exists(kFolderIndexFile)) storageFS().remove(kFolderIndexFile);
-  File f = storageFS().open(kFolderIndexFile, FILE_WRITE);
+
+  // Atomar schreiben (wie writeGridSd): der Ordner-Index ist die kritischste
+  // Datei ueberhaupt - wird sie bei einem Crash halb geschrieben, sind ALLE
+  // Ordner verloren. Erst .tmp fuellen, dann atomar drueberrenamen.
+  const String tmpPath = String(kFolderIndexFile) + ".tmp";
+  if (storageFS().exists(tmpPath)) storageFS().remove(tmpPath);
+  File f = storageFS().open(tmpPath, FILE_WRITE);
   if (!f) return false;
 
+  bool write_ok = true;
   FolderIndexHeader header{};
   header.magic = kFolderIndexMagic;
   header.version = kFolderIndexVersion;
   header.count = static_cast<uint16_t>(folders.size());
   if (f.write(reinterpret_cast<const uint8_t*>(&header), sizeof(header)) != sizeof(header)) {
-    f.close();
-    return false;
+    write_ok = false;
   }
 
   for (const auto& entry : folders) {
+    if (!write_ok) break;
     FolderEntryDisk disk{};
     disk.id = entry.id;
     disk.parent_id = entry.parent_id;
@@ -2269,12 +2293,25 @@ bool TileConfig::saveFolders() const {
     memcpy(disk.icon_name, entry.icon_name, sizeof(disk.icon_name));
     disk.icon_name[sizeof(disk.icon_name) - 1] = '\0';
     if (f.write(reinterpret_cast<const uint8_t*>(&disk), sizeof(disk)) != sizeof(disk)) {
-      f.close();
-      return false;
+      write_ok = false;
     }
   }
 
+  f.flush();
   f.close();
+
+  if (!write_ok) {
+    storageFS().remove(tmpPath);
+    return false;
+  }
+
+  if (!storageFS().rename(tmpPath, kFolderIndexFile)) {
+    if (storageFS().exists(kFolderIndexFile)) storageFS().remove(kFolderIndexFile);
+    if (!storageFS().rename(tmpPath, kFolderIndexFile)) {
+      storageFS().remove(tmpPath);
+      return false;
+    }
+  }
   return true;
 }
 
