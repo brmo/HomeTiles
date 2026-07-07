@@ -38,13 +38,24 @@ the whole chain: MQTT broker, bridge integration, and connecting the display.
 - [FAQ & Troubleshooting](docs/faq.md) — common questions and known quirks
 - [BOARD_SETTINGS.md](BOARD_SETTINGS.md) — Arduino IDE build settings per device
 
-## Highlights Of The v0.2.x Releases
+## Highlights Of The v0.3.x Releases
+
+- Project rebranded to **HomeTiles** (formerly ESP32-P4-HomeAssistant-Display) — existing devices keep updating automatically across the rename
+- New boot splash screen: logo, firmware version, and device name shown briefly on startup before the dashboard loads
+- Polished branding across the on-device System popup and the web admin panel
+- More reliable tile storage: tile grids and the folder index are written atomically, avoiding partial/corrupted saves
+- Smoother MQTT behavior under load, with traffic throttled during heavy rendering/DMA activity
+
+<details>
+<summary>Highlights of the v0.2.x releases</summary>
 
 - All three supported devices are now covered by every release
 - Firmware updates directly from the device: Settings → System checks GitHub for new releases and installs them over the air
 - Reworked on-device settings: WiFi network scan with on-screen keyboard, Access Point mode with QR code, display/brightness/sleep options, language and time settings, restart button
 - Major rendering performance improvements on the M5Stack Tab5 and the Waveshare 8" display (hardware-accelerated rotation, faster draw paths)
 - General UI polish across tiles and popups
+
+</details>
 
 <!-- TODO Bilder da? Dann diesen Block aktivieren:
 <img src="docs/images/8inch-settings.png" alt="On-device settings" width="32%"> <img src="docs/images/8inch-system-update.png" alt="System popup with available update" width="32%"> <img src="docs/images/8inch-wifi-list.png" alt="On-device WiFi network list" width="32%">
@@ -191,7 +202,7 @@ A manual reset after flashing may be required.
 
 ### Option 2: Update From The Device
 
-Devices already running a recent v0.2.x firmware can update themselves:
+Devices already running a recent firmware version can update themselves:
 open `Settings` → `System` → check for updates. The device finds the
 latest GitHub release and installs it directly.
 
