@@ -839,8 +839,14 @@ void tiles_reload_layout(GridType grid_type) {
     layout_tile.span_w = layouts[i].span_w;
     layout_tile.span_h = layouts[i].span_h;
     g_tiles_objs[idx][i] = render_tile(g_tiles_grids[idx], layouts[i].col, layouts[i].row, layout_tile, i, grid_type, g_tiles_scene_cbs[idx]);
+    // yield() nach jeder einzelnen Kachel (statt nur alle GRID_COLS): ein voller
+    // Reload blockierte im schlimmsten Fall >200ms am Stueck (siehe LoopGap-Log),
+    // was unter WLAN-Last die SDIO-Empfangs-Queue ueberlaufen liess. Haeufigere,
+    // aber kurze Yield-Punkte lassen dem WLAN-Task oefter eine Chance zu laufen,
+    // ohne den Reload spuerbar zu verlangsamen. delay(1) bleibt seltener, damit
+    // der Reload nicht unnoetig lahmer wird.
+    yield();
     if ((++render_count % GRID_COLS) == 0) {
-      yield();
       delay(1);
     }
   }
