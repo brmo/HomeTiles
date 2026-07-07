@@ -863,14 +863,6 @@ bool init_display() {
     return false;
   }
   log_step("Panel display on OK");
-  // RGB/DPI-Panel: der Timing-Controller braucht nach dem ersten Enable
-  // einen Moment, um sich auf HSYNC/VSYNC/PCLK einzurasten -- ohne Wartezeit
-  // hier zeigt der allererste sichtbare Frame nach dem Boot ein schiefes/
-  // treppenartiges Bild, unabhaengig davon was danach gezeichnet wird. Das
-  // Backlight ist an dieser Stelle noch aus (apply_backlight(0) lief vor
-  // init_display(), setBrightness() erst am Ende von init()), die Wartezeit
-  // hier ist also unsichtbar.
-  delay(100);
 
   ppa_client_config_t ppa_cfg = {};
   ppa_cfg.oper_type = PPA_OPERATION_SRM;
@@ -959,12 +951,7 @@ bool DeviceWaveshareTouchLCD8::init() {
   }
 
   displayFillScreen(0x0000);
-  // Backlight bleibt hier bewusst aus (0, siehe apply_backlight(0) oben) --
-  // wuerde hier schon eingeschaltet, sieht man die Panel-Sync-Einschwingzeit
-  // live als schraege Streifen/Treppen, bevor ueberhaupt irgendein Setup-Code
-  // danach laeuft. Das erste echte Einschalten passiert jetzt gezielt in
-  // HomeTiles.ino kurz vor dem Splash (BoardHAL::displayPowerSaveOff()),
-  // nachdem der Framebuffer schon den fertigen Splash enthaelt.
+  setBrightness(g_brightness);
   Serial.println("[Device/WaveshareTouchLCD8] Init complete");
   return true;
 }
