@@ -490,20 +490,22 @@ void setup() {
   Serial.flush();
 
   // Ab hier gibt es einen aktiven LVGL-Screen -- kurz die Begruessung zeigen,
-  // waehrend der Rest bootet. displayManager.init() schaltet das Panel noch
-  // NICHT sichtbar; das passiert erst durch BoardHAL::displayWake() (Panel-
-  // Ausgabe + Backlight an). Ohne den Wake HIER waere der Splash bis zum
-  // naechsten Wake-Aufruf (urspruenglich erst nach dem UI-Build) unsichtbar --
-  // das Panel blieb schlicht aus. Gleiche Doppel-Refresh-Sequenz wie beim
-  // spaeteren Wake unten, weil dieses Panel einen einzelnen Refresh nicht
-  // zuverlaessig vollstaendig durchzeichnet.
+  // waehrend der Rest bootet.
   BootSplash::show();
   // Layout (Flex-Positionen, Bild-Skalierung/Pivot) VOR dem ersten Refresh
   // fertigrechnen -- sonst kann der allererste Frame einen halbfertigen
   // Zwischenzustand zeigen (verzerrt wirkendes Icon/Text), bevor sich beim
   // naechsten Refresh die endgueltige Position einstellt.
   lv_obj_update_layout(lv_screen_active());
-  BoardHAL::displayWake();
+  // Das Backlight ist ab BoardHAL::init() (Geraetetreiber) bereits an -- der
+  // Screen zeigt bis hierhin nur Schwarz (displayFillScreen). Die folgenden
+  // Refreshes schreiben aber im Partial-Mode bandweise per DMA in den
+  // Framebuffer; bliebe das Backlight dabei an, saehe man Icon/Text
+  // sichtbar streifenweise aufbauen ("Treppen"). Kurz aus, bis der Splash
+  // komplett im Framebuffer steht, dann in einem sauberen Schritt wieder an
+  // (displaySleep()/displayWake() sind das bereits bestehende, fuers
+  // Power-Save erprobte Backlight-Off/On-Paar).
+  BoardHAL::displaySleep();
   lv_obj_invalidate(lv_screen_active());
 #if defined(DEVICE_M5STACKS_TAB5)
   tab5_timed_refresh_now("splash-1");
@@ -521,6 +523,9 @@ void setup() {
   lv_refr_now(displayManager.getDisplay());
   BoardHAL::displayWaitDisplay();
 #endif
+  // Framebuffer enthaelt jetzt den fertigen Splash -- Backlight wieder an,
+  // zeigt alles in einem Schritt statt bandweise.
+  BoardHAL::displayWake();
   const uint32_t boot_splash_shown_at = millis();
 
   Serial.println("[Setup] powerManager.init()...");
