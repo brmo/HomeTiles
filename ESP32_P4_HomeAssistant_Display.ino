@@ -208,6 +208,7 @@ static void apply_hotspot_mode(bool enable) {
   if (tab5_brightness_capped) tab5_brightness_cap_wait_since = millis();
 #endif
   if (configManager.isConfigured()) {
+    networkManager.deferMqttReconnect(6000);
     if (WiFi.status() != WL_CONNECTED) {
       // WiFi.begin() laeuft ins Leere, solange noch ein Scan aktiv ist -
       // genau deshalb verband sich das Geraet nach "AP beenden" nicht mehr.
@@ -238,6 +239,7 @@ static void apply_wifi_reconnect() {
   // Zugangsdaten aus der Config. Danach uebernimmt networkManager.update()
   // (WebAdmin/NTP/MQTT wie bei jedem normalen Verbindungsaufbau).
   WiFi.disconnect();
+  networkManager.deferMqttReconnect(6000);
   networkManager.connectWifi();
 }
 

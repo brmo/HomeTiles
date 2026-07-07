@@ -60,6 +60,7 @@ public:
   // und nicht zeitkritisch.
   void disconnectMqtt();
   void prepareMqttForOta();
+  void deferMqttReconnect(uint32_t hold_ms = 6000);
 
   // Reine Merker/Request-Flags: das eigentliche setBufferSize() macht nur der
   // Worker in serviceBufferHousekeeping() (naechste Iteration, ~2ms spaeter).
@@ -115,6 +116,8 @@ private:
   volatile bool mqtt_ota_prep_requested = false;
   volatile bool mqtt_restore_normal_requested = false;
   volatile bool mqtt_suspended = false;  // OTA laeuft: Worker ruehrt nichts mehr an
+  volatile uint32_t mqtt_reconnect_hold_until = 0;
+  volatile uint32_t mqtt_post_connect_ready_at = 0;
   volatile uint32_t mqtt_large_until = 0;
   volatile uint16_t mqtt_buffer_size = 0;  // Spiegel der Client-Puffergroesse, Worker pflegt
 
@@ -130,7 +133,7 @@ private:
 
   // worker-only (nach init()):
   void connectMqtt();
-  void drainOutboundQueue();
+  void drainOutboundQueue(uint8_t max_commands);
   void serviceBufferHousekeeping(uint32_t now_ms);
   bool setMqttBufferSize(uint16_t size, const char* reason);
 };

@@ -17,6 +17,10 @@ Tab5NetworkManager networkManager;
 static constexpr uint16_t kMqttBufferOta = 1024;
 static constexpr uint16_t kMqttBufferNormal = 16 * 1024;
 static constexpr uint16_t kMqttBufferLarge = 32 * 1024;
+static constexpr uint32_t kMqttPostConnectQuietMs = 3000;
+static constexpr uint8_t kMqttOutboundDrainNormal = 12;
+static constexpr uint8_t kMqttOutboundDrainStorm = 2;
+static constexpr size_t kMqttMinDmaLargestBeforeTx = 8 * 1024;
 
 // Waehrend dieses Fensters direkt nach dem Connect bleibt der MQTT-Empfangs-
 // puffer klein (16 KB). Der PubSubClient-Puffer liegt im internen RAM; ihn
@@ -49,6 +53,7 @@ struct MqttOutboundCmd {
 static constexpr size_t kMqttOutboundQueueDepth = 128;
 static QueueHandle_t g_mqtt_outbound_queue = nullptr;
 static uint32_t g_mqtt_outbound_dropped = 0;
+static uint32_t g_mqtt_last_tx_guard_log_ms = 0;
 
 static MqttOutboundCmd* mqttAllocOutbound(MqttCmdKind kind,
                                           const char* topic,
@@ -302,6 +307,7 @@ void Tab5NetworkManager::connectMqtt() {
   // scannen Flash, pumpen LVGL und lesen Batterie-I2C -- nichts davon darf
   // auf dem Worker laufen. Ihre publishes/subscribes kommen per
   // Outbound-Queue hierher zurueck.
+  mqtt_post_connect_ready_at = mqtt_connected_at + kMqttPostConnectQuietMs;
   mqtt_post_connect_pending = true;
 
   // Bridge refresh is handled by the background refresh after startup.
@@ -350,6 +356,13 @@ void Tab5NetworkManager::serviceMqttWorker() {
       mqtt_client.disconnect();
       Serial.println("[MQTT] Disconnect auf Anforderung (Hotspot-Modus)");
     }
+    purgeOutboundQueue();
+    mqtt_post_connect_pending = false;
+    mqtt_post_connect_ready_at = 0;
+    mqtt_large_until = 0;
+    if (mqtt_buffer_size > kMqttBufferNormal) {
+      setMqttBufferSize(kMqttBufferNormal, "disconnect");
+    }
     mqtt_connected_flag = false;
     mqtt_disconnect_requested = false;
     return;
@@ -358,10 +371,27 @@ void Tab5NetworkManager::serviceMqttWorker() {
 
   if (WiFi.status() != WL_CONNECTED) {
     if (mqtt_connected_flag) mqtt_connected_flag = false;
+    mqtt_post_connect_pending = false;
+    mqtt_post_connect_ready_at = 0;
     return;
   }
 
   const uint32_t now_ms = millis();
+  const uint32_t hold_until = mqtt_reconnect_hold_until;
+  if (hold_until != 0 && (int32_t)(now_ms - hold_until) < 0) {
+    if (mqtt_client.connected()) {
+      mqtt_client.disconnect();
+      Serial.println("[MQTT] Disconnect waehrend Reconnect-Ruhefenster");
+    }
+    if (mqtt_connected_flag) mqtt_connected_flag = false;
+    mqtt_post_connect_pending = false;
+    mqtt_post_connect_ready_at = 0;
+    return;
+  }
+  if (hold_until != 0) {
+    mqtt_reconnect_hold_until = 0;
+  }
+
   serviceBufferHousekeeping(now_ms);
 
   if (!mqtt_client.connected()) {
@@ -378,18 +408,34 @@ void Tab5NetworkManager::serviceMqttWorker() {
   // Erst ausgehende Kommandos, dann den Socket pumpen. Housekeeping lief
   // davor, damit ein requestLargeMqttBuffer() des Loop-Tasks noch vor dem
   // zugehoerigen (gerade enqueueten) grossen Publish wirksam wird.
-  drainOutboundQueue();
+  const bool startup_storm =
+      mqtt_connected_at != 0 && (uint32_t)(now_ms - mqtt_connected_at) < kMqttStormWindowMs;
+  drainOutboundQueue(startup_storm ? kMqttOutboundDrainStorm : kMqttOutboundDrainNormal);
   mqtt_client.loop();
   if (!mqtt_client.connected()) {
     mqtt_connected_flag = false;
   }
 }
 
-void Tab5NetworkManager::drainOutboundQueue() {
-  if (!g_mqtt_outbound_queue) return;
+void Tab5NetworkManager::drainOutboundQueue(uint8_t max_commands) {
+  if (!g_mqtt_outbound_queue || max_commands == 0) return;
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+  const size_t dma_largest =
+      heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+  if (dma_largest < kMqttMinDmaLargestBeforeTx) {
+    const uint32_t now_ms = millis();
+    if ((uint32_t)(now_ms - g_mqtt_last_tx_guard_log_ms) >= 2000) {
+      g_mqtt_last_tx_guard_log_ms = now_ms;
+      Serial.printf("[MQTT] TX verschoben: DMA largest nur %u KB\n",
+                    static_cast<unsigned>(dma_largest / 1024));
+    }
+    return;
+  }
+#endif
   MqttOutboundCmd* cmd = nullptr;
   uint32_t drained = 0;
-  while (xQueueReceive(g_mqtt_outbound_queue, &cmd, 0) == pdTRUE) {
+  while (drained < max_commands &&
+         xQueueReceive(g_mqtt_outbound_queue, &cmd, 0) == pdTRUE) {
     if (cmd) {
       bool ok = false;
       const char* verb = "?";
@@ -462,7 +508,17 @@ bool Tab5NetworkManager::mqttEnqueueUnsubscribe(const char* topic) {
 
 bool Tab5NetworkManager::consumeMqttPostConnectPending() {
   if (!mqtt_post_connect_pending) return false;
+  if (!mqtt_connected_flag) {
+    mqtt_post_connect_pending = false;
+    mqtt_post_connect_ready_at = 0;
+    return false;
+  }
+  const uint32_t ready_at = mqtt_post_connect_ready_at;
+  if (ready_at != 0 && (int32_t)(millis() - ready_at) < 0) {
+    return false;
+  }
   mqtt_post_connect_pending = false;  // einziger Konsument ist der Loop-Task
+  mqtt_post_connect_ready_at = 0;
   return true;
 }
 
@@ -488,6 +544,18 @@ void Tab5NetworkManager::prepareMqttForOta() {
   if (mqtt_ota_prep_requested) {
     Serial.println("[OTA] WARNUNG: MQTT-Worker hat OTA-Vorbereitung nicht bestaetigt");
   }
+}
+
+void Tab5NetworkManager::deferMqttReconnect(uint32_t hold_ms) {
+  if (!mqtt_enabled) return;
+  if (hold_ms == 0) hold_ms = 6000;
+  mqtt_reconnect_hold_until = millis() + hold_ms;
+  mqtt_post_connect_pending = false;
+  mqtt_post_connect_ready_at = 0;
+  mqtt_large_until = 0;
+  purgeOutboundQueue();
+  Serial.printf("[MQTT] Reconnect fuer %u ms pausiert\n",
+                static_cast<unsigned>(hold_ms));
 }
 
 // ========== MQTT-Status ==========
