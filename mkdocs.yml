@@ -1,8 +1,8 @@
-site_name: ESP32-P4 HomeAssistant Display
+site_name: HomeTiles
 site_description: Tile-based ESP32-P4 firmware for Home Assistant dashboards
-site_url: https://galusperes.github.io/ESP32-P4-HomeAssistant-Display/
-repo_url: https://github.com/GalusPeres/ESP32-P4-HomeAssistant-Display
-repo_name: GalusPeres/ESP32-P4-HomeAssistant-Display
+site_url: https://galusperes.github.io/HomeTiles/
+repo_url: https://github.com/GalusPeres/HomeTiles
+repo_name: GalusPeres/HomeTiles
 
 theme:
   name: material

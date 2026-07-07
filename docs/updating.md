@@ -6,7 +6,7 @@ need the first one.
 ## 1. On-Device Updater (recommended)
 
 Open **Settings → System** on the display and tap the update check button. The device
-looks up the latest [GitHub release](https://github.com/GalusPeres/ESP32-P4-HomeAssistant-Display/releases/latest),
+looks up the latest [GitHub release](https://github.com/GalusPeres/HomeTiles/releases/latest),
 and if a newer version exists, offers to install it. The download and installation run
 directly on the device with a progress bar; afterwards it restarts into the new version.
 
@@ -26,9 +26,13 @@ Use the asset matching your device from the release page:
 
 | Device | OTA update file |
 | --- | --- |
-| M5Stack Tab5 | `esp32-p4-homeassistant-display-<version>-m5stacks_tab5.bin` |
-| Waveshare 4B | `esp32-p4-homeassistant-display-<version>-waveshare_4b.bin` |
-| Waveshare 8" | `esp32-p4-homeassistant-display-<version>-waveshare_touch_lcd_8.bin` |
+| M5Stack Tab5 | `hometiles-<version>-m5stacks_tab5.bin` |
+| Waveshare 4B | `hometiles-<version>-waveshare_4b.bin` |
+| Waveshare 8" | `hometiles-<version>-waveshare_touch_lcd_8.bin` |
+
+Older devices still running v0.2.9 or earlier look for the previous
+`esp32-p4-homeassistant-display-<version>-<device>-update.bin` naming; recent releases
+still include both until no devices on that old firmware remain.
 
 ## 3. Factory Flash (first installation)
 
@@ -40,7 +44,7 @@ required. This wipes the stored configuration.
 
 1. Open `ESP32_P4_HomeAssistant_Display.ino` in the Arduino IDE.
 2. Select the target device in `src/devices/device_select.h`.
-3. Apply the board settings from [BOARD_SETTINGS.md](https://github.com/GalusPeres/ESP32-P4-HomeAssistant-Display/blob/master/BOARD_SETTINGS.md).
+3. Apply the board settings from [BOARD_SETTINGS.md](https://github.com/GalusPeres/HomeTiles/blob/master/BOARD_SETTINGS.md).
 4. Build and flash.
 
 The firmware version comes from `version.txt`. The on-device updater compares this

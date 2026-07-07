@@ -1,6 +1,6 @@
 # Bridge Integration
 
-The [ESP32-P4 HomeAssistant Display Bridge](https://github.com/GalusPeres/ESP32-P4-HomeAssistant-Display-Bridge)
+The [HomeTiles Bridge](https://github.com/GalusPeres/HomeTiles-Bridge)
 is the Home Assistant side of the project: a custom integration that pushes entity
 states, icons, sensor history, weather forecasts, and energy data to the displays via
 MQTT, and executes the light/switch/media/scene commands coming back.
@@ -15,9 +15,9 @@ MQTT, and executes the light/switch/media/scene commands coming back.
 ### Via HACS (recommended)
 
 1. **HACS → Integrations → three-dot menu → Custom repositories**
-2. Repository: `https://github.com/GalusPeres/ESP32-P4-HomeAssistant-Display-Bridge`,
+2. Repository: `https://github.com/GalusPeres/HomeTiles-Bridge`,
    category **Integration**, click **Add**
-3. Search for **ESP32-P4 HomeAssistant Display Bridge** in HACS and download it
+3. Search for **HomeTiles Bridge** in HACS and download it
 4. Restart Home Assistant
 
 Updates arrive through HACS like for any other custom integration.

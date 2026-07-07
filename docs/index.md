@@ -1,4 +1,4 @@
-# ESP32-P4 HomeAssistant Display
+# HomeTiles
 
 Tile-based firmware that turns ESP32-P4 touch displays into Home Assistant control
 panels — configured entirely in the browser, updated over the air, connected via MQTT.
@@ -53,7 +53,7 @@ panels — configured entirely in the browser, updated over the air, connected v
 
     MIT-licensed firmware and bridge, prebuilt binaries for every device
 
-    [:octicons-arrow-right-24: GitHub](https://github.com/GalusPeres/ESP32-P4-HomeAssistant-Display)
+    [:octicons-arrow-right-24: GitHub](https://github.com/GalusPeres/HomeTiles)
 
 </div>
 

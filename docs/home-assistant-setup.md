@@ -38,14 +38,14 @@ The easiest option on Home Assistant OS is the official Mosquitto add-on:
 
 ## Step 2: Install The Bridge Integration
 
-The bridge is a custom integration: [ESP32-P4 HomeAssistant Display Bridge](https://github.com/GalusPeres/ESP32-P4-HomeAssistant-Display-Bridge)
+The bridge is a custom integration: [HomeTiles Bridge](https://github.com/GalusPeres/HomeTiles-Bridge)
 
 ### Via HACS (recommended)
 
 1. **HACS → Integrations → three-dot menu → Custom repositories**
-2. Repository: `https://github.com/GalusPeres/ESP32-P4-HomeAssistant-Display-Bridge`,
+2. Repository: `https://github.com/GalusPeres/HomeTiles-Bridge`,
    category **Integration**, click **Add**.
-3. Search for **ESP32-P4 HomeAssistant Display Bridge** in HACS and download it.
+3. Search for **HomeTiles Bridge** in HACS and download it.
 4. Restart Home Assistant.
 
 ### Manual

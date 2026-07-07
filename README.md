@@ -1,4 +1,4 @@
-## <img src="docs/images/favicon.svg" width="34" alt="" align="top"> ESP32-P4 Home Assistant Display
+## <img src="docs/images/favicon.svg" width="34" alt="" align="top"> HomeTiles
 
 <!-- TODO Bild da? Dann diese Zeile aktivieren und die b4-Zeile darunter loeschen:
 <img align="right" width="38%" src="docs/images/8inch-home.png" alt="Home dashboard on the Waveshare 8 inch display">
@@ -22,14 +22,14 @@ The project supports multiple ESP32-P4 touch displays and combines:
 - Home Assistant
 - MQTT broker
 - The Home Assistant bridge/integration:
-  [ESP32-P4 HomeAssistant Display Bridge](https://github.com/GalusPeres/ESP32-P4-HomeAssistant-Display-Bridge)
+  [HomeTiles Bridge](https://github.com/GalusPeres/HomeTiles-Bridge)
 
 New to this? The [Home Assistant Setup Guide](docs/home-assistant-setup.md) walks through
 the whole chain: MQTT broker, bridge integration, and connecting the display.
 
 ## Documentation
 
-**Full documentation: https://galusperes.github.io/ESP32-P4-HomeAssistant-Display/**
+**Full documentation: https://galusperes.github.io/HomeTiles/**
 
 - [Home Assistant Setup Guide](docs/home-assistant-setup.md) — MQTT broker, bridge integration, first connection
 - [Bridge Integration](docs/bridge.md) — installation, panel settings, entity configuration
@@ -175,7 +175,7 @@ Built-in web admin interface for tiles, folders, WiFi, MQTT, and layout configur
 
 ### Option 1: Prebuilt Binaries
 
-Download the files matching your device from the [latest release](https://github.com/GalusPeres/ESP32-P4-HomeAssistant-Display/releases/latest):
+Download the files matching your device from the [latest release](https://github.com/GalusPeres/HomeTiles/releases/latest):
 
 | Device | First flash | OTA update file |
 | --- | --- | --- |
@@ -223,7 +223,7 @@ Optional:
 
 This firmware expects the Home Assistant side to be provided by the MQTT bridge/integration:
 
-- [ESP32-P4 HomeAssistant Display Bridge](https://github.com/GalusPeres/ESP32-P4-HomeAssistant-Display-Bridge)
+- [HomeTiles Bridge](https://github.com/GalusPeres/HomeTiles-Bridge)
 
 That integration handles the Home Assistant-side MQTT communication and entity bridge.
 For Energy tiles, Home Assistant energy statistics, live icon updates, and popup history, use the current bridge release.

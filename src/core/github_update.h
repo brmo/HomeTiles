@@ -13,12 +13,19 @@
 //   z.B.   hometiles-v0.2.10-waveshare_touch_lcd_8.bin
 //   (bis v0.2.9 hiess das Schema esp32-p4-homeassistant-display-*; Releases
 //   muessen die alten Asset-Namen mitliefern, solange Geraete <= v0.2.9
-//   im Umlauf sind, sonst laufen deren Updates ins 404)
+//   im Umlauf sind, sonst laufen deren Updates ins 404 -- install() faellt
+//   in dem Fall automatisch auf den alten Namen zurueck, siehe github_update.cpp)
 // Die Geraete-Keys sind: waveshare_touch_lcd_8, waveshare_4b, m5stacks_tab5.
+//
+// Repo wurde von ESP32-P4-HomeAssistant-Display auf HomeTiles umbenannt.
+// GitHub redirected die alte URL dauerhaft, d.h. Geraete mit einer aelteren
+// Firmware (die noch die alte URL einkompiliert haben) funktionieren weiter.
+// Die alte URL darf trotzdem NIE wieder als eigenes Repo angelegt werden --
+// das wuerde den Redirect kaputt machen.
 namespace GithubUpdate {
 
 constexpr const char* kRepoUrl =
-    "https://github.com/GalusPeres/ESP32-P4-HomeAssistant-Display";
+    "https://github.com/GalusPeres/HomeTiles";
 
 struct CheckResult {
   bool ok = false;                // Anfrage erfolgreich beantwortet
