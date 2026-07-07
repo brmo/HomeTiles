@@ -2232,29 +2232,33 @@ static void build_system_popup(lv_obj_t* parent) {
   lv_obj_set_style_pad_top(box, 48, 0);
   lv_obj_set_style_pad_row(box, 18, 0);
 
-  // Marke oben im Popup: Logo + Produktname, wie ein App-"Ueber"-Screen.
+  // Marke oben im Popup: Icon links, Produktname rechts daneben, darunter
+  // die Version klein/ohne Label -- wie ein App-"Ueber"-Screen.
   lv_obj_t* brand = lv_obj_create(box);
   style_plain_container(brand);
   lv_obj_clear_flag(brand, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_size(brand, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-  lv_obj_set_flex_flow(brand, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_flow(brand, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(brand, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_row(brand, 10, 0);
-  create_hometiles_logo_mark(brand, 56);
+  lv_obj_set_style_pad_column(brand, 14, 0);
+  create_hometiles_logo_mark(brand, 44);
   lv_obj_t* brand_title = lv_label_create(brand);
   lv_label_set_text(brand_title, "HomeTiles");
   lv_obj_set_style_text_font(brand_title, &ui_font_32, 0);
   lv_obj_set_style_text_color(brand_title, lv_color_white(), 0);
 
-  // Version + Geraet als buendige Beschriftung/Wert-Zeilen (wie AP-Infobox)
+  lv_obj_t* version_caption = lv_label_create(box);
+  lv_label_set_text(version_caption, FW_VERSION);
+  lv_obj_set_style_text_font(version_caption, &ui_font_20, 0);
+  lv_obj_set_style_text_color(version_caption, lv_color_hex(0xA8A8A8), 0);
+
+  // Geraet als buendige Beschriftung/Wert-Zeile (wie AP-Infobox)
   system_info_rows = lv_obj_create(box);
   style_plain_container(system_info_rows);
   lv_obj_set_size(system_info_rows, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
   lv_obj_set_flex_flow(system_info_rows, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(system_info_rows, 8, 0);
-  lv_obj_t* version_val = create_info_value_row(system_info_rows, "Version");
-  lv_label_set_text(version_val, FW_VERSION);
   lv_obj_t* device_val = create_info_value_row(system_info_rows, tr().system_device_label);
   lv_label_set_text(device_val, Device::displayName());
 

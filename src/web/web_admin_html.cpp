@@ -700,9 +700,18 @@ String WebAdminServer::getAdminPage() {
 <body>
   <div class="wrapper">
     <div class="card">
-      <h1>)html";
+      <h1 style="display:flex;align-items:center;gap:12px;">
+        <svg width="32" height="32" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;" aria-hidden="true">
+          <rect width="48" height="48" rx="10" fill="#16181c"/>
+          <rect x="7" y="7" width="14" height="14" rx="3" fill="#ffffff"/>
+          <rect x="27" y="7" width="14" height="14" rx="3" fill="#ffffff"/>
+          <rect x="7" y="27" width="14" height="14" rx="3" fill="#ffffff"/>
+          <path d="M31.5 25.5h5v6h6v5h-6v6h-5v-6h-6v-5h6z" fill="#26a69a"/>
+        </svg>
+        <span>)html";
   html += admin_panel_title;
-  html += R"html(</h1>
+  html += R"html(</span>
+      </h1>
       
       <!-- Tab Navigation -->
       <div class="tab-nav">
