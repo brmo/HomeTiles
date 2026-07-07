@@ -863,6 +863,14 @@ bool init_display() {
     return false;
   }
   log_step("Panel display on OK");
+  // RGB/DPI-Panel: der Timing-Controller braucht nach dem ersten Enable
+  // einen Moment, um sich auf HSYNC/VSYNC/PCLK einzurasten -- ohne Wartezeit
+  // hier zeigt der allererste sichtbare Frame nach dem Boot ein schiefes/
+  // treppenartiges Bild, unabhaengig davon was danach gezeichnet wird. Das
+  // Backlight ist an dieser Stelle noch aus (apply_backlight(0) lief vor
+  // init_display(), setBrightness() erst am Ende von init()), die Wartezeit
+  // hier ist also unsichtbar.
+  delay(100);
 
   ppa_client_config_t ppa_cfg = {};
   ppa_cfg.oper_type = PPA_OPERATION_SRM;
