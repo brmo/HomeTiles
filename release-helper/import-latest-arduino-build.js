@@ -3,7 +3,7 @@ const os = require('os');
 const path = require('path');
 
 const repoRoot = path.resolve(__dirname, '..');
-const projectName = 'ESP32_P4_HomeAssistant_Display.ino';
+const projectName = 'HomeTiles.ino';
 const releaseDir = path.join(repoRoot, 'build', 'releases');
 const deviceSelectPath = path.join(repoRoot, 'src', 'devices', 'device_select.h');
 const versionFilePath = path.join(repoRoot, 'version.txt');

@@ -197,7 +197,7 @@ latest GitHub release and installs it directly.
 
 ### Option 3: Build From Source
 
-1. Open [ESP32_P4_HomeAssistant_Display.ino](ESP32_P4_HomeAssistant_Display.ino) in the Arduino IDE.
+1. Open [HomeTiles.ino](HomeTiles.ino) in the Arduino IDE.
 2. Select the target device in [src/devices/device_select.h](src/devices/device_select.h).
 3. Apply the correct board settings from [BOARD_SETTINGS.md](BOARD_SETTINGS.md).
 4. Build and flash the firmware.

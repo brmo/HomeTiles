@@ -42,7 +42,7 @@ required. This wipes the stored configuration.
 
 ## Building From Source
 
-1. Open `ESP32_P4_HomeAssistant_Display.ino` in the Arduino IDE.
+1. Open `HomeTiles.ino` in the Arduino IDE.
 2. Select the target device in `src/devices/device_select.h`.
 3. Apply the board settings from [BOARD_SETTINGS.md](https://github.com/GalusPeres/HomeTiles/blob/master/BOARD_SETTINGS.md).
 4. Build and flash.
