@@ -2180,12 +2180,17 @@ static void on_system_check_clicked(lv_event_t*) {
 }
 
 // HomeTiles-Logo als kompiliertes Bild (hometiles_logo_dsc): eine 1:1-
-// Rasterisierung von docs/images/logo.svg (96x96 ARGB8888, siehe
+// Rasterisierung von docs/images/logo.svg (144x144 ARGB8888, siehe
 // release-helper/gen_logo.py). Eine fruehere Fassung baute das Logo aus
 // reinen LVGL-Formen nach, traf aber weder die Kachel/Luecken-Proportionen
 // noch die Plus-Form exakt -- hier wird nur noch auf die Zielgroesse skaliert.
 static lv_obj_t* create_hometiles_logo_mark(lv_obj_t* parent, int32_t size) {
   lv_obj_t* img = lv_image_create(parent);
+  // lv_image erbt vom Theme sonst Standard-Padding/Border (der "Rahmen", der
+  // das Icon sichtbar weiter vom Text abrueckte, als die tatsaechlichen
+  // Bild-Pixel es tun) -- exakt das Problem, das style_plain_container()
+  // ueberall sonst in dieser Datei schon loest.
+  style_plain_container(img);
   lv_image_set_src(img, &hometiles_logo_dsc);
   lv_image_set_antialias(img, true);
   const uint32_t zoom = static_cast<uint32_t>(
