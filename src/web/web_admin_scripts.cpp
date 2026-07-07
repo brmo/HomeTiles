@@ -952,11 +952,13 @@ void appendAdminScripts(String& html) {
 
   function buildTileSnapshotFromInputs(tab) {
     const prefix = tab;
+    const colorEl = document.getElementById(prefix + '_tile_color');
     const snapshot = {
       type: document.getElementById(prefix + '_tile_type')?.value || '0',
       title: document.getElementById(prefix + '_tile_title')?.value || '',
       icon: document.getElementById(prefix + '_tile_icon')?.value || '',
-      color: document.getElementById(prefix + '_tile_color')?.value || '#2A2A2A',
+      color: colorEl?.value || '#2A2A2A',
+      bg_color_default: tileColorInputIsDefault(tab) ? '1' : '0',
       col: document.getElementById(prefix + '_tile_col')?.value || '1',
       row: document.getElementById(prefix + '_tile_row')?.value || '1',
       span_w: document.getElementById(prefix + '_tile_span_w')?.value || '1',
@@ -985,14 +987,16 @@ void appendAdminScripts(String& html) {
     tile.type = clampInt(snapshot?.type, 0, 255, Number(prev.type) || 0);
     tile.title = snapshot?.title || '';
     tile.icon_name = snapshot?.icon || '';
-    tile.bg_color = hexToRgb(snapshot?.color || '#2A2A2A');
+    tile.bg_color = snapshotBgColorIsDefault(snapshot)
+                        ? 0
+                        : makeTileBgValue(hexToRgb(snapshot?.color || '#2A2A2A'));
     tile.col = layout.col;
     tile.row = layout.row;
     tile.span_w = layout.span_w;
     tile.span_h = layout.span_h;
 
     for (const [key, value] of Object.entries(snapshot || {})) {
-      if (key === '_dirty' || key === '_rev' || key === 'icon' || key === 'color' || key === 'col' || key === 'row' || key === 'span_w' || key === 'span_h' || key === 'type' || key === 'title') continue;
+      if (key === '_dirty' || key === '_rev' || key === 'icon' || key === 'color' || key === 'bg_color_default' || key === 'col' || key === 'row' || key === 'span_w' || key === 'span_h' || key === 'type' || key === 'title') continue;
       if (numericFields.includes(key)) {
         const num = Number(value);
         tile[key] = Number.isFinite(num) ? num : value;
@@ -1395,11 +1399,13 @@ void appendAdminScripts(String& html) {
     if (!drafts[tab]) drafts[tab] = {};
     const prefix = tab;
     const prevDraft = drafts[tab][currentTileIndex];
+    const colorEl = document.getElementById(prefix + '_tile_color');
     const d = {
       type: document.getElementById(prefix + '_tile_type')?.value || '0',
       title: document.getElementById(prefix + '_tile_title')?.value || '',
       icon: document.getElementById(prefix + '_tile_icon')?.value || '',
-      color: document.getElementById(prefix + '_tile_color')?.value || '#2A2A2A',
+      color: colorEl?.value || '#2A2A2A',
+      bg_color_default: tileColorInputIsDefault(tab) ? '1' : '0',
       col: document.getElementById(prefix + '_tile_col')?.value || '1',
       row: document.getElementById(prefix + '_tile_row')?.value || '1',
       span_w: document.getElementById(prefix + '_tile_span_w')?.value || '1',
@@ -1422,7 +1428,7 @@ void appendAdminScripts(String& html) {
     updateTileType(tab);
     document.getElementById(prefix + '_tile_title').value = d.title || '';
     document.getElementById(prefix + '_tile_icon').value = d.icon || '';
-    document.getElementById(prefix + '_tile_color').value = d.color || '#2A2A2A';
+    setTileColorInputFromSnapshot(tab, d);
     const colEl = document.getElementById(prefix + '_tile_col');
     if (colEl) colEl.value = d.col || '1';
     const rowEl = document.getElementById(prefix + '_tile_row');
@@ -1451,11 +1457,13 @@ void appendAdminScripts(String& html) {
 
   function collectTileFormData(tab) {
     const prefix = tab;
+    const colorEl = document.getElementById(prefix + '_tile_color');
     const data = {
       type: document.getElementById(prefix + '_tile_type')?.value || '0',
       title: document.getElementById(prefix + '_tile_title')?.value || '',
       icon: document.getElementById(prefix + '_tile_icon')?.value || '',
-      color: document.getElementById(prefix + '_tile_color')?.value || '#2A2A2A',
+      color: colorEl?.value || '#2A2A2A',
+      bg_color_default: tileColorInputIsDefault(tab) ? '1' : '0',
       span_w: document.getElementById(prefix + '_tile_span_w')?.value || '1',
       span_h: document.getElementById(prefix + '_tile_span_h')?.value || '1'
     };
@@ -1476,8 +1484,7 @@ void appendAdminScripts(String& html) {
     if (titleEl) titleEl.value = data.title || '';
     const iconEl = document.getElementById(prefix + '_tile_icon');
     if (iconEl) iconEl.value = data.icon || '';
-    const colorEl = document.getElementById(prefix + '_tile_color');
-    if (colorEl) colorEl.value = data.color || '#2A2A2A';
+    setTileColorInputFromSnapshot(tab, data);
     const spanWEl = document.getElementById(prefix + '_tile_span_w');
     if (spanWEl) spanWEl.value = data.span_w || '1';
     const spanHEl = document.getElementById(prefix + '_tile_span_h');
@@ -1623,7 +1630,7 @@ void appendAdminScripts(String& html) {
 
     bindLive(titleInput, 'input', 'tileTitle', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(iconInput, 'input', 'tileIcon', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
-    bindLive(colorInput, 'input', 'tileColor', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
+    bindLive(colorInput, 'input', 'tileColor', () => { markTileColorInputExplicit(tab); updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(colInput, 'input', 'tileCol', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(rowInput, 'input', 'tileRow', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(spanWInput, 'input', 'tileSpanW', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
@@ -1779,7 +1786,11 @@ void appendAdminScripts(String& html) {
     }
 
     const defaultBg = meta.defaultBg || '#353535';
-    const tileBg = color || defaultBg;
+    if (tileColorInputIsDefault(tab)) {
+      const colorInput = document.getElementById(prefix + '_tile_color');
+      if (colorInput) colorInput.value = defaultBg;
+    }
+    const tileBg = tileColorInputIsDefault(tab) ? defaultBg : (color || defaultBg);
     tileElem.style.background = tileBg;
     tileElem.style.removeProperty('--switch-knob-color');
     tileElem.style.removeProperty('--switch-on-color');
@@ -1873,7 +1884,8 @@ void appendAdminScripts(String& html) {
         updateTileType(tab);
         document.getElementById(prefix + '_tile_title').value = data.title || '';
         document.getElementById(prefix + '_tile_icon').value = data.icon_name || '';
-        document.getElementById(prefix + '_tile_color').value = rgbToHex(data.bg_color || 0x2A2A2A);
+        const colorMeta = getTileTypeMeta(data.type || 0);
+        setTileColorInputFromStored(tab, data.bg_color, colorMeta.defaultBg || '#2A2A2A');
         const colEl = document.getElementById(prefix + '_tile_col');
         const rowEl = document.getElementById(prefix + '_tile_row');
         const spanWEl = document.getElementById(prefix + '_tile_span_w');
@@ -1898,7 +1910,7 @@ void appendAdminScripts(String& html) {
           spanWEl.value = String(layout.span_w);
           spanHEl.value = String(layout.span_h);
         }
-        const meta = getTileTypeMeta(data.type || 0);
+        const meta = colorMeta;
         callTypeHandler(meta, 'load', prefix, data);
         syncGaugeUi(tab);
         const tileElem = document.getElementById(tab + '-tile-' + index);
@@ -1997,7 +2009,7 @@ void appendAdminScripts(String& html) {
     document.getElementById(prefix + '_tile_type').value = '0';
     document.getElementById(prefix + '_tile_title').value = '';
     document.getElementById(prefix + '_tile_icon').value = '';
-    document.getElementById(prefix + '_tile_color').value = '#2A2A2A';
+    setTileColorInputFromStored(tab, 0, '#2A2A2A');
     resetAllTypeFields(tab);
     syncGaugeUi(tab);
     updateTileType(tab);
@@ -2061,10 +2073,14 @@ void appendAdminScripts(String& html) {
     formData.append('type', snapshot.type || '0');
     formData.append('title', snapshot.title || '');
     formData.append('icon_name', snapshot.icon || '');
-    formData.append('bg_color', hexToRgb(snapshot.color || '#2A2A2A'));
+    if (snapshotBgColorIsDefault(snapshot)) {
+      formData.append('bg_color_default', '1');
+    } else {
+      formData.append('bg_color', hexToRgb(snapshot.color || '#2A2A2A'));
+    }
     const typeValue = String(snapshot.type || '0');
     for (const [key, value] of Object.entries(snapshot)) {
-      if (key === '_dirty' || key === '_rev' || key === 'type' || key === 'title' || key === 'icon' || key === 'color' || key === 'col' || key === 'row' || key === 'span_w' || key === 'span_h') continue;
+      if (key === '_dirty' || key === '_rev' || key === 'type' || key === 'title' || key === 'icon' || key === 'color' || key === 'bg_color_default' || key === 'col' || key === 'row' || key === 'span_w' || key === 'span_h') continue;
       formData.append(key, value);
     }
     applySnapshotToTileData(tab, tileIndex, snapshot);
@@ -2376,7 +2392,12 @@ void appendAdminScripts(String& html) {
     fd.append('type', safeType);
     fd.append('title', tile.title || '');
     fd.append('icon_name', tile.icon_name || '');
-    fd.append('bg_color', parseBgColorValue(tile.bg_color));
+    const parsedBgColor = parseBgColorValue(tile.bg_color);
+    if (parsedBgColor !== 0 || (typeof tile.bg_color === 'string' && tile.bg_color.trim().startsWith('#'))) {
+      fd.append('bg_color', parsedBgColor);
+    } else {
+      fd.append('bg_color_default', '1');
+    }
     const layout = normalizeTileLayout(tile, index);
     fd.append('col', layout.col);
     fd.append('row', layout.row);
@@ -2492,8 +2513,61 @@ void appendAdminScripts(String& html) {
     }
   }
 
-  function rgbToHex(rgb) { return '#' + ('000000' + rgb.toString(16)).slice(-6); }
-  function hexToRgb(hex) { return parseInt(hex.replace('#', ''), 16); }
+  function rgbToHex(rgb) {
+    const num = Number(rgb);
+    const masked = Number.isFinite(num) ? (num & 0xFFFFFF) : 0;
+    return '#' + ('000000' + masked.toString(16)).slice(-6);
+  }
+  function hexToRgb(hex) {
+    const parsed = parseInt(String(hex || '').replace('#', ''), 16);
+    return isNaN(parsed) ? 0 : (parsed & 0xFFFFFF);
+  }
+  function makeTileBgValue(rgb) {
+    return (Number(rgb) & 0xFFFFFF) | 0x01000000;
+  }
+  function tileBgValueIsSet(value) {
+    const num = Number(value);
+    return Number.isFinite(num) && num !== 0;
+  }
+  function tileBgToHex(value, fallback) {
+    const num = Number(value);
+    if (!Number.isFinite(num) || num === 0) return fallback || '#353535';
+    return rgbToHex(num);
+  }
+  function snapshotBgColorIsDefault(snapshot) {
+    return String(snapshot?.bg_color_default || '0') === '1';
+  }
+  function tileColorInputIsDefault(tab) {
+    const input = document.getElementById(tab + '_tile_color');
+    return !!input && input.dataset.bgColorDefault === '1';
+  }
+  function setTileColorInputFromStored(tab, value, fallback) {
+    const input = document.getElementById(tab + '_tile_color');
+    if (!input) return;
+    input.value = tileBgToHex(value, fallback || '#2A2A2A');
+    input.dataset.bgColorDefault = tileBgValueIsSet(value) ? '0' : '1';
+  }
+  function setTileColorInputFromSnapshot(tab, snapshot) {
+    const input = document.getElementById(tab + '_tile_color');
+    if (!input) return;
+    const meta = getTileTypeMeta(snapshot?.type || '0');
+    const isDefault = snapshotBgColorIsDefault(snapshot);
+    input.value = isDefault ? (meta.defaultBg || '#2A2A2A') : (snapshot?.color || meta.defaultBg || '#2A2A2A');
+    input.dataset.bgColorDefault = isDefault ? '1' : '0';
+  }
+  function markTileColorInputExplicit(tab) {
+    const input = document.getElementById(tab + '_tile_color');
+    if (input) input.dataset.bgColorDefault = '0';
+  }
+  function resetTileColor(tab) {
+    const input = document.getElementById(tab + '_tile_color');
+    if (!input) return;
+    input.value = '#2A2A2A';
+    input.dataset.bgColorDefault = '0';
+    updateTilePreview(tab);
+    updateDraft(tab);
+    scheduleAutoSave(tab);
+  }
 
   function renderTileFromData(tab, index, tile, sensorMeta) {
     const el = document.getElementById(tab + '-tile-' + index);
@@ -2512,7 +2586,7 @@ void appendAdminScripts(String& html) {
     el.dataset.type = typeValue;
     if (typeValue === '0') el.style.background = 'transparent';
     else {
-      const bg = tile.bg_color ? rgbToHex(tile.bg_color) : (meta.defaultBg || '#353535');
+      const bg = tileBgToHex(tile.bg_color, meta.defaultBg || '#353535');
       el.style.background = bg;
       el.style.removeProperty('--switch-knob-color');
       el.style.removeProperty('--switch-on-color');

@@ -422,6 +422,23 @@ void appendAdminStyles(String& html) {
     .tile-settings h3 { margin:0 0 16px; color:#1e293b; font-size:18px; }
     .type-fields { display:none; margin-top:12px; }
     .type-fields.show { display:block; }
+    .tile-color-row { display:flex; align-items:center; gap:8px; margin-bottom:12px; }
+    .tile-color-row input[type="color"] { flex:1 1 auto; min-width:0; height:40px; margin-bottom:0; padding:6px 10px; }
+    .tile-color-reset-btn {
+      flex:0 0 44px;
+      width:44px;
+      height:40px;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      border:1px solid #cbd5f5;
+      border-radius:10px;
+      background:#fff;
+      color:#334155;
+      cursor:pointer;
+      font-size:20px;
+    }
+    .tile-color-reset-btn:hover { background:#f8fafc; color:#1e293b; }
     .tile-layout {
       display:grid;
       grid-template-columns:repeat(2, minmax(0, 1fr));

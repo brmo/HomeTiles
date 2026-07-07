@@ -66,6 +66,31 @@ fs::FS& sdFS() {
   return Device::sdFS();
 }
 
+static bool tileTypeHasDynamicMqttRoute(TileType type) {
+  return type == TILE_SENSOR ||
+         type == TILE_SWITCH ||
+         type == TILE_MEDIA ||
+         type == TILE_WEATHER;
+}
+
+static String dynamicMqttEntityForTile(const Tile& tile) {
+  if (!tileTypeHasDynamicMqttRoute(tile.type)) return "";
+  String entity = tile.sensor_entity;
+  entity.trim();
+  return entity;
+}
+
+static bool tileChangeAffectsDynamicMqttRoutes(const Tile& before, const Tile& after) {
+  const String before_entity = dynamicMqttEntityForTile(before);
+  const String after_entity = dynamicMqttEntityForTile(after);
+  const bool before_has_route = before_entity.length() > 0;
+  const bool after_has_route = after_entity.length() > 0;
+  if (before_has_route != after_has_route) return true;
+  if (!before_has_route && !after_has_route) return false;
+  if (before.type != after.type) return true;
+  return !before_entity.equalsIgnoreCase(after_entity);
+}
+
 String normalizeFileManagerPath(const String& raw) {
   String path = raw;
   path.trim();
@@ -1494,6 +1519,7 @@ void WebAdminServer::handleGetTiles() {
 
 void WebAdminServer::handleSaveTiles() {
   // POST /api/tiles
+  webAdminMarkActivity();
   if (!server.hasArg("index") || !server.hasArg("type")) {
     server.send(400, "application/json", "{\"success\":false,\"error\":\"Missing parameters\"}");
     return;
@@ -1570,9 +1596,12 @@ void WebAdminServer::handleSaveTiles() {
   tile.type = static_cast<TileType>(type);
   tile.title = server.hasArg("title") ? server.arg("title") : "";
   tile.icon_name = server.hasArg("icon_name") ? server.arg("icon_name") : "";
-  // Parse color
-  if (server.hasArg("bg_color")) {
-    tile.bg_color = server.arg("bg_color").toInt();
+  // Parse color. bg_color_default keeps legacy/default tiles as true defaults;
+  // bg_color=0 is reserved for an explicitly selected black background.
+  if (server.hasArg("bg_color_default") && server.arg("bg_color_default").toInt() != 0) {
+    tile.bg_color = 0;
+  } else if (server.hasArg("bg_color")) {
+    tile.bg_color = makeTileBgColor(static_cast<uint32_t>(server.arg("bg_color").toInt()));
   }
 
   // Parse layout (0-based col/row, span >= 1)
@@ -1670,9 +1699,16 @@ void WebAdminServer::handleSaveTiles() {
   if (success) {
     Serial.printf("[WebAdmin] Tile folder %u[%d] gespeichert - Type: %d\n", static_cast<unsigned>(folder_id), index, type);
 
-    // Rebuild MQTT dynamic routes for new sensor entities
-    mqttReloadDynamicSlots();
-    Serial.println("[WebAdmin] MQTT Routes neu aufgebaut");
+    const bool routes_changed = deleting_folder || tileChangeAffectsDynamicMqttRoutes(previous_tile, tile);
+    if (routes_changed) {
+      // Mehrere schnelle Tile-Edits duerfen nur einen teuren Route-Rebuild
+      // ausloesen. Der Loop fuehrt ihn nach laengerer Admin-Ruhe aus, damit
+      // kein Subscribe-Burst parallel zum naechsten Grid-Save laeuft.
+      mqttRequestDynamicSlotsReload(5000);
+      Serial.println("[WebAdmin] MQTT Routes fuer spaeteren Rebuild markiert");
+    } else {
+      Serial.println("[WebAdmin] MQTT Routes unveraendert (kein Rebuild fuer Style/Layout)");
+    }
 
     tiles_invalidate_folder(folder_id);
     if (tileConfig.getActiveFolderId() == folder_id) {
@@ -1694,6 +1730,7 @@ void WebAdminServer::handleSaveTiles() {
 
 
 void WebAdminServer::handleReorderTiles() {
+  webAdminMarkActivity();
   if (!server.hasArg("from") || !server.hasArg("to")) {
     server.send(400, "application/json", "{\"success\":false,\"error\":\"Missing parameters\"}");
     return;
@@ -1739,7 +1776,6 @@ void WebAdminServer::handleReorderTiles() {
 
   bool success = tileConfig.saveFolderGrid(folder_id, grid);
   if (success) {
-    mqttReloadDynamicSlots();
     tiles_invalidate_folder(folder_id);
     if (tileConfig.getActiveFolderId() == folder_id) {
       tiles_request_reload_if_loaded(GridType::TAB0);
@@ -2630,6 +2666,7 @@ void WebAdminServer::handleGetFolderTab() {
 }
 
 void WebAdminServer::handleDeleteFolder() {
+  webAdminMarkActivity();
   if (!server.hasArg("folder_id")) {
     server.send(400, "application/json", "{\"success\":false,\"error\":\"Missing folder_id\"}");
     return;
@@ -2668,7 +2705,7 @@ void WebAdminServer::handleDeleteFolder() {
     return;
   }
 
-  mqttReloadDynamicSlots();
+  mqttRequestDynamicSlotsReload(5000);
   Serial.printf("[WebAdmin] Folder %u deleted\n", static_cast<unsigned>(folder_id));
   server.send(200, "application/json", "{\"success\":true}");
 }

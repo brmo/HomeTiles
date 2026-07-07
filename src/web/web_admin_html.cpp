@@ -218,8 +218,9 @@ static void appendTileTabHTML(
     }
 
     if (tile.type != TILE_EMPTY) {
-      uint32_t bg_color = tile.bg_color;
-      if (bg_color == 0 && type_desc) bg_color = type_desc->default_bg_color;
+      uint32_t bg_color = tileBgColorIsSet(tile)
+                              ? tileBgColorRgb(tile)
+                              : (type_desc ? type_desc->default_bg_color : 0);
       if (bg_color == 0) bg_color = 0x353535;
       char colorHex[8];
       snprintf(colorHex, sizeof(colorHex), "#%06X", (unsigned int)bg_color);
@@ -383,9 +384,14 @@ static void appendTileTabHTML(
             <label>)html";
   html += tr.admin_color;
   html += R"html(</label>
+            <div class="tile-color-row">
             <input type="color" id=")html";
   html += tab_id;
-  html += R"html(_tile_color" value="#2A2A2A" style="height:40px;">
+  html += R"html(_tile_color" value="#2A2A2A">
+              <button type="button" class="tile-color-reset-btn" title="Auf #2A2A2A zuruecksetzen" onclick="resetTileColor(')html";
+  html += tab_id;
+  html += R"html(')"><i class="mdi mdi-restore"></i></button>
+            </div>
 
             <div class="tile-layout">
               <div class="layout-field">

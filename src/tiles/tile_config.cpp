@@ -317,6 +317,68 @@ static bool ensureIconDir() {
   return storageFS().mkdir("/icons");
 }
 
+static String tmpPathFor(const String& filePath) {
+  return filePath + ".tmp";
+}
+
+static String backupPathFor(const String& filePath) {
+  return filePath + ".bak";
+}
+
+static bool replaceFileWithPreparedTmp(const String& tmpPath, const String& filePath) {
+  if (!storageReady()) return false;
+  if (!storageFS().exists(tmpPath)) return false;
+
+  const String backupPath = backupPathFor(filePath);
+  if (storageFS().exists(backupPath)) storageFS().remove(backupPath);
+
+  if (storageFS().rename(tmpPath, filePath)) {
+    return true;
+  }
+
+  // Some FS backends do not replace an existing destination on rename(). Keep
+  // the old file as .bak first, so a reset between both renames is recoverable.
+  if (storageFS().exists(filePath)) {
+    if (!storageFS().rename(filePath, backupPath)) {
+      return false;
+    }
+  }
+
+  if (storageFS().rename(tmpPath, filePath)) {
+    if (storageFS().exists(backupPath)) storageFS().remove(backupPath);
+    return true;
+  }
+
+  if (storageFS().exists(backupPath) && !storageFS().exists(filePath)) {
+    storageFS().rename(backupPath, filePath);
+  }
+  return false;
+}
+
+static void promoteRecoveryFile(const String& candidatePath, const String& filePath) {
+  if (!storageReady()) return;
+  if (!storageFS().exists(candidatePath)) return;
+
+  if (storageFS().exists(filePath)) {
+    const String badPath = filePath + ".bad";
+    if (storageFS().exists(badPath)) storageFS().remove(badPath);
+    if (!storageFS().rename(filePath, badPath)) {
+      return;
+    }
+  }
+
+  if (!storageFS().rename(candidatePath, filePath)) {
+    const String badPath = filePath + ".bad";
+    if (storageFS().exists(badPath) && !storageFS().exists(filePath)) {
+      storageFS().rename(badPath, filePath);
+    }
+    return;
+  }
+
+  const String badPath = filePath + ".bad";
+  if (storageFS().exists(badPath)) storageFS().remove(badPath);
+}
+
 static String imagePathFile(uint16_t folder_id, size_t index) {
   char buf[64];
   snprintf(buf, sizeof(buf), "%s/f%u_%02u.url", kImagePathDir, static_cast<unsigned>(folder_id), static_cast<unsigned>(index));
@@ -420,7 +482,7 @@ static bool writeGridSd(uint16_t folder_id, const PackedQuarterGridV7* packed, s
   // wurde die alte Datei zuerst geloescht und dann neu gefuellt - ein Crash
   // oder Stromausfall dazwischen liess sie leer/halb zurueck, das Grid war
   // beim naechsten Boot nicht mehr ladbar und der ganze Ordner blockiert.
-  String tmpPath = filePath + ".tmp";
+  String tmpPath = tmpPathFor(filePath);
   if (storageFS().exists(tmpPath)) storageFS().remove(tmpPath);
 
   // yield() vor dem Schreiben: das interne Flash-Schreiben sperrt kurz den
@@ -451,17 +513,11 @@ static bool writeGridSd(uint16_t folder_id, const PackedQuarterGridV7* packed, s
     return false;
   }
 
-  // rename ersetzt das Ziel atomar; erst ab hier ist die alte Datei weg.
-  if (!storageFS().rename(tmpPath, filePath)) {
-    // Fallback fuer FS-Backends ohne atomares Ersetzen (LittleFS kann es):
-    // nur hier entsteht ein kurzes Fenster, in dem die Zieldatei fehlt.
-    if (storageFS().exists(filePath)) storageFS().remove(filePath);
-    if (!storageFS().rename(tmpPath, filePath)) {
-      Serial.printf("[TileConfig] Storage rename failed: folder=%u\n",
-                    static_cast<unsigned>(folder_id));
-      storageFS().remove(tmpPath);
-      return false;
-    }
+  if (!replaceFileWithPreparedTmp(tmpPath, filePath)) {
+    Serial.printf("[TileConfig] Storage rename failed: folder=%u\n",
+                  static_cast<unsigned>(folder_id));
+    storageFS().remove(tmpPath);
+    return false;
   }
 
   return true;
@@ -512,7 +568,25 @@ static bool readPackedGridFileV6(const String& filePath, PackedQuarterGridV6* pa
 
 static bool readGridSd(uint16_t folder_id, PackedQuarterGridV7* packed, size_t count) {
   if (!storageReady()) return false;
-  return readPackedGridFileV7(tileGridFile(folder_id), packed, count);
+  const String filePath = tileGridFile(folder_id);
+  const String tmpPath = tmpPathFor(filePath);
+  if (readPackedGridFileV7(tmpPath, packed, count)) {
+    Serial.printf("[TileConfig] Grid %u aus .tmp wiederhergestellt\n",
+                  static_cast<unsigned>(folder_id));
+    promoteRecoveryFile(tmpPath, filePath);
+    return true;
+  }
+  if (readPackedGridFileV7(filePath, packed, count)) {
+    return true;
+  }
+  const String backupPath = backupPathFor(filePath);
+  if (readPackedGridFileV7(backupPath, packed, count)) {
+    Serial.printf("[TileConfig] Grid %u aus .bak wiederhergestellt\n",
+                  static_cast<unsigned>(folder_id));
+    promoteRecoveryFile(backupPath, filePath);
+    return true;
+  }
+  return false;
 }
 
 static bool readGridSdV6(uint16_t folder_id, PackedQuarterGridV6* packed, size_t count) {
@@ -2232,40 +2306,77 @@ bool TileConfig::loadFolders() {
     Serial.println("[TileConfig] WARN: Storage nicht verfuegbar, Ordner-Liste kann nicht geladen werden");
     return false;
   }
-  if (!storageFS().exists(kFolderIndexFile)) {
-    return false;
-  }
-  File f = storageFS().open(kFolderIndexFile, FILE_READ);
-  if (!f) return false;
 
-  FolderIndexHeader header{};
-  if (f.read(reinterpret_cast<uint8_t*>(&header), sizeof(header)) != sizeof(header)) {
-    f.close();
-    return false;
-  }
-  if (header.magic != kFolderIndexMagic || header.version != kFolderIndexVersion) {
-    f.close();
-    return false;
-  }
+  auto read_folder_index = [](const String& path, std::vector<FolderEntry>& out) -> bool {
+    File f = storageFS().open(path, FILE_READ);
+    if (!f) return false;
 
-  folders.clear();
-  for (uint16_t i = 0; i < header.count; ++i) {
-    FolderEntryDisk disk{};
-    if (f.read(reinterpret_cast<uint8_t*>(&disk), sizeof(disk)) != sizeof(disk)) {
-      break;
+    FolderIndexHeader header{};
+    if (f.read(reinterpret_cast<uint8_t*>(&header), sizeof(header)) != sizeof(header)) {
+      f.close();
+      return false;
     }
-    FolderEntry entry{};
-    entry.id = disk.id;
-    entry.parent_id = disk.parent_id;
-    memcpy(entry.name, disk.name, sizeof(entry.name));
-    entry.name[sizeof(entry.name) - 1] = '\0';
-    memcpy(entry.icon_name, disk.icon_name, sizeof(entry.icon_name));
-    entry.icon_name[sizeof(entry.icon_name) - 1] = '\0';
-    folders.push_back(entry);
+    if (header.magic != kFolderIndexMagic || header.version != kFolderIndexVersion) {
+      f.close();
+      return false;
+    }
+    if (header.count > 128) {
+      f.close();
+      return false;
+    }
+
+    out.clear();
+    for (uint16_t i = 0; i < header.count; ++i) {
+      FolderEntryDisk disk{};
+      if (f.read(reinterpret_cast<uint8_t*>(&disk), sizeof(disk)) != sizeof(disk)) {
+        f.close();
+        out.clear();
+        return false;
+      }
+      if (disk.id == kInvalidFolderId) {
+        f.close();
+        out.clear();
+        return false;
+      }
+      FolderEntry entry{};
+      entry.id = disk.id;
+      entry.parent_id = disk.parent_id;
+      memcpy(entry.name, disk.name, sizeof(entry.name));
+      entry.name[sizeof(entry.name) - 1] = '\0';
+      memcpy(entry.icon_name, disk.icon_name, sizeof(entry.icon_name));
+      entry.icon_name[sizeof(entry.icon_name) - 1] = '\0';
+      out.push_back(entry);
+    }
+
+    f.close();
+    return true;
+  };
+
+  const String filePath(kFolderIndexFile);
+  const String tmpPath = tmpPathFor(filePath);
+  const String backupPath = backupPathFor(filePath);
+  std::vector<FolderEntry> loaded;
+
+  if (read_folder_index(tmpPath, loaded)) {
+    folders = loaded;
+    Serial.println("[TileConfig] Ordner-Liste aus .tmp wiederhergestellt");
+    promoteRecoveryFile(tmpPath, filePath);
+    return true;
   }
 
-  f.close();
-  return true;
+  if (read_folder_index(filePath, loaded)) {
+    folders = loaded;
+    return true;
+  }
+
+  if (read_folder_index(backupPath, loaded)) {
+    folders = loaded;
+    Serial.println("[TileConfig] Ordner-Liste aus .bak wiederhergestellt");
+    promoteRecoveryFile(backupPath, filePath);
+    return true;
+  }
+
+  return false;
 }
 
 bool TileConfig::saveFolders() const {
@@ -2278,7 +2389,8 @@ bool TileConfig::saveFolders() const {
   // Atomar schreiben (wie writeGridSd): der Ordner-Index ist die kritischste
   // Datei ueberhaupt - wird sie bei einem Crash halb geschrieben, sind ALLE
   // Ordner verloren. Erst .tmp fuellen, dann atomar drueberrenamen.
-  const String tmpPath = String(kFolderIndexFile) + ".tmp";
+  const String filePath(kFolderIndexFile);
+  const String tmpPath = tmpPathFor(filePath);
   if (storageFS().exists(tmpPath)) storageFS().remove(tmpPath);
   // Siehe writeGridSd(): yield() vor dem Flash-Schreiben, damit der WLAN/SDIO-
   // Task unter Last noch eine Chance bekommt, seine Empfangs-Queue zu leeren.
@@ -2306,6 +2418,7 @@ bool TileConfig::saveFolders() const {
     disk.icon_name[sizeof(disk.icon_name) - 1] = '\0';
     if (f.write(reinterpret_cast<const uint8_t*>(&disk), sizeof(disk)) != sizeof(disk)) {
       write_ok = false;
+      break;
     }
   }
 
@@ -2318,12 +2431,9 @@ bool TileConfig::saveFolders() const {
     return false;
   }
 
-  if (!storageFS().rename(tmpPath, kFolderIndexFile)) {
-    if (storageFS().exists(kFolderIndexFile)) storageFS().remove(kFolderIndexFile);
-    if (!storageFS().rename(tmpPath, kFolderIndexFile)) {
-      storageFS().remove(tmpPath);
-      return false;
-    }
+  if (!replaceFileWithPreparedTmp(tmpPath, filePath)) {
+    storageFS().remove(tmpPath);
+    return false;
   }
   return true;
 }

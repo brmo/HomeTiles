@@ -7,6 +7,7 @@
 #include "src/ui/sensor_popup.h"
 #include "src/ui/weather_popup.h"
 #include "src/network/ha_bridge_config.h"
+#include "src/web/web_admin.h"
 #include "src/tiles/mdi_icons.h"
 #include <misc/cache/instance/lv_image_cache.h>
 #include <Arduino.h>
@@ -1105,6 +1106,10 @@ void tiles_process_reload_requests() {
       tiles_release_layout(grid_type);
     }
     return;  // nur ein Release pro Loop
+  }
+
+  if (webAdminRecentlyActive(1000)) {
+    return;
   }
 
   for (uint8_t i = 0; i < 3; ++i) {

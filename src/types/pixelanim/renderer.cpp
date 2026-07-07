@@ -418,14 +418,14 @@ lv_obj_t* render_pixelanim_tile(lv_obj_t* parent, int col, int row, const Tile& 
   const uint16_t zoom_percent = normalize_zoom_percent(tile.sensor_gauge_max);
   const bool edge_to_edge = (fit_mode == kFitCover || fit_mode == kFitStretch);
 
-  // bg_color 0 -> fully transparent: the tile looks like empty space (no visible
+  // Unset bg_color -> fully transparent: the tile looks like empty space (no visible
   // card), and a transparent sprite shows the dashboard behind it. A real colour
   // fills a normal rounded card that the sprite's alpha blends over.
-  if (tile.bg_color == 0 && !edge_to_edge) {
+  if (!tileBgColorIsSet(tile) && !edge_to_edge) {
     lv_obj_set_style_bg_opa(card, LV_OPA_TRANSP, 0);
     lv_obj_set_style_radius(card, 0, 0);
   } else {
-    lv_obj_set_style_bg_color(card, lv_color_hex(tile.bg_color ? tile.bg_color : 0x000000), 0);
+    lv_obj_set_style_bg_color(card, lv_color_hex(tileBgColorOrDefault(tile, 0x000000)), 0);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(card, 22, 0);
     lv_obj_set_style_clip_corner(card, true, 0);

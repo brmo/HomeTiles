@@ -815,7 +815,8 @@ void loop() {
   }
   uint32_t t_wake = millis();
 
-  const bool ui_idle_for_background_refresh = !powerManager.isHighPerformance();
+  const bool admin_busy = webAdminRecentlyActive(20000);
+  const bool ui_idle_for_background_refresh = !powerManager.isHighPerformance() && !admin_busy;
   service_background_state_refresh(ui_idle_for_background_refresh);
   uint32_t t_bg_refresh = millis();
   tiles_process_bridge_cache_refresh(ui_idle_for_background_refresh);
@@ -903,6 +904,7 @@ void loop() {
     // Verarbeiten eingegangener Nachrichten.
     mqttServicePostConnect();
     mqtt_process_inbound_queue();
+    mqttServiceDynamicSlotsReload();
     static uint8_t net_tick = 0;
     if (++net_tick % 5 == 0) {
       if (first_run) Serial.println("[Loop] networkManager.update()...");

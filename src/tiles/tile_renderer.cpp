@@ -1455,7 +1455,7 @@ void update_switch_tile_state(GridType grid_type, uint8_t grid_index, const char
     } else {
       lv_obj_remove_state(widgets.switch_obj, LV_STATE_CHECKED);
     }
-    uint32_t tile_color = (tile.bg_color != 0) ? tile.bg_color : 0x353535;
+    uint32_t tile_color = tileBgColorOrDefault(tile, 0x353535);
     lv_obj_set_style_bg_color(widgets.switch_obj, lv_color_hex(tile_color), LV_PART_KNOB);
     lv_obj_set_style_bg_color(
         widgets.switch_obj,
@@ -2050,7 +2050,7 @@ static void update_media_popup_from_widgets(GridType grid_type,
   init.title = media_popup_title_for_tile(tile);
   init.icon_name = media_popup_icon_for_tile(tile);
   init.icon_char = media_label_text(widgets.icon_label);
-  init.bg_color = tile.bg_color != 0 ? tile.bg_color : 0x2A2A2A;
+  init.bg_color = tileBgColorOrDefault(tile, 0x2A2A2A);
   init.media_title = media_label_text(widgets.media_title_label);
   init.media_subtitle = media_label_text(widgets.media_subtitle_label);
   init.is_playing = state_override.length() ? media_is_playing_state(state_override)

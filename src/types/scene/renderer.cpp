@@ -154,7 +154,7 @@ lv_obj_t* render_scene_tile(lv_obj_t* parent, int col, int row, const Tile& tile
   lv_obj_set_style_radius(btn, 22, 0);
   lv_obj_set_style_border_width(btn, 0, 0);
 
-  uint32_t btn_color = (tile.bg_color != 0) ? tile.bg_color : 0x353535;
+  uint32_t btn_color = tileBgColorOrDefault(tile, 0x353535);
   lv_obj_set_style_bg_color(btn, lv_color_hex(btn_color), LV_PART_MAIN | LV_STATE_DEFAULT);
 lv_obj_set_style_bg_grad_color(btn, lv_color_hex(btn_color), LV_PART_MAIN | LV_STATE_DEFAULT);
 lv_obj_set_style_bg_grad_dir(btn, LV_GRAD_DIR_NONE, LV_PART_MAIN | LV_STATE_DEFAULT);

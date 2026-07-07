@@ -157,6 +157,25 @@ struct TileGridConfig {
   Tile tiles[TILES_PER_GRID];
 };
 
+static constexpr uint32_t TILE_BG_COLOR_RGB_MASK = 0x00FFFFFFu;
+static constexpr uint32_t TILE_BG_COLOR_EXPLICIT = 0x01000000u;
+
+static inline uint32_t makeTileBgColor(uint32_t rgb) {
+  return (rgb & TILE_BG_COLOR_RGB_MASK) | TILE_BG_COLOR_EXPLICIT;
+}
+
+static inline bool tileBgColorIsSet(const Tile& tile) {
+  return tile.bg_color != 0;
+}
+
+static inline uint32_t tileBgColorRgb(const Tile& tile) {
+  return tile.bg_color & TILE_BG_COLOR_RGB_MASK;
+}
+
+static inline uint32_t tileBgColorOrDefault(const Tile& tile, uint32_t default_color) {
+  return tileBgColorIsSet(tile) ? tileBgColorRgb(tile) : (default_color & TILE_BG_COLOR_RGB_MASK);
+}
+
 struct FolderEntry {
   uint16_t id;
   uint16_t parent_id;

@@ -119,7 +119,7 @@ lv_obj_t* render_switch_tile(lv_obj_t* parent, int col, int row, const Tile& til
   lv_obj_set_style_border_width(container, 0, 0);
 
   // Farbe verwenden (Standard: 0x353535 wenn color = 0)
-  uint32_t tile_color = (tile.bg_color != 0) ? tile.bg_color : 0x353535;
+  uint32_t tile_color = tileBgColorOrDefault(tile, 0x353535);
   lv_obj_set_style_bg_color(container, lv_color_hex(tile_color), LV_PART_MAIN | LV_STATE_DEFAULT);
 lv_obj_set_style_bg_grad_color(container, lv_color_hex(tile_color), LV_PART_MAIN | LV_STATE_DEFAULT);
 lv_obj_set_style_bg_grad_dir(container, LV_GRAD_DIR_NONE, LV_PART_MAIN | LV_STATE_DEFAULT);

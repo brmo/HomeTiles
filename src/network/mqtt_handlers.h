@@ -36,5 +36,7 @@ void mqttPublishHomeSnapshot();
 void mqttPublishDeviceSettings();
 void mqttServiceLocalSensors();
 void mqttReloadDynamicSlots();
+void mqttRequestDynamicSlotsReload(uint32_t quiet_ms = 3000);
+void mqttServiceDynamicSlotsReload();
 
 #endif // MQTT_HANDLERS_H

@@ -15,6 +15,7 @@
 #include "src/core/battery_state.h"
 #include "src/core/board_hal.h"
 #include "src/core/lvgl_tick_service.h"
+#include "src/web/web_admin.h"
 #include <esp_heap_caps.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -59,6 +60,11 @@ static uint16_t g_external_history_count = 0;
 static uint32_t g_external_history_last_store_ms = 0;
 static constexpr uint32_t kHistoryHaResponseTimeoutMs = 2000;
 static constexpr uint8_t kHistoryPendingSlots = 8;
+static constexpr uint32_t kDynamicSlotReloadQuietMs = 3000;
+static constexpr uint32_t kDynamicSlotReloadAdminQuietMs = 5000;
+
+static volatile bool g_dynamic_slots_reload_requested = false;
+static uint32_t g_dynamic_slots_reload_due_ms = 0;
 
 struct PendingHistoryRequest {
   String entity_id;
@@ -1919,6 +1925,35 @@ void mqttReloadDynamicSlots() {
     }
   }
   Serial.printf("[Bridge] mqttReloadDynamicSlots subscribe: %u ms\n", (unsigned)(millis() - t_sub0));
+}
+
+void mqttRequestDynamicSlotsReload(uint32_t quiet_ms) {
+  if (quiet_ms == 0) quiet_ms = kDynamicSlotReloadQuietMs;
+  const uint32_t due = millis() + quiet_ms;
+  if (!g_dynamic_slots_reload_requested ||
+      (int32_t)(due - g_dynamic_slots_reload_due_ms) > 0) {
+    g_dynamic_slots_reload_due_ms = due;
+  }
+  g_dynamic_slots_reload_requested = true;
+}
+
+void mqttServiceDynamicSlotsReload() {
+  if (!g_dynamic_slots_reload_requested) return;
+
+  const uint32_t now = millis();
+  if (webAdminRecentlyActive(kDynamicSlotReloadAdminQuietMs)) {
+    g_dynamic_slots_reload_due_ms = now + kDynamicSlotReloadQuietMs;
+    return;
+  }
+  if ((int32_t)(now - g_dynamic_slots_reload_due_ms) < 0) {
+    return;
+  }
+
+  g_dynamic_slots_reload_requested = false;
+  uint32_t t_slots0 = millis();
+  mqttReloadDynamicSlots();
+  Serial.printf("[Bridge] deferred mqttReloadDynamicSlots: %u ms\n",
+                (unsigned)(millis() - t_slots0));
 }
 
 // ========== Post-Connect (Loop-Task) ==========
