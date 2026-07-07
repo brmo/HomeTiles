@@ -462,65 +462,14 @@ void setup() {
   log_memory_status("after-display");
   Serial.flush();
 
-  // Ab hier gibt es einen aktiven LVGL-Screen -- kurz die Begruessung zeigen,
-  // waehrend der Rest bootet. displayManager.init() schaltet das Panel noch
-  // NICHT sichtbar; das passiert erst durch BoardHAL::displayWake() (Panel-
-  // Ausgabe + Backlight an). Ohne den Wake HIER waere der Splash bis zum
-  // naechsten Wake-Aufruf (urspruenglich erst nach dem UI-Build) unsichtbar --
-  // das Panel blieb schlicht aus. Gleiche Doppel-Refresh-Sequenz wie beim
-  // spaeteren Wake unten, weil dieses Panel einen einzelnen Refresh nicht
-  // zuverlaessig vollstaendig durchzeichnet.
-  BootSplash::show();
-  // Layout (Flex-Positionen, Bild-Skalierung/Pivot) VOR dem ersten Refresh
-  // fertigrechnen -- sonst kann der allererste Frame einen halbfertigen
-  // Zwischenzustand zeigen (verzerrt wirkendes Icon/Text), bevor sich beim
-  // naechsten Refresh die endgueltige Position einstellt.
-  lv_obj_update_layout(lv_screen_active());
-  BoardHAL::displayWake();
-  // Kurze Ruhephase direkt nach dem physischen Panel-Einschalten: der
-  // Timing-/Sync-Generator des Panels braucht offenbar einen Moment, bis er
-  // eingerastet ist -- ein Refresh, der zu frueh danach kommt, kann verzerrt
-  // ankommen. Zusaetzlich zum bestehenden Doppel-Refresh (siehe Kommentar
-  // dort: ein einzelner Refresh zeichnet dieses Panel nicht zuverlaessig
-  // vollstaendig durch) noch ein dritter Durchlauf, weil dies hier der
-  // allererste Refresh nach dem Kaltstart ist -- im Gegensatz zum spaeteren
-  // Wake nach dem UI-Build, wo das Panel schon "warmgelaufen" ist.
-  delay(30);
-  lv_obj_invalidate(lv_screen_active());
-#if defined(DEVICE_M5STACKS_TAB5)
-  tab5_timed_refresh_now("splash-1");
-  tab5_timed_display_wait("splash-1");
-#else
-  lv_refr_now(displayManager.getDisplay());
-  BoardHAL::displayWaitDisplay();
-#endif
-  delay(20);
-  lv_obj_invalidate(lv_screen_active());
-#if defined(DEVICE_M5STACKS_TAB5)
-  tab5_timed_refresh_now("splash-2");
-  tab5_timed_display_wait("splash-2");
-#else
-  lv_refr_now(displayManager.getDisplay());
-  BoardHAL::displayWaitDisplay();
-#endif
-  delay(20);
-  lv_obj_invalidate(lv_screen_active());
-#if defined(DEVICE_M5STACKS_TAB5)
-  tab5_timed_refresh_now("splash-3");
-  tab5_timed_display_wait("splash-3");
-#else
-  lv_refr_now(displayManager.getDisplay());
-  BoardHAL::displayWaitDisplay();
-#endif
-  const uint32_t boot_splash_shown_at = millis();
-
-  Serial.println("[Setup] powerManager.init()...");
-  Serial.flush();
-  powerManager.init();
-  Serial.println("[Setup] Power OK");
-  log_memory_status("after-power");
-  Serial.flush();
-
+  // NVS + Konfiguration (insbesondere die Display-Rotation) muessen VOR dem
+  // ersten sichtbaren Splash-Frame geladen sein. displayManager.init() setzt
+  // die Rotation nur auf Device::kRotationDefault; die tatsaechlich vom
+  // Nutzer gespeicherte Rotation kommt erst aus configManager.load(). Frueher
+  // liefen NVS-Init/Config-Load erst NACH dem Splash-Wake -- wessen Rotation
+  // vom Default abweicht (z.B. 180°-geflippt), sah den Splash kurz falsch
+  // gedreht ("verdreht"), weil dessen Frames schon mit der falschen Rotation
+  // geflusht wurden und nie neu gezeichnet werden, bevor er wieder verschwindet.
   Serial.println("[Setup] NVS init...");
   Serial.flush();
   init_nvs();
@@ -538,6 +487,47 @@ void setup() {
   }
   Serial.println("[Setup] Configs OK");
   log_memory_status("after-configs");
+  Serial.flush();
+
+  // Ab hier gibt es einen aktiven LVGL-Screen -- kurz die Begruessung zeigen,
+  // waehrend der Rest bootet. displayManager.init() schaltet das Panel noch
+  // NICHT sichtbar; das passiert erst durch BoardHAL::displayWake() (Panel-
+  // Ausgabe + Backlight an). Ohne den Wake HIER waere der Splash bis zum
+  // naechsten Wake-Aufruf (urspruenglich erst nach dem UI-Build) unsichtbar --
+  // das Panel blieb schlicht aus. Gleiche Doppel-Refresh-Sequenz wie beim
+  // spaeteren Wake unten, weil dieses Panel einen einzelnen Refresh nicht
+  // zuverlaessig vollstaendig durchzeichnet.
+  BootSplash::show();
+  // Layout (Flex-Positionen, Bild-Skalierung/Pivot) VOR dem ersten Refresh
+  // fertigrechnen -- sonst kann der allererste Frame einen halbfertigen
+  // Zwischenzustand zeigen (verzerrt wirkendes Icon/Text), bevor sich beim
+  // naechsten Refresh die endgueltige Position einstellt.
+  lv_obj_update_layout(lv_screen_active());
+  BoardHAL::displayWake();
+  lv_obj_invalidate(lv_screen_active());
+#if defined(DEVICE_M5STACKS_TAB5)
+  tab5_timed_refresh_now("splash-1");
+  tab5_timed_display_wait("splash-1");
+#else
+  lv_refr_now(displayManager.getDisplay());
+  BoardHAL::displayWaitDisplay();
+#endif
+  delay(20);
+  lv_obj_invalidate(lv_screen_active());
+#if defined(DEVICE_M5STACKS_TAB5)
+  tab5_timed_refresh_now("splash-2");
+  tab5_timed_display_wait("splash-2");
+#else
+  lv_refr_now(displayManager.getDisplay());
+  BoardHAL::displayWaitDisplay();
+#endif
+  const uint32_t boot_splash_shown_at = millis();
+
+  Serial.println("[Setup] powerManager.init()...");
+  Serial.flush();
+  powerManager.init();
+  Serial.println("[Setup] Power OK");
+  log_memory_status("after-power");
   Serial.flush();
 
   // Waveshare 720×720: Square display, no rotation needed.
