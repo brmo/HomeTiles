@@ -1710,7 +1710,8 @@ static void create_popup_keyboard(lv_obj_t* content_parent) {
 // Eine "Beschriftung:  Wert"-Zeile mit fester Beschriftungsspalte, damit die
 // Werte aller Zeilen an derselben Kante beginnen (AP-Infobox und System-
 // Popup). Rueckgabe ist das Wert-Label; der Aufrufer befuellt es.
-static lv_obj_t* create_info_value_row(lv_obj_t* parent, const char* label_text) {
+static lv_obj_t* create_info_value_row(lv_obj_t* parent, const char* label_text,
+                                       bool white_label = false) {
   lv_obj_t* row = lv_obj_create(parent);
   style_plain_container(row);
   lv_obj_set_size(row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
@@ -1720,7 +1721,7 @@ static lv_obj_t* create_info_value_row(lv_obj_t* parent, const char* label_text)
   lv_label_set_text_fmt(label, "%s:", label_text);
   lv_obj_set_width(label, 160);
   lv_obj_set_style_text_font(label, &ui_font_24, 0);
-  lv_obj_set_style_text_color(label, lv_color_hex(0xC8C8C8), 0);
+  lv_obj_set_style_text_color(label, white_label ? lv_color_white() : lv_color_hex(0xC8C8C8), 0);
 
   lv_obj_t* value = lv_label_create(row);
   lv_label_set_text(value, "-");
@@ -2241,26 +2242,29 @@ static void build_system_popup(lv_obj_t* parent) {
   lv_obj_set_flex_flow(brand, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(brand, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_column(brand, 14, 0);
-  create_hometiles_logo_mark(brand, 48);
+  lv_obj_set_style_pad_column(brand, 18, 0);
+  create_hometiles_logo_mark(brand, 64);
 
   lv_obj_t* brand_text = lv_obj_create(brand);
   style_plain_container(brand_text);
   lv_obj_clear_flag(brand_text, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_size(brand_text, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
   lv_obj_set_flex_flow(brand_text, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(brand_text, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+  // cross_place=START ist hier die eigentliche Achse, die links buendig
+  // ausrichtet (COLUMN-Flow: Cross-Achse ist horizontal) -- vorher stand hier
+  // CENTER, wodurch die Version unter dem Titel zentriert statt buendig war.
+  lv_obj_set_flex_align(brand_text, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
                         LV_FLEX_ALIGN_START);
   lv_obj_set_style_pad_row(brand_text, 2, 0);
 
   lv_obj_t* brand_title = lv_label_create(brand_text);
   lv_label_set_text(brand_title, "HomeTiles");
-  lv_obj_set_style_text_font(brand_title, &ui_font_32, 0);
+  lv_obj_set_style_text_font(brand_title, &ui_font_40, 0);
   lv_obj_set_style_text_color(brand_title, lv_color_white(), 0);
 
   lv_obj_t* version_caption = lv_label_create(brand_text);
   lv_label_set_text(version_caption, FW_VERSION);
-  lv_obj_set_style_text_font(version_caption, &ui_font_20, 0);
+  lv_obj_set_style_text_font(version_caption, &ui_font_24, 0);
   lv_obj_set_style_text_color(version_caption, lv_color_hex(0xA8A8A8), 0);
 
   // Geraet als buendige Beschriftung/Wert-Zeile (wie AP-Infobox)
@@ -2269,7 +2273,8 @@ static void build_system_popup(lv_obj_t* parent) {
   lv_obj_set_size(system_info_rows, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
   lv_obj_set_flex_flow(system_info_rows, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(system_info_rows, 8, 0);
-  lv_obj_t* device_val = create_info_value_row(system_info_rows, tr().system_device_label);
+  lv_obj_t* device_val =
+      create_info_value_row(system_info_rows, tr().system_device_label, /*white_label=*/true);
   lv_label_set_text(device_val, Device::displayName());
 
 #if LV_USE_QRCODE
