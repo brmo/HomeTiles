@@ -477,6 +477,15 @@ void setup() {
   // naechsten Refresh die endgueltige Position einstellt.
   lv_obj_update_layout(lv_screen_active());
   BoardHAL::displayWake();
+  // Kurze Ruhephase direkt nach dem physischen Panel-Einschalten: der
+  // Timing-/Sync-Generator des Panels braucht offenbar einen Moment, bis er
+  // eingerastet ist -- ein Refresh, der zu frueh danach kommt, kann verzerrt
+  // ankommen. Zusaetzlich zum bestehenden Doppel-Refresh (siehe Kommentar
+  // dort: ein einzelner Refresh zeichnet dieses Panel nicht zuverlaessig
+  // vollstaendig durch) noch ein dritter Durchlauf, weil dies hier der
+  // allererste Refresh nach dem Kaltstart ist -- im Gegensatz zum spaeteren
+  // Wake nach dem UI-Build, wo das Panel schon "warmgelaufen" ist.
+  delay(30);
   lv_obj_invalidate(lv_screen_active());
 #if defined(DEVICE_M5STACKS_TAB5)
   tab5_timed_refresh_now("splash-1");
@@ -490,6 +499,15 @@ void setup() {
 #if defined(DEVICE_M5STACKS_TAB5)
   tab5_timed_refresh_now("splash-2");
   tab5_timed_display_wait("splash-2");
+#else
+  lv_refr_now(displayManager.getDisplay());
+  BoardHAL::displayWaitDisplay();
+#endif
+  delay(20);
+  lv_obj_invalidate(lv_screen_active());
+#if defined(DEVICE_M5STACKS_TAB5)
+  tab5_timed_refresh_now("splash-3");
+  tab5_timed_display_wait("splash-3");
 #else
   lv_refr_now(displayManager.getDisplay());
   BoardHAL::displayWaitDisplay();
@@ -563,8 +581,19 @@ void setup() {
     }
   }
   BootSplash::hide();
-  lv_obj_invalidate(lv_screen_active());
-  lv_timer_handler();
+  // Waehrend des kompletten UI-Aufbaus (inkl. Statusbar-Befuellung weiter
+  // unten) die Display-Invalidierung abschalten -- switchToTab(0) in
+  // buildUI() macht sonst selbst schon einen sichtbaren Zwischen-Refresh
+  // (Kacheln mit noch leerer Uhrzeit), bevor updateStatusbar() unten die
+  // echten Werte setzt. Zusammen mit dem Schwarzbild-Refresh, der hier vorher
+  // stand, ergab das ein "treppenartiges" Umschalten (schwarz -> Kacheln ohne
+  // Uhrzeit -> Kacheln mit Uhrzeit) statt eines einzigen sauberen Schnitts
+  // von Splash auf die fertige Oberflaeche. Gleiche Technik wie in
+  // tiles_reload_layout() (tab_tiles_unified.cpp) -- dort schon bewaehrt, um
+  // Kachel-Aufbau unsichtbar zu halten, bis alles fertig ist.
+  if (lv_display_t* disp = displayManager.getDisplay()) {
+    lv_display_enable_invalidation(disp, false);
+  }
 
   Serial.println("[Setup] Building UI...");
   Serial.flush();
@@ -586,6 +615,13 @@ void setup() {
   uiManager.updateStatusbar();
   Serial.println("[Setup] Statusbar updated");
   Serial.flush();
+
+  // Ab hier ist die Oberflaeche komplett fertig (Kacheln + Statusbar) --
+  // Invalidierung wieder einschalten, der folgende Wake-Refresh zeigt dann in
+  // einem Schritt die fertige Oberflaeche statt Zwischenstufen.
+  if (lv_display_t* disp = displayManager.getDisplay()) {
+    lv_display_enable_invalidation(disp, true);
+  }
 
   BoardHAL::displayWake();
   lv_obj_invalidate(lv_screen_active());

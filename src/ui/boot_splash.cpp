@@ -48,26 +48,39 @@ void show() {
   lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), 0);
   lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
 
+  // Gleicher zweischichtiger Aufbau wie das System-Popup (settings_popup_overlay
+  // + settings_popup_card in tab_settings.cpp): aussen randloser fast-schwarzer
+  // Hintergrund mit Geraete-Grid-Padding als "Rahmen", darin eine abgerundete
+  // graue Karte in exakt denselben Massen/Radius wie das System-Popup.
   g_overlay = lv_obj_create(scr);
   lv_obj_set_size(g_overlay, LV_PCT(100), LV_PCT(100));
   lv_obj_set_pos(g_overlay, 0, 0);
-  // Gleicher Grauton wie die System-Popup-Karte (settings_popup_card in
-  // tab_settings.cpp) statt des dunkleren Popup-Overlay-Hintergrunds.
-  lv_obj_set_style_bg_color(g_overlay, lv_color_hex(0x2A2A2A), 0);
+  lv_obj_set_style_bg_color(g_overlay, lv_color_hex(0x0A0A0A), 0);
   lv_obj_set_style_bg_opa(g_overlay, LV_OPA_COVER, 0);
   lv_obj_set_style_border_opa(g_overlay, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(g_overlay, 0, 0);
   lv_obj_set_style_radius(g_overlay, 0, 0);
-  lv_obj_set_style_pad_all(g_overlay, 0, 0);
+  lv_obj_set_style_pad_all(g_overlay, Device::kGridPad, 0);
   lv_obj_clear_flag(g_overlay, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_flex_flow(g_overlay, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(g_overlay, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+
+  lv_obj_t* card = lv_obj_create(g_overlay);
+  lv_obj_set_size(card, LV_PCT(100), LV_PCT(100));
+  lv_obj_center(card);
+  lv_obj_set_style_bg_color(card, lv_color_hex(0x2A2A2A), 0);
+  lv_obj_set_style_border_opa(card, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(card, 0, 0);
+  lv_obj_set_style_radius(card, 22, 0);
+  lv_obj_set_style_clip_corner(card, false, 0);
+  lv_obj_set_style_pad_all(card, 0, 0);
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(card, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_row(g_overlay, 24, 0);
+  lv_obj_set_style_pad_row(card, 24, 0);
 
   // Marke: Icon links, rechts daneben Titel+Version -- identischer Aufbau
   // wie im System-Popup.
-  lv_obj_t* brand = lv_obj_create(g_overlay);
+  lv_obj_t* brand = lv_obj_create(card);
   lv_obj_set_style_bg_opa(brand, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(brand, 0, 0);
   lv_obj_set_style_pad_all(brand, 0, 0);
@@ -100,7 +113,7 @@ void show() {
   lv_obj_set_style_text_font(version_caption, &ui_font_24, 0);
   lv_obj_set_style_text_color(version_caption, lv_color_hex(0xA8A8A8), 0);
 
-  lv_obj_t* device_label = lv_label_create(g_overlay);
+  lv_obj_t* device_label = lv_label_create(card);
   lv_label_set_text(device_label, Device::displayName());
   lv_obj_set_style_text_font(device_label, &ui_font_24, 0);
   lv_obj_set_style_text_color(device_label, lv_color_hex(0xA8A8A8), 0);
