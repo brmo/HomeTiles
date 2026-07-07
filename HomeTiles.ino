@@ -490,20 +490,26 @@ void setup() {
   Serial.flush();
 
   // Ab hier gibt es einen aktiven LVGL-Screen -- kurz die Begruessung zeigen,
-  // waehrend der Rest bootet. displayManager.init() schaltet das Panel noch
-  // NICHT sichtbar; das passiert erst durch BoardHAL::displayWake() (Panel-
-  // Ausgabe + Backlight an). Ohne den Wake HIER waere der Splash bis zum
-  // naechsten Wake-Aufruf (urspruenglich erst nach dem UI-Build) unsichtbar --
-  // das Panel blieb schlicht aus. Gleiche Doppel-Refresh-Sequenz wie beim
-  // spaeteren Wake unten, weil dieses Panel einen einzelnen Refresh nicht
-  // zuverlaessig vollstaendig durchzeichnet.
+  // waehrend der Rest bootet.
   BootSplash::show();
   // Layout (Flex-Positionen, Bild-Skalierung/Pivot) VOR dem ersten Refresh
   // fertigrechnen -- sonst kann der allererste Frame einen halbfertigen
   // Zwischenzustand zeigen (verzerrt wirkendes Icon/Text), bevor sich beim
   // naechsten Refresh die endgueltige Position einstellt.
   lv_obj_update_layout(lv_screen_active());
-  BoardHAL::displayWake();
+  // Backlight bleibt aus, bis der Splash komplett im Framebuffer steht --
+  // sonst sieht man ihn bandweise aufbauen. Gleiche Aufruffolge + Delays wie
+  // PowerManager::enterDisplaySleep()/wakeFromDisplaySleep() (power_manager.cpp),
+  // dort schon fuers Geraet feinjustiert (die Delays sind hardwarebedingt
+  // noetig, nicht nur Kosmetik) -- displayWaitDisplay() ist je nach Geraet
+  // ein No-Op oder wartet wirklich auf die Hardware.
+  BoardHAL::displayWaitDisplay();
+  BoardHAL::setBrightness(0);
+  BoardHAL::displayWaitDisplay();
+  delay(30);
+  BoardHAL::displayPowerSaveOn();
+  BoardHAL::displayWaitDisplay();
+  delay(60);
   lv_obj_invalidate(lv_screen_active());
 #if defined(DEVICE_M5STACKS_TAB5)
   tab5_timed_refresh_now("splash-1");
@@ -521,6 +527,13 @@ void setup() {
   lv_refr_now(displayManager.getDisplay());
   BoardHAL::displayWaitDisplay();
 #endif
+  // Framebuffer enthaelt jetzt den fertigen Splash -- wieder an, gleiche
+  // Aufruffolge wie PowerManager::wakeFromDisplaySleep().
+  BoardHAL::displayWaitDisplay();
+  delay(20);
+  BoardHAL::displayPowerSaveOff();
+  BoardHAL::displayWaitDisplay();
+  delay(30);
   const uint32_t boot_splash_shown_at = millis();
 
   Serial.println("[Setup] powerManager.init()...");
