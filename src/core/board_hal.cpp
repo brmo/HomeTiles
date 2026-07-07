@@ -60,6 +60,10 @@ void BoardHAL::displayWake() {
   Device::displayWake();
 }
 
+void BoardHAL::displayWakeDark() {
+  Device::displayWakeDark();
+}
+
 void BoardHAL::displayPowerSaveOn() {
   Device::displayPowerSaveOn();
 }

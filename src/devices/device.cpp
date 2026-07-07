@@ -60,6 +60,15 @@ void displayWake() {
   DeviceImpl::displayWake();
 }
 
+void displayWakeDark() {
+#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
+  DeviceImpl::displayWakeDark();
+#else
+  DeviceImpl::displayWake();
+  DeviceImpl::setBrightness(0);
+#endif
+}
+
 void displayPowerSaveOn() {
   DeviceImpl::displayPowerSaveOn();
 }

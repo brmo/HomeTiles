@@ -1,5 +1,6 @@
 #include <lvgl.h>
 #include <WiFi.h>
+#include <cstring>
 #include "src/ui/tab_settings.h"
 #include "src/core/config_manager.h"
 #include "src/core/board_hal.h"
@@ -133,6 +134,17 @@ static bool system_update_available = false;
 static const i18n::Strings& tr() {
   return i18n::strings(configManager.getConfig().language);
 }
+
+#if LV_USE_QRCODE
+static void style_qr_code(lv_obj_t* qr) {
+  if (!qr) return;
+  lv_obj_set_style_radius(qr, 14, 0);
+  lv_obj_set_style_clip_corner(qr, true, 0);
+  lv_obj_set_style_border_width(qr, 0, 0);
+  lv_obj_set_style_bg_color(qr, lv_color_white(), 0);
+  lv_obj_set_style_bg_opa(qr, LV_OPA_COVER, 0);
+}
+#endif
 
 static lv_obj_t *ap_mode_btn = nullptr;
 static lv_obj_t *ap_mode_btn_label = nullptr;
@@ -1263,9 +1275,16 @@ static void wifi_update_conn_status_label() {
       }
       // Handy-Kameras verbinden sich damit direkt mit dem Hotspot
       static char qr_buf[128];
+      static char last_qr_buf[128] = {};
+      static lv_obj_t* last_qr_obj = nullptr;
       snprintf(qr_buf, sizeof(qr_buf), "WIFI:T:WPA;S:%s;P:%s;;",
                webConfigApSsid(), webConfigApPassword());
-      lv_qrcode_update(wifi_ap_qr, qr_buf, strlen(qr_buf));
+      if (last_qr_obj != wifi_ap_qr || strcmp(last_qr_buf, qr_buf) != 0) {
+        lv_qrcode_update(wifi_ap_qr, qr_buf, strlen(qr_buf));
+        last_qr_obj = wifi_ap_qr;
+        strncpy(last_qr_buf, qr_buf, sizeof(last_qr_buf) - 1);
+        last_qr_buf[sizeof(last_qr_buf) - 1] = '\0';
+      }
       lv_obj_clear_flag(wifi_ap_qr, LV_OBJ_FLAG_HIDDEN);
     }
 #endif
@@ -1871,6 +1890,7 @@ static void build_wifi_popup(lv_obj_t* parent) {
   lv_qrcode_set_dark_color(wifi_ap_qr, lv_color_black());
   lv_qrcode_set_light_color(wifi_ap_qr, lv_color_white());
   lv_qrcode_set_quiet_zone(wifi_ap_qr, true);
+  style_qr_code(wifi_ap_qr);
   lv_obj_add_flag(wifi_ap_qr, LV_OBJ_FLAG_HIDDEN);
 #endif
 
@@ -2263,6 +2283,9 @@ static void build_system_popup(lv_obj_t* parent) {
   lv_qrcode_set_dark_color(system_qr, lv_color_black());
   lv_qrcode_set_light_color(system_qr, lv_color_white());
   lv_qrcode_set_quiet_zone(system_qr, true);
+  style_qr_code(system_qr);
+  lv_qrcode_update(system_qr, GithubUpdate::kRepoUrl, strlen(GithubUpdate::kRepoUrl));
+  system_qr_sized = true;
   lv_obj_add_flag(system_qr, LV_OBJ_FLAG_HIDDEN);
 #endif
 

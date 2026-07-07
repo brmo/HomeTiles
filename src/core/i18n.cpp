@@ -236,7 +236,7 @@ static const Strings kStringsDe = {
     "Helligkeit, Standby & Rotation",
     "Netzwerk & Access Point",
     "Sprache, Zeitzone & Tastatur",
-    "Version %s",
+    "%s",
 
     "Drehen",
 
@@ -485,7 +485,7 @@ static const Strings kStringsEn = {
     "Brightness, standby & rotation",
     "Network & access point",
     "Language, time zone & keyboard",
-    "Version %s",
+    "%s",
 
     "Rotate",
 

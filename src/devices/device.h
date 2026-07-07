@@ -43,6 +43,7 @@ bool getTouch(int16_t& x, int16_t& y);
 
 void displaySleep();
 void displayWake();
+void displayWakeDark();
 void displayPowerSaveOn();
 void displayPowerSaveOff();
 void displayWaitDisplay();

@@ -28,6 +28,7 @@ bool getTouch(TouchPoint* tp);
 
 void displaySleep();
 void displayWake();
+void displayWakeDark();
 void displayPowerSaveOn();
 void displayPowerSaveOff();
 void displayWaitDisplay();

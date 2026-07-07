@@ -70,6 +70,10 @@ static uint32_t tab5_brightness_cap_wait_since = 0;
 // Splash-Screen bleibt mindestens so lange stehen, dass Version/Geraet
 // tatsaechlich lesbar sind, auch wenn der restliche Boot schneller fertig ist.
 static constexpr uint32_t kBootSplashMinVisibleMs = 2500;
+#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
+static constexpr uint32_t kBootBlackWarmupMs = 90;
+static constexpr uint32_t kBootBlackGapMs = 60;
+#endif
 
 static void log_memory_status(const char* tag) {
   const uint32_t heap_free = ESP.getFreeHeap();
@@ -93,6 +97,22 @@ static void log_memory_status(const char* tag) {
                 ESP.getPsramSize() / 1024);
   Serial.flush();
 }
+
+#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
+static void boot_black_warmup(const char* label) {
+  Serial.printf("[Boot] Black display warmup: %s\n", label ? label : "?");
+  Serial.flush();
+
+  BoardHAL::displayFillScreen(0x0000);
+  BoardHAL::displayWaitDisplay();
+  BoardHAL::displayWakeDark();
+  delay(kBootBlackWarmupMs);
+  BoardHAL::displaySleep();
+  delay(kBootBlackGapMs);
+  BoardHAL::displayFillScreen(0x0000);
+  BoardHAL::displayWaitDisplay();
+}
+#endif
 
 #if defined(DEVICE_M5STACKS_TAB5)
 static void tab5_timed_refresh_now(const char* label) {
@@ -461,6 +481,9 @@ void setup() {
   Serial.println("[Setup] Display OK");
   log_memory_status("after-display");
   Serial.flush();
+#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
+  boot_black_warmup("after-display");
+#endif
 
   // NVS + Konfiguration (insbesondere die Display-Rotation) muessen VOR dem
   // ersten sichtbaren Splash-Frame geladen sein. displayManager.init() setzt
@@ -490,20 +513,25 @@ void setup() {
   Serial.flush();
 
   // Ab hier gibt es einen aktiven LVGL-Screen -- kurz die Begruessung zeigen,
-  // waehrend der Rest bootet. displayManager.init() schaltet das Panel noch
-  // NICHT sichtbar; das passiert erst durch BoardHAL::displayWake() (Panel-
-  // Ausgabe + Backlight an). Ohne den Wake HIER waere der Splash bis zum
-  // naechsten Wake-Aufruf (urspruenglich erst nach dem UI-Build) unsichtbar --
-  // das Panel blieb schlicht aus. Gleiche Doppel-Refresh-Sequenz wie beim
-  // spaeteren Wake unten, weil dieses Panel einen einzelnen Refresh nicht
-  // zuverlaessig vollstaendig durchzeichnet.
+  // waehrend der Rest bootet. Das Waveshare-8"-DPI-Panel zeigt den aktiven
+  // Framebuffer direkt; waere es waehrend der ersten Splash-Refreshes sichtbar,
+  // koennen die LVGL-Flush-Streifen fuer wenige Millisekunden als Treppen-Flash
+  // aufblitzen. Deshalb Panel aus, Splash fertig rendern, dann erst sichtbar.
+#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
+  BoardHAL::displaySleep();
+  delay(kBootBlackGapMs);
+  BoardHAL::displayFillScreen(0x0000);
+  BoardHAL::displayWaitDisplay();
+#endif
   BootSplash::show();
   // Layout (Flex-Positionen, Bild-Skalierung/Pivot) VOR dem ersten Refresh
   // fertigrechnen -- sonst kann der allererste Frame einen halbfertigen
   // Zwischenzustand zeigen (verzerrt wirkendes Icon/Text), bevor sich beim
   // naechsten Refresh die endgueltige Position einstellt.
   lv_obj_update_layout(lv_screen_active());
+#if !defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
   BoardHAL::displayWake();
+#endif
   lv_obj_invalidate(lv_screen_active());
 #if defined(DEVICE_M5STACKS_TAB5)
   tab5_timed_refresh_now("splash-1");
@@ -519,6 +547,10 @@ void setup() {
   tab5_timed_display_wait("splash-2");
 #else
   lv_refr_now(displayManager.getDisplay());
+  BoardHAL::displayWaitDisplay();
+#endif
+#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
+  BoardHAL::displayWake();
   BoardHAL::displayWaitDisplay();
 #endif
   const uint32_t boot_splash_shown_at = millis();

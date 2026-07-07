@@ -38,6 +38,8 @@ constexpr ledc_timer_bit_t kBacklightBits = LEDC_TIMER_10_BIT;
 constexpr bool kBacklightActiveLow = false;
 constexpr uint8_t kBacklightInputMin = 121;
 constexpr uint8_t kBacklightInputMax = 255;
+constexpr uint32_t kBootBlackWarmupMs = 90;
+constexpr uint32_t kBootBlackGapMs = 60;
 constexpr uint32_t kPanelLaneCount = 2;
 constexpr uint32_t kPanelFrameBufferCount = 1;
 constexpr size_t kFillChunkRows = 40;
@@ -347,6 +349,28 @@ size_t panel_frame_bytes() {
 
 uint16_t* panel_fb() {
   return g_panel_fb_ready ? g_panel_fbs[0] : nullptr;
+}
+
+void clear_panel_framebuffer(uint16_t color) {
+  uint16_t* fb = panel_fb();
+  if (!fb) {
+    return;
+  }
+
+  const size_t pixels = panel_pixel_count();
+  if (color == 0) {
+    std::memset(fb, 0, panel_frame_bytes());
+  } else {
+    for (size_t i = 0; i < pixels; ++i) {
+      fb[i] = color;
+    }
+  }
+  flush_cache_for_dma(fb, panel_frame_bytes());
+  g_frame_dirty = false;
+  g_dirty_x1 = 0;
+  g_dirty_y1 = 0;
+  g_dirty_x2 = 0;
+  g_dirty_y2 = 0;
 }
 
 void reset_dirty_rect() {
@@ -827,7 +851,9 @@ bool init_display() {
   }
   log_step("JD9365 panel create OK");
 
-  init_panel_framebuffer();
+  if (init_panel_framebuffer()) {
+    clear_panel_framebuffer(0x0000);
+  }
 
   esp_lcd_dpi_panel_event_callbacks_t cbs = {};
   cbs.on_color_trans_done = on_color_trans_done;
@@ -950,8 +976,16 @@ bool DeviceWaveshareTouchLCD8::init() {
     Serial.println("[Device/WaveshareTouchLCD8] Touch OK");
   }
 
+  // Keep the boot path dark until HomeTiles has rendered the first complete
+  // splash frame. Showing this single live DPI framebuffer too early exposes
+  // intermediate LVGL/flush bands as a short stair-step flash.
   displayFillScreen(0x0000);
-  setBrightness(g_brightness);
+  displayWakeDark();
+  delay(kBootBlackWarmupMs);
+  displaySleep();
+  delay(kBootBlackGapMs);
+  displayFillScreen(0x0000);
+  apply_backlight(0);
   Serial.println("[Device/WaveshareTouchLCD8] Init complete");
   return true;
 }
@@ -1175,6 +1209,13 @@ void DeviceWaveshareTouchLCD8::displayWake() {
     esp_lcd_panel_disp_on_off(g_panel, true);
   }
   apply_backlight(g_brightness);
+}
+
+void DeviceWaveshareTouchLCD8::displayWakeDark() {
+  if (g_panel) {
+    esp_lcd_panel_disp_on_off(g_panel, true);
+  }
+  apply_backlight(0);
 }
 
 void DeviceWaveshareTouchLCD8::displayPowerSaveOn() {
