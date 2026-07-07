@@ -490,7 +490,13 @@ void setup() {
   Serial.flush();
 
   // Ab hier gibt es einen aktiven LVGL-Screen -- kurz die Begruessung zeigen,
-  // waehrend der Rest bootet.
+  // waehrend der Rest bootet. displayManager.init() schaltet das Panel noch
+  // NICHT sichtbar; das passiert erst durch BoardHAL::displayWake() (Panel-
+  // Ausgabe + Backlight an). Ohne den Wake HIER waere der Splash bis zum
+  // naechsten Wake-Aufruf (urspruenglich erst nach dem UI-Build) unsichtbar --
+  // das Panel blieb schlicht aus. Gleiche Doppel-Refresh-Sequenz wie beim
+  // spaeteren Wake unten, weil dieses Panel einen einzelnen Refresh nicht
+  // zuverlaessig vollstaendig durchzeichnet.
   BootSplash::show();
   // Layout (Flex-Positionen, Bild-Skalierung/Pivot) VOR dem ersten Refresh
   // fertigrechnen -- sonst kann der allererste Frame einen halbfertigen

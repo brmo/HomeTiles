@@ -62,14 +62,6 @@ void show() {
   lv_obj_set_style_radius(g_overlay, 0, 0);
   lv_obj_set_style_pad_all(g_overlay, Device::kGridPad, 0);
   lv_obj_clear_flag(g_overlay, LV_OBJ_FLAG_SCROLLABLE);
-  // Default-Theme setzt LV_THEME_DEFAULT_TRANSITION_TIME=80 (lv_conf.h) --
-  // ohne dieses Abschalten animiert LVGL das Flex-Layout jedes Containers
-  // beim ersten Aufbau (Kinder faedeln sich sichtbar in Position ein). Bei
-  // drei verschachtelten Flex-Containern (card -> brand -> brand_text)
-  // summiert sich das zu einem sichtbaren stufenweisen Aufbau ("Treppen").
-  // Gleiches Problem/gleicher Fix bereits in build_tiles_tab()
-  // (tab_tiles_unified.cpp) fuer die Kachel-Tabs.
-  lv_obj_set_style_anim_duration(g_overlay, 0, 0);
 
   lv_obj_t* card = lv_obj_create(g_overlay);
   lv_obj_set_size(card, LV_PCT(100), LV_PCT(100));
@@ -81,7 +73,6 @@ void show() {
   lv_obj_set_style_clip_corner(card, false, 0);
   lv_obj_set_style_pad_all(card, 0, 0);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_anim_duration(card, 0, 0);
   lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(card, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER);
@@ -94,7 +85,6 @@ void show() {
   lv_obj_set_style_border_width(brand, 0, 0);
   lv_obj_set_style_pad_all(brand, 0, 0);
   lv_obj_clear_flag(brand, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_anim_duration(brand, 0, 0);
   lv_obj_set_size(brand, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
   lv_obj_set_flex_flow(brand, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(brand, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
@@ -107,7 +97,6 @@ void show() {
   lv_obj_set_style_border_width(brand_text, 0, 0);
   lv_obj_set_style_pad_all(brand_text, 0, 0);
   lv_obj_clear_flag(brand_text, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_anim_duration(brand_text, 0, 0);
   lv_obj_set_size(brand_text, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
   lv_obj_set_flex_flow(brand_text, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(brand_text, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
