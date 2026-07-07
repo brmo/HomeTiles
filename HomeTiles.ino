@@ -30,6 +30,7 @@
 #include "src/web/web_config.h"
 #include "src/web/web_admin.h"
 #include "src/ui/tab_settings.h"
+#include "src/ui/boot_splash.h"
 #include "src/ui/tab_tiles_unified.h"
 #include "src/game/game_controls_config.h"
 #include "src/game/game_ws_server.h"
@@ -457,18 +458,29 @@ void setup() {
   log_memory_status("after-display");
   Serial.flush();
 
+  // Ab hier gibt es einen aktiven LVGL-Screen -- Ladeanzeige zeigen, bis die
+  // Oberflaeche fertig gebaut ist. lv_timer_handler() nach jedem Update
+  // pumpt den Render, damit es auch tatsaechlich aufs Panel kommt (setup()
+  // laeuft ausserhalb von loop(), sonst pumpt das niemand).
+  BootSplash::show();
+  lv_timer_handler();
+
   Serial.println("[Setup] powerManager.init()...");
   Serial.flush();
   powerManager.init();
   Serial.println("[Setup] Power OK");
   log_memory_status("after-power");
   Serial.flush();
+  BootSplash::setProgress(15, "Starte...");
+  lv_timer_handler();
 
   Serial.println("[Setup] NVS init...");
   Serial.flush();
   init_nvs();
   log_memory_status("after-nvs");
   Serial.flush();
+  BootSplash::setProgress(20, nullptr);
+  lv_timer_handler();
 
   Serial.println("[Setup] Loading configs...");
   Serial.flush();
@@ -482,6 +494,8 @@ void setup() {
   Serial.println("[Setup] Configs OK");
   log_memory_status("after-configs");
   Serial.flush();
+  BootSplash::setProgress(30, "Lade Konfiguration...");
+  lv_timer_handler();
 
   // Waveshare 720×720: Square display, no rotation needed.
   // Skip auto-rotation detection (no IMU).
@@ -509,6 +523,8 @@ void setup() {
   }
   Serial.println("[Setup] Brightness OK");
   Serial.flush();
+  BootSplash::setProgress(35, "Baue Oberflaeche...");
+  lv_timer_handler();
 
   Serial.println("[Setup] Building UI...");
   Serial.flush();
@@ -526,6 +542,8 @@ void setup() {
   ui_build_waiter = nullptr;
   Serial.println("[Setup] UI built");
   Serial.flush();
+  BootSplash::setProgress(75, nullptr);
+  lv_timer_handler();
 
   uiManager.updateStatusbar();
   Serial.println("[Setup] Statusbar updated");
@@ -552,6 +570,8 @@ void setup() {
   Serial.println("[Setup] Display wake OK");
   log_memory_status("after-ui-build");
   Serial.flush();
+  BootSplash::setProgress(80, nullptr);
+  lv_timer_handler();
 
   Serial.println("[Setup] MQTT Topics...");
   Serial.flush();
@@ -564,21 +584,29 @@ void setup() {
   mqttTopics.begin(ts);
   Serial.println("[Setup] MQTT Topics OK");
   Serial.flush();
+  BootSplash::setProgress(82, nullptr);
+  lv_timer_handler();
 
   if (has_config) {
     Serial.println("[Setup] Network init...");
     Serial.flush();
+    BootSplash::setProgress(85, "Verbinde WLAN...");
+    lv_timer_handler();
     networkManager.init();
     if (WiFi.status() == WL_CONNECTED) uiManager.scheduleNtpSync(0);
     Serial.println("[Setup] Network OK");
     log_memory_status("after-network-init");
     Serial.flush();
+    BootSplash::setProgress(90, nullptr);
+    lv_timer_handler();
 
     Serial.println("[Setup] Game WebSocket Server...");
     Serial.flush();
     gameWSServer.init(8081);
     Serial.println("[Setup] Game WebSocket OK");
     Serial.flush();
+    BootSplash::setProgress(93, nullptr);
+    lv_timer_handler();
 
     Serial.println("[Setup] MQTT-Worker...");
     Serial.flush();
@@ -601,6 +629,12 @@ void setup() {
   } else {
     Serial.println("[Setup] Ueberspringe Network/Game WS (keine Config)");
   }
+
+  BootSplash::setProgress(100, "Fertig");
+  lv_timer_handler();
+  BootSplash::hide();
+  lv_obj_invalidate(lv_screen_active());
+  lv_timer_handler();
 
   Serial.println("\n=== SETUP COMPLETE ===\n");
   log_memory_status("setup-complete");
