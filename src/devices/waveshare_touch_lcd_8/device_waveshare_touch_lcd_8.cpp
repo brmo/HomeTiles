@@ -959,7 +959,12 @@ bool DeviceWaveshareTouchLCD8::init() {
   }
 
   displayFillScreen(0x0000);
-  setBrightness(g_brightness);
+  // Backlight bleibt hier bewusst aus (0, siehe apply_backlight(0) oben) --
+  // wuerde hier schon eingeschaltet, sieht man die Panel-Sync-Einschwingzeit
+  // live als schraege Streifen/Treppen, bevor ueberhaupt irgendein Setup-Code
+  // danach laeuft. Das erste echte Einschalten passiert jetzt gezielt in
+  // HomeTiles.ino kurz vor dem Splash (BoardHAL::displayPowerSaveOff()),
+  // nachdem der Framebuffer schon den fertigen Splash enthaelt.
   Serial.println("[Device/WaveshareTouchLCD8] Init complete");
   return true;
 }

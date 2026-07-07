@@ -581,7 +581,12 @@ bool DisplayManager::init() {
   // Waveshare: Display is already initialised by BoardHAL::init().
   // 720×720 square display – no rotation needed by default.
   BoardHAL::displayFillScreen(0x0000);  // black
-  BoardHAL::setBrightness(150);  // Wird spaeter vom Power Manager gesteuert
+  // Kein setBrightness() hier -- Backlight bleibt aus, bis der Splash-Wake in
+  // HomeTiles.ino es gezielt einschaltet (nachdem der Framebuffer den
+  // fertigen Splash enthaelt). Frueher schaltete diese Zeile das Backlight
+  // schon hier ein, lange bevor Splash/Config ueberhaupt geladen sind --
+  // beim Waveshare-8-RGB-Panel sichtbar als schraege Streifen ("Treppen"),
+  // weil der Panel-Sync zu diesem fruehen Zeitpunkt noch nicht eingerastet ist.
   rotation = Device::kRotationDefault;
 
   last_activity_time = millis();
