@@ -2286,6 +2286,13 @@ static void build_system_popup(lv_obj_t* parent) {
   lv_obj_add_flag(system_qr, LV_OBJ_FLAG_HIDDEN);
 #endif
 
+  // Drueckt Status/Fortschritt+Buttons nach unten; dient beim QR-Einblenden
+  // als Platz-Mass.
+  system_spacer = create_flex_spacer(box);
+
+  // Status/Fortschritt sitzen direkt ueber dem Update-Button, nicht oben
+  // beim Geraet -- das ist die Stelle, an der beim Klick auf "Nach Updates
+  // suchen" tatsaechlich etwas passiert.
   system_status_label = lv_label_create(box);
   lv_obj_set_width(system_status_label, LV_PCT(100));
   lv_label_set_long_mode(system_status_label, LV_LABEL_LONG_WRAP);
@@ -2312,9 +2319,6 @@ static void build_system_popup(lv_obj_t* parent) {
   lv_obj_set_style_radius(system_progress_bar, 9, LV_PART_INDICATOR);
   lv_bar_set_range(system_progress_bar, 0, 100);
   lv_obj_add_flag(system_progress_bar, LV_OBJ_FLAG_HIDDEN);
-
-  // Drueckt die Buttons nach unten; dient beim QR-Einblenden als Platz-Mass
-  system_spacer = create_flex_spacer(box);
 
   system_check_btn = create_popup_button(box, "", 0x2E7D32, on_system_check_clicked);
   lv_obj_set_width(system_check_btn, LV_PCT(100));
