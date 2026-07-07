@@ -423,6 +423,14 @@ static bool writeGridSd(uint16_t folder_id, const PackedQuarterGridV7* packed, s
   String tmpPath = filePath + ".tmp";
   if (storageFS().exists(tmpPath)) storageFS().remove(tmpPath);
 
+  // yield() vor dem Schreiben: das interne Flash-Schreiben sperrt kurz den
+  // Flash-Cache auf beiden Cores und blockiert damit auch den WLAN/SDIO-Task.
+  // Unter Last (viele MQTT-Nachrichten gleichzeitig) kann dessen Empfangs-
+  // Queue dabei ueberlaufen (assert sdio_push_data_to_queue) - reproduziert
+  // beim schnellen Verschieben/Umbenennen vieler Kacheln. yield() direkt davor
+  // gibt dem WLAN-Task eine letzte Chance, seine Queue vor dem Block zu leeren.
+  yield();
+
   File f = storageFS().open(tmpPath, FILE_WRITE);
   if (!f) {
     return false;
@@ -432,6 +440,7 @@ static bool writeGridSd(uint16_t folder_id, const PackedQuarterGridV7* packed, s
   const size_t written = f.write(reinterpret_cast<const uint8_t*>(packed), expected);
   f.flush();
   f.close();
+  yield();
 
   if (written != expected) {
     Serial.printf("[TileConfig] Storage short write: folder=%u written=%u expected=%u\n",
@@ -2271,6 +2280,9 @@ bool TileConfig::saveFolders() const {
   // Ordner verloren. Erst .tmp fuellen, dann atomar drueberrenamen.
   const String tmpPath = String(kFolderIndexFile) + ".tmp";
   if (storageFS().exists(tmpPath)) storageFS().remove(tmpPath);
+  // Siehe writeGridSd(): yield() vor dem Flash-Schreiben, damit der WLAN/SDIO-
+  // Task unter Last noch eine Chance bekommt, seine Empfangs-Queue zu leeren.
+  yield();
   File f = storageFS().open(tmpPath, FILE_WRITE);
   if (!f) return false;
 
@@ -2299,6 +2311,7 @@ bool TileConfig::saveFolders() const {
 
   f.flush();
   f.close();
+  yield();
 
   if (!write_ok) {
     storageFS().remove(tmpPath);
