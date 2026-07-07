@@ -463,12 +463,32 @@ void setup() {
   Serial.flush();
 
   // Ab hier gibt es einen aktiven LVGL-Screen -- kurz die Begruessung zeigen,
-  // waehrend der Rest bootet (lv_timer_handler() pumpt den Render, damit sie
-  // auch tatsaechlich aufs Panel kommt -- setup() laeuft ausserhalb von
-  // loop(), sonst pumpt das niemand). Mindestanzeigedauer siehe unten bei
-  // BootSplash::hide().
+  // waehrend der Rest bootet. displayManager.init() schaltet das Panel noch
+  // NICHT sichtbar; das passiert erst durch BoardHAL::displayWake() (Panel-
+  // Ausgabe + Backlight an). Ohne den Wake HIER waere der Splash bis zum
+  // naechsten Wake-Aufruf (urspruenglich erst nach dem UI-Build) unsichtbar --
+  // das Panel blieb schlicht aus. Gleiche Doppel-Refresh-Sequenz wie beim
+  // spaeteren Wake unten, weil dieses Panel einen einzelnen Refresh nicht
+  // zuverlaessig vollstaendig durchzeichnet.
   BootSplash::show();
-  lv_timer_handler();
+  BoardHAL::displayWake();
+  lv_obj_invalidate(lv_screen_active());
+#if defined(DEVICE_M5STACKS_TAB5)
+  tab5_timed_refresh_now("splash-1");
+  tab5_timed_display_wait("splash-1");
+#else
+  lv_refr_now(displayManager.getDisplay());
+  BoardHAL::displayWaitDisplay();
+#endif
+  delay(20);
+  lv_obj_invalidate(lv_screen_active());
+#if defined(DEVICE_M5STACKS_TAB5)
+  tab5_timed_refresh_now("splash-2");
+  tab5_timed_display_wait("splash-2");
+#else
+  lv_refr_now(displayManager.getDisplay());
+  BoardHAL::displayWaitDisplay();
+#endif
   const uint32_t boot_splash_shown_at = millis();
 
   Serial.println("[Setup] powerManager.init()...");
@@ -524,6 +544,23 @@ void setup() {
   Serial.println("[Setup] Brightness OK");
   Serial.flush();
 
+  // Splash lang genug stehen lassen, dann komplett weg -- BEVOR die
+  // eigentliche UI gebaut wird, damit sich Splash und Kacheln nie denselben
+  // Screen teilen. Frueher lief das nach dem UI-Build mit einem Overlay-
+  // Trick (bringToFront), aber build_ui_task macht offenbar selbst
+  // zwischendurch sichtbare Refreshes, wodurch die Kacheln kurz durchblitzten,
+  // bevor der Splash sich wieder nach vorne draengte -- daher jetzt komplett
+  // sequenziell statt ueberlappend.
+  {
+    const uint32_t elapsed = millis() - boot_splash_shown_at;
+    if (elapsed < kBootSplashMinVisibleMs) {
+      delay(kBootSplashMinVisibleMs - elapsed);
+    }
+  }
+  BootSplash::hide();
+  lv_obj_invalidate(lv_screen_active());
+  lv_timer_handler();
+
   Serial.println("[Setup] Building UI...");
   Serial.flush();
   ui_scene_cb = mqttPublishScene;
@@ -540,10 +577,6 @@ void setup() {
   ui_build_waiter = nullptr;
   Serial.println("[Setup] UI built");
   Serial.flush();
-  // Kacheln sind jetzt als neue Geschwister auf demselben aktiven Screen
-  // entstanden -- Splash wieder nach vorne, sonst zeichnet LVGL sie ueber
-  // ihm (Erzeugungsreihenfolge).
-  BootSplash::bringToFront();
 
   uiManager.updateStatusbar();
   Serial.println("[Setup] Statusbar updated");
@@ -570,21 +603,6 @@ void setup() {
   Serial.println("[Setup] Display wake OK");
   log_memory_status("after-ui-build");
   Serial.flush();
-
-  // Kacheln stehen; Splash beenden, aber erst wenn er mindestens
-  // kBootSplashMinVisibleMs sichtbar war, damit Version/Geraet lesbar
-  // bleiben, auch wenn der Boot bis hierhin schneller war. Netzwerk/MQTT
-  // laufen danach im Hintergrund weiter -- die UI zeigt notfalls erstmal
-  // zwischengespeicherte Werte, bis die Verbindung steht.
-  {
-    const uint32_t elapsed = millis() - boot_splash_shown_at;
-    if (elapsed < kBootSplashMinVisibleMs) {
-      delay(kBootSplashMinVisibleMs - elapsed);
-    }
-  }
-  BootSplash::hide();
-  lv_obj_invalidate(lv_screen_active());
-  lv_timer_handler();
 
   Serial.println("[Setup] MQTT Topics...");
   Serial.flush();

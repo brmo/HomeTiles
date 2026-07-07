@@ -10,15 +10,17 @@
 // (Mindestanzeigedauer siehe hide() in HomeTiles.ino).
 namespace BootSplash {
 
+// Baut nur die LVGL-Objekte auf. Das Panel ist nach displayManager.init()
+// noch nicht sichtbar (kein displayWake() passiert) -- der Aufrufer muss
+// direkt danach selbst BoardHAL::displayWake() + einen Refresh anstossen,
+// siehe HomeTiles.ino (nutzt dort die geraetespezifischen Wake-Helfer, die
+// nicht in dieses Modul exportiert sind).
 void show();
 
-// Muss einmal aufgerufen werden, nachdem waehrend des Boots neue
-// Geschwister-Objekte auf dem aktiven Screen erzeugt wurden (z.B. nach dem
-// UI-Build) -- sonst landen die neuen Tabs vor dem Splash, weil LVGL Kinder
-// in Erzeugungsreihenfolge zeichnet.
-void bringToFront();
-
-// Entfernt das Overlay wieder vollstaendig (loescht die LVGL-Objekte).
+// Entfernt das Overlay wieder vollstaendig (loescht die LVGL-Objekte). Erst
+// aufrufen, wenn der Splash schon lang genug sichtbar war -- danach beginnt
+// der Aufrufer mit dem eigentlichen UI-Aufbau auf demselben Screen, splash
+// und Kacheln sollten sich also nie ueberlappen.
 void hide();
 
 }  // namespace BootSplash

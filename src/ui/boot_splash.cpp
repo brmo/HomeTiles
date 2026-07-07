@@ -42,7 +42,9 @@ void show() {
   g_overlay = lv_obj_create(lv_screen_active());
   lv_obj_set_size(g_overlay, LV_PCT(100), LV_PCT(100));
   lv_obj_set_pos(g_overlay, 0, 0);
-  lv_obj_set_style_bg_color(g_overlay, lv_color_hex(0x0A0A0A), 0);
+  // Gleicher Grauton wie die System-Popup-Karte (settings_popup_card in
+  // tab_settings.cpp) statt des dunkleren Popup-Overlay-Hintergrunds.
+  lv_obj_set_style_bg_color(g_overlay, lv_color_hex(0x2A2A2A), 0);
   lv_obj_set_style_bg_opa(g_overlay, LV_OPA_COVER, 0);
   lv_obj_set_style_border_opa(g_overlay, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(g_overlay, 0, 0);
@@ -93,14 +95,6 @@ void show() {
   lv_label_set_text(device_label, Device::displayName());
   lv_obj_set_style_text_font(device_label, &ui_font_24, 0);
   lv_obj_set_style_text_color(device_label, lv_color_hex(0xA8A8A8), 0);
-}
-
-void bringToFront() {
-  if (!g_overlay) return;
-  // Tabs/Popups werden waehrend des Boots auf denselben aktiven Screen
-  // gebaut -- als spaeter hinzugefuegte Geschwister wuerden sie sonst ueber
-  // dem Overlay landen (LVGL zeichnet Kinder in Erzeugungsreihenfolge).
-  lv_obj_move_foreground(g_overlay);
 }
 
 void hide() {
