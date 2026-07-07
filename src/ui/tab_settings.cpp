@@ -2178,6 +2178,47 @@ static void on_system_check_clicked(lv_event_t*) {
   g_fw_check_callback();
 }
 
+// HomeTiles-Logo als reine LVGL-Primitive nachgebaut (drei weisse Kacheln +
+// tealfarbenes Plus in der vierten) -- gleiche Optik wie docs/images/logo.svg,
+// ohne dass ein Bild-Asset in ein Display-Farbformat konvertiert werden muss.
+static lv_obj_t* create_hometiles_logo_mark(lv_obj_t* parent, int32_t size) {
+  lv_obj_t* mark = lv_obj_create(parent);
+  style_plain_container(mark);
+  lv_obj_clear_flag(mark, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_size(mark, size, size);
+
+  const int32_t gap = size / 12;
+  const int32_t cell = (size - gap) / 2;
+
+  auto make_square = [&](int32_t x, int32_t y) {
+    lv_obj_t* sq = lv_obj_create(mark);
+    style_plain_container(sq);
+    lv_obj_clear_flag(sq, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(sq, cell, cell);
+    lv_obj_set_pos(sq, x, y);
+    lv_obj_set_style_radius(sq, cell / 4, 0);
+    lv_obj_set_style_bg_color(sq, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(sq, LV_OPA_COVER, 0);
+  };
+  make_square(0, 0);
+  make_square(cell + gap, 0);
+  make_square(0, cell + gap);
+
+  lv_obj_t* plus_slot = lv_obj_create(mark);
+  style_plain_container(plus_slot);
+  lv_obj_clear_flag(plus_slot, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_size(plus_slot, cell, cell);
+  lv_obj_set_pos(plus_slot, cell + gap, cell + gap);
+
+  lv_obj_t* plus = lv_label_create(plus_slot);
+  lv_label_set_text(plus, getMdiChar("plus").c_str());
+  if (FONT_MDI_ICONS) lv_obj_set_style_text_font(plus, FONT_MDI_ICONS, 0);
+  lv_obj_set_style_text_color(plus, lv_color_hex(0x26A69A), 0);
+  lv_obj_center(plus);
+
+  return mark;
+}
+
 static void build_system_popup(lv_obj_t* parent) {
   lv_obj_t* box = lv_obj_create(parent);
   style_plain_container(box);
@@ -2190,6 +2231,21 @@ static void build_system_popup(lv_obj_t* parent) {
   // Gleiche Anmutung wie das Display-Formular: fester Abstand von oben
   lv_obj_set_style_pad_top(box, 48, 0);
   lv_obj_set_style_pad_row(box, 18, 0);
+
+  // Marke oben im Popup: Logo + Produktname, wie ein App-"Ueber"-Screen.
+  lv_obj_t* brand = lv_obj_create(box);
+  style_plain_container(brand);
+  lv_obj_clear_flag(brand, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_size(brand, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(brand, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(brand, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_row(brand, 10, 0);
+  create_hometiles_logo_mark(brand, 56);
+  lv_obj_t* brand_title = lv_label_create(brand);
+  lv_label_set_text(brand_title, "HomeTiles");
+  lv_obj_set_style_text_font(brand_title, &ui_font_32, 0);
+  lv_obj_set_style_text_color(brand_title, lv_color_white(), 0);
 
   // Version + Geraet als buendige Beschriftung/Wert-Zeilen (wie AP-Infobox)
   system_info_rows = lv_obj_create(box);
