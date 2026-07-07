@@ -132,6 +132,16 @@ String resolveRedirectUrl(const String& current_url,
   return String("https://") + current.host + "/" + location;
 }
 
+String releaseDownloadUrl(const char* tag, const String& asset_name) {
+  return String(GithubUpdate::kRepoUrl) + "/releases/download/" + tag + "/" + asset_name;
+}
+
+String legacyDeviceSlug() {
+  String slug = Device::profile().key;
+  slug.replace('_', '-');
+  return slug;
+}
+
 typedef bool (*RangeDataFn)(const uint8_t* data, size_t len, void* ctx);
 
 bool fetchHttpRange(const String& start_url, size_t from, size_t to,
@@ -446,9 +456,8 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
   // Evtl. haengengebliebenen Web-OTA-Rest aufraeumen
   if (Update.isRunning()) Update.abort();
 
-  const String url = String(kRepoUrl) + "/releases/download/" + tag +
-                     "/hometiles-" + tag + "-" +
-                     Device::profile().key + ".bin";
+  String url = releaseDownloadUrl(
+      tag, String("hometiles-") + tag + "-" + Device::profile().key + ".bin");
   Serial.printf("[Update] Lade %s\n", url.c_str());
 
   // Netzwerk-Lesepuffer und OTA-Staging liegen im PSRAM. Der GitHub/CDN-
@@ -480,8 +489,27 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
   HeadBufferCtx head_ctx{image_head, sizeof(image_head), 0};
   if (!fetchHttpRange(url, 0, sizeof(image_head) - 1, net_buf, kInstallReadChunk,
                       storeHeadBytes, &head_ctx, total_sz, error_out)) {
-    failed = true;
-  } else {
+    const String first_error = error_out;
+    const String legacy_url = releaseDownloadUrl(
+        tag,
+        String("esp32-p4-homeassistant-display-") + tag + "-" +
+            legacyDeviceSlug() + "-update.bin");
+    memset(image_head, 0, sizeof(image_head));
+    head_ctx.len = 0;
+    total_sz = 0;
+    error_out = "";
+    Serial.printf("[Update] Asset nicht gefunden/lesbar (%s), versuche %s\n",
+                  first_error.c_str(), legacy_url.c_str());
+    if (!fetchHttpRange(legacy_url, 0, sizeof(image_head) - 1, net_buf,
+                        kInstallReadChunk, storeHeadBytes, &head_ctx, total_sz,
+                        error_out)) {
+      error_out = first_error + "; fallback: " + error_out;
+      failed = true;
+    } else {
+      url = legacy_url;
+    }
+  }
+  if (!failed) {
     delay(20);
   }
 

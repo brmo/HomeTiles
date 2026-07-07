@@ -27,7 +27,7 @@ function readVersion() {
   return firstLine;
 }
 
-function readDeviceSlug() {
+function readDeviceInfo() {
   const lines = fs.readFileSync(deviceSelectPath, 'utf8').split(/\r?\n/);
   let hasTab5 = false;
   let hasB4 = false;
@@ -53,10 +53,10 @@ function readDeviceSlug() {
     throw new Error('Multiple device targets are enabled in src/devices/device_select.h');
   }
 
-  if (hasTab5) return 'm5stacks-tab5';
-  if (hasTouch8) return 'waveshare-touch-lcd-8';
-  if (hasB4) return 'waveshare-b4';
-  return 'waveshare-b4';
+  if (hasTab5) return { key: 'm5stacks_tab5', slug: 'm5stacks-tab5' };
+  if (hasTouch8) return { key: 'waveshare_touch_lcd_8', slug: 'waveshare-touch-lcd-8' };
+  if (hasB4) return { key: 'waveshare_4b', slug: 'waveshare-b4' };
+  return { key: 'waveshare_4b', slug: 'waveshare-b4' };
 }
 
 function getArduinoSketchesPath() {
@@ -99,31 +99,39 @@ function findLatestSuccessfulBuild(sketchesPath) {
 
 function main() {
   const version = readVersion().replace(/[^A-Za-z0-9._-]/g, '-');
-  const deviceSlug = readDeviceSlug();
+  const device = readDeviceInfo();
   const sketchesPath = getArduinoSketchesPath();
   const build = findLatestSuccessfulBuild(sketchesPath);
 
   fs.mkdirSync(releaseDir, { recursive: true });
 
-  const deviceFilePattern = new RegExp(
-    `^esp32-p4-homeassistant-display-.*-${deviceSlug}-(update|factory)\\.bin$`
-  );
+  const deviceFilePatterns = [
+    new RegExp(`^hometiles-.*-${device.key}(-factory)?\\.bin$`),
+    new RegExp(`^esp32-p4-homeassistant-display-.*-${device.slug}-(update|factory)\\.bin$`),
+  ];
   for (const entry of fs.readdirSync(releaseDir, { withFileTypes: true })) {
     if (!entry.isFile()) continue;
-    if (!deviceFilePattern.test(entry.name)) continue;
+    if (!deviceFilePatterns.some((pattern) => pattern.test(entry.name))) continue;
     fs.unlinkSync(path.join(releaseDir, entry.name));
   }
 
-  const baseName = `esp32-p4-homeassistant-display-${version}-${deviceSlug}`;
-  const updateDest = path.join(releaseDir, `${baseName}-update.bin`);
-  const factoryDest = path.join(releaseDir, `${baseName}-factory.bin`);
+  const updateDest = path.join(releaseDir, `hometiles-${version}-${device.key}.bin`);
+  const factoryDest = path.join(releaseDir, `hometiles-${version}-${device.key}-factory.bin`);
+  // Keep legacy copies so older firmware builds can still update from the same release.
+  const legacyBaseName = `esp32-p4-homeassistant-display-${version}-${device.slug}`;
+  const legacyUpdateDest = path.join(releaseDir, `${legacyBaseName}-update.bin`);
+  const legacyFactoryDest = path.join(releaseDir, `${legacyBaseName}-factory.bin`);
 
   fs.copyFileSync(build.updatePath, updateDest);
   fs.copyFileSync(build.factoryPath, factoryDest);
+  fs.copyFileSync(build.updatePath, legacyUpdateDest);
+  fs.copyFileSync(build.factoryPath, legacyFactoryDest);
 
   console.log(`[release-helper] Build: ${build.buildPath}`);
   console.log(`[release-helper] ${path.basename(updateDest)}`);
   console.log(`[release-helper] ${path.basename(factoryDest)}`);
+  console.log(`[release-helper] ${path.basename(legacyUpdateDest)}`);
+  console.log(`[release-helper] ${path.basename(legacyFactoryDest)}`);
 }
 
 main();
