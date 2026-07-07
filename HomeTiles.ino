@@ -67,6 +67,10 @@ static bool tab5_brightness_capped = false;
 static uint32_t tab5_brightness_cap_wait_since = 0;
 #endif
 
+// Splash-Screen bleibt mindestens so lange stehen, dass Version/Geraet
+// tatsaechlich lesbar sind, auch wenn der restliche Boot schneller fertig ist.
+static constexpr uint32_t kBootSplashMinVisibleMs = 1800;
+
 static void log_memory_status(const char* tag) {
   const uint32_t heap_free = ESP.getFreeHeap();
   const uint32_t heap_min = ESP.getMinFreeHeap();
@@ -458,12 +462,14 @@ void setup() {
   log_memory_status("after-display");
   Serial.flush();
 
-  // Ab hier gibt es einen aktiven LVGL-Screen -- Ladeanzeige zeigen, bis die
-  // Oberflaeche fertig gebaut ist. lv_timer_handler() nach jedem Update
-  // pumpt den Render, damit es auch tatsaechlich aufs Panel kommt (setup()
-  // laeuft ausserhalb von loop(), sonst pumpt das niemand).
+  // Ab hier gibt es einen aktiven LVGL-Screen -- kurz die Begruessung zeigen,
+  // waehrend der Rest bootet (lv_timer_handler() pumpt den Render, damit sie
+  // auch tatsaechlich aufs Panel kommt -- setup() laeuft ausserhalb von
+  // loop(), sonst pumpt das niemand). Mindestanzeigedauer siehe unten bei
+  // BootSplash::hide().
   BootSplash::show();
   lv_timer_handler();
+  const uint32_t boot_splash_shown_at = millis();
 
   Serial.println("[Setup] powerManager.init()...");
   Serial.flush();
@@ -471,16 +477,12 @@ void setup() {
   Serial.println("[Setup] Power OK");
   log_memory_status("after-power");
   Serial.flush();
-  BootSplash::setProgress(15, "Starte...");
-  lv_timer_handler();
 
   Serial.println("[Setup] NVS init...");
   Serial.flush();
   init_nvs();
   log_memory_status("after-nvs");
   Serial.flush();
-  BootSplash::setProgress(20, nullptr);
-  lv_timer_handler();
 
   Serial.println("[Setup] Loading configs...");
   Serial.flush();
@@ -494,8 +496,6 @@ void setup() {
   Serial.println("[Setup] Configs OK");
   log_memory_status("after-configs");
   Serial.flush();
-  BootSplash::setProgress(30, "Lade Konfiguration...");
-  lv_timer_handler();
 
   // Waveshare 720×720: Square display, no rotation needed.
   // Skip auto-rotation detection (no IMU).
@@ -523,8 +523,6 @@ void setup() {
   }
   Serial.println("[Setup] Brightness OK");
   Serial.flush();
-  BootSplash::setProgress(35, "Baue Oberflaeche...");
-  lv_timer_handler();
 
   Serial.println("[Setup] Building UI...");
   Serial.flush();
@@ -542,8 +540,10 @@ void setup() {
   ui_build_waiter = nullptr;
   Serial.println("[Setup] UI built");
   Serial.flush();
-  BootSplash::setProgress(75, nullptr);
-  lv_timer_handler();
+  // Kacheln sind jetzt als neue Geschwister auf demselben aktiven Screen
+  // entstanden -- Splash wieder nach vorne, sonst zeichnet LVGL sie ueber
+  // ihm (Erzeugungsreihenfolge).
+  BootSplash::bringToFront();
 
   uiManager.updateStatusbar();
   Serial.println("[Setup] Statusbar updated");
@@ -570,7 +570,20 @@ void setup() {
   Serial.println("[Setup] Display wake OK");
   log_memory_status("after-ui-build");
   Serial.flush();
-  BootSplash::setProgress(80, nullptr);
+
+  // Kacheln stehen; Splash beenden, aber erst wenn er mindestens
+  // kBootSplashMinVisibleMs sichtbar war, damit Version/Geraet lesbar
+  // bleiben, auch wenn der Boot bis hierhin schneller war. Netzwerk/MQTT
+  // laufen danach im Hintergrund weiter -- die UI zeigt notfalls erstmal
+  // zwischengespeicherte Werte, bis die Verbindung steht.
+  {
+    const uint32_t elapsed = millis() - boot_splash_shown_at;
+    if (elapsed < kBootSplashMinVisibleMs) {
+      delay(kBootSplashMinVisibleMs - elapsed);
+    }
+  }
+  BootSplash::hide();
+  lv_obj_invalidate(lv_screen_active());
   lv_timer_handler();
 
   Serial.println("[Setup] MQTT Topics...");
@@ -584,29 +597,21 @@ void setup() {
   mqttTopics.begin(ts);
   Serial.println("[Setup] MQTT Topics OK");
   Serial.flush();
-  BootSplash::setProgress(82, nullptr);
-  lv_timer_handler();
 
   if (has_config) {
     Serial.println("[Setup] Network init...");
     Serial.flush();
-    BootSplash::setProgress(85, "Verbinde WLAN...");
-    lv_timer_handler();
     networkManager.init();
     if (WiFi.status() == WL_CONNECTED) uiManager.scheduleNtpSync(0);
     Serial.println("[Setup] Network OK");
     log_memory_status("after-network-init");
     Serial.flush();
-    BootSplash::setProgress(90, nullptr);
-    lv_timer_handler();
 
     Serial.println("[Setup] Game WebSocket Server...");
     Serial.flush();
     gameWSServer.init(8081);
     Serial.println("[Setup] Game WebSocket OK");
     Serial.flush();
-    BootSplash::setProgress(93, nullptr);
-    lv_timer_handler();
 
     Serial.println("[Setup] MQTT-Worker...");
     Serial.flush();
@@ -629,12 +634,6 @@ void setup() {
   } else {
     Serial.println("[Setup] Ueberspringe Network/Game WS (keine Config)");
   }
-
-  BootSplash::setProgress(100, "Fertig");
-  lv_timer_handler();
-  BootSplash::hide();
-  lv_obj_invalidate(lv_screen_active());
-  lv_timer_handler();
 
   Serial.println("\n=== SETUP COMPLETE ===\n");
   log_memory_status("setup-complete");

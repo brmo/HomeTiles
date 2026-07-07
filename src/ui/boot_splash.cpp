@@ -11,8 +11,6 @@ namespace BootSplash {
 namespace {
 
 lv_obj_t* g_overlay = nullptr;
-lv_obj_t* g_bar = nullptr;
-lv_obj_t* g_status_label = nullptr;
 
 // Gleiche Kachel-Bild-Logik wie create_hometiles_logo_mark() in
 // tab_settings.cpp (dort static/file-lokal, daher hier dupliziert statt
@@ -95,52 +93,10 @@ void show() {
   lv_label_set_text(device_label, Device::displayName());
   lv_obj_set_style_text_font(device_label, &ui_font_24, 0);
   lv_obj_set_style_text_color(device_label, lv_color_hex(0xA8A8A8), 0);
-
-  // Breite Content-Spalte fuers Untergeschoss (Status+Balken): gleiche
-  // max_width/Seitenabstand wie settings_popup_content im System-Popup,
-  // damit der Balken exakt so breit wie die dortigen Buttons wird -- auf
-  // dem 720px breiten B4 genauso wie auf den 1280px-Geraeten.
-  lv_obj_t* bottom = lv_obj_create(g_overlay);
-  lv_obj_set_style_bg_opa(bottom, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(bottom, 0, 0);
-  // lv_obj_create()'s Standardgroesse ist ein festes 100x50-dp-Kaestchen,
-  // keine Content-Groesse -- ohne explizite Hoehe wuerde das hier Status-
-  // label+Balken abschneiden statt sie zu umschliessen.
-  lv_obj_set_width(bottom, LV_PCT(100));
-  lv_obj_set_height(bottom, LV_SIZE_CONTENT);
-  lv_obj_set_style_max_width(bottom, 660, 0);
-  lv_obj_set_style_pad_hor(bottom, 20, 0);
-  lv_obj_set_style_pad_row(bottom, 12, 0);
-  lv_obj_clear_flag(bottom, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_flex_flow(bottom, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(bottom, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
-                        LV_FLEX_ALIGN_CENTER);
-
-  g_status_label = lv_label_create(bottom);
-  lv_label_set_text(g_status_label, "");
-  lv_obj_set_width(g_status_label, LV_PCT(100));
-  lv_label_set_long_mode(g_status_label, LV_LABEL_LONG_WRAP);
-  lv_obj_set_style_text_align(g_status_label, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_text_font(g_status_label, &ui_font_20, 0);
-  lv_obj_set_style_text_color(g_status_label, lv_color_hex(0xC8C8C8), 0);
-
-  g_bar = lv_bar_create(bottom);
-  lv_obj_set_size(g_bar, LV_PCT(100), 18);
-  lv_obj_set_style_bg_color(g_bar, lv_color_hex(0x1E1E1E), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(g_bar, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_radius(g_bar, 9, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(g_bar, lv_color_hex(0x2E7D32), LV_PART_INDICATOR);
-  lv_obj_set_style_bg_opa(g_bar, LV_OPA_COVER, LV_PART_INDICATOR);
-  lv_obj_set_style_radius(g_bar, 9, LV_PART_INDICATOR);
-  lv_bar_set_range(g_bar, 0, 100);
-  lv_bar_set_value(g_bar, 0, LV_ANIM_OFF);
 }
 
-void setProgress(uint8_t percent, const char* status_text) {
+void bringToFront() {
   if (!g_overlay) return;
-  if (percent > 100) percent = 100;
-  if (g_bar) lv_bar_set_value(g_bar, percent, LV_ANIM_OFF);
-  if (status_text && g_status_label) lv_label_set_text(g_status_label, status_text);
   // Tabs/Popups werden waehrend des Boots auf denselben aktiven Screen
   // gebaut -- als spaeter hinzugefuegte Geschwister wuerden sie sonst ueber
   // dem Overlay landen (LVGL zeichnet Kinder in Erzeugungsreihenfolge).
@@ -151,8 +107,6 @@ void hide() {
   if (!g_overlay) return;
   lv_obj_del(g_overlay);
   g_overlay = nullptr;
-  g_bar = nullptr;
-  g_status_label = nullptr;
 }
 
 }  // namespace BootSplash
