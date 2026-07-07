@@ -1710,8 +1710,7 @@ static void create_popup_keyboard(lv_obj_t* content_parent) {
 // Eine "Beschriftung:  Wert"-Zeile mit fester Beschriftungsspalte, damit die
 // Werte aller Zeilen an derselben Kante beginnen (AP-Infobox und System-
 // Popup). Rueckgabe ist das Wert-Label; der Aufrufer befuellt es.
-static lv_obj_t* create_info_value_row(lv_obj_t* parent, const char* label_text,
-                                       bool white_label = false) {
+static lv_obj_t* create_info_value_row(lv_obj_t* parent, const char* label_text) {
   lv_obj_t* row = lv_obj_create(parent);
   style_plain_container(row);
   lv_obj_set_size(row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
@@ -1721,7 +1720,7 @@ static lv_obj_t* create_info_value_row(lv_obj_t* parent, const char* label_text,
   lv_label_set_text_fmt(label, "%s:", label_text);
   lv_obj_set_width(label, 160);
   lv_obj_set_style_text_font(label, &ui_font_24, 0);
-  lv_obj_set_style_text_color(label, white_label ? lv_color_white() : lv_color_hex(0xC8C8C8), 0);
+  lv_obj_set_style_text_color(label, lv_color_hex(0xC8C8C8), 0);
 
   lv_obj_t* value = lv_label_create(row);
   lv_label_set_text(value, "-");
@@ -2243,7 +2242,7 @@ static void build_system_popup(lv_obj_t* parent) {
   lv_obj_set_flex_align(brand, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_column(brand, 18, 0);
-  create_hometiles_logo_mark(brand, 64);
+  create_hometiles_logo_mark(brand, 76);
 
   lv_obj_t* brand_text = lv_obj_create(brand);
   style_plain_container(brand_text);
@@ -2267,15 +2266,12 @@ static void build_system_popup(lv_obj_t* parent) {
   lv_obj_set_style_text_font(version_caption, &ui_font_24, 0);
   lv_obj_set_style_text_color(version_caption, lv_color_hex(0xA8A8A8), 0);
 
-  // Geraet als buendige Beschriftung/Wert-Zeile (wie AP-Infobox)
-  system_info_rows = lv_obj_create(box);
-  style_plain_container(system_info_rows);
-  lv_obj_set_size(system_info_rows, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-  lv_obj_set_flex_flow(system_info_rows, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_style_pad_row(system_info_rows, 8, 0);
-  lv_obj_t* device_val =
-      create_info_value_row(system_info_rows, tr().system_device_label, /*white_label=*/true);
-  lv_label_set_text(device_val, Device::displayName());
+  // Geraetename allein, ohne "Device:"-Label -- gleiche Optik wie die
+  // Version-Caption darueber (Name wechselt eh nie waehrend das Popup offen ist).
+  system_info_rows = lv_label_create(box);
+  lv_label_set_text(system_info_rows, Device::displayName());
+  lv_obj_set_style_text_font(system_info_rows, &ui_font_24, 0);
+  lv_obj_set_style_text_color(system_info_rows, lv_color_hex(0xA8A8A8), 0);
 
 #if LV_USE_QRCODE
   system_qr = lv_qrcode_create(box);
