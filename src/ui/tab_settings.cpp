@@ -2196,6 +2196,12 @@ static lv_obj_t* create_hometiles_logo_mark(lv_obj_t* parent, int32_t size) {
   const uint32_t zoom = static_cast<uint32_t>(
       (static_cast<int64_t>(size) * 256) / hometiles_logo_dsc.header.w);
   lv_image_set_scale(img, zoom);
+  // LV_SIZE_CONTENT (der Default) bemisst sich bei lv_image immer an der
+  // unskalierten Quellgroesse (hier 144x144), nicht am sichtbaren skalierten
+  // Ergebnis -- das Objekt reservierte dadurch 144px im Layout, obwohl nur
+  // ~size Pixel sichtbar sind, macht einen unsichtbaren Rand um das Icon.
+  // Groesse deshalb explizit auf die tatsaechliche Zielgroesse setzen.
+  lv_obj_set_size(img, size, size);
   lv_obj_clear_flag(img, LV_OBJ_FLAG_CLICKABLE);
   return img;
 }

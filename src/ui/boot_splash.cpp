@@ -27,6 +27,11 @@ lv_obj_t* create_logo(lv_obj_t* parent, int32_t size) {
   const uint32_t zoom = static_cast<uint32_t>(
       (static_cast<int64_t>(size) * 256) / hometiles_logo_dsc.header.w);
   lv_image_set_scale(img, zoom);
+  // Siehe create_hometiles_logo_mark() in tab_settings.cpp: LV_SIZE_CONTENT
+  // bemisst sich bei lv_image an der unskalierten Quellgroesse, nicht am
+  // sichtbaren skalierten Ergebnis -- ohne diese Zeile reserviert das Icon
+  // mehr Layoutplatz als es sichtbar einnimmt (unsichtbarer Rand).
+  lv_obj_set_size(img, size, size);
   lv_obj_clear_flag(img, LV_OBJ_FLAG_CLICKABLE);
   return img;
 }
