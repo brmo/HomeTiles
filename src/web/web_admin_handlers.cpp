@@ -609,6 +609,12 @@ bool saveDrawBufferAsBmp(const lv_draw_buf_t* draw_buf, const String& path, Stri
       error = "Could not write BMP pixels";
       return false;
     }
+    // Ohne yield() blockiert diese Schleife bei grossen Screenshots (800+
+    // Zeilen SD-Schreiben) lange genug am Stueck, dass der WLAN/SDIO-Task
+    // keine Chance bekommt, seine Empfangs-Queue zu leeren -- Absturz
+    // "assert failed: sdio_rx_get_buffer" (siehe tiles_reload_layout() in
+    // tab_tiles_unified.cpp fuer denselben, dort schon behobenen Bug).
+    yield();
   }
 
   file.close();
