@@ -594,6 +594,23 @@ static bool readGridSdV6(uint16_t folder_id, PackedQuarterGridV6* packed, size_t
   return readPackedGridFileV6(tileGridFileLegacyV6(folder_id), packed, count);
 }
 
+// Unterscheidet "Ordner ist neu, es gibt schlicht noch keine Datei" (harmlos,
+// die Aufrufer-Defaults sind gueltig) von "Datei existiert, konnte aber nicht
+// gelesen werden" (echter Fehler, der ein Ueberschreiben verhindern soll).
+// Ohne diese Unterscheidung schlug jeder erste Speicherversuch in einen frisch
+// angelegten Ordner (z.B. Ordner 0 auf einem werksfrischen Geraet) mit
+// "Grid konnte nicht geladen werden" fehl, obwohl nichts kaputt war.
+static bool anyGridFileExists(uint16_t folder_id, bool is_root) {
+  if (!storageReady()) return false;
+  const String filePath = tileGridFile(folder_id);
+  if (storageFS().exists(filePath)) return true;
+  if (storageFS().exists(tmpPathFor(filePath))) return true;
+  if (storageFS().exists(backupPathFor(filePath))) return true;
+  if (storageFS().exists(tileGridFileLegacyV6(folder_id))) return true;
+  if (is_root && storageFS().exists(tileGridFileLegacy("tab0"))) return true;
+  return false;
+}
+
 static bool writeImagePathSd(uint16_t folder_id, size_t index, const String& path) {
   if (!ensureImagePathDir()) return false;
   ensureSidecarIndexBuilt();
@@ -2580,9 +2597,16 @@ bool TileConfig::loadGrid(uint16_t folder_id, TileGridConfig& grid) {
   }
 
   if (!ok) {
-    Serial.printf("[TileConfig] WARN: Grid %u konnte nicht geladen werden, Storage-Inhalt bleibt unveraendert\n",
-                  static_cast<unsigned>(folder_id));
-    return false;
+    if (!anyGridFileExists(folder_id, folder_id == kRootFolderId)) {
+      // Neuer Ordner, noch nie gespeichert -- die oben gesetzten Defaults
+      // sind gueltig, das ist kein Fehler.
+      Serial.printf("[TileConfig] Grid %u ist neu (keine Datei vorhanden), verwende Standardwerte\n",
+                    static_cast<unsigned>(folder_id));
+    } else {
+      Serial.printf("[TileConfig] WARN: Grid %u konnte nicht geladen werden, Storage-Inhalt bleibt unveraendert\n",
+                    static_cast<unsigned>(folder_id));
+      return false;
+    }
   }
 
   applyImagePathsFromSd(folder_id, grid);
