@@ -29,7 +29,7 @@ void MqttTopicRegistry::begin(const TopicSettings& settings) {
   if (settings.device_base.length()) {
     device_base_ = settings.device_base;
   } else if (device_base_.isEmpty()) {
-    device_base_ = "tab5";
+    device_base_ = "hometiles";
   }
 
   if (settings.ha_prefix.length()) {

@@ -55,7 +55,7 @@ private:
     const char* leaf;
   };
 
-  String device_base_ = "tab5";
+  String device_base_ = "hometiles";
   String ha_prefix_ = "ha/statestream";
   String sensor_root_;
   String command_root_;

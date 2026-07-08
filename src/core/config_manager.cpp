@@ -129,7 +129,7 @@ ConfigManager::ConfigManager() {
   memset(&config, 0, sizeof(config));
   config.configured = false;
   config.mqtt_port = 1883;  // Default MQTT Port
-  strncpy(config.mqtt_base_topic, "tab5", CONFIG_MQTT_BASE_MAX - 1);
+  strncpy(config.mqtt_base_topic, "hometiles", CONFIG_MQTT_BASE_MAX - 1);
   strncpy(config.ha_prefix, "ha/statestream", CONFIG_HA_PREFIX_MAX - 1);
   set_language_code(config.language, sizeof(config.language), "en");
   set_timezone_code(config.timezone, sizeof(config.timezone), "berlin");
@@ -259,7 +259,7 @@ bool ConfigManager::load() {
 
   // Fallback: 0 Minuten korrigieren (kann durch ungültige Speicherung entstehen)
   if (config.mqtt_base_topic[0] == '\0') {
-    strncpy(config.mqtt_base_topic, "tab5", CONFIG_MQTT_BASE_MAX - 1);
+    strncpy(config.mqtt_base_topic, "hometiles", CONFIG_MQTT_BASE_MAX - 1);
   }
   if (config.ha_prefix[0] == '\0') {
     strncpy(config.ha_prefix, "ha/statestream", CONFIG_HA_PREFIX_MAX - 1);
@@ -455,7 +455,7 @@ void ConfigManager::clear() {
   memset(&config, 0, sizeof(config));
   config.configured = false;
   config.mqtt_port = 1883;
-  strncpy(config.mqtt_base_topic, "tab5", CONFIG_MQTT_BASE_MAX - 1);
+  strncpy(config.mqtt_base_topic, "hometiles", CONFIG_MQTT_BASE_MAX - 1);
   strncpy(config.ha_prefix, "ha/statestream", CONFIG_HA_PREFIX_MAX - 1);
   set_language_code(config.language, sizeof(config.language), "en");
   set_timezone_code(config.timezone, sizeof(config.timezone), "berlin");

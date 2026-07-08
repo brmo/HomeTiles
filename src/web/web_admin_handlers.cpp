@@ -1126,7 +1126,7 @@ void WebAdminServer::handleSaveMQTT() {
     cfg = configManager.getConfig();
   } else {
     cfg.mqtt_port = 1883;
-    strncpy(cfg.mqtt_base_topic, "tab5", CONFIG_MQTT_BASE_MAX - 1);
+    strncpy(cfg.mqtt_base_topic, "hometiles", CONFIG_MQTT_BASE_MAX - 1);
     strncpy(cfg.ha_prefix, "ha/statestream", CONFIG_HA_PREFIX_MAX - 1);
   }
 
@@ -1175,7 +1175,7 @@ void WebAdminServer::handleSaveMQTT() {
     String base = server.arg("mqtt_base");
     base.trim();
     while (base.endsWith("/")) base.remove(base.length() - 1);
-    if (base.isEmpty()) base = "tab5";
+    if (base.isEmpty()) base = "hometiles";
     copyToBuffer(cfg.mqtt_base_topic, sizeof(cfg.mqtt_base_topic), base);
   }
   if (server.hasArg("ha_prefix")) {
