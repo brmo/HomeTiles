@@ -45,10 +45,84 @@
 /* Karten: dezenter Rahmen, Hover-Anhebung */
 .md-typeset .grid.cards > ul > li {
   border-radius: 10px;
-  transition: box-shadow 0.15s, transform 0.15s;
+  transition: box-shadow 0.15s, transform 0.15s, border-color 0.15s;
 }
 
 .md-typeset .grid.cards > ul > li:hover {
   transform: translateY(-2px);
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
+  border-color: var(--md-accent-fg-color);
+}
+
+/* ---------------------------------------------------------------------
+   Eigenes dunkles Farbschema statt des generischen Material-"black"/"teal"
+   Presets - kraeftigerer Cyan-Akzent, mehr Kontrast zwischen Kopfleiste,
+   Seitenleiste und Inhalt statt eines einzigen flachen Grautons.
+   ------------------------------------------------------------------- */
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color: #0b0d10;
+  --md-default-fg-color: #e8eaed;
+  --md-default-fg-color--light: #c2c7cf;
+  --md-default-fg-color--lighter: #8a919c;
+  --md-default-fg-color--lightest: #2a2f38;
+
+  --md-primary-fg-color: #12151a;
+  --md-primary-bg-color: #e8eaed;
+
+  --md-accent-fg-color: #2dd4bf;
+  --md-accent-fg-color--transparent: #2dd4bf26;
+  --md-accent-bg-color: #0b0d10;
+
+  --md-typeset-a-color: #2dd4bf;
+
+  --md-code-bg-color: #12151a;
+  --md-code-fg-color: #d7dadf;
+}
+
+.md-typeset a {
+  transition: color 0.1s;
+}
+
+.md-typeset a:hover {
+  color: #5eead4;
+}
+
+/* Kopfleiste optisch von Inhalt/Seitenleiste abheben statt gleicher Grauton */
+.md-header {
+  background-color: #12151a;
+  border-bottom: 1px solid #22262e;
+  box-shadow: none;
+}
+
+.md-tabs {
+  background-color: #12151a;
+}
+
+/* Aktiver Menuepunkt: Pille mit Akzentfarbe statt reinem Textfarbwechsel */
+.md-nav__link--active,
+.md-nav__link:focus-within,
+.md-nav__item .md-nav__link[aria-current="page"] {
+  background-color: var(--md-accent-fg-color--transparent);
+  border-radius: 6px;
+  color: var(--md-accent-fg-color) !important;
+}
+
+.md-nav__item .md-nav__link[aria-current="page"] {
+  font-weight: 600;
+}
+
+/* Logo/Titel in der Kopfleiste etwas praesenter */
+.md-header__title {
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+/* Suchfeld dezent absetzen statt komplett transparent im Header */
+.md-search__input {
+  background-color: #0b0d10;
+  border-radius: 8px;
+}
+
+.md-search__input:hover {
+  background-color: #191d24;
 }
