@@ -5,7 +5,7 @@
 Work through this checklist:
 
 1. Is the entity selected in the bridge integration options? (**Settings → Devices &
-   Services → ESP32-P4 HomeAssistant Display Bridge → Configure → Entity Configuration**)
+   Services → HomeTiles Bridge → Configure → Entity Configuration**)
 2. Are the display's MQTT settings correct (host, port, credentials)? Check the web admin.
 3. Do the base topic and HA prefix match between the display and the integration entry?
 4. Is the panel listed as a device under the bridge integration? If not, restart the
