@@ -12,23 +12,10 @@ theme:
   favicon: images/favicon.svg
   logo: images/logo.svg
   palette:
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
+    - scheme: slate
       primary: black
       accent: teal
-      toggle:
-        icon: material/weather-sunny
-        name: Switch to light mode
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
-      primary: black
-      accent: teal
-      toggle:
-        icon: material/weather-night
-        name: Switch to dark mode
   features:
-    - navigation.tabs
-    - navigation.tabs.sticky
     - navigation.instant
     - navigation.top
     - navigation.footer
