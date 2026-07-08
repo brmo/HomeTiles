@@ -819,10 +819,12 @@ void loop() {
     settings_update_power_status();
 
     if (webConfigServer.hasNewConfig()) {
-      displayManager.setInputEnabled(false);
-      BoardHAL::prepareForRestart();
-      delay(200);
-      BoardHAL::restart();
+      webConfigServer.resetConfigFlag();
+      // WLAN-Zugangsdaten sind schon gespeichert (siehe WebConfigServer::handleSave) -
+      // wie beim WLAN-Popup im Settings-Tab reicht ein Live-Reconnect, der ohnehin
+      // schon beim normalen "AP beenden" laeuft (apply_hotspot_mode(false) stoppt
+      // den AP und verbindet neu, siehe dort). Kein Neustart mehr noetig.
+      set_hotspot_mode(false);
     }
 
     if (ap_mode_started_at != 0 && (uint32_t)(now - ap_mode_started_at) > AP_MODE_TIMEOUT_MS) {

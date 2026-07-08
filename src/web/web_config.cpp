@@ -178,7 +178,7 @@ void WebConfigServer::handleSave() {
     }
     cfg.auto_sleep_battery_enabled = cfg.auto_sleep_enabled;
     if (cfg.mqtt_base_topic[0] == '\0') {
-      strncpy(cfg.mqtt_base_topic, "tab5", CONFIG_MQTT_BASE_MAX - 1);
+      strncpy(cfg.mqtt_base_topic, "hometiles", CONFIG_MQTT_BASE_MAX - 1);
     }
     if (cfg.ha_prefix[0] == '\0') {
       strncpy(cfg.ha_prefix, "ha/statestream", CONFIG_HA_PREFIX_MAX - 1);
@@ -249,7 +249,7 @@ String WebConfigServer::getConfigPage() {
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: #0a0a0a;
       min-height: 100vh;
       display: flex;
       align-items: center;
@@ -257,44 +257,35 @@ String WebConfigServer::getConfigPage() {
       padding: 20px;
     }
     .container {
-      background: white;
-      border-radius: 16px;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-      max-width: 500px;
+      background: #1c1c1c;
+      border: 1px solid #2a2a2a;
+      border-radius: 22px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+      max-width: 420px;
       width: 100%;
-      padding: 40px;
+      padding: 32px;
     }
-    h1 {
-      color: #2d3748;
-      font-size: 28px;
-      margin-bottom: 8px;
-      text-align: center;
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 28px;
     }
-    .subtitle {
-      color: #718096;
-      text-align: center;
-      margin-bottom: 32px;
-      font-size: 14px;
+    .brand h1 {
+      color: #ffffff;
+      font-size: 22px;
     }
-    .section {
-      margin-bottom: 24px;
-    }
-    .section-title {
-      color: #667eea;
-      font-size: 14px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin-bottom: 16px;
-      padding-bottom: 8px;
-      border-bottom: 2px solid #e2e8f0;
+    .brand .device {
+      color: #8a8a8a;
+      font-size: 13px;
+      margin-top: 2px;
     }
     .form-group {
       margin-bottom: 16px;
     }
     label {
       display: block;
-      color: #4a5568;
+      color: #b8b8b8;
       font-size: 14px;
       font-weight: 500;
       margin-bottom: 6px;
@@ -302,19 +293,20 @@ String WebConfigServer::getConfigPage() {
     input {
       width: 100%;
       padding: 12px 16px;
-      border: 2px solid #e2e8f0;
-      border-radius: 8px;
+      border: 1px solid #333333;
+      border-radius: 12px;
+      background: #141414;
+      color: #ffffff;
       font-size: 15px;
-      transition: all 0.2s;
+      transition: border-color 0.2s;
       font-family: inherit;
     }
     input:focus {
       outline: none;
-      border-color: #667eea;
-      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+      border-color: #26a69a;
     }
     input::placeholder {
-      color: #a0aec0;
+      color: #666666;
     }
     .password-field {
       display: flex;
@@ -327,83 +319,73 @@ String WebConfigServer::getConfigPage() {
     .password-toggle {
       flex: 0 0 auto;
       padding: 12px 14px;
-      border: 2px solid #e2e8f0;
-      border-radius: 8px;
-      background: white;
-      color: #4a5568;
+      border: 1px solid #333333;
+      border-radius: 12px;
+      background: #141414;
+      color: #b8b8b8;
       font-size: 13px;
       font-weight: 600;
       cursor: pointer;
     }
-    .password-toggle:hover {
-      background: #f7fafc;
-    }
     .hint {
-      color: #a0aec0;
+      color: #666666;
       font-size: 12px;
       margin-top: 4px;
     }
     .btn {
       width: 100%;
       padding: 14px;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: #26a69a;
       color: white;
       border: none;
-      border-radius: 8px;
+      border-radius: 12px;
       font-size: 16px;
       font-weight: 600;
       cursor: pointer;
-      transition: transform 0.2s, box-shadow 0.2s;
       margin-top: 8px;
     }
-    .btn:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
-    }
     .btn:active {
-      transform: translateY(0);
-    }
-    .icon {
-      font-size: 48px;
-      text-align: center;
-      margin-bottom: 16px;
+      background: #1f8a80;
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="icon">📶</div>
-    <h1>)html";
-  html += ap_page_title;
-  html += R"html(</h1>
-    <p class="subtitle">Configure WiFi so the device can join your network. MQTT can be configured later from the normal web interface.</p>
+    <div class="brand">
+      <svg width="48" height="48" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;" aria-hidden="true">
+        <rect width="48" height="48" rx="10" fill="#16181c"/>
+        <rect x="7" y="7" width="14" height="14" rx="3" fill="#ffffff"/>
+        <rect x="27" y="7" width="14" height="14" rx="3" fill="#ffffff"/>
+        <rect x="7" y="27" width="14" height="14" rx="3" fill="#ffffff"/>
+        <path d="M31.5 25.5h5v6h6v5h-6v6h-5v-6h-6v-5h6z" fill="#26a69a"/>
+      </svg>
+      <div>
+        <h1>HomeTiles</h1>
+        <div class="device">)html";
+  html += String(Device::displayName());
+  html += R"html(</div>
+      </div>
+    </div>
 
     <form action="/save" method="POST">
-      <div class="section">
-        <div class="section-title">WiFi Connection</div>
-        <div class="form-group">
-          <label for="wifi_ssid">SSID</label>
-          <input type="text" id="wifi_ssid" name="wifi_ssid" placeholder="My WiFi" value=")html";
+      <div class="form-group">
+        <label for="wifi_ssid">Network</label>
+        <input type="text" id="wifi_ssid" name="wifi_ssid" placeholder="My WiFi" value=")html";
   html += String(cfg.wifi_ssid);
   html += R"html(" required>
-        </div>
-        <div class="form-group">
-          <label for="wifi_pass">Password</label>
-          <div class="password-field">
-            <input type="password" id="wifi_pass" name="wifi_pass" placeholder="Password" value=")html";
+      </div>
+      <div class="form-group">
+        <label for="wifi_pass">Password</label>
+        <div class="password-field">
+          <input type="password" id="wifi_pass" name="wifi_pass" placeholder="Password" value=")html";
   html += String(cfg.wifi_pass);
   html += R"html(">
-            <button type="button" class="password-toggle" onclick="togglePasswordVisibility('wifi_pass', this)">Show</button>
-          </div>
-          <div class="hint">Leave empty for an open network</div>
+          <button type="button" class="password-toggle" onclick="togglePasswordVisibility('wifi_pass', this)">Show</button>
         </div>
+        <div class="hint">Leave empty for an open network</div>
       </div>
 
-      <div class="info" style="background: #fff3cd; border-left: 4px solid #ffc107; color: #856404; margin-bottom: 20px;">
-        ℹ️ <strong>Note:</strong> After WiFi works, you can configure MQTT later through the normal web interface on your local network.
-      </div>
-
-      <button type="submit" class="btn">💾 Save & Connect</button>
+      <button type="submit" class="btn">Connect</button>
     </form>
   </div>
   <script>
@@ -429,12 +411,12 @@ String WebConfigServer::getSuccessPage() {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Configuration saved</title>
+  <title>Connecting...</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: #0a0a0a;
       min-height: 100vh;
       display: flex;
       align-items: center;
@@ -442,59 +424,43 @@ String WebConfigServer::getSuccessPage() {
       padding: 20px;
     }
     .container {
-      background: white;
-      border-radius: 16px;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-      max-width: 500px;
+      background: #1c1c1c;
+      border: 1px solid #2a2a2a;
+      border-radius: 22px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+      max-width: 420px;
       width: 100%;
-      padding: 40px;
+      padding: 32px;
       text-align: center;
     }
-    .icon {
-      font-size: 72px;
-      margin-bottom: 24px;
-      animation: bounce 0.6s;
-    }
-    @keyframes bounce {
-      0%, 100% { transform: translateY(0); }
-      50% { transform: translateY(-20px); }
+    .logo {
+      margin: 0 auto 20px;
+      width: 56px;
+      height: 56px;
     }
     h1 {
-      color: #2d3748;
-      font-size: 28px;
-      margin-bottom: 16px;
+      color: #ffffff;
+      font-size: 22px;
+      margin-bottom: 10px;
     }
     p {
-      color: #718096;
-      font-size: 16px;
-      line-height: 1.6;
-      margin-bottom: 24px;
-    }
-    .info {
-      background: #f7fafc;
-      border-left: 4px solid #667eea;
-      padding: 16px;
-      border-radius: 8px;
-      text-align: left;
-      color: #4a5568;
+      color: #8a8a8a;
       font-size: 14px;
+      line-height: 1.6;
     }
   </style>
-  <script>
-    setTimeout(function() {
-      window.location.href = '/';
-    }, 10000);
-  </script>
 </head>
 <body>
   <div class="container">
-    <div class="icon">✅</div>
-    <h1>Configuration saved</h1>
-    <p>The configuration was saved successfully.<br>The device will now restart and try to connect to WiFi.</p>
-    <div class="info">
-      ℹ️ You will be redirected automatically in 10 seconds.<br>
-      If the connection fails, enable hotspot mode again from the device settings.
-    </div>
+    <svg class="logo" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <rect width="48" height="48" rx="10" fill="#16181c"/>
+      <rect x="7" y="7" width="14" height="14" rx="3" fill="#ffffff"/>
+      <rect x="27" y="7" width="14" height="14" rx="3" fill="#ffffff"/>
+      <rect x="7" y="27" width="14" height="14" rx="3" fill="#ffffff"/>
+      <path d="M31.5 25.5h5v6h6v5h-6v6h-5v-6h-6v-5h6z" fill="#26a69a"/>
+    </svg>
+    <h1>Connecting...</h1>
+    <p>HomeTiles is joining your network now.<br>This page will lose its connection - you can close it.</p>
   </div>
 </body>
 </html>
