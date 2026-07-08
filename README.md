@@ -40,7 +40,7 @@ the whole chain: MQTT broker, bridge integration, and connecting the display.
 
 ## Highlights Of The v0.3.x Releases
 
-- New in v0.3.1: automatic device pairing — a freshly connected device (no MQTT broker configured yet) announces itself on the network, shows up as a "discovered device" card in Home Assistant, and the bridge pushes MQTT credentials to it automatically once confirmed. No manual host/user/password entry required.
+- New in v0.3.1: automatic device pairing — a freshly connected device (no MQTT credentials configured on it yet) announces itself on the network, shows up as a "discovered device" card in Home Assistant, and the bridge pushes your existing MQTT broker's credentials to it automatically once confirmed. No manual host/user/password entry required on the device itself.
 - Project rebranded to **HomeTiles** (formerly ESP32-P4-HomeAssistant-Display) — existing devices keep updating automatically across the rename
 - New boot splash screen: logo, firmware version, and device name shown briefly on startup before the dashboard loads
 - Polished branding across the on-device System popup and the web admin panel
@@ -224,7 +224,7 @@ latest GitHub release and installs it directly.
 4. The device IP address is shown in the on-device WLAN settings.
 5. Open the web admin panel through that IP address.
 6. Install the [HomeTiles Bridge](https://github.com/GalusPeres/HomeTiles-Bridge) integration in Home Assistant, if you haven't already.
-7. As long as the device has no MQTT broker configured yet, it announces itself on the network automatically. A "discovered device" card appears under Settings → Devices & Services in Home Assistant — confirm it, and the bridge pushes your MQTT broker credentials to the device for you, no typing required.
+7. As long as the device has no MQTT credentials configured on it yet, it announces itself on the network automatically. A "discovered device" card appears under Settings → Devices & Services in Home Assistant — confirm it, and the bridge pushes your existing MQTT broker's credentials to the device for you, no typing required.
    - Alternatively, enter MQTT host/user/password by hand in the device's web admin panel — see the [Home Assistant Setup Guide](docs/home-assistant-setup.md) for the full walkthrough either way.
 8. Configure your tiles, folders, and layout.
 
