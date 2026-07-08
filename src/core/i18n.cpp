@@ -5,10 +5,10 @@ namespace i18n {
 static const Strings kStringsDe = {
     "de",
     "de",
-    "Sprache",
-    "Zeitzone",
-    "Zeitformat",
-    "Datumsformat",
+    "Sprache:",
+    "Zeitzone:",
+    "Zeitformat:",
+    "Datumsformat:",
     "Auto (Sprache)",
     "Auto (Lokalisierung)",
     "24 Stunden",
@@ -116,10 +116,10 @@ static const Strings kStringsDe = {
     "Fehler: WiFi SSID ist erforderlich!",
 
     "Display",
-    "Helligkeit",
+    "Helligkeit:",
     "Farbton",
     "Sättigung",
-    "Sleep",
+    "Sleep:",
     "in",
     "Nie",
     "Touch",
@@ -231,7 +231,7 @@ static const Strings kStringsDe = {
     "Gespeichert – Gerät startet neu...",
     "Speichern fehlgeschlagen",
 
-    "Tastatur",
+    "Tastatur:",
 
     "Helligkeit, Standby & Rotation",
     "Netzwerk & Access Point",
@@ -254,10 +254,10 @@ static const Strings kStringsDe = {
 static const Strings kStringsEn = {
     "en",
     "en",
-    "Language",
-    "Time zone",
-    "Time format",
-    "Date format",
+    "Language:",
+    "Time zone:",
+    "Time format:",
+    "Date format:",
     "Auto (language)",
     "Auto (localization)",
     "24-hour",
@@ -365,10 +365,10 @@ static const Strings kStringsEn = {
     "Error: WiFi SSID is required!",
 
     "Display",
-    "Brightness",
+    "Brightness:",
     "Hue",
     "Saturation",
-    "Sleep",
+    "Sleep:",
     "in",
     "Never",
     "Touch",
@@ -480,7 +480,7 @@ static const Strings kStringsEn = {
     "Saved - device is restarting...",
     "Saving failed",
 
-    "Keyboard",
+    "Keyboard:",
 
     "Brightness, standby & rotation",
     "Network & access point",

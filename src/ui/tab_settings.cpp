@@ -2024,7 +2024,7 @@ static lv_obj_t* create_locale_dropdown_row(lv_obj_t* form, const char* label_te
   lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
   lv_obj_set_width(label, 210);
   lv_obj_set_style_text_font(label, &ui_font_24, 0);
-  lv_obj_set_style_text_color(label, lv_color_hex(0xC8C8C8), 0);
+  lv_obj_set_style_text_color(label, lv_color_white(), 0);
 
   lv_obj_t* dd = lv_dropdown_create(row);
   style_popup_dropdown(dd);
@@ -2279,6 +2279,12 @@ static void build_system_popup(lv_obj_t* parent) {
 
 #if LV_USE_QRCODE
   system_qr = lv_qrcode_create(box);
+  // Etwas mehr Luft zur Marke darueber als der uniforme Zeilenabstand (18) -
+  // margin (nicht pad!) schiebt das Element weg, ohne seine eigene Box (den
+  // weissen QR-Rahmen) aufzublaehen. QR-Groesse haengt vom Rest-Platz ab
+  // (siehe system_show_qr), passt sich also automatisch an und bleibt auch
+  // auf 720p-Geraeten im Rahmen.
+  lv_obj_set_style_margin_top(system_qr, 14, 0);
   lv_qrcode_set_size(system_qr, 280);
   lv_qrcode_set_dark_color(system_qr, lv_color_black());
   lv_qrcode_set_light_color(system_qr, lv_color_white());
