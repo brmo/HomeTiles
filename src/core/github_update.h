@@ -9,12 +9,13 @@
 //
 // Namenskonvention der GitHub-Releases (MUSS beim Anlegen eingehalten werden):
 //   Tag:   vX.Y.Z (gleiches Format wie FW_VERSION in version.txt)
-//   Asset: hometiles-<tag>-<geraete-key>.bin
-//   z.B.   hometiles-v0.2.10-waveshare_touch_lcd_8.bin
-//   (bis v0.2.9 hiess das Schema esp32-p4-homeassistant-display-*; Releases
-//   muessen die alten Asset-Namen mitliefern, solange Geraete <= v0.2.9
-//   im Umlauf sind, sonst laufen deren Updates ins 404 -- install() faellt
-//   in dem Fall automatisch auf den alten Namen zurueck, siehe github_update.cpp)
+//   Asset: hometiles_<tag>_<geraete-key>.bin
+//   z.B.   hometiles_v0.3.2_waveshare_touch_lcd_8.bin
+//   (bis v0.2.9 hiess das Schema esp32-p4-homeassistant-display-*; ein Geraet
+//   auf <= v0.2.9 faellt automatisch auf diesen alten Namen zurueck, wenn der
+//   aktuelle Asset-Name auf dem Release fehlt -- siehe install() in
+//   github_update.cpp. Neue Releases muessen den alten Namen NICHT mehr
+//   mitliefern, seit v0.3.1 keine Geraete mehr auf <= v0.2.9 unterwegs sind.)
 // Die Geraete-Keys sind: waveshare_touch_lcd_8, waveshare_4b, m5stacks_tab5.
 //
 // Repo wurde von ESP32-P4-HomeAssistant-Display auf HomeTiles umbenannt.

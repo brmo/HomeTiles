@@ -618,7 +618,7 @@ String WebAdminServer::getAdminPage() {
   const String admin_heading_subtitle =
       String(FW_VERSION) + "  \xC2\xB7  " + Device::displayName();
   const String current_firmware_name =
-      String("hometiles-") + FW_VERSION + "-" + Device::profile().key;
+      String("hometiles_") + FW_VERSION + "_" + Device::profile().key;
   const HaBridgeConfigData& ha = haBridgeConfig.get();
   const auto sensorOptions = parseSensorList(ha.sensors_text);
   const auto energyOptions = parseSensorList(ha.energy_text);

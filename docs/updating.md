@@ -26,13 +26,13 @@ Use the asset matching your device from the release page:
 
 | Device | OTA update file |
 | --- | --- |
-| M5Stack Tab5 | `hometiles-<version>-m5stacks_tab5.bin` |
-| Waveshare 4B | `hometiles-<version>-waveshare_4b.bin` |
-| Waveshare 8" | `hometiles-<version>-waveshare_touch_lcd_8.bin` |
+| M5Stack Tab5 | `hometiles_<version>_m5stacks_tab5.bin` |
+| Waveshare 4B | `hometiles_<version>_waveshare_4b.bin` |
+| Waveshare 8" | `hometiles_<version>_waveshare_touch_lcd_8.bin` |
 
 Older devices still running v0.2.9 or earlier look for the previous
-`esp32-p4-homeassistant-display-<version>-<device>-update.bin` naming; recent releases
-still include both until no devices on that old firmware remain.
+`esp32-p4-homeassistant-display-<version>-<device>-update.bin` naming; the on-device
+updater falls back to it automatically if a release doesn't have the current-named asset.
 
 ## 3. Factory Flash (first installation / full reset)
 

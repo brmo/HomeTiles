@@ -457,7 +457,7 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
   if (Update.isRunning()) Update.abort();
 
   String url = releaseDownloadUrl(
-      tag, String("hometiles-") + tag + "-" + Device::profile().key + ".bin");
+      tag, String("hometiles_") + tag + "_" + Device::profile().key + ".bin");
   Serial.printf("[Update] Lade %s\n", url.c_str());
 
   // Netzwerk-Lesepuffer und OTA-Staging liegen im PSRAM. Der GitHub/CDN-

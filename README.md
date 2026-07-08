@@ -191,9 +191,9 @@ Download the files matching your device from the [latest release](https://github
 
 | Device | First flash | OTA update file |
 | --- | --- | --- |
-| M5Stack Tab5 | `...-m5stacks_tab5-factory.bin` | `...-m5stacks_tab5.bin` |
-| Waveshare 4B | `...-waveshare_4b-factory.bin` | `...-waveshare_4b.bin` |
-| Waveshare 8" | `...-waveshare_touch_lcd_8-factory.bin` | `...-waveshare_touch_lcd_8.bin` |
+| M5Stack Tab5 | `..._m5stacks_tab5_factory.bin` | `..._m5stacks_tab5.bin` |
+| Waveshare 4B | `..._waveshare_4b_factory.bin` | `..._waveshare_4b.bin` |
+| Waveshare 8" | `..._waveshare_touch_lcd_8_factory.bin` | `..._waveshare_touch_lcd_8.bin` |
 
 Use:
 - `factory.bin` for a clean first flash (ESP Flash Download Tool at address `0x00000`)
