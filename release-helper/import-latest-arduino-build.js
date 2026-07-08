@@ -117,21 +117,13 @@ function main() {
 
   const updateDest = path.join(releaseDir, `hometiles_${version}_${device.key}.bin`);
   const factoryDest = path.join(releaseDir, `hometiles_${version}_${device.key}_factory.bin`);
-  // Keep legacy copies so older firmware builds can still update from the same release.
-  const legacyBaseName = `esp32-p4-homeassistant-display-${version}-${device.slug}`;
-  const legacyUpdateDest = path.join(releaseDir, `${legacyBaseName}-update.bin`);
-  const legacyFactoryDest = path.join(releaseDir, `${legacyBaseName}-factory.bin`);
 
   fs.copyFileSync(build.updatePath, updateDest);
   fs.copyFileSync(build.factoryPath, factoryDest);
-  fs.copyFileSync(build.updatePath, legacyUpdateDest);
-  fs.copyFileSync(build.factoryPath, legacyFactoryDest);
 
   console.log(`[release-helper] Build: ${build.buildPath}`);
   console.log(`[release-helper] ${path.basename(updateDest)}`);
   console.log(`[release-helper] ${path.basename(factoryDest)}`);
-  console.log(`[release-helper] ${path.basename(legacyUpdateDest)}`);
-  console.log(`[release-helper] ${path.basename(legacyFactoryDest)}`);
 }
 
 main();
