@@ -17,6 +17,7 @@ enum class TopicKey : uint8_t {
   SWITCH_CMND,
   MEDIA_CMND,
   STAT_CONN,
+  STAT_IP,
   TELE_UP,
   HA_WOHN_TEMP,
   DISPLAY_BRIGHTNESS_CMND,

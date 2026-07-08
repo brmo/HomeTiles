@@ -6,10 +6,12 @@
 #include "src/web/web_admin.h"
 #include "src/ui/ui_manager.h"
 #include "src/ui/tab_settings.h"
+#include "src/devices/device.h"
 #include <esp_heap_caps.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
+#include <ESPmDNS.h>
 
 // Globale Instanz
 Tab5NetworkManager networkManager;
@@ -109,10 +111,23 @@ static void purgeOutboundQueue() {
   }
 }
 
-static void buildDeviceId(char* buffer, size_t len) {
+// Volle 48-Bit-MAC statt nur der unteren 16 Bit: zwei Geraete aus aehnlicher
+// Fertigungscharge koennen in den unteren 16 Bit kollidieren (bei diesem
+// Nutzer beobachtet -- zwei Panels meldeten dieselbe device_id und HA hat
+// eines der beiden Zeroconf-Discovery-Events stillschweigend als "schon
+// konfiguriert" verworfen). Kein "tab5_lvgl_"-Praefix mehr, nur die reine
+// MAC als Hex-String.
+void buildDeviceId(char* buffer, size_t len) {
   if (!buffer || !len) return;
   uint64_t mac = ESP.getEfuseMac();
-  snprintf(buffer, len, "tab5_lvgl_%04X", (uint16_t)(mac & 0xFFFF));
+  snprintf(buffer, len, "%012llX", (unsigned long long)(mac & 0xFFFFFFFFFFFFULL));
+}
+
+static void logMdnsHeap(const char* tag) {
+  const uint32_t dma_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+  const uint32_t dma_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+  Serial.printf("[mDNS] %s | DMA free=%u KB | DMA largest=%u KB\n",
+                tag, dma_free / 1024, dma_largest / 1024);
 }
 
 static bool parseConfiguredIp(const char* value, IPAddress& out) {
@@ -277,6 +292,10 @@ void Tab5NetworkManager::connectMqtt() {
   // Client-Zugriff ist hier safe, weil connectMqtt() ausschliesslich auf dem
   // Worker laeuft (Single-Owner).
   mqtt_client.publish(stat_topic, "1", true);
+  const char* ip_topic = mqttTopics.topic(TopicKey::STAT_IP);
+  if (ip_topic && *ip_topic) {
+    mqtt_client.publish(ip_topic, WiFi.localIP().toString().c_str(), true);
+  }
   if (!bridge_apply_topic_.isEmpty()) {
     mqtt_client.subscribe(bridge_apply_topic_.c_str());
     Serial.printf("[MQTT] Listening for bridge config on %s\n", bridge_apply_topic_.c_str());
@@ -327,6 +346,47 @@ void Tab5NetworkManager::beginMqttWorker() {
 
 // Worker-Task-Body: die EINZIGE Stelle, die mqtt_client nach init() anfasst.
 void Tab5NetworkManager::serviceMqttWorker() {
+  // Reconfigure-Request zuerst und VOR dem mqtt_enabled-Gate geprueft: genau
+  // dieses Flag soll hier live neu gesetzt werden (Erstkonfiguration ueber
+  // die Admin-Seite, Host geleert, Host geaendert). Alle anderen Requests
+  // unten bleiben bewusst hinter dem Gate, die betreffen nur ein Geraet, das
+  // bereits mqtt_enabled war.
+  if (mqtt_reconfig_requested) {
+    mqtt_reconfig_requested = false;
+    if (mqtt_client.connected()) {
+      const char* stat_topic = mqttTopics.topic(TopicKey::STAT_CONN);
+      if (stat_topic && *stat_topic) {
+        // Sauberes "0" vor dem Disconnect -- ein regulaeres MQTT DISCONNECT
+        // (was PubSubClient::disconnect() sendet) loest das Last-Will NICHT
+        // aus, die Bridge wuerde also faelschlich "verbunden" weiterzeigen.
+        mqtt_client.publish(stat_topic, "0", true);
+      }
+      mqtt_client.disconnect();
+      Serial.println("[MQTT] Disconnect fuer Reconfigure");
+    }
+    purgeOutboundQueue();
+    mqtt_post_connect_pending = false;
+    mqtt_post_connect_ready_at = 0;
+    mqtt_large_until = 0;
+    if (mqtt_buffer_size > kMqttBufferNormal) {
+      setMqttBufferSize(kMqttBufferNormal, "reconfig");
+    }
+    mqtt_connected_flag = false;
+
+    mqtt_enabled = configManager.hasMqttConfig();
+    if (mqtt_enabled) {
+      const DeviceConfig& cfg = configManager.getConfig();
+      mqtt_client.setClient(net_client);
+      mqtt_client.setServer(cfg.mqtt_host, cfg.mqtt_port);
+      mqtt_client.setCallback(mqttCallback);
+      mqtt_retry_at = 0;  // sofortiger Verbindungsversuch, naechste Iteration
+      Serial.println("[MQTT] Reconfigure: neue Einstellungen uebernommen");
+    } else {
+      Serial.println("[MQTT] Reconfigure: kein Host konfiguriert, bleibe getrennt");
+    }
+    return;
+  }
+
   if (!mqtt_enabled) return;
 
   // Request-Flags zuerst -- auch im suspendierten Zustand, damit
@@ -535,6 +595,19 @@ void Tab5NetworkManager::disconnectMqtt() {
   }
 }
 
+void Tab5NetworkManager::requestMqttReconfigure() {
+  // Bewusst KEIN "if (!mqtt_enabled) return;" wie bei disconnectMqtt() --
+  // der Worker soll mqtt_enabled hier gerade erst neu bestimmen (z.B. erste
+  // MQTT-Konfiguration ueberhaupt, wo es bislang false war).
+  mqtt_reconfig_requested = true;
+  for (int i = 0; i < 100 && mqtt_reconfig_requested; ++i) {
+    delay(5);
+  }
+  if (mqtt_reconfig_requested) {
+    Serial.println("[MQTT] WARNUNG: Worker hat Reconfigure-Request nicht bestaetigt");
+  }
+}
+
 void Tab5NetworkManager::prepareMqttForOta() {
   if (!mqtt_enabled) return;
   mqtt_ota_prep_requested = true;
@@ -683,6 +756,69 @@ const char* Tab5NetworkManager::getBridgeIconsTopic() const {
   return bridge_icons_topic_.length() ? bridge_icons_topic_.c_str() : nullptr;
 }
 
+// ========== mDNS-Advertising ==========
+// Rein additiv: erlaubt der HA-Bridge (Zeroconf), das Geraet zu finden BEVOR
+// es MQTT-Zugangsdaten hat. Laeuft ausschliesslich, waehrend WiFi verbunden
+// UND keine MQTT-Verbindung steht (siehe update()) -- ein bereits gepairtes,
+// verbundenes Geraet muss nicht laenger auffindbar sein. Wird immer erst NACH
+// webAdminServer.start() versucht -- ein haengender/fehlschlagender
+// MDNS.begin() darf die admin-UI, die schon heute funktioniert, nicht
+// verzoegern.
+void Tab5NetworkManager::startMdns() {
+  if (mdns_active) return;
+
+  char did[24];
+  buildDeviceId(did, sizeof(did));
+
+  // device_id ist reiner Hex-Text (keine Unterstriche mehr) -- als
+  // mDNS-Hostname direkt verwendbar, ohne RFC-952/1123-Zeichenersetzung.
+  char hostname[24];
+  snprintf(hostname, sizeof(hostname), "%s", did);
+
+  logMdnsHeap("before-begin");
+  if (!MDNS.begin(hostname)) {
+    Serial.println("[mDNS] begin() fehlgeschlagen -- Advertising uebersprungen");
+    return;
+  }
+  MDNS.addService("hometiles", "tcp", 80);
+
+  // addServiceTxt() ist auf char*/const char*/String ueberladen. Ein Mix aus
+  // String-Literalen (ueber die deprecated Literal->char*-Konvertierung auch
+  // fuer die char*-Ueberladung gueltig) und einem char[]-Puffer macht die
+  // Ueberladung mehrdeutig -> alle vier Argumente als benannte const char*-
+  // Variablen uebergeben, dann ist nur noch die const-char*-Variante gueltig.
+  const char* svc_name = "hometiles";
+  const char* svc_proto = "tcp";
+  const char* key_txtvers = "txtvers";
+  const char* val_txtvers = "1";
+  const char* key_device_id = "device_id";
+  const char* val_device_id = did;
+  const char* key_name = "name";
+  const char* val_name = Device::displayName();
+  const char* key_model = "model";
+  const char* val_model = Device::profile().key;
+  const DeviceConfig& cfg = configManager.getConfig();
+  const char* key_base_topic = "base_topic";
+  const char* val_base_topic = cfg.mqtt_base_topic;
+  const char* key_ha_prefix = "ha_prefix";
+  const char* val_ha_prefix = cfg.ha_prefix;
+
+  MDNS.addServiceTxt(svc_name, svc_proto, key_txtvers, val_txtvers);
+  MDNS.addServiceTxt(svc_name, svc_proto, key_device_id, val_device_id);
+  MDNS.addServiceTxt(svc_name, svc_proto, key_name, val_name);
+  MDNS.addServiceTxt(svc_name, svc_proto, key_model, val_model);
+  MDNS.addServiceTxt(svc_name, svc_proto, key_base_topic, val_base_topic);
+  MDNS.addServiceTxt(svc_name, svc_proto, key_ha_prefix, val_ha_prefix);
+  mdns_active = true;
+  logMdnsHeap("after-begin");
+}
+
+void Tab5NetworkManager::stopMdns() {
+  if (!mdns_active) return;
+  MDNS.end();
+  mdns_active = false;
+}
+
 // ========== Update-Schleife (Loop-Task) ==========
 void Tab5NetworkManager::update() {
   if (!configManager.isConfigured()) {
@@ -705,12 +841,27 @@ void Tab5NetworkManager::update() {
     if (was_connected && webAdminServer.isRunning()) {
       webAdminServer.stop();
     }
+    if (was_connected) {
+      stopMdns();
+    }
   } else {
     // Verbunden
 
     // WebAdmin starten wenn gerade verbunden
     if (!was_connected && !webAdminServer.isRunning()) {
       webAdminServer.start();
+    }
+
+    // mDNS: nur an, solange (noch) KEINE MQTT-Verbindung steht -- ein bereits
+    // gepairtes, verbundenes Geraet muss nicht laenger auffindbar sein (spart
+    // das bisschen RAM, haelt "Discovered"-Karten in HA sauber). Faellt die
+    // Verbindung spaeter weg (Broker offline etc.), wird wieder advertised.
+    // Beide Aufrufe sind ueber mdns_active geguardet und im bereits erreichten
+    // Zielzustand billige No-Ops -- unproblematisch, das jeden Tick zu pruefen.
+    if (mqtt_enabled && isMqttConnected()) {
+      stopMdns();
+    } else if (webAdminServer.isRunning()) {
+      startMdns();
     }
 
     // NTP-Sync triggern bei neuer Verbindung

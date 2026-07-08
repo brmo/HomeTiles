@@ -11,6 +11,7 @@ const MqttTopicRegistry::TopicDescriptor MqttTopicRegistry::kDescriptors[] = {
   {TopicKey::SWITCH_CMND, TopicDomain::Command, "switch"},
   {TopicKey::MEDIA_CMND, TopicDomain::Command, "media"},
   {TopicKey::STAT_CONN, TopicDomain::State, "connected"},
+  {TopicKey::STAT_IP, TopicDomain::State, "ip"},
   {TopicKey::TELE_UP, TopicDomain::Telemetry, "uptime"},
   {TopicKey::HA_WOHN_TEMP, TopicDomain::HaStatestream, "sensor/og_wohnbereich_sensor_temperatur/state"},
   {TopicKey::DISPLAY_BRIGHTNESS_CMND, TopicDomain::Command, "display_brightness"},

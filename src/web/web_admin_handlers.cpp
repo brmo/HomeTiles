@@ -1212,6 +1212,11 @@ void WebAdminServer::handleSaveMQTT() {
     tiles_request_reload_all();
     server.sendHeader("Location", "/");
     server.send(303, "text/plain", "");
+    // Erst antworten (wie handleRestart()), dann die bis zu 500ms blockierende
+    // Anfrage an den MQTT-Worker -- damit haengt der Browser beim Speichern
+    // nicht. Verbindet MQTT live mit den neuen Einstellungen, kein
+    // Geraete-Neustart mehr noetig.
+    networkManager.requestMqttReconfigure();
   } else {
     const auto& tr = i18n::strings(cfg.language);
     server.send(500, "text/html", String("<h1>") + tr.save_failed + "</h1>");

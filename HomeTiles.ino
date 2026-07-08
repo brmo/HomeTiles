@@ -187,6 +187,7 @@ static void apply_hotspot_mode(bool enable) {
     }
     if (networkManager.isMqttConnected()) networkManager.disconnectMqtt();
     if (webAdminServer.isRunning()) webAdminServer.stop();
+    networkManager.stopMdns();
     settings_update_ap_mode(true);
 #if defined(DEVICE_M5STACKS_TAB5)
     // Vor dem Funk-Moduswechsel deckeln: AP-Start bei vollem Backlight
@@ -883,6 +884,7 @@ void loop() {
     }
     if (configManager.isConfigured()) {
       networkManager.update();
+      if (webAdminServer.isRunning()) webAdminServer.handle();
       // Der MQTT-Worker laeuft auch im Sleep weiter und reiht Empfangenes in
       // die Inbound-Queue ein -- ohne Drain wuerde sie volllaufen (Drops).
       // Post-Connect ebenfalls hier, damit ein Reconnect im Sleep wie frueher

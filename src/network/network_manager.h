@@ -11,6 +11,11 @@
 // src/network/vendor/pubsubclient/PubSubClient.cpp for details.
 #include "src/network/vendor/pubsubclient/PubSubClient.h"
 
+// Einzige Quelle fuer die device_id (volle 48-Bit-MAC als Hex-String, kein
+// Praefix) -- von network_manager.cpp und mqtt_handlers.cpp genutzt, damit
+// beide garantiert denselben Wert berechnen.
+void buildDeviceId(char* buffer, size_t len);
+
 // Tab5 Network Manager - Verwaltet WiFi und MQTT
 //
 // Single-Owner MQTT: das PubSubClient-Objekt (mqtt_client) wird nach init()
@@ -62,6 +67,13 @@ public:
   void prepareMqttForOta();
   void deferMqttReconnect(uint32_t hold_ms = 6000);
 
+  // Nach dem Speichern neuer MQTT-Einstellungen im Web-Admin: trennt eine
+  // laufende Verbindung, liest mqtt_enabled/Host/Port frisch aus dem
+  // ConfigManager und verbindet sofort neu -- ohne Geraete-Neustart. Anders
+  // als disconnectMqtt() NICHT auf mqtt_enabled gegated, da genau dieses Flag
+  // hier live neu gesetzt werden soll (Erstkonfiguration, Host geleert etc.).
+  void requestMqttReconfigure();
+
   // Reine Merker/Request-Flags: das eigentliche setBufferSize() macht nur der
   // Worker in serviceBufferHousekeeping() (naechste Iteration, ~2ms spaeter).
   void requestLargeMqttBuffer(uint32_t hold_ms = 15000);
@@ -91,6 +103,11 @@ public:
   void setWifiPowerSaving(bool enable);
   void setSleepWifiProfile(bool enable);
 
+  // mDNS-Advertising stoppen (z.B. beim Eintritt in den Hotspot/AP-Modus,
+  // der STA-seitig ohnehin nicht laeuft). startMdns() bleibt intern -- wird
+  // nur von update() auf der bestehenden Connect-Flanke ausgeloest.
+  void stopMdns();
+
 private:
   WiFiClient net_client;
   PubSubClient mqtt_client;  // nach init() NUR noch vom Worker-Task beruehrt
@@ -100,6 +117,7 @@ private:
   uint32_t last_telemetry = 0;
   bool was_connected = false;
   bool mqtt_enabled = false;
+  bool mdns_active = false;
   // Build-compat: used by older/newer network_manager.cpp variants.
   bool wifi_ps_state_known = false;
   bool wifi_ps_enabled = false;
@@ -113,6 +131,7 @@ private:
   volatile bool mqtt_connected_flag = false;
   volatile bool mqtt_post_connect_pending = false;
   volatile bool mqtt_disconnect_requested = false;
+  volatile bool mqtt_reconfig_requested = false;
   volatile bool mqtt_ota_prep_requested = false;
   volatile bool mqtt_restore_normal_requested = false;
   volatile bool mqtt_suspended = false;  // OTA laeuft: Worker ruehrt nichts mehr an
@@ -136,6 +155,12 @@ private:
   void drainOutboundQueue(uint8_t max_commands);
   void serviceBufferHousekeeping(uint32_t now_ms);
   bool setMqttBufferSize(uint16_t size, const char* reason);
+
+  // mDNS-Start (Loop-Task, gleiche connect-Flanke wie webAdminServer). Rein
+  // additiv fuers Zeroconf-Discovery der HA-Bridge -- beeinflusst weder MQTT
+  // noch WebAdmin, wird bei Fehlschlag stillschweigend uebersprungen statt
+  // irgendetwas anderes zu blockieren.
+  void startMdns();
 };
 
 // Globale Instanz

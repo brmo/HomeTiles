@@ -1830,58 +1830,34 @@ void mqttPublishDiscovery() {
   Serial.println("Publishing Home Assistant discovery payloads...");
 
   char did[24];
-  uint64_t mac = ESP.getEfuseMac();
-  snprintf(did, sizeof(did), "tab5_lvgl_%04X", (uint16_t)(mac & 0xFFFF));
+  buildDeviceId(did, sizeof(did));
 
   char tpc[128];
-  char js[1024];
 
-  const char* stat_topic = mqttTopics.topic(TopicKey::STAT_CONN);
+  // Legacy Discovery komplett entfernen: alle diese Sensoren/Buttons kommen
+  // laengst konsistent ueber die HA-Integration (tab5_lvgl/HomeTiles Bridge).
+  // Jede dieser Nachrichten war mit retain=true gesetzt -- ein leerer Payload
+  // (weiterhin retained) ist bei HA's nativer MQTT-Discovery die dokumentierte
+  // Loesch-Anweisung fuer den Discovery-Eintrag. Ohne das haette jede
+  // device_id-Aenderung (z.B. der 48-Bit-MAC-Fix) ein weiteres verwaistes
+  // "Waveshare P4 Panel"-Phantomgeraet unter der nativen MQTT-Integration
+  // hinterlassen -- bei diesem Nutzer schon viermal passiert.
+  const char* legacy_configs[] = {
+    "outside_c", "inside_c", "external_c", "soc_pct", "uptime",
+  };
+  for (const char* leaf : legacy_configs) {
+    snprintf(tpc, sizeof(tpc), "homeassistant/sensor/%s_%s/config", did, leaf);
+    networkManager.mqttEnqueuePublish(tpc, "", true);
+  }
+  const char* legacy_buttons[] = {
+    "scene_abend", "scene_lesen", "scene_allesaus",
+  };
+  for (const char* leaf : legacy_buttons) {
+    snprintf(tpc, sizeof(tpc), "homeassistant/button/%s_%s/config", did, leaf);
+    networkManager.mqttEnqueuePublish(tpc, "", true);
+  }
 
-  snprintf(tpc, sizeof(tpc), "homeassistant/sensor/%s_outside_c/config", did);
-  snprintf(js, sizeof(js),
-    "{\"name\":\"Waveshare Outside\",\"stat_t\":\"%s\",\"unit_of_meas\":\"°C\",\"dev_cla\":\"temperature\",\"stat_cla\":\"measurement\",\"uniq_id\":\"%s_out\",\"avty_t\":\"%s\",\"pl_avail\":\"1\",\"pl_not_avail\":\"0\",\"dev\":{\"ids\":[\"%s\"],\"name\":\"Waveshare P4 Panel\",\"mf\":\"Waveshare\",\"mdl\":\"ESP32-P4-WIFI6-Touch-LCD-4B\"}}",
-    mqttTopics.topic(TopicKey::SENSOR_OUT), did, stat_topic, did);
-  networkManager.mqttEnqueuePublish(tpc, js, true);
-
-  snprintf(tpc, sizeof(tpc), "homeassistant/sensor/%s_inside_c/config", did);
-  snprintf(js, sizeof(js),
-    "{\"name\":\"Waveshare Inside\",\"stat_t\":\"%s\",\"unit_of_meas\":\"°C\",\"dev_cla\":\"temperature\",\"stat_cla\":\"measurement\",\"uniq_id\":\"%s_in\",\"avty_t\":\"%s\",\"pl_avail\":\"1\",\"pl_not_avail\":\"0\",\"dev\":{\"ids\":[\"%s\"],\"name\":\"Waveshare P4 Panel\",\"mf\":\"Waveshare\",\"mdl\":\"ESP32-P4-WIFI6-Touch-LCD-4B\"}}",
-    mqttTopics.topic(TopicKey::SENSOR_IN), did, stat_topic, did);
-  networkManager.mqttEnqueuePublish(tpc, js, true);
-
-  // Legacy Discovery entfernen: diese Sensoren kommen jetzt konsistent ueber die
-  // HA-Integration (tab5_lvgl) und sonst entstuenden Dubletten.
-  snprintf(tpc, sizeof(tpc), "homeassistant/sensor/%s_external_c/config", did);
-  networkManager.mqttEnqueuePublish(tpc, "", true);
-  snprintf(tpc, sizeof(tpc), "homeassistant/sensor/%s_soc_pct/config", did);
-  networkManager.mqttEnqueuePublish(tpc, "", true);
-
-  snprintf(tpc, sizeof(tpc), "homeassistant/sensor/%s_uptime/config", did);
-  snprintf(js, sizeof(js),
-    "{\"name\":\"Waveshare Uptime\",\"stat_t\":\"%s\",\"unit_of_meas\":\"s\",\"uniq_id\":\"%s_up\",\"avty_t\":\"%s\",\"pl_avail\":\"1\",\"pl_not_avail\":\"0\",\"dev\":{\"ids\":[\"%s\"]}}",
-    mqttTopics.topic(TopicKey::TELE_UP), did, stat_topic, did);
-  networkManager.mqttEnqueuePublish(tpc, js, true);
-
-  snprintf(tpc, sizeof(tpc), "homeassistant/button/%s_scene_abend/config", did);
-  snprintf(js, sizeof(js),
-    "{\"name\":\"Waveshare Scene Abend\",\"cmd_t\":\"%s\",\"pl_prs\":\"Abend\",\"uniq_id\":\"%s_btn_abend\",\"avty_t\":\"%s\",\"pl_avail\":\"1\",\"pl_not_avail\":\"0\",\"dev\":{\"ids\":[\"%s\"]}}",
-    mqttTopics.topic(TopicKey::SCENE_CMND), did, stat_topic, did);
-  networkManager.mqttEnqueuePublish(tpc, js, true);
-
-  snprintf(tpc, sizeof(tpc), "homeassistant/button/%s_scene_lesen/config", did);
-  snprintf(js, sizeof(js),
-    "{\"name\":\"Waveshare Scene Lesen\",\"cmd_t\":\"%s\",\"pl_prs\":\"Lesen\",\"uniq_id\":\"%s_btn_lesen\",\"avty_t\":\"%s\",\"pl_avail\":\"1\",\"pl_not_avail\":\"0\",\"dev\":{\"ids\":[\"%s\"]}}",
-    mqttTopics.topic(TopicKey::SCENE_CMND), did, stat_topic, did);
-  networkManager.mqttEnqueuePublish(tpc, js, true);
-
-  snprintf(tpc, sizeof(tpc), "homeassistant/button/%s_scene_allesaus/config", did);
-  snprintf(js, sizeof(js),
-    "{\"name\":\"Waveshare Scene Alles Aus\",\"cmd_t\":\"%s\",\"pl_prs\":\"AllesAus\",\"uniq_id\":\"%s_btn_allesaus\",\"avty_t\":\"%s\",\"pl_avail\":\"1\",\"pl_not_avail\":\"0\",\"dev\":{\"ids\":[\"%s\"]}}",
-    mqttTopics.topic(TopicKey::SCENE_CMND), did, stat_topic, did);
-  networkManager.mqttEnqueuePublish(tpc, js, true);
-
-  Serial.println("Home Assistant discovery published");
+  Serial.println("Legacy Home Assistant discovery cleared");
 }
 
 void mqttReloadDynamicSlots() {
