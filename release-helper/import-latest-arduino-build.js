@@ -106,7 +106,7 @@ function main() {
   fs.mkdirSync(releaseDir, { recursive: true });
 
   const deviceFilePatterns = [
-    new RegExp(`^hometiles-.*-${device.key}(-factory)?\\.bin$`),
+    new RegExp(`^hometiles_.*_${device.key}(_factory)?\\.bin$`),
     new RegExp(`^esp32-p4-homeassistant-display-.*-${device.slug}-(update|factory)\\.bin$`),
   ];
   for (const entry of fs.readdirSync(releaseDir, { withFileTypes: true })) {
@@ -115,8 +115,8 @@ function main() {
     fs.unlinkSync(path.join(releaseDir, entry.name));
   }
 
-  const updateDest = path.join(releaseDir, `hometiles-${version}-${device.key}.bin`);
-  const factoryDest = path.join(releaseDir, `hometiles-${version}-${device.key}-factory.bin`);
+  const updateDest = path.join(releaseDir, `hometiles_${version}_${device.key}.bin`);
+  const factoryDest = path.join(releaseDir, `hometiles_${version}_${device.key}_factory.bin`);
   // Keep legacy copies so older firmware builds can still update from the same release.
   const legacyBaseName = `esp32-p4-homeassistant-display-${version}-${device.slug}`;
   const legacyUpdateDest = path.join(releaseDir, `${legacyBaseName}-update.bin`);
