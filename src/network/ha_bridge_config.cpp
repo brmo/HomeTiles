@@ -7,6 +7,7 @@
 #include <strings.h>
 #include <ctype.h>
 #include "src/core/lvgl_tick_service.h"
+#include "src/devices/device.h"
 #include <vector>
 
 static const char* PREF_NAMESPACE = "tab5_config";
@@ -211,6 +212,14 @@ String HaBridgeConfig::buildJsonPayload(const char* device_id,
   appendJsonEscaped(json, base_topic);
   json += "\",\"ha_prefix\":\"";
   appendJsonEscaped(json, ha_prefix);
+  // Automatischer Vorschlag fuer Geraetename/Hersteller/Modell in der Bridge -
+  // die "Gerätename (optional)"-Felder im Panel-Einstellungen-Dialog blieben
+  // sonst leer, bis der Nutzer sie manuell ausfuellt. Ein von Hand gesetzter
+  // Name hat auf Bridge-Seite weiterhin Vorrang (siehe entry_device_name()).
+  json += "\",\"device_name\":\"";
+  appendJsonEscaped(json, Device::displayName());
+  json += "\",\"manufacturer\":\"HomeTiles\",\"model\":\"";
+  appendJsonEscaped(json, Device::profile().key);
   json += "\",\"sensors\":";
   appendSensorsJson(json, data.sensors_text);
 
