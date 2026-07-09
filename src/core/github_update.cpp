@@ -142,6 +142,57 @@ String legacyDeviceSlug() {
   return slug;
 }
 
+void logCheckNetworkState(const char* label, const String& url) {
+  const uint32_t int_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+  const uint32_t int_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+  const uint32_t dma_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+  const uint32_t dma_largest =
+      heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+
+  Serial.printf("[Update/Diag] %s url=%s\n",
+                label ? label : "?",
+                url.c_str());
+  Serial.printf("[Update/Diag] wifi=%d ip=%s gw=%s dns=%s rssi=%ld\n",
+                static_cast<int>(WiFi.status()),
+                WiFi.localIP().toString().c_str(),
+                WiFi.gatewayIP().toString().c_str(),
+                WiFi.dnsIP(0).toString().c_str(),
+                static_cast<long>(WiFi.RSSI()));
+  Serial.printf("[Update/Diag] mem int=%u KB largest=%u KB dma=%u KB dma_largest=%u KB psram=%u KB\n",
+                static_cast<unsigned>(int_free / 1024),
+                static_cast<unsigned>(int_largest / 1024),
+                static_cast<unsigned>(dma_free / 1024),
+                static_cast<unsigned>(dma_largest / 1024),
+                static_cast<unsigned>(ESP.getFreePsram() / 1024));
+}
+
+void logCheckFailureDetails(int code, WiFiClientSecure& client, const String& url) {
+  char tls_error[96] = {};
+  const int tls_code = client.lastError(tls_error, sizeof(tls_error));
+
+  IPAddress github_ip;
+  const int dns_ok = WiFi.hostByName("github.com", github_ip) ? 1 : 0;
+
+  if (code < 0) {
+    Serial.printf("[Update/Diag] http=%d (%s) tls=%d (%s) fd=%d\n",
+                  code,
+                  HTTPClient::errorToString(code).c_str(),
+                  tls_code,
+                  tls_error,
+                  client.fd());
+  } else {
+    Serial.printf("[Update/Diag] http=%d tls=%d (%s) fd=%d\n",
+                  code,
+                  tls_code,
+                  tls_error,
+                  client.fd());
+  }
+  Serial.printf("[Update/Diag] dns github.com: ok=%d ip=%s | url=%s\n",
+                dns_ok,
+                github_ip.toString().c_str(),
+                url.c_str());
+}
+
 typedef bool (*RangeDataFn)(const uint8_t* data, size_t len, void* ctx);
 
 bool fetchHttpRange(const String& start_url, size_t from, size_t to,
@@ -397,21 +448,42 @@ CheckResult checkLatest() {
   // Umbenennen des Repos dauerhaft ihre Update-Suche.
   String url = String(kRepoUrl) + "/releases/latest";
   String tag;
+  logCheckNetworkState("check-start", url);
   for (int hop = 0; hop < 4; ++hop) {
+    client.stop();
+    client.setTimeout(8000);
+    client.setHandshakeTimeout(12);
+
     HTTPClient http;
     http.setConnectTimeout(8000);
     http.setTimeout(8000);
-    if (!http.begin(client, url)) return result;
+    http.setReuse(false);
+    if (!http.begin(client, url)) {
+      Serial.printf("[Update] Check fehlgeschlagen: HTTP begin (%s)\n", url.c_str());
+      logCheckFailureDetails(0, client, url);
+      client.stop();
+      return result;
+    }
     http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+    http.addHeader("Connection", "close");
     const char* kCollect[] = {"Location"};
     http.collectHeaders(kCollect, 1);
 
     const int code = http.GET();
     const String location = http.header("Location");
     http.end();
+    client.stop();
+    delay(10);
 
     if (code < 300 || code >= 400 || !location.length()) {
-      Serial.printf("[Update] Check fehlgeschlagen: HTTP %d\n", code);
+      if (code < 0) {
+        Serial.printf("[Update] Check fehlgeschlagen: HTTP %d (%s)\n",
+                      code,
+                      HTTPClient::errorToString(code).c_str());
+      } else {
+        Serial.printf("[Update] Check fehlgeschlagen: HTTP %d\n", code);
+      }
+      logCheckFailureDetails(code, client, url);
       return result;
     }
 

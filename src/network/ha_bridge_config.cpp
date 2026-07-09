@@ -6,12 +6,10 @@
 #include <lvgl.h>
 #include <strings.h>
 #include <ctype.h>
-#include "src/core/lvgl_tick_service.h"
 #include "src/devices/device.h"
 #include <vector>
 
 static const char* PREF_NAMESPACE = "tab5_config";
-static void logList(const char* label, const String& text);
 static bool sensorExistsInList(const String& list, const String& candidate);
 static bool aliasExistsInList(const String& list, const String& alias);
 static String normalizeLineLocal(const String& line);
@@ -517,16 +515,16 @@ bool HaBridgeConfig::applyJson(const char* json_payload, bool* out_reload, bool*
   if (needs_reload) {
     bool ok = save(merged);
     if (ok) {
-      uint32_t t_log0 = millis();
-      Serial.println("[Bridge] Konfiguration aus Home Assistant uebernommen");
-      logList("Sensoren", data.sensors_text);
-      logList("Energy", data.energy_text);
-      logList("Wetter", data.weathers_text);
-      logList("Lichter", data.lights_text);
-      logList("Schalter", data.switches_text);
-      logList("Media Player", data.media_players_text);
-      logList("Szenen", data.scene_alias_text);
-      Serial.printf("[Bridge] logList dump: %u ms\n", (unsigned)(millis() - t_log0));
+      Serial.printf("[Bridge] Konfiguration aus Home Assistant uebernommen: "
+                    "sensoren=%d energy=%d wetter=%d lichter=%d schalter=%d "
+                    "media=%d szenen=%d\n",
+                    countListEntries(data.sensors_text),
+                    countListEntries(data.energy_text),
+                    countListEntries(data.weathers_text),
+                    countListEntries(data.lights_text),
+                    countListEntries(data.switches_text),
+                    countListEntries(data.media_players_text),
+                    countMapEntries(data.scene_alias_text));
       if (out_reload) {
         *out_reload = true;
       }
@@ -581,33 +579,6 @@ bool HaBridgeConfig::applyIconUpdate(const char* json_payload) {
     }
   }
   return changed;
-}
-
-static void logList(const char* label, const String& text) {
-  if (!label) label = "Liste";
-  if (!text.length()) {
-    Serial.printf("[Bridge] %s: (leer)\n", label);
-    return;
-  }
-  Serial.printf("[Bridge] %s:\n", label);
-  int start = 0;
-  int idx = 1;
-  while (start < text.length()) {
-    int end = text.indexOf('\n', start);
-    if (end < 0) end = text.length();
-    String line = text.substring(start, end);
-    line.trim();
-    if (line.length()) {
-      Serial.printf("  %d) %s\n", idx++, line.c_str());
-    }
-    start = end + 1;
-    // Each Serial.printf() blocks until the UART/USB TX buffer has room --
-    // with 7 lists x up to ~25 entries this debug dump alone measured as a
-    // single ~200-500ms uninterrupted block on a reload (matches the leftover
-    // gap after the grid-reload/JSON-parse fixes above). Give LVGL a turn
-    // between lines so this pure logging output doesn't stall the UI.
-    lvglServiceDuringBlockingWork();
-  }
 }
 
 static bool sensorExistsInList(const String& list, const String& candidate) {

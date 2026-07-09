@@ -294,7 +294,25 @@ static void apply_fw_check() {
   // Die "Suche..."-Statuszeile noch auf den Schirm bringen, bevor der
   // TLS-Handshake den Loop fuer 1-3 Sekunden blockiert
   lv_refr_now(displayManager.getDisplay());
+
+  // Auch der reine Versions-Check braucht einen frischen GitHub-TLS-Handshake.
+  // Auf ESP32-P4/SDIO-WiFi ist das stabiler, wenn MQTT kurz ruhig ist und der
+  // interne PubSubClient-Puffer nicht gleichzeitig 16-32 KB SRAM festhaelt.
+  const uint16_t mqtt_buffer_before_check = networkManager.getMqttBufferSize();
+  const bool quiet_mqtt_for_check = mqtt_buffer_before_check > 0;
+  if (quiet_mqtt_for_check) {
+    Serial.printf("[Update] Check: MQTT fuer GitHub-TLS kurz pausieren (Buffer=%u)\n",
+                  static_cast<unsigned>(mqtt_buffer_before_check));
+    networkManager.prepareMqttForOta();
+    delay(50);
+  }
+
   GithubUpdate::CheckResult res = GithubUpdate::checkLatest();
+
+  if (quiet_mqtt_for_check) {
+    networkManager.restoreMqttBufferNormal();
+    Serial.println("[Update] Check: MQTT wieder freigegeben");
+  }
   settings_fw_check_result(res.ok, res.latest_tag, res.update_available);
 }
 
