@@ -41,29 +41,33 @@ jobs:
         shell: bash
         run: |
           retry() {
+            local max_attempts="$1"
+            shift
             local attempt
-            for attempt in 1 2 3; do
+            for attempt in $(seq 1 "${max_attempts}"); do
               "$@" && return 0
               echo "Command failed on attempt ${attempt}: $*"
-              sleep $((attempt * 20))
+              if [ "${attempt}" -lt "${max_attempts}" ]; then
+                sleep $((attempt * 30))
+              fi
             done
-            "$@"
+            return 1
           }
 
           arduino-cli config init --overwrite
           arduino-cli config add board_manager.additional_urls "https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json"
-          retry arduino-cli core update-index
-          retry arduino-cli core install "esp32:esp32@${ARDUINO_CORE_VERSION}"
-          retry arduino-cli lib update-index
-          retry arduino-cli lib install "ArduinoJson@7.4.3"
-          retry arduino-cli lib install "DallasTemperature@4.0.6"
-          retry arduino-cli lib install "GFX Library for Arduino@1.6.5"
-          retry arduino-cli lib install "lvgl@9.5.0"
-          retry arduino-cli lib install "M5GFX@0.2.20"
-          retry arduino-cli lib install "M5Unified@0.2.14"
-          retry arduino-cli lib install "OneWire@2.3.8"
-          retry arduino-cli lib install "PubSubClient@2.8"
-          retry arduino-cli lib install "WebSockets@2.7.2"
+          retry 5 arduino-cli core update-index
+          retry 12 arduino-cli core install "esp32:esp32@${ARDUINO_CORE_VERSION}"
+          retry 5 arduino-cli lib update-index
+          retry 5 arduino-cli lib install "ArduinoJson@7.4.3"
+          retry 5 arduino-cli lib install "DallasTemperature@4.0.6"
+          retry 5 arduino-cli lib install "GFX Library for Arduino@1.6.5"
+          retry 5 arduino-cli lib install "lvgl@9.5.0"
+          retry 5 arduino-cli lib install "M5GFX@0.2.20"
+          retry 5 arduino-cli lib install "M5Unified@0.2.14"
+          retry 5 arduino-cli lib install "OneWire@2.3.8"
+          retry 5 arduino-cli lib install "PubSubClient@2.8"
+          retry 5 arduino-cli lib install "WebSockets@2.7.2"
 
   build:
     name: Build ${{ matrix.label }}
