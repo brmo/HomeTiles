@@ -16,7 +16,7 @@ concurrency:
 
 env:
   ARDUINO_CORE_VERSION: "3.3.7"
-  ARDUINO_CACHE_KEY: arduino-esp32-3.3.7-libs-v1
+  ARDUINO_CACHE_KEY: arduino-esp32-3.3.7-libs-v2
 
 jobs:
   toolchain:
@@ -37,7 +37,6 @@ jobs:
           key: ${{ env.ARDUINO_CACHE_KEY }}
 
       - name: Install ESP32 core and Arduino libraries
-        if: steps.arduino-cache.outputs.cache-hit != 'true'
         shell: bash
         run: |
           retry() {
