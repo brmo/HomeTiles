@@ -16,7 +16,7 @@ concurrency:
 
 env:
   ARDUINO_CORE_VERSION: "3.3.7"
-  ARDUINO_CACHE_KEY: arduino-esp32-3.3.7-libs-v2
+  ARDUINO_CACHE_KEY: arduino-esp32-3.3.7-libs-v3
 
 jobs:
   toolchain:
@@ -62,7 +62,7 @@ jobs:
           retry 5 arduino-cli lib install "DallasTemperature@4.0.6"
           retry 5 arduino-cli lib install "GFX Library for Arduino@1.6.5"
           retry 5 arduino-cli lib install "lvgl@9.5.0"
-          retry 5 arduino-cli lib install "M5GFX@0.2.20"
+          retry 5 arduino-cli lib install "M5GFX@0.2.25"
           retry 5 arduino-cli lib install "M5Unified@0.2.14"
           retry 5 arduino-cli lib install "OneWire@2.3.8"
           retry 5 arduino-cli lib install "PubSubClient@2.8"
@@ -134,8 +134,8 @@ jobs:
             --profile "${{ matrix.profile }}" \
             --export-binaries \
             --output-dir "build/ci/${{ matrix.key }}" \
-            --build-property "compiler.c.extra_flags=-DLV_CONF_INCLUDE_SIMPLE -I$GITHUB_WORKSPACE" \
-            --build-property "compiler.cpp.extra_flags=-DHOMETILES_CI_TARGET -D${{ matrix.define }} -DLV_CONF_INCLUDE_SIMPLE -I$GITHUB_WORKSPACE"
+            --build-property "compiler.c.extra_flags=-DLV_CONF_INCLUDE_SIMPLE -I$GITHUB_WORKSPACE -I$HOME/Arduino/libraries" \
+            --build-property "compiler.cpp.extra_flags=-DHOMETILES_CI_TARGET -D${{ matrix.define }} -DLV_CONF_INCLUDE_SIMPLE -I$GITHUB_WORKSPACE -I$HOME/Arduino/libraries"
 
       - name: Package firmware binaries
         shell: bash
