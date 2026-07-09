@@ -132,7 +132,6 @@ jobs:
         run: |
           arduino-cli compile \
             --profile "${{ matrix.profile }}" \
-            --libraries "$HOME/Arduino/libraries" \
             --export-binaries \
             --output-dir "build/ci/${{ matrix.key }}" \
             --build-property "compiler.cpp.extra_flags=-DHOMETILES_CI_TARGET -D${{ matrix.define }}"
