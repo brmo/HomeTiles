@@ -513,11 +513,19 @@ void IRAM_ATTR DisplayManager::flush_cb(lv_display_t *lv_disp, const lv_area_t *
 // IRAM_ATTR: Touch wird haeufig abgefragt (jede Loop-Iteration)
 // Schnellere Touch-Response = besseres Scroll-Gefuehl!
 void IRAM_ATTR DisplayManager::touch_cb(lv_indev_t* indev_drv, lv_indev_data_t *data) {
-  // Wenn im Display-Sleep, erstmal aufwecken
+  // Wenn im Display-Sleep, nur bei echtem Touch aufwecken. Dieser Callback
+  // wird waehrend echtem Sleep zwar nicht vom normalen Loop getrieben, aber
+  // lvglServiceDuringBlockingWork() (z.B. logList() beim grossen Bridge-
+  // Config-Dump) ruft lv_timer_handler() auch dann auf -- ohne Touch-Check
+  // hat das jeden Bridge-Update-Block waehrend des Sleeps zuverlaessig
+  // aufgeweckt, ganz ohne Finger auf dem Display.
   if (powerManager.isInSleep()) {
     if (powerManager.isTouchWakeEnabled()) {
-      powerManager.wakeFromDisplaySleep();
-      g_ignore_touch_until_release = true;  // Erst loslassen, dann wieder reagieren
+      BoardHAL::TouchPoint tmp;
+      if (BoardHAL::getTouch(&tmp)) {
+        powerManager.wakeFromDisplaySleep("touch_cb");
+        g_ignore_touch_until_release = true;  // Erst loslassen, dann wieder reagieren
+      }
     }
     data->state = LV_INDEV_STATE_RELEASED;
     return;

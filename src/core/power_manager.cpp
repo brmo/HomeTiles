@@ -165,8 +165,9 @@ void PowerManager::enterDisplaySleep() {
   mqttPublishDeviceSettings();
 }
 
-void PowerManager::wakeFromDisplaySleep() {
+void PowerManager::wakeFromDisplaySleep(const char* reason) {
   if (!is_display_sleeping) return;
+  Serial.printf("[Power] Wake (%s)\n", reason ? reason : "unknown");
 
   BoardHAL::setBrightness(0);
 
@@ -216,7 +217,7 @@ void PowerManager::blockSleep(uint32_t duration_ms) {
   sleep_blocked = true;
   sleep_block_until = duration_ms ? millis() + duration_ms : 0;
   if (is_display_sleeping) {
-    wakeFromDisplaySleep();
+    wakeFromDisplaySleep("blockSleep");
   }
   setHighPerformance(true);
 }

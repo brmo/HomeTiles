@@ -563,6 +563,16 @@ void setup() {
   log_memory_status("after-power");
   Serial.flush();
 
+  // Sleep bis zu 60s nach dem Boot sperren, bis der erste frische Bridge-Sync
+  // (processMqttMessage() -> powerManager.allowSleep() bei erfolgreichem
+  // applyJson()) angekommen ist. Ohne das kann ein kurzes Auto-Sleep-Timeout
+  // das Geraet einschlafen lassen, bevor WLAN/MQTT/HA ueberhaupt die
+  // aktuellen Sensordaten geliefert haben -- reines Zeitverschieben (wie
+  // resetActivityTimer() unten) reicht dafuer nicht, weil die Sync-Dauer
+  // schwankt. Kommt gar kein Sync (Broker/HA nicht erreichbar), greift nach
+  // 60s automatisch wieder das normale Idle-Timeout als Fallback.
+  powerManager.blockSleep(60000);
+
   // Waveshare 720×720: Square display, no rotation needed.
   // Skip auto-rotation detection (no IMU).
   Serial.println("[Setup] Display rotation: fixed (square display)");
@@ -717,6 +727,14 @@ void setup() {
     Serial.println("[Setup] Ueberspringe Network/Game WS (keine Config)");
   }
 
+  // last_activity_time wurde schon ganz am Anfang in displayManager.init()
+  // gesetzt -- alles seitdem (Config-Load, Splash, UI-Build, bis zu 30s
+  // Timeout) zaehlte bisher schon gegen den Idle-/Sleep-Timer, obwohl der
+  // Nutzer das Geraet noch gar nicht sehen/bedienen konnte. Bei kurzem
+  // Auto-Sleep-Timeout schlief das Geraet dadurch faktisch sofort nach dem
+  // Boot ein. Timer hier neu starten, sobald die UI wirklich bedienbar ist.
+  displayManager.resetActivityTimer();
+
   Serial.println("\n=== SETUP COMPLETE ===\n");
   log_memory_status("setup-complete");
   Serial.flush();
@@ -725,9 +743,6 @@ void setup() {
 void loop() {
   static bool first_run = true;
   static bool was_asleep = false;
-  static bool wake_cache_refresh_pending = false;
-  static bool wake_bridge_request_pending = false;
-  static uint32_t wake_bridge_request_until_ms = 0;
   static bool logged_wifi_connected = false;
   static bool logged_mqtt_connected = false;
   static uint32_t last_mem_log_ms = 0;
@@ -882,6 +897,18 @@ void loop() {
       Serial.println("[Loop] SLEEP MODE AKTIV!");
       was_asleep = true;
     }
+    // first_run muss auch hier geloescht werden -- sonst druckt JEDE
+    // Sleep-Iteration den ganzen "if (first_run)"-Block am Loop-Anfang neu
+    // (Endlos-Spam), falls das Geraet schon in seiner allerersten
+    // Loop-Iteration schlaeft (z.B. Boot/UI-Build dauerte laenger als das
+    // konfigurierte Auto-Sleep-Timeout). Frueher unsichtbar, weil der alte
+    // touch_cb-Bug jeden lv_timer_handler()-Aufruf als Wake gewertet und den
+    // Sleep-Zweig so nie laenger als einen Tick am Stueck lief.
+    if (first_run) {
+      Serial.println("[Loop] Sleep direkt nach Boot erkannt");
+      Serial.flush();
+      first_run = false;
+    }
     if (configManager.isConfigured()) {
       networkManager.update();
       if (webAdminServer.isRunning()) webAdminServer.handle();
@@ -891,22 +918,63 @@ void loop() {
       // sofort wieder Subscribes/Discovery bekommt.
       mqttServicePostConnect();
       mqtt_process_inbound_queue();
+      // tiles_update_sensor_by_entity() queued Live-Werte jetzt auch waehrend
+      // echtem Sleep (frueher: nur gecacht, UI-Queues blieben leer -- das
+      // brauchte einen Wake-Sonder-Catchup, der z.B. Media-Tiles vergessen
+      // hat). Hier draenieren, damit die Kacheln laufend aktuell sind, nicht
+      // erst ab dem Aufwachen. Kein Rendering-Kosten: Refresh-Timer ist
+      // pausiert, ein aktualisiertes Label markiert nur seine eigene kleine
+      // Flaeche dirty, ohne dass auf den abgeschalteten Screen gezeichnet wird.
+      // process_tile_graph_queue() bewusst NICHT hier: Graph-Historie ist
+      // Request/Response (network round-trip), keine laufende Werte-Quelle
+      // wie die anderen vier -- bleibt beim bestehenden On-Demand-Pfad.
+      process_sensor_update_queue();
+      process_switch_update_queue();
+      process_weather_update_queue();
+      process_media_update_queue();
+      // Uhrzeit/WLAN-/Power-Status haben denselben Bug wie die Sensor-Queues
+      // oben: uiManager.updateStatusbar() & Co. liefen bisher nur alle 2s im
+      // AKTIVEN Loop-Pfad, nie im Sleep -- die Uhr blieb also auf dem Stand
+      // von vor dem Einschlafen stehen und sprang erst beim Aufwachen auf
+      // die aktuelle Zeit. Guenstig genug (liest nur Systemzeit/WiFi-Status,
+      // setzt Label-Text), um hier ebenfalls alle ~20ms mitzulaufen.
+      settings_update_power_status();
+      if (networkManager.isWifiConnected()) {
+        const DeviceConfig& sleep_cfg = configManager.getConfig();
+        settings_update_wifi_status(true, sleep_cfg.wifi_ssid, WiFi.localIP().toString().c_str());
+      } else {
+        settings_update_wifi_status(false, nullptr, nullptr);
+      }
+      uiManager.updateStatusbar();
+      // Gleiches Muster nochmal, zwei weitere Stellen gefunden, die nur im
+      // aktiven Loop liefen: tiles_process_visible_cache_refresh() wendet
+      // Struktur-/Icon-Aenderungen (aus dem 60s-Bridge-Sync oben) auf
+      // sichtbare Kacheln an -- ohne das blieben Icon-Updates waehrend des
+      // Sleeps haengen. mqttServiceLocalSensors() aktualisiert die interne
+      // Batterie- und den externen OneWire-Temperatursensor (alle 500ms
+      // eigen-throttled) -- dieselbe Luecke wie bei den Statusbar-Werten.
+      tiles_process_visible_cache_refresh(true);
+      mqttServiceLocalSensors();
       tiles_process_bridge_cache_refresh(true);
       service_background_state_refresh(true);
       process_energy_response_queue();
       energy_service_periodic();
     }
-    // Touch-Wake: abfragen ob Touch aktiv
+    // Touch-Wake: abfragen ob Touch aktiv. Aufwecken ist NUR NOCH eine
+    // Display-Hardware-Aktion (Backlight/Panel an) -- keine Sonderbehandlung
+    // fuer Daten mehr (kein Extra-Request, kein Extra-Drain). Die Hintergrund-
+    // verarbeitung oben laeuft ohnehin durchgehend, gleiche Logik ob wach oder
+    // schlafend; das kurze delay(20) unten (statt vorher 150ms) haelt das
+    // Zeitfenster fuer "gerade eingetroffener Wert noch nicht verarbeitet"
+    // strukturell klein, ohne dass das Aufwachen selbst etwas anstossen muss.
     BoardHAL::TouchPoint tp;
     if (BoardHAL::getTouch(&tp)) {
-      powerManager.wakeFromDisplaySleep();
+      Serial.printf("[Power] Sleep-Poll Touch erkannt: x=%d y=%d\n", tp.x, tp.y);
+      powerManager.wakeFromDisplaySleep("sleep-poll");
       was_asleep = false;
-      wake_cache_refresh_pending = true;
-      wake_bridge_request_pending = true;
-      wake_bridge_request_until_ms = millis() + 15000;
       return;
     }
-    delay(150);
+    delay(20);
     return;
   }
   // Zurück im aktiven Modus
@@ -919,20 +987,13 @@ void loop() {
   // in one pass). Only prints if the total exceeds 80ms.
   uint32_t t_loop0 = millis();
 
-  if (wake_cache_refresh_pending) {
-    wake_cache_refresh_pending = false;
-    tiles_refresh_visible_from_cache();
-  }
-  if (wake_bridge_request_pending) {
-    if (networkManager.isMqttConnected()) {
-      networkManager.publishBridgeRequest();
-      mark_background_state_refresh_sent();
-      energy_request_day_for_tiles(true);
-      wake_bridge_request_pending = false;
-    } else if ((int32_t)(millis() - wake_bridge_request_until_ms) >= 0) {
-      wake_bridge_request_pending = false;
-    }
-  }
+  // Kein Wake-getriggerter Extra-Request mehr hier (frueher: wake_bridge_
+  // request_pending -> publishBridgeRequest()/energy_request_day_for_tiles()).
+  // Beides laeuft schon unabhaengig vom Sleep/Wake-Zustand periodisch von
+  // alleine (service_background_state_refresh() alle 60s, energy_service_
+  // periodic() alle 60s, beide oben/unten unconditional aufgerufen) --
+  // Aufwachen soll keine Datenverarbeitung anstossen, die nicht ohnehin
+  // schon laeuft, nur das Display anschalten.
   uint32_t t_wake = millis();
 
   const bool admin_busy = webAdminRecentlyActive(20000);

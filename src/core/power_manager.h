@@ -30,7 +30,7 @@ public:
 
   // Display-Sleep-Modus verwalten (Display aus, CPU minimal, Touch bleibt aktiv)
   void enterDisplaySleep();
-  void wakeFromDisplaySleep();
+  void wakeFromDisplaySleep(const char* reason = "unknown");
   bool isInSleep() const { return is_display_sleeping; }
   bool isTouchWakeEnabled() const;
   bool isImuWakeEnabled() const;

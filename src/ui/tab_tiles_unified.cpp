@@ -508,7 +508,13 @@ void tiles_refresh_visible_from_cache() {
   if (idx >= 3 || !g_tiles_grids[idx] || !g_tiles_loaded[idx]) return;
 
   const TileGridConfig& config = getGridConfig(grid_type);
-  apply_cached_states(grid_type, config, false);
+  // include_media=true (wie beim Ordner-Wechsel weiter unten in dieser Datei,
+  // der denselben Cache-Apply + alle 4 Queues nutzt) -- vorher liess das
+  // hier gesetzte "false" Media-Tiles aus, die dadurch erst nach dem
+  // sichtbaren Aufwachen (im normalen Loop) aktualisiert wurden: sichtbares
+  // Nachziehen genau bei den Kacheln, die dieser Cache-Refresh eigentlich
+  // schon VOR dem Wake fertig machen soll.
+  apply_cached_states(grid_type, config, true);
   // update_sensor_tile_value()/update_switch_tile_state()/update_weather_tile_state()
   // (called from these three queues) all update a specific tile's widgets via
   // lv_label_set_text()/lv_arc_set_value()/etc., which already mark just that
@@ -521,6 +527,7 @@ void tiles_refresh_visible_from_cache() {
   process_sensor_update_queue();
   process_switch_update_queue();
   process_weather_update_queue();
+  process_media_update_queue();
 }
 
 void tiles_request_visible_cache_refresh() {
@@ -1304,8 +1311,17 @@ void tiles_update_sensor_by_entity(GridType grid_type, const char* entity_id, co
   if (!entity_id || !value) return;
 
   cache_entity_payload(entity_id, value);
-  // Im Sleep nur den letzten Zustand cachen; UI-Queues bleiben leer.
-  if (powerManager.isInSleep()) return;
+  // Frueher hier: "if (powerManager.isInSleep()) return;" -- nur den
+  // letzten Zustand cachen, UI-Queues blieben im Sleep leer. Damit war beim
+  // Aufwachen ein Sonder-Catchup noetig (tiles_refresh_visible_from_cache()),
+  // der leicht Tile-Typen vergessen konnte (siehe Media-Tile-Luecke). Jetzt
+  // stattdessen durchgehend queuen -- mqtt_process_inbound_queue() im
+  // Sleep-Zweig der Loop drained diese Queues genauso wie im aktiven Pfad,
+  // die Kacheln sind also die ganze Zeit ueber aktuell, nicht nur ab dem
+  // Moment des Aufwachens. Kein Rendering-Kosten dabei: der Refresh-Timer
+  // ist waehrend des Sleeps pausiert, ein aktualisiertes Label markiert nur
+  // seine kleine Flaeche dirty, ohne dass irgendwas auf den (abgeschalteten)
+  // Bildschirm gezeichnet wird.
   if (!tiles_is_loaded(grid_type)) return;
 
   const TileGridConfig& config = getGridConfig(grid_type);

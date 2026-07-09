@@ -9,6 +9,9 @@
 .idea/
 .claude/
 
+# Lokale Design-Vorschau (Web-Admin-Snapshot), nicht Teil des Projekts
+/webadmin-preview/
+
 # Backup-Dateien
 *.bak
 *~

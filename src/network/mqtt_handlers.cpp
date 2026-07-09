@@ -918,7 +918,7 @@ static void handleDisplaySleepCommand(const char* payload, size_t) {
   if (sleep) {
     powerManager.enterDisplaySleep();
   } else {
-    powerManager.wakeFromDisplaySleep();
+    powerManager.wakeFromDisplaySleep("mqtt-cmd");
   }
   mqttPublishDeviceSettings();
 }
@@ -1376,6 +1376,16 @@ static void processMqttMessage(char* topic, uint8_t* payload, unsigned int lengt
     Serial.printf("[Bridge] applyJson: %u ms\n", (unsigned)(millis() - t_parse0));
     if (applied) {
       Serial.println("[Bridge] Konfiguration von HA empfangen");
+      // Erster/erneuter erfolgreicher Bridge-Sync: die Boot-Sleep-Sperre aus
+      // setup() (bzw. jede andere) wieder freigeben -- ab hier sind die
+      // Sensordaten aktuell, ein Einschlafen davor waere das eigentliche
+      // Problem gewesen. Activity-Timer hier ebenfalls neu setzen: sonst
+      // waere er (gesetzt am Setup-Ende) bei einem langsamen Sync schon
+      // aelter als das konfigurierte Sleep-Timeout, und das Geraet wuerde
+      // sofort nach der Freigabe wieder einschlafen, statt dem Nutzer die
+      // frischen Daten tatsaechlich zu zeigen.
+      powerManager.allowSleep();
+      displayManager.resetActivityTimer();
       tiles_request_bridge_cache_refresh();
       if (reload) {
         yield();  // Nach JSON Parse
