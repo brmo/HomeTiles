@@ -84,11 +84,39 @@ function ensureCleanDeviceOutputs(outDir, deviceKey) {
   }
 }
 
+function readNullTerminatedString(buffer, offset, maxLength) {
+  const end = buffer.indexOf(0, offset);
+  const limit = Math.min(end === -1 ? buffer.length : end, offset + maxLength);
+  return buffer.subarray(offset, limit).toString('utf8');
+}
+
+function verifyDeviceDescriptor(imagePath, expectedDeviceKey) {
+  const image = fs.readFileSync(imagePath);
+  const descriptorOffset = 24 + 8 + 256;
+  const descriptorLength = 4 + 32 + 32 + 32;
+  const descriptorMagic = 0x44565034;
+
+  if (image.length < descriptorOffset + descriptorLength) {
+    throw new Error(`Firmware image is too small for metadata: ${imagePath}`);
+  }
+  if (image.readUInt32LE(descriptorOffset) !== descriptorMagic) {
+    throw new Error(`Firmware metadata magic is missing: ${imagePath}`);
+  }
+
+  const deviceKey = readNullTerminatedString(image, descriptorOffset + 4 + 32, 32);
+  if (deviceKey !== expectedDeviceKey) {
+    throw new Error(
+      `Firmware metadata device mismatch: expected ${expectedDeviceKey}, got ${deviceKey || '(empty)'}.`
+    );
+  }
+}
+
 function main() {
   const args = readArgs(process.argv);
   const buildDirArg = args['build-dir'] || process.env.BUILD_DIR;
   const outDir = path.resolve(repoRoot, args['out-dir'] || process.env.OUT_DIR || 'build/releases');
   const deviceKey = args['device-key'] || process.env.DEVICE_KEY;
+  const metadataDeviceKey = args['metadata-device-key'] || deviceKey;
 
   if (!buildDirArg) {
     throw new Error('Missing --build-dir');
@@ -115,6 +143,8 @@ function main() {
     (file) => path.basename(file) === `${projectName}.merged.bin`,
     `${deviceKey} factory`
   );
+
+  verifyDeviceDescriptor(updatePath, metadataDeviceKey);
 
   ensureCleanDeviceOutputs(outDir, deviceKey);
 

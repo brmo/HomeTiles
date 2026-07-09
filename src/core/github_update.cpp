@@ -598,11 +598,10 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
             image_head, head_ctx.len, incoming_desc)) {
       error_out = "firmware metadata missing or invalid";
       failed = true;
-    } else if (strcmp(incoming_desc.device_key,
-                      firmware_meta::currentDeviceKey()) != 0) {
+    } else if (!firmware_meta::matchesCurrentDeviceKey(incoming_desc.device_key)) {
       error_out = String("device mismatch: got ") +
                   incoming_desc.display_name + ", expected " +
-                  firmware_meta::currentDisplayName();
+                  firmware_meta::expectedDeviceDisplayName();
       failed = true;
     } else if (strcmp(incoming_desc.project_key,
                       firmware_meta::currentProjectKey()) != 0) {

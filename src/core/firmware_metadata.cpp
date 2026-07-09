@@ -1,19 +1,31 @@
 #include "src/core/firmware_metadata.h"
+#include "src/devices/device_select.h"
 
 #include <string.h>
 
 #if defined(DEVICE_M5STACKS_TAB5)
-#define FW_META_DEVICE_KEY "m5stacks_tab5"
-#define FW_META_DISPLAY_NAME "M5Stacks Tab5"
+#define FW_META_TARGET_DEVICE_KEY "m5stacks_tab5"
+#define FW_META_TARGET_DISPLAY_NAME "M5Stacks Tab5"
 #elif defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
-#define FW_META_DEVICE_KEY "waveshare_touch_lcd_8"
-#define FW_META_DISPLAY_NAME "Waveshare Touch LCD 8"
+#define FW_META_TARGET_DEVICE_KEY "waveshare_touch_lcd_8"
+#define FW_META_TARGET_DISPLAY_NAME "Waveshare Touch LCD 8"
 #elif defined(DEVICE_WAVESHARE_4B)
-#define FW_META_DEVICE_KEY "waveshare_4b"
-#define FW_META_DISPLAY_NAME "Waveshare B4"
+#define FW_META_TARGET_DEVICE_KEY "waveshare_4b"
+#define FW_META_TARGET_DISPLAY_NAME "Waveshare B4"
 #else
+#define FW_META_TARGET_DEVICE_KEY "unknown"
+#define FW_META_TARGET_DISPLAY_NAME "Unknown"
+#endif
+
+// v0.3.3 wrote "unknown" into its descriptor because this source file did not
+// include device_select.h. The v0.3.5 release needs the same descriptor once so
+// those already-installed panels can bootstrap themselves through OTA.
+#if defined(HOMETILES_OTA_BOOTSTRAP_METADATA)
 #define FW_META_DEVICE_KEY "unknown"
 #define FW_META_DISPLAY_NAME "Unknown"
+#else
+#define FW_META_DEVICE_KEY FW_META_TARGET_DEVICE_KEY
+#define FW_META_DISPLAY_NAME FW_META_TARGET_DISPLAY_NAME
 #endif
 
 #define FW_META_PROJECT_KEY "esp32_p4_homeassistant_display"
@@ -58,6 +70,26 @@ const char* currentDeviceKey() {
 }
 
 const char* currentDisplayName() {
+  return kCurrentDeviceDescriptor.display_name;
+}
+
+bool matchesCurrentDeviceKey(const char* incoming_device_key) {
+  if (!incoming_device_key || !*incoming_device_key) return false;
+
+  if (strcmp(kCurrentDeviceDescriptor.device_key, "unknown") == 0) {
+    // A bootstrap image accepts its own legacy descriptor and the exact target
+    // selected at build time. It never accepts another device's image.
+    return strcmp(incoming_device_key, "unknown") == 0 ||
+           strcmp(incoming_device_key, FW_META_TARGET_DEVICE_KEY) == 0;
+  }
+
+  return strcmp(incoming_device_key, kCurrentDeviceDescriptor.device_key) == 0;
+}
+
+const char* expectedDeviceDisplayName() {
+  if (strcmp(kCurrentDeviceDescriptor.device_key, "unknown") == 0) {
+    return FW_META_TARGET_DISPLAY_NAME;
+  }
   return kCurrentDeviceDescriptor.display_name;
 }
 

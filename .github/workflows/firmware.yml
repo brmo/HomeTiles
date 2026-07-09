@@ -17,6 +17,7 @@ concurrency:
 env:
   ARDUINO_CORE_VERSION: "3.3.7"
   ARDUINO_CACHE_KEY: arduino-esp32-3.3.7-libs-v3
+  OTA_BOOTSTRAP_TAG: "v0.3.5"
 
 jobs:
   toolchain:
@@ -130,19 +131,31 @@ jobs:
       - name: Compile firmware
         shell: bash
         run: |
+          common_flags="-DLV_CONF_INCLUDE_SIMPLE -I$GITHUB_WORKSPACE -I$HOME/Arduino/libraries"
+          metadata_key="${{ matrix.key }}"
+          # Existing v0.3.3 panels report their own descriptor as "unknown".
+          # Build this tag once with that descriptor so they can update OTA;
+          # the code inside it then restores strict per-device checks.
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" = "$OTA_BOOTSTRAP_TAG" ]; then
+            common_flags="$common_flags -DHOMETILES_OTA_BOOTSTRAP_METADATA"
+            metadata_key="unknown"
+          fi
           arduino-cli compile \
             --profile "${{ matrix.profile }}" \
             --export-binaries \
             --output-dir "build/ci/${{ matrix.key }}" \
-            --build-property "compiler.c.extra_flags=-DLV_CONF_INCLUDE_SIMPLE -I$GITHUB_WORKSPACE -I$HOME/Arduino/libraries" \
-            --build-property "compiler.cpp.extra_flags=-DHOMETILES_CI_TARGET -D${{ matrix.define }} -DLV_CONF_INCLUDE_SIMPLE -I$GITHUB_WORKSPACE -I$HOME/Arduino/libraries"
+            --build-property "compiler.c.extra_flags=$common_flags" \
+            --build-property "compiler.cpp.extra_flags=-DHOMETILES_CI_TARGET -D${{ matrix.define }} $common_flags"
+
+          echo "metadata_key=$metadata_key" >> "$GITHUB_ENV"
 
       - name: Package firmware binaries
         shell: bash
         run: |
           node release-helper/package-ci-build.js \
             --build-dir "build/ci/${{ matrix.key }}" \
-            --device-key "${{ matrix.key }}"
+            --device-key "${{ matrix.key }}" \
+            --metadata-device-key "$metadata_key"
 
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4

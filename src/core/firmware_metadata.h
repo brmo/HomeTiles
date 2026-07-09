@@ -24,6 +24,8 @@ const DeviceDescriptor& currentDeviceDescriptor();
 const char* currentProjectKey();
 const char* currentDeviceKey();
 const char* currentDisplayName();
+bool matchesCurrentDeviceKey(const char* incoming_device_key);
+const char* expectedDeviceDisplayName();
 bool parseDeviceDescriptorFromImage(const uint8_t* image_data, size_t image_len, DeviceDescriptor& out);
 
 }  // namespace firmware_meta

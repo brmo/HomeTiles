@@ -2405,10 +2405,10 @@ void WebAdminServer::handleOtaUpdate() {
               g_ota_upload_state.buffered_bytes,
               g_ota_upload_state.buffered_len,
               incoming_desc)) {
-        if (strcmp(incoming_desc.device_key, firmware_meta::currentDeviceKey()) != 0) {
+        if (!firmware_meta::matchesCurrentDeviceKey(incoming_desc.device_key)) {
           g_ota_upload_state.error =
               String("Firmware device mismatch: got ") + incoming_desc.display_name +
-              ", expected " + firmware_meta::currentDisplayName();
+              ", expected " + firmware_meta::expectedDeviceDisplayName();
           return;
         }
         if (strcmp(incoming_desc.project_key, firmware_meta::currentProjectKey()) != 0) {
