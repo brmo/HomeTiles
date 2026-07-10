@@ -113,8 +113,16 @@ void appendAdminStyles(String& html) {
       color:var(--text);
       margin:0;
       padding:0;
+      height:100vh;
+      overflow:hidden;
     }
-    .wrapper { max-width:1200px; margin:24px auto; padding:0 20px 40px; }
+    .wrapper {
+      max-width:1200px;
+      height:100vh;
+      box-sizing:border-box;
+      margin:0 auto;
+      padding:24px 20px;
+    }
     .card {
       background:var(--card);
       border:1px solid var(--line);
@@ -122,7 +130,10 @@ void appendAdminStyles(String& html) {
       box-shadow:0 20px 60px rgba(0,0,0,0.5);
       padding:32px;
       box-sizing:border-box;
-      min-height:calc(100vh - 88px);
+      height:100%;
+      min-height:0;
+      display:flex;
+      flex-direction:column;
     }
 
     /* Header / Brand */
@@ -186,7 +197,9 @@ void appendAdminStyles(String& html) {
     /* Settings bleibt unter der Tab-Leiste und scrollt dort intern, statt den
        Browser-Viewport mit langen Konfigurationsformularen zu vergroessern. */
     #tab-network.active {
-      max-height:calc(100vh - 300px);
+      flex:1 1 auto;
+      min-height:0;
+      max-height:none;
       overflow-y:auto;
       overscroll-behavior:contain;
       margin-right:-12px;
@@ -746,7 +759,10 @@ void appendAdminStyles(String& html) {
       .tile-settings { flex:1 1 auto; position:static; max-height:none; }
     }
     @media (max-width: 780px) {
-      #tab-network.active { max-height:none; margin-right:0; padding-right:0; }
+      body { height:auto; overflow:auto; }
+      .wrapper { height:auto; padding:16px; }
+      .card { height:auto; min-height:calc(100vh - 32px); }
+      #tab-network.active { flex:none; overflow:visible; margin-right:0; padding-right:0; }
       .settings-grid { grid-template-columns:1fr; }
       .settings-subgrid { grid-template-columns:1fr; }
       .settings-full { grid-column:auto; }

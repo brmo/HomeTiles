@@ -9,8 +9,11 @@ void append_navigate_styles(String& html) {
       align-self:auto;
       width:100%;
       margin-top:4px;
-      padding-bottom:1px;
+      min-height:calc(1.3em + 2px);
+      padding:0 1px 2px;
       line-height:1.3;
+      overflow:visible;
+      text-overflow:clip;
     }
     .tile.navigate .tile-icon { margin-bottom:4px; }
   </style>
