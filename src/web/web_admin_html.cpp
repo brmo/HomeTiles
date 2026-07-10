@@ -10,6 +10,7 @@
 #include "src/game/game_controls_config.h"
 #include "src/web/web_admin_scripts.h"
 #include "src/web/web_admin_styles.h"
+#include "src/web/web_admin_tile_helpers.h"
 #include "src/tiles/tile_config.h"
 #include "src/types/types_registry.h"
 #include "src/core/device_entities.h"
@@ -239,6 +240,10 @@ static void appendTileTabHTML(
     html += String(static_cast<unsigned>(span_h));
     html += "\" data-type=\"";
     html += String(static_cast<unsigned>(tile.type));
+    if (tile.type == TILE_FOLDER) {
+      html += "\" data-navigate-target=\"";
+      html += String(getNavigateTargetId(tile));
+    }
     html += "\" draggable=\"true\" id=\"";
     html += tab_id;
     html += "-tile-";

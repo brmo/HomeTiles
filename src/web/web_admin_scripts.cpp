@@ -108,7 +108,8 @@ void appendAdminScripts(String& html) {
     updateTileSettingsMaxHeight();
     if (tabName.startsWith('tab-tiles-')) {
       const tileTab = tabName.substring('tab-tiles-'.length);
-      selectTile(getTopLeftConfiguredTileIndex(tileTab), tileTab);
+      const rememberedIndex = getRememberedTileIndex(tileTab);
+      selectTile(rememberedIndex === null ? getTopLeftConfiguredTileIndex(tileTab) : rememberedIndex, tileTab);
     }
     if (tabName === 'tab-network') {
       window.setTimeout(() => {
@@ -1011,6 +1012,7 @@ void appendAdminScripts(String& html) {
   let sensorMetaFetchInFlight = null;
   let lastSensorMetaFetchMs = 0;
   const SELECTED_TILE_STORAGE_KEY = 'selectedAdminTile';
+  let selectedTileByTab = {};
 
   function normalizeSensorMetaPayload(payload) {
     if (!payload || typeof payload !== 'object') {
@@ -1369,33 +1371,61 @@ void appendAdminScripts(String& html) {
   function persistSelectedTileState() {
     try {
       if (currentTileTab && currentTileIndex >= 0) {
-        localStorage.setItem(SELECTED_TILE_STORAGE_KEY, JSON.stringify({ tab: currentTileTab, index: currentTileIndex }));
+        selectedTileByTab[currentTileTab] = currentTileIndex;
+        localStorage.setItem(SELECTED_TILE_STORAGE_KEY, JSON.stringify(selectedTileByTab));
       } else {
         localStorage.removeItem(SELECTED_TILE_STORAGE_KEY);
       }
     } catch (e) {}
   }
-  function restoreSelectedTileState() {
+  function loadSelectedTileStates() {
     try {
       const raw = localStorage.getItem(SELECTED_TILE_STORAGE_KEY);
-      if (!raw) return false;
+      if (!raw) return;
       const saved = JSON.parse(raw);
-      const tab = saved && typeof saved.tab === 'string' ? saved.tab : '';
-      const index = Number(saved && saved.index);
-      if (!tab || !Number.isInteger(index) || index < 0 || index >= TILES_PER_GRID) {
-        localStorage.removeItem(SELECTED_TILE_STORAGE_KEY);
-        return false;
+      // Migration vom bisherigen Format { tab, index } auf die Auswahl pro Tab.
+      if (saved && typeof saved.tab === 'string') {
+        const index = Number(saved.index);
+        if (Number.isInteger(index) && index >= 0 && index < TILES_PER_GRID) {
+          selectedTileByTab[saved.tab] = index;
+        }
+        return;
       }
-      if (!document.getElementById(tab) || !document.getElementById(tab + '-tile-' + index)) {
-        localStorage.removeItem(SELECTED_TILE_STORAGE_KEY);
-        return false;
-      }
-      selectTile(index, tab);
-      return true;
+      if (!saved || typeof saved !== 'object') return;
+      Object.entries(saved).forEach(([tab, rawIndex]) => {
+        const index = Number(rawIndex);
+        if (Number.isInteger(index) && index >= 0 && index < TILES_PER_GRID) {
+          selectedTileByTab[tab] = index;
+        }
+      });
     } catch (e) {
-      try { localStorage.removeItem(SELECTED_TILE_STORAGE_KEY); } catch (ignored) {}
-      return false;
+      selectedTileByTab = {};
     }
+  }
+  function getRememberedTileIndex(tab) {
+    const index = Number(selectedTileByTab[tab]);
+    if (!Number.isInteger(index) || index < 0 || index >= TILES_PER_GRID) return null;
+    const tile = document.getElementById(tab + '-tile-' + index);
+    if (!tile || Number(tile.dataset.type || 0) === 0) {
+      delete selectedTileByTab[tab];
+      return null;
+    }
+    return index;
+  }
+  function restoreSelectedTileState(tab) {
+    const targetTab = tab || currentTileTab;
+    const index = targetTab ? getRememberedTileIndex(targetTab) : null;
+    if (index === null) return false;
+    selectTile(index, targetTab);
+    return true;
+  }
+  function openFolderFromPreview(tab, index) {
+    const tile = getTilesData(tab)[index];
+    const tileEl = document.getElementById(tab + '-tile-' + index);
+    if (Number(tile?.type ?? tileEl?.dataset.type) !== 4) return;
+    const targetId = Number(tile?.navigate_target ?? tileEl?.dataset.navigateTarget);
+    const targetTab = tabByFolder[targetId];
+    if (targetTab) switchTab('tab-tiles-' + targetTab);
   }
   function clampInt(value, min, max, fallback) {
     const v = parseInt(value, 10);
@@ -2791,6 +2821,8 @@ void appendAdminScripts(String& html) {
     if (typeValue === '0' && (!meta.css || meta.css !== 'empty')) cls.push('empty');
     el.className = cls.join(' ');
     el.dataset.type = typeValue;
+    if (typeValue === '4') el.dataset.navigateTarget = String(tile.navigate_target || 0);
+    else delete el.dataset.navigateTarget;
     if (typeValue === '0') el.style.background = 'transparent';
     else {
       const bg = tileBgToHex(tile.bg_color, meta.defaultBg || '#353535');
@@ -3597,6 +3629,10 @@ void appendAdminScripts(String& html) {
     const grid = getTileGrid(tab);
     const tiles = document.querySelectorAll('#tab-tiles-' + tab + ' .tile');
     tiles.forEach(tile => {
+      tile.addEventListener('dblclick', () => {
+        const tileIndex = parseInt(tile.dataset.index, 10);
+        if (!isNaN(tileIndex)) openFolderFromPreview(tab, tileIndex);
+      });
       tile.addEventListener('dragstart', (e) => {
         if (resizeState) {
           e.preventDefault();
@@ -3754,6 +3790,7 @@ void appendAdminScripts(String& html) {
   document.addEventListener('DOMContentLoaded', () => {
     toggleStaticWifiFields();
     initTileTabs();
+    loadSelectedTileStates();
     loadDraftsFromStorage();
     loadTileClipboard();
     // Der Editor startet immer mit der Kachel in Home, Spalte 1 / Zeile 1.
