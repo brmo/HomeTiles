@@ -258,6 +258,11 @@ struct Strings {
   const char* system_downloading;
   const char* system_install_failed;
   const char* system_installed_restarting;
+
+  // WLAN-Popup: Trennen-Button; System-Popup: HA-Pairing-Button + Statuszeile
+  const char* wifi_disconnect_btn;
+  const char* system_pair_btn;
+  const char* system_pair_status;
 };
 
 const Strings& strings(const char* language_code);

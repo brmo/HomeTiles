@@ -336,7 +336,9 @@ String WebConfigServer::getConfigPage() {
     .btn {
       width: 100%;
       padding: 14px;
-      background: #26a69a;
+      /* Gruen wie alle "Los"-Aktionen (Verbinden/Speichern/Update) - Tuerkis
+         bleibt Akzentfarbe fuer Fokus-Ringe und Logo. */
+      background: #2e7d32;
       color: white;
       border: none;
       border-radius: 12px;
@@ -346,7 +348,7 @@ String WebConfigServer::getConfigPage() {
       margin-top: 8px;
     }
     .btn:active {
-      background: #1f8a80;
+      background: #1b5e20;
     }
   </style>
 </head>

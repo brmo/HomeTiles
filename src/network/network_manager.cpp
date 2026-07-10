@@ -226,6 +226,13 @@ void Tab5NetworkManager::init() {
 void Tab5NetworkManager::connectWifi() {
   wifi_retry_at = millis() + 5000UL;  // Retry in 5s
 
+  // Jeder Verbindungsaufbau (manuell, neue Zugangsdaten, AP-Ende) hebt ein
+  // vorheriges manuelles Trennen wieder auf.
+  if (wifi_manual_disconnect) {
+    wifi_manual_disconnect = false;
+    WiFi.setAutoReconnect(true);
+  }
+
   if (!configManager.isConfigured()) {
     Serial.println("WiFi: Keine Konfiguration vorhanden");
     return;
@@ -237,6 +244,15 @@ void Tab5NetworkManager::connectWifi() {
     applyWifiAddressing(cfg);
     WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
   }
+}
+
+// ========== WiFi manuell trennen (WLAN-Popup "Trennen") ==========
+void Tab5NetworkManager::disconnectWifiManual() {
+  wifi_manual_disconnect = true;
+  if (isMqttConnected()) disconnectMqtt();
+  WiFi.setAutoReconnect(false);
+  WiFi.disconnect();
+  Serial.println("WiFi: manuell getrennt (kein Auto-Reconnect bis Verbinden/Neustart)");
 }
 
 // ========== MQTT verbinden (worker-only) ==========
@@ -832,8 +848,8 @@ void Tab5NetworkManager::update() {
   if (!is_connected) {
     wifi_ps_state_known = false;
 
-    // Nicht verbunden - Retry
-    if ((int32_t)(now_ms - wifi_retry_at) >= 0) {
+    // Nicht verbunden - Retry (ausser der Nutzer hat manuell getrennt)
+    if (!wifi_manual_disconnect && (int32_t)(now_ms - wifi_retry_at) >= 0) {
       connectWifi();
     }
 

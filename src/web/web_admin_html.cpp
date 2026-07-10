@@ -481,7 +481,7 @@ static void appendTileTabHTML(
   html += R"html(')">)html";
   html += tr.admin_paste;
   html += R"html(</button>
-                <button type="button" class="btn" onclick="resetTile(')html";
+                <button type="button" class="btn btn-danger" onclick="resetTile(')html";
   html += tab_id;
   html += R"html(')">)html";
   html += tr.admin_delete;
@@ -1123,7 +1123,7 @@ String WebAdminServer::getAdminPage() {
   html += R"html(</div>
                 <div class="settings-note"><strong>GitHub OTA:</strong></div>
                 <div class="settings-actions ota-github-actions">
-                  <button class="btn" type="button" id="ota_github_btn" onclick="checkOrInstallGithubFirmware()">)html";
+                  <button class="btn btn-go" type="button" id="ota_github_btn" onclick="checkOrInstallGithubFirmware()">)html";
   html += tr.system_check_updates_btn;
   html += R"html(</button>
                 </div>
@@ -1162,7 +1162,7 @@ String WebAdminServer::getAdminPage() {
 
         <form id="admin_restart_form" action="/restart" method="POST" onsubmit="return confirm('Geraet wirklich neu starten?');" class="admin-hidden-form"></form>
         <div class="admin-footer-actions">
-          <button class="btn admin-footer-btn" type="submit" form="admin_settings_form">Speichern</button>
+          <button class="btn btn-go admin-footer-btn" type="submit" form="admin_settings_form">Speichern</button>
           <button class="btn btn-secondary admin-footer-btn" type="submit" form="admin_restart_form">Geraet neu starten</button>
         </div>
       </div>

@@ -608,13 +608,15 @@ bool DisplayManager::init() {
 
   lv_display_set_flush_cb(disp, flush_cb);
 
-  // Farbformat + Anti-Aliasing aus (Performance)
 #if defined(DEVICE_M5STACKS_TAB5)
   lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565_SWAPPED);
 #else
   lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565);
 #endif
-  lv_display_set_antialiasing(disp, false);
+  // Anti-Aliasing an: glaettet nur die Kantenpixel von Rundungen/Kreisen
+  // (Switches, Popups, Radio-Buttons - die Treppeneffekte im Settings-Menue).
+  // Flaechenfuellungen kosten damit nicht mehr; die Fonts sind ohnehin 4bpp.
+  lv_display_set_antialiasing(disp, true);
 
   // Default-Theme explizit mit HomeTiles-Tuerkis als Akzentfarbe initialisieren
   // (sonst nimmt LVGL Blau fuer Fokus-Ringe, Switches, Checkboxen usw.).

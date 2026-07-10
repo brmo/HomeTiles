@@ -122,6 +122,9 @@ void appendAdminStyles(String& html) {
       --accent-ring:rgba(38,166,154,0.22);
       --danger:#c14444;
       --danger-hover:#a83a3a;
+      --go:#2e7d32;
+      --go-hover:#43a047;
+      --go-active:#1b5e20;
       --ok:#66BB6A;
       --err:#FF6B6B;
       accent-color:#26a69a;
@@ -411,14 +414,14 @@ void appendAdminStyles(String& html) {
       width:40%;
       height:100%;
       border-radius:999px;
-      background:var(--accent);
+      background:var(--go-hover);
       animation:ota-progress-slide 1.1s ease-in-out infinite;
     }
     .ota-progress-bar {
       width:0%;
       height:100%;
       border-radius:999px;
-      background:var(--accent);
+      background:var(--go-hover);
       transition:width 0.18s ease;
     }
     @keyframes ota-progress-slide {
@@ -452,6 +455,11 @@ void appendAdminStyles(String& html) {
     .btn-danger { background:var(--danger); }
     .btn-danger:hover { background:var(--danger-hover); }
     .btn-danger:active { background:#8f2e2e; }
+    /* Gruen = positive "Los"-Aktion (Speichern/Update) - gleiche Semantik
+       wie im LVGL-Settings-Menue auf dem Geraet. */
+    .btn-go { background:var(--go); }
+    .btn-go:hover { background:var(--go-hover); }
+    .btn-go:active { background:var(--go-active); }
 
     .admin-hidden-form { display:none; }
     .admin-footer-actions { display:flex; align-items:center; justify-content:flex-end; gap:12px; flex-wrap:wrap; margin-top:24px; }

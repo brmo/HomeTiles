@@ -269,6 +269,20 @@ static void apply_wifi_reconnect() {
   networkManager.connectWifi();
 }
 
+// WLAN-Popup "Trennen" und System-Popup "Pairing": gleiches Pending-Flag-
+// Muster - der LVGL-Event-Callback setzt nur das Flag, die Netzwerkarbeit
+// laeuft im Hauptloop.
+static bool wifi_disconnect_pending = false;
+static bool ha_pair_pending = false;
+
+static void request_wifi_disconnect() {
+  wifi_disconnect_pending = true;
+}
+
+static void request_ha_pair() {
+  ha_pair_pending = true;
+}
+
 // Update-ueber-GitHub (System-Popup): Check und Install laufen blockierend
 // auf dem Loop-Task - die Klick-Handler im Popup setzen nur diese Flags
 // (gleiches Muster wie Hotspot-Toggle und WLAN-Reconnect).
@@ -657,6 +671,8 @@ void setup() {
   ui_scene_cb = mqttPublishScene;
   ui_hotspot_cb = set_hotspot_mode;
   settings_set_wifi_reconnect_callback(request_wifi_reconnect);
+  settings_set_wifi_disconnect_callback(request_wifi_disconnect);
+  settings_set_ha_pair_callback(request_ha_pair);
   settings_set_fw_check_callback(request_fw_check);
   settings_set_fw_install_callback(request_fw_install);
   settings_set_system_reboot_callback(request_system_reboot);
@@ -791,6 +807,18 @@ void loop() {
   if (wifi_reconnect_pending) {
     wifi_reconnect_pending = false;
     apply_wifi_reconnect();
+  }
+
+  if (wifi_disconnect_pending) {
+    wifi_disconnect_pending = false;
+    esp_wifi_scan_stop();
+    networkManager.disconnectWifiManual();
+  }
+  if (ha_pair_pending) {
+    ha_pair_pending = false;
+    // Erzwungener MQTT-Reconnect: die Post-Connect-Publishes (Status/
+    // Settings/Snapshot) lassen die HA-Bridge das Geraet neu erkennen.
+    networkManager.requestMqttReconfigure();
   }
 
   if (fw_check_pending) {

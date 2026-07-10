@@ -86,6 +86,13 @@ public:
   // Verbindung herstellen
   void connectWifi();
 
+  // Vom Nutzer angefordertes Trennen (WLAN-Popup "Trennen"): trennt und
+  // unterdrueckt jeden Auto-Reconnect, bis wieder manuell verbunden wird
+  // (connectWifi) oder das Geraet neu startet. Zugangsdaten bleiben
+  // gespeichert - nach einem Reboot verbindet das Geraet normal.
+  void disconnectWifiManual();
+  bool isWifiManuallyDisconnected() const { return wifi_manual_disconnect; }
+
   // Telemetrie (Loop-Task; sendet ueber die Outbound-Queue)
   void publishTelemetry();
   void publishBridgeConfig();
@@ -113,6 +120,7 @@ private:
   PubSubClient mqtt_client;  // nach init() NUR noch vom Worker-Task beruehrt
 
   uint32_t wifi_retry_at = 0;
+  bool wifi_manual_disconnect = false;  // Loop-Task: setzt/liest, UI liest
   uint32_t mqtt_retry_at = 0;      // worker-only
   uint32_t last_telemetry = 0;
   bool was_connected = false;

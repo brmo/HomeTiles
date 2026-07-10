@@ -2250,7 +2250,7 @@ void appendAdminScripts(String& html) {
   function showNotification(message, success = true) {
     const notification = document.getElementById('notification');
     notification.textContent = message;
-    notification.style.background = success ? '#26a69a' : '#ef4444';
+    notification.style.background = success ? '#43a047' : '#ef4444';
     notification.classList.add('show');
     setTimeout(() => { notification.classList.remove('show'); }, 3000);
   }

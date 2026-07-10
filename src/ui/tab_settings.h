@@ -22,6 +22,17 @@ void settings_set_fw_check_callback(fw_check_callback_t cb);
 void settings_set_fw_install_callback(fw_install_callback_t cb);
 typedef void (*system_reboot_callback_t)();
 void settings_set_system_reboot_callback(system_reboot_callback_t cb);
+
+// WLAN-Popup "Trennen": Sketch trennt im Hauptloop via
+// networkManager.disconnectWifiManual() (kein Auto-Reconnect bis Verbinden).
+typedef void (*wifi_disconnect_callback_t)();
+void settings_set_wifi_disconnect_callback(wifi_disconnect_callback_t cb);
+
+// System-Popup "Pairing": Sketch stoesst im Hauptloop einen MQTT-Reconnect an
+// (requestMqttReconfigure) - die Post-Connect-Publishes lassen die HA-Bridge
+// das Geraet neu erkennen, wie beim manuellen Aendern des MQTT-Hosts.
+typedef void (*ha_pair_callback_t)();
+void settings_set_ha_pair_callback(ha_pair_callback_t cb);
 // Rueckmeldungen vom Loop-Task; tolerieren ein inzwischen geschlossenes Popup.
 void settings_fw_check_result(bool ok, const char* latest_tag, bool update_available);
 void settings_fw_install_progress(size_t written, size_t total);

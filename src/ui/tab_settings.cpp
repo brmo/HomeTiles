@@ -43,6 +43,8 @@ static wifi_reconnect_callback_t g_wifi_reconnect_callback = nullptr;
 static fw_check_callback_t g_fw_check_callback = nullptr;
 static fw_install_callback_t g_fw_install_callback = nullptr;
 static system_reboot_callback_t g_system_reboot_callback = nullptr;
+static wifi_disconnect_callback_t g_wifi_disconnect_callback = nullptr;
+static ha_pair_callback_t g_ha_pair_callback = nullptr;
 
 enum class SettingsPopupKind : uint8_t {
   Display,
@@ -121,6 +123,8 @@ static lv_obj_t *system_check_btn = nullptr;
 static lv_obj_t *system_check_btn_label = nullptr;
 static lv_obj_t *system_github_btn = nullptr;
 static lv_obj_t *system_reboot_btn = nullptr;
+static lv_obj_t *system_pair_btn = nullptr;
+static lv_obj_t *system_action_row = nullptr;  // Reihe Restart + Pairing
 static lv_obj_t *system_qr = nullptr;
 static lv_obj_t *system_spacer = nullptr;
 static bool system_qr_sized = false;
@@ -148,6 +152,7 @@ static void style_qr_code(lv_obj_t* qr) {
 
 static lv_obj_t *ap_mode_btn = nullptr;
 static lv_obj_t *ap_mode_btn_label = nullptr;
+static lv_obj_t *wifi_disconnect_btn = nullptr;
 static lv_obj_t *ap_confirm_row = nullptr;
 static lv_obj_t *ap_confirm_yes_btn = nullptr;
 static lv_obj_t *ap_confirm_no_btn = nullptr;
@@ -938,6 +943,7 @@ static void reset_popup_refs() {
   sleep_label = nullptr;
   ap_mode_btn = nullptr;
   ap_mode_btn_label = nullptr;
+  wifi_disconnect_btn = nullptr;
 
   wifi_ssid_ta = nullptr;
   wifi_pass_ta = nullptr;
@@ -971,6 +977,8 @@ static void reset_popup_refs() {
   system_check_btn_label = nullptr;
   system_github_btn = nullptr;
   system_reboot_btn = nullptr;
+  system_pair_btn = nullptr;
+  system_action_row = nullptr;
   system_qr = nullptr;
   system_spacer = nullptr;
   system_qr_sized = false;
@@ -1225,6 +1233,13 @@ static void wifi_update_conn_status_label() {
   if (sta_connected != prev_sta_connected) {
     prev_sta_connected = sta_connected;
     if (wifi_list_container) wifi_populate_list();
+  }
+
+  // Trennen gibt es nur, solange eine STA-Verbindung besteht (im AP-Modus
+  // und offline uebernimmt der AP-Button die volle Reihenbreite).
+  if (wifi_disconnect_btn) {
+    if (sta_connected) lv_obj_clear_flag(wifi_disconnect_btn, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(wifi_disconnect_btn, LV_OBJ_FLAG_HIDDEN);
   }
 
   // Im AP-Modus sind Scan und Netzwerkliste nutzlos (Scans sind waehrend des
@@ -1572,6 +1587,17 @@ static void on_ap_btn_cooldown_timer(lv_timer_t*) {
   }
 }
 
+static void on_wifi_disconnect_clicked(lv_event_t*) {
+  if (!g_wifi_disconnect_callback) return;
+  // Laufenden Scan beenden - das Trennen passiert asynchron im Hauptloop.
+  wifi_stop_scan_timer();
+  WiFi.scanDelete();
+  g_wifi_disconnect_callback();
+  // Kein optimistisches UI-Update: Statuszeile und Button-Sichtbarkeit
+  // ziehen ueber wifi_update_conn_status_label nach, sobald die Verbindung
+  // tatsaechlich weg ist.
+}
+
 static void on_popup_ap_mode_clicked(lv_event_t*) {
   if (ap_btn_cooldown_timer) return;
   if (ap_mode_click_block_until != 0 &&
@@ -1900,11 +1926,30 @@ static void build_wifi_popup(lv_obj_t* parent) {
   lv_obj_add_flag(wifi_ap_qr, LV_OBJ_FLAG_HIDDEN);
 #endif
 
-  // Volle Inhaltsbreite (Content ist auf Lesebreite gedeckelt)
-  ap_mode_btn = create_popup_button(wifi_list_view, ap_mode_active ? tr().ap_disable : tr().ap_enable,
+  // Fussreihe in voller Inhaltsbreite: Trennen (nur bei bestehender STA-
+  // Verbindung sichtbar, siehe wifi_update_conn_status_label) + AP-Toggle.
+  // Beide mit flex_grow: ist Trennen ausgeblendet, fuellt der AP-Button die
+  // Reihe allein (Flex ignoriert versteckte Kinder).
+  lv_obj_t* wifi_btn_row = lv_obj_create(wifi_list_view);
+  style_plain_container(wifi_btn_row);
+  lv_obj_clear_flag(wifi_btn_row, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_width(wifi_btn_row, LV_PCT(100));
+  lv_obj_set_height(wifi_btn_row, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(wifi_btn_row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_style_pad_column(wifi_btn_row, 12, 0);
+
+  wifi_disconnect_btn = create_popup_button(wifi_btn_row, tr().wifi_disconnect_btn,
+                                            0x424242, on_wifi_disconnect_clicked);
+  lv_obj_set_flex_grow(wifi_disconnect_btn, 1);
+  lv_obj_set_height(wifi_disconnect_btn, 76);
+  lv_obj_t* disconnect_label = lv_obj_get_child(wifi_disconnect_btn, 0);
+  if (disconnect_label) lv_obj_set_style_text_font(disconnect_label, &ui_font_28, 0);
+  lv_obj_add_flag(wifi_disconnect_btn, LV_OBJ_FLAG_HIDDEN);
+
+  ap_mode_btn = create_popup_button(wifi_btn_row, ap_mode_active ? tr().ap_disable : tr().ap_enable,
                                     ap_mode_active ? 0xC62828 : 0xFF9800,
                                     on_popup_ap_mode_clicked);
-  lv_obj_set_width(ap_mode_btn, LV_PCT(100));
+  lv_obj_set_flex_grow(ap_mode_btn, 1);
   lv_obj_set_height(ap_mode_btn, 76);
   ap_mode_btn_label = lv_obj_get_child(ap_mode_btn, 0);
   if (ap_mode_btn_label) lv_obj_set_style_text_font(ap_mode_btn_label, &ui_font_28, 0);
@@ -1955,7 +2000,7 @@ static void build_wifi_popup(lv_obj_t* parent) {
   // Enter-Taste (on_settings_popup_save_clicked -> save_wifi_popup).
   // Direkt unter den Feldern (nicht mehr an den unteren Rand gedrueckt),
   // volle Inhaltsbreite wie der AP-Button.
-  lv_obj_t* wifi_connect_btn = create_popup_button(wifi_entry_view, tr().wifi_connect_btn, 0x26A69A,
+  lv_obj_t* wifi_connect_btn = create_popup_button(wifi_entry_view, tr().wifi_connect_btn, 0x2E7D32,
                                                    on_settings_popup_save_clicked);
   lv_obj_set_width(wifi_connect_btn, LV_PCT(100));
   lv_obj_set_height(wifi_connect_btn, 76);
@@ -2082,7 +2127,7 @@ static void build_localization_popup(lv_obj_t* parent) {
 
   // Speichern unten in voller Inhaltsbreite wie AP-/Verbinden-Button (das
   // Formular darueber bekommt per flex_grow die Resthoehe)
-  lv_obj_t* save_btn = create_popup_button(parent, tr().save, 0x26A69A,
+  lv_obj_t* save_btn = create_popup_button(parent, tr().save, 0x2E7D32,
                                            on_settings_popup_save_clicked);
   lv_obj_set_width(save_btn, LV_PCT(100));
   lv_obj_set_height(save_btn, 76);
@@ -2093,7 +2138,8 @@ static void build_localization_popup(lv_obj_t* parent) {
 // ===== System-Popup: Version/Geraet, GitHub-QR, Update-Suche + OTA-Install =====
 
 static void system_set_buttons_enabled(bool enabled) {
-  lv_obj_t* btns[] = {system_check_btn, system_github_btn, system_reboot_btn};
+  lv_obj_t* btns[] = {system_check_btn, system_github_btn, system_reboot_btn,
+                      system_pair_btn};
   for (lv_obj_t* btn : btns) {
     if (!btn) continue;
     lv_obj_set_style_opa(btn, enabled ? LV_OPA_COVER : LV_OPA_50, 0);
@@ -2135,7 +2181,7 @@ static void system_show_qr(bool show) {
     if (system_info_rows) lv_obj_add_flag(system_info_rows, LV_OBJ_FLAG_HIDDEN);
     if (system_status_label) lv_obj_add_flag(system_status_label, LV_OBJ_FLAG_HIDDEN);
     if (system_check_btn) lv_obj_add_flag(system_check_btn, LV_OBJ_FLAG_HIDDEN);
-    if (system_reboot_btn) lv_obj_add_flag(system_reboot_btn, LV_OBJ_FLAG_HIDDEN);
+    if (system_action_row) lv_obj_add_flag(system_action_row, LV_OBJ_FLAG_HIDDEN);
     if (!system_qr_sized) {
       if (settings_popup_content) lv_obj_update_layout(settings_popup_content);
       int target = 280;
@@ -2153,7 +2199,7 @@ static void system_show_qr(bool show) {
     if (system_info_rows) lv_obj_clear_flag(system_info_rows, LV_OBJ_FLAG_HIDDEN);
     if (system_status_label) lv_obj_clear_flag(system_status_label, LV_OBJ_FLAG_HIDDEN);
     if (system_check_btn) lv_obj_clear_flag(system_check_btn, LV_OBJ_FLAG_HIDDEN);
-    if (system_reboot_btn) lv_obj_clear_flag(system_reboot_btn, LV_OBJ_FLAG_HIDDEN);
+    if (system_action_row) lv_obj_clear_flag(system_action_row, LV_OBJ_FLAG_HIDDEN);
   }
 #else
   (void)show;
@@ -2203,6 +2249,18 @@ static void on_system_check_clicked(lv_event_t*) {
   system_set_buttons_enabled(false);
   system_show_status(tr().system_checking, 0xC8C8C8);
   g_fw_check_callback();
+}
+
+// "Pairing": erzwingt einen MQTT-Reconnect - die Post-Connect-Publishes
+// (Status/Settings/Snapshot) lassen die HA-Bridge das Geraet neu anlegen.
+// Gleicher Effekt wie das manuelle Neuspeichern des MQTT-Hosts, nur ohne
+// Umweg ueber den Web-Admin.
+static void on_system_pair_clicked(lv_event_t*) {
+  if (system_check_running || system_install_running) return;
+  if (!g_ha_pair_callback) return;
+  system_show_qr(false);
+  g_ha_pair_callback();
+  system_show_status(tr().system_pair_status, 0x64B5F6);
 }
 
 // HomeTiles-Logo als kompiliertes Bild (hometiles_logo_dsc): eine 1:1-
@@ -2329,13 +2387,14 @@ static void build_system_popup(lv_obj_t* parent) {
   lv_obj_set_style_bg_color(system_progress_bar, lv_color_hex(0x1E1E1E), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(system_progress_bar, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(system_progress_bar, 9, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(system_progress_bar, lv_color_hex(0x26A69A), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(system_progress_bar, lv_color_hex(0x43A047), LV_PART_INDICATOR);
   lv_obj_set_style_bg_opa(system_progress_bar, LV_OPA_COVER, LV_PART_INDICATOR);
   lv_obj_set_style_radius(system_progress_bar, 9, LV_PART_INDICATOR);
   lv_bar_set_range(system_progress_bar, 0, 100);
   lv_obj_add_flag(system_progress_bar, LV_OBJ_FLAG_HIDDEN);
 
-  system_check_btn = create_popup_button(box, "", 0x26A69A, on_system_check_clicked);
+  // Gruen = positive "Los"-Aktion (wie WLAN-Verbinden und Speichern)
+  system_check_btn = create_popup_button(box, "", 0x2E7D32, on_system_check_clicked);
   lv_obj_set_width(system_check_btn, LV_PCT(100));
   lv_obj_set_height(system_check_btn, 76);
   system_check_btn_label = lv_obj_get_child(system_check_btn, 0);
@@ -2344,8 +2403,19 @@ static void build_system_popup(lv_obj_t* parent) {
   }
   system_update_check_btn_text();
 
-  system_reboot_btn = create_popup_button(box, "", 0x424242, on_system_reboot_clicked);
-  lv_obj_set_width(system_reboot_btn, LV_PCT(100));
+  // Restart (neutral grau - rot ist fuers Loeschen reserviert) + Pairing
+  // (blau, Sync-Aktion) teilen sich eine Reihe unter dem Update-Button.
+  system_action_row = lv_obj_create(box);
+  style_plain_container(system_action_row);
+  lv_obj_clear_flag(system_action_row, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_width(system_action_row, LV_PCT(100));
+  lv_obj_set_height(system_action_row, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(system_action_row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_style_pad_column(system_action_row, 12, 0);
+
+  system_reboot_btn = create_popup_button(system_action_row, "", 0x424242,
+                                          on_system_reboot_clicked);
+  lv_obj_set_flex_grow(system_reboot_btn, 1);
   lv_obj_set_height(system_reboot_btn, 76);
   lv_obj_set_flex_flow(system_reboot_btn, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(system_reboot_btn, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
@@ -2361,6 +2431,25 @@ static void build_system_popup(lv_obj_t* parent) {
   lv_label_set_long_mode(reboot_text, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_font(reboot_text, &ui_font_28, 0);
   lv_obj_set_style_text_color(reboot_text, lv_color_white(), 0);
+
+  system_pair_btn = create_popup_button(system_action_row, "", 0x1E88E5,
+                                        on_system_pair_clicked);
+  lv_obj_set_flex_grow(system_pair_btn, 1);
+  lv_obj_set_height(system_pair_btn, 76);
+  lv_obj_set_flex_flow(system_pair_btn, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(system_pair_btn, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(system_pair_btn, 14, 0);
+  lv_obj_t* pair_icon = lv_obj_get_child(system_pair_btn, 0);
+  if (pair_icon) {
+    lv_label_set_text(pair_icon, getMdiChar("home-assistant").c_str());
+    if (FONT_MDI_ICONS) lv_obj_set_style_text_font(pair_icon, FONT_MDI_ICONS, 0);
+  }
+  lv_obj_t* pair_text = lv_label_create(system_pair_btn);
+  lv_label_set_text(pair_text, tr().system_pair_btn);
+  lv_label_set_long_mode(pair_text, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_font(pair_text, &ui_font_28, 0);
+  lv_obj_set_style_text_color(pair_text, lv_color_white(), 0);
 
   // GitHub-Button: Icon + Schriftzug im Button (wie der Drehen-Button)
   system_github_btn = create_popup_button(box, "", 0x424242, on_system_github_clicked);
@@ -2660,6 +2749,14 @@ void settings_set_system_reboot_callback(system_reboot_callback_t cb) {
   g_system_reboot_callback = cb;
 }
 
+void settings_set_wifi_disconnect_callback(wifi_disconnect_callback_t cb) {
+  g_wifi_disconnect_callback = cb;
+}
+
+void settings_set_ha_pair_callback(ha_pair_callback_t cb) {
+  g_ha_pair_callback = cb;
+}
+
 // Alle vier Rueckmeldungen laufen auf dem Loop-Task (LVGL-Owner) und
 // tolerieren ein inzwischen geschlossenes Popup (Statics sind dann genullt,
 // die Helper pruefen selbst).
@@ -2756,6 +2853,7 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   sleep_time_label = nullptr;
   ap_mode_btn = nullptr;
   ap_mode_btn_label = nullptr;
+  wifi_disconnect_btn = nullptr;
   ap_confirm_row = nullptr;
   ap_confirm_yes_btn = nullptr;
   ap_confirm_no_btn = nullptr;

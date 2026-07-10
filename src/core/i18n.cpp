@@ -91,7 +91,7 @@ static const Strings kStringsDe = {
     "Datum Schriftgröße",
     "Speichern",
     "Gerät wirklich neu starten?",
-    "Gerät neu starten",
+    "Neustart",
     "MQTT-Konfiguration gespeichert",
     "Das Gerät verbindet sich neu ...",
     "Bridge-Konfiguration gespeichert",
@@ -249,7 +249,11 @@ static const Strings kStringsDe = {
     "Suche fehlgeschlagen",
     "Update wird geladen...",
     "Update fehlgeschlagen",
-    "Installiert! Neustart..."};
+    "Installiert! Neustart...",
+
+    "Trennen",
+    "Koppeln",
+    "Koppeln: MQTT verbindet neu..."};
 
 static const Strings kStringsEn = {
     "en",
@@ -340,7 +344,7 @@ static const Strings kStringsEn = {
     "Date font size",
     "Save",
     "Restart device now?",
-    "Restart Device",
+    "Restart",
     "MQTT configuration saved",
     "The device is reconnecting ...",
     "Bridge configuration saved",
@@ -498,7 +502,11 @@ static const Strings kStringsEn = {
     "Check failed",
     "Downloading update...",
     "Update failed",
-    "Installed! Restarting..."};
+    "Installed! Restarting...",
+
+    "Disconnect",
+    "Pairing",
+    "Pairing: reconnecting MQTT..."};
 
 const char* normalize_language_code(const char* language_code) {
   if (!language_code || !language_code[0]) return kStringsEn.code;
