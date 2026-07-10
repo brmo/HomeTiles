@@ -26,9 +26,14 @@ int preview_target_height_px() {
 }
 
 int settings_panel_target_width_px() {
-  // Das quadratische 4-Spalten-B4 bekommt ein kompakteres Panel; bei den
-  // breiten 7-Spalten-Geraeten bleibt die bewaehrte 8-Zoll-Breite erhalten.
-  return (GRID_COLS <= 4) ? 340 : 390;
+  return 390;
+}
+
+int admin_wrapper_target_width_px() {
+  // Beim kompakten B4 schliesst der gesamte Desktop-Container direkt um
+  // Vorschau, Abstand und Settings-Panel. Die breiten Geraete behalten das
+  // bisherige 1200-px-Layout.
+  return (GRID_COLS <= 4) ? 952 : 1200;
 }
 
 int preview_cell_h_px() {
@@ -79,6 +84,9 @@ void appendPreviewScaleVars(String& html) {
   emit("value-dy", 28);       // Sensorwert: LV_ALIGN_CENTER(0, 28)
   html += "--settings-panel-width:";
   html += String(settings_panel_target_width_px());
+  html += "px;";
+  html += "--admin-wrapper-width:";
+  html += String(admin_wrapper_target_width_px());
   html += "px;";
   html += "}</style>\n";
 }
@@ -135,7 +143,7 @@ void appendAdminStyles(String& html) {
       overflow:hidden;
     }
     .wrapper {
-      max-width:1200px;
+      max-width:var(--admin-wrapper-width, 1200px);
       height:100vh;
       box-sizing:border-box;
       margin:0 auto;
