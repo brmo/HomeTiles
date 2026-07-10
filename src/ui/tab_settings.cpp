@@ -1939,7 +1939,7 @@ static void build_wifi_popup(lv_obj_t* parent) {
   lv_obj_set_style_pad_column(wifi_btn_row, 12, 0);
 
   wifi_disconnect_btn = create_popup_button(wifi_btn_row, tr().wifi_disconnect_btn,
-                                            0x424242, on_wifi_disconnect_clicked);
+                                            0xC14444, on_wifi_disconnect_clicked);
   lv_obj_set_flex_grow(wifi_disconnect_btn, 1);
   lv_obj_set_height(wifi_disconnect_btn, 76);
   lv_obj_t* disconnect_label = lv_obj_get_child(wifi_disconnect_btn, 0);
@@ -2413,24 +2413,13 @@ static void build_system_popup(lv_obj_t* parent) {
   lv_obj_set_flex_flow(system_action_row, LV_FLEX_FLOW_ROW);
   lv_obj_set_style_pad_column(system_action_row, 12, 0);
 
-  system_reboot_btn = create_popup_button(system_action_row, "", 0x424242,
-                                          on_system_reboot_clicked);
+  // Ohne Icon - der Web-Admin-Neustart-Button hat auch keins.
+  system_reboot_btn = create_popup_button(system_action_row, tr().restart_button,
+                                          0x424242, on_system_reboot_clicked);
   lv_obj_set_flex_grow(system_reboot_btn, 1);
   lv_obj_set_height(system_reboot_btn, 76);
-  lv_obj_set_flex_flow(system_reboot_btn, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(system_reboot_btn, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
-                        LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_column(system_reboot_btn, 14, 0);
-  lv_obj_t* reboot_icon = lv_obj_get_child(system_reboot_btn, 0);
-  if (reboot_icon) {
-    lv_label_set_text(reboot_icon, getMdiChar("restart").c_str());
-    if (FONT_MDI_ICONS) lv_obj_set_style_text_font(reboot_icon, FONT_MDI_ICONS, 0);
-  }
-  lv_obj_t* reboot_text = lv_label_create(system_reboot_btn);
-  lv_label_set_text(reboot_text, tr().restart_button);
-  lv_label_set_long_mode(reboot_text, LV_LABEL_LONG_DOT);
-  lv_obj_set_style_text_font(reboot_text, &ui_font_28, 0);
-  lv_obj_set_style_text_color(reboot_text, lv_color_white(), 0);
+  lv_obj_t* reboot_text = lv_obj_get_child(system_reboot_btn, 0);
+  if (reboot_text) lv_obj_set_style_text_font(reboot_text, &ui_font_28, 0);
 
   system_pair_btn = create_popup_button(system_action_row, "", 0x1E88E5,
                                         on_system_pair_clicked);

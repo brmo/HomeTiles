@@ -1144,7 +1144,7 @@ String WebAdminServer::getAdminPage() {
   html += R"html(</span>
                 </div>
                 <div class="settings-actions">
-                  <button class="btn btn-secondary" type="button" id="ota_upload_btn" onclick="uploadOtaFirmware()">)html";
+                  <button class="btn btn-go" type="button" id="ota_upload_btn" onclick="uploadOtaFirmware()">)html";
   html += tr.ota_upload_install;
   html += R"html(</button>
                 </div>
