@@ -3727,18 +3727,42 @@ void appendAdminScripts(String& html) {
 
   function loadTileDataAndSelect(tab, index) { selectTile(index, tab); }
 
+  function getTopLeftConfiguredTileIndex(tab) {
+    let selectedIndex = -1;
+    let selectedRow = Number.MAX_SAFE_INTEGER;
+    let selectedCol = Number.MAX_SAFE_INTEGER;
+    document.querySelectorAll('#tab-tiles-' + tab + ' .tile').forEach(tile => {
+      const index = parseInt(tile.dataset.index, 10);
+      if (isNaN(index) || Number(tile.dataset.type || 0) === 0) return;
+      const row = parseInt(tile.style.gridRowStart, 10);
+      const col = parseInt(tile.style.gridColumnStart, 10);
+      const safeRow = isNaN(row) ? Number.MAX_SAFE_INTEGER : row;
+      const safeCol = isNaN(col) ? Number.MAX_SAFE_INTEGER : col;
+      if (safeRow < selectedRow || (safeRow === selectedRow && safeCol < selectedCol)) {
+        selectedIndex = index;
+        selectedRow = safeRow;
+        selectedCol = safeCol;
+      }
+    });
+    return selectedIndex >= 0 ? selectedIndex : 0;
+  }
+
   document.addEventListener('DOMContentLoaded', () => {
     toggleStaticWifiFields();
     initTileTabs();
     loadDraftsFromStorage();
     loadTileClipboard();
+    // Der Editor startet immer mit der Kachel in Home, Spalte 1 / Zeile 1.
+    // Damit ist das Settings-Panel sofort mit einer echten Kachel gefuellt
+    // und zeigt nie den leeren Anfangszustand.
+    const homeTab = tabByFolder[0] || tileTabs[0];
+    if (homeTab) {
+      switchTab('tab-tiles-' + homeTab);
+      selectTile(getTopLeftConfiguredTileIndex(homeTab), homeTab);
+    } else {
+      switchTab('tab-network');
+    }
     loadSensorValues(true, true);
-    let savedTab = null;
-    try { savedTab = localStorage.getItem('activeAdminTab'); } catch (e) {}
-    const defaultTab = tileTabs.length ? ('tab-tiles-' + tileTabs[0]) : 'tab-network';
-    const targetTab = savedTab && document.getElementById(savedTab) ? savedTab : defaultTab;
-    const targetBtn = Array.from(document.querySelectorAll('.tab-btn')).find(btn => btn.getAttribute('onclick')?.includes(targetTab)) || document.querySelector('.tab-btn');
-    if (targetBtn) targetBtn.click();
     setInterval(() => { if (!document.hidden && !fileManagerUploadBusy) loadSensorValues(false, false); }, 15000);
     tileTabs.forEach(tab => {
       enableTileDrag(tab);
