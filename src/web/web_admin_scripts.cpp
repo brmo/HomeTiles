@@ -140,7 +140,7 @@ void appendAdminScripts(String& html) {
       showNotification(t('screenshotSaved'));
       const link = document.createElement('a');
       link.href = '/api/screenshot/download?ts=' + Date.now();
-      link.download = 'ui_screenshot.bmp';
+      link.download = 'ui_screenshot.jpg';
       document.body.appendChild(link);
       link.click();
       link.remove();

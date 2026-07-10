@@ -18,6 +18,7 @@
 #include "src/core/display_manager.h"
 #include "src/core/firmware_metadata.h"
 #include <Update.h>
+#include <driver/jpeg_encode.h>
 #include <esp_heap_caps.h>
 #include <lvgl.h>
 #include <algorithm>
@@ -320,7 +321,9 @@ void resetFileManagerUploadState() {
   g_file_manager_upload_next_heap_log = 0;
 }
 
-constexpr const char* kScreenshotPath = "/ui_screenshot.bmp";
+constexpr const char* kScreenshotPath = "/ui_screenshot.jpg";
+constexpr const char* kLegacyScreenshotPath = "/ui_screenshot.bmp";
+constexpr uint32_t kScreenshotJpegQuality = 92;
 struct OtaUploadState {
   bool upload_started = false;
   bool upload_success = false;
@@ -503,29 +506,7 @@ bool writeDirectOtaChunk(const uint8_t* data, size_t len) {
   return true;
 }
 
-bool writeU16LE(File& file, uint16_t value) {
-  uint8_t bytes[2] = {
-      static_cast<uint8_t>(value & 0xFFu),
-      static_cast<uint8_t>((value >> 8) & 0xFFu),
-  };
-  return file.write(bytes, sizeof(bytes)) == sizeof(bytes);
-}
-
-bool writeU32LE(File& file, uint32_t value) {
-  uint8_t bytes[4] = {
-      static_cast<uint8_t>(value & 0xFFu),
-      static_cast<uint8_t>((value >> 8) & 0xFFu),
-      static_cast<uint8_t>((value >> 16) & 0xFFu),
-      static_cast<uint8_t>((value >> 24) & 0xFFu),
-  };
-  return file.write(bytes, sizeof(bytes)) == sizeof(bytes);
-}
-
-bool writeI32LE(File& file, int32_t value) {
-  return writeU32LE(file, static_cast<uint32_t>(value));
-}
-
-bool saveDrawBufferAsBmp(const lv_draw_buf_t* draw_buf, const String& path, String& error) {
+bool saveDrawBufferAsJpeg(const lv_draw_buf_t* draw_buf, const String& path, String& error) {
   if (!draw_buf || !draw_buf->data) {
     error = "Screenshot buffer missing";
     return false;
@@ -538,86 +519,118 @@ bool saveDrawBufferAsBmp(const lv_draw_buf_t* draw_buf, const String& path, Stri
   const int32_t width = draw_buf->header.w;
   const int32_t height = draw_buf->header.h;
   const uint32_t src_stride = draw_buf->header.stride;
-  if (width <= 0 || height <= 0 || src_stride == 0) {
+  if (width <= 0 || height <= 0) {
+    error = "Invalid screenshot size";
+    return false;
+  }
+  const size_t row_bytes = static_cast<size_t>(width) * sizeof(uint16_t);
+  const size_t raw_size = row_bytes * static_cast<size_t>(height);
+  if (src_stride < row_bytes || raw_size > UINT32_MAX) {
     error = "Invalid screenshot size";
     return false;
   }
 
-  const uint32_t row_bytes = static_cast<uint32_t>(width) * 3u;
-  const uint32_t row_padding = (4u - (row_bytes & 3u)) & 3u;
-  const uint32_t pixel_bytes = (row_bytes + row_padding) * static_cast<uint32_t>(height);
-  const uint32_t file_size = 14u + 40u + pixel_bytes;
-
-  std::unique_ptr<uint8_t[]> row_buf(new (std::nothrow) uint8_t[row_bytes + row_padding]);
-  if (!row_buf) {
-    error = "Screenshot row buffer allocation failed";
+  jpeg_encode_memory_alloc_cfg_t input_mem_cfg = {};
+  input_mem_cfg.buffer_direction = JPEG_ENC_ALLOC_INPUT_BUFFER;
+  size_t input_capacity = 0;
+  uint8_t* input = static_cast<uint8_t*>(
+      jpeg_alloc_encoder_mem(raw_size, &input_mem_cfg, &input_capacity));
+  if (!input || input_capacity < raw_size) {
+    if (input) free(input);
+    error = "JPEG input buffer allocation failed";
     return false;
   }
-  if (sdFS().exists(path)) sdFS().remove(path);
+  for (int32_t y = 0; y < height; ++y) {
+    memcpy(input + static_cast<size_t>(y) * row_bytes,
+           draw_buf->data + static_cast<size_t>(y) * src_stride,
+           row_bytes);
+  }
 
+  jpeg_encode_memory_alloc_cfg_t output_mem_cfg = {};
+  output_mem_cfg.buffer_direction = JPEG_ENC_ALLOC_OUTPUT_BUFFER;
+  size_t output_capacity = 0;
+  uint8_t* output = static_cast<uint8_t*>(
+      jpeg_alloc_encoder_mem(raw_size, &output_mem_cfg, &output_capacity));
+  if (!output || output_capacity == 0) {
+    free(input);
+    if (output) free(output);
+    error = "JPEG output buffer allocation failed";
+    return false;
+  }
+
+  jpeg_encode_engine_cfg_t engine_cfg = {};
+  engine_cfg.timeout_ms = 1000;
+  jpeg_encoder_handle_t encoder = nullptr;
+  esp_err_t result = jpeg_new_encoder_engine(&engine_cfg, &encoder);
+  if (result != ESP_OK) {
+    free(output);
+    free(input);
+    error = String("Could not start JPEG encoder: ") + esp_err_to_name(result);
+    return false;
+  }
+
+  jpeg_encode_cfg_t encode_cfg = {};
+  encode_cfg.height = static_cast<uint32_t>(height);
+  encode_cfg.width = static_cast<uint32_t>(width);
+  encode_cfg.src_type = JPEG_ENCODE_IN_FORMAT_RGB565;
+  encode_cfg.sub_sample = JPEG_DOWN_SAMPLING_YUV444;
+  encode_cfg.image_quality = kScreenshotJpegQuality;
+
+  const uint32_t started_ms = millis();
+  uint32_t jpeg_size = 0;
+  result = jpeg_encoder_process(
+      encoder,
+      &encode_cfg,
+      input,
+      static_cast<uint32_t>(raw_size),
+      output,
+      static_cast<uint32_t>(output_capacity),
+      &jpeg_size);
+  jpeg_del_encoder_engine(encoder);
+  free(input);
+
+  if (result != ESP_OK) {
+    free(output);
+    error = String("JPEG encoding failed: ") + esp_err_to_name(result);
+    return false;
+  }
+  if (jpeg_size == 0 || jpeg_size > output_capacity) {
+    free(output);
+    error = "JPEG encoder returned an invalid output size";
+    return false;
+  }
+
+  if (sdFS().exists(path)) sdFS().remove(path);
   File file = sdFS().open(path, FILE_WRITE);
   if (!file) {
+    free(output);
     error = "Could not open screenshot file";
     return false;
   }
 
-  bool ok = true;
-  ok = ok && file.write(reinterpret_cast<const uint8_t*>("BM"), 2) == 2;
-  ok = ok && writeU32LE(file, file_size);
-  ok = ok && writeU16LE(file, 0);
-  ok = ok && writeU16LE(file, 0);
-  ok = ok && writeU32LE(file, 54);
-  ok = ok && writeU32LE(file, 40);
-  ok = ok && writeI32LE(file, width);
-  ok = ok && writeI32LE(file, height);
-  ok = ok && writeU16LE(file, 1);
-  ok = ok && writeU16LE(file, 24);
-  ok = ok && writeU32LE(file, 0);
-  ok = ok && writeU32LE(file, pixel_bytes);
-  ok = ok && writeI32LE(file, 2835);
-  ok = ok && writeI32LE(file, 2835);
-  ok = ok && writeU32LE(file, 0);
-  ok = ok && writeU32LE(file, 0);
-
-  if (!ok) {
-    file.close();
-    sdFS().remove(path);
-    error = "Could not write BMP header";
-    return false;
-  }
-
-  for (int32_t y = height - 1; y >= 0; --y) {
-    const uint8_t* src_row = draw_buf->data + static_cast<uint32_t>(y) * src_stride;
-    const uint16_t* src = reinterpret_cast<const uint16_t*>(src_row);
-    uint8_t* dst = row_buf.get();
-    for (int32_t x = 0; x < width; ++x) {
-      const uint16_t px = src[x];
-      const uint8_t r = static_cast<uint8_t>((((px >> 11) & 0x1Fu) * 255u) / 31u);
-      const uint8_t g = static_cast<uint8_t>((((px >> 5) & 0x3Fu) * 255u) / 63u);
-      const uint8_t b = static_cast<uint8_t>(((px & 0x1Fu) * 255u) / 31u);
-      *dst++ = b;
-      *dst++ = g;
-      *dst++ = r;
-    }
-    for (uint32_t i = 0; i < row_padding; ++i) {
-      *dst++ = 0;
-    }
-    const size_t write_len = row_bytes + row_padding;
-    if (file.write(row_buf.get(), write_len) != write_len) {
+  constexpr size_t kWriteChunkBytes = 32 * 1024;
+  size_t written = 0;
+  while (written < jpeg_size) {
+    const size_t chunk = std::min(kWriteChunkBytes, static_cast<size_t>(jpeg_size) - written);
+    if (file.write(output + written, chunk) != chunk) {
       file.close();
       sdFS().remove(path);
-      error = "Could not write BMP pixels";
+      free(output);
+      error = "Could not write JPEG screenshot";
       return false;
     }
-    // Ohne yield() blockiert diese Schleife bei grossen Screenshots (800+
-    // Zeilen SD-Schreiben) lange genug am Stueck, dass der WLAN/SDIO-Task
-    // keine Chance bekommt, seine Empfangs-Queue zu leeren -- Absturz
-    // "assert failed: sdio_rx_get_buffer" (siehe tiles_reload_layout() in
-    // tab_tiles_unified.cpp fuer denselben, dort schon behobenen Bug).
+    written += chunk;
     yield();
   }
-
   file.close();
+  free(output);
+  if (sdFS().exists(kLegacyScreenshotPath)) sdFS().remove(kLegacyScreenshotPath);
+  Serial.printf("[Screenshot] JPEG %ldx%ld quality=%u: %u KB in %u ms\n",
+                static_cast<long>(width),
+                static_cast<long>(height),
+                static_cast<unsigned>(kScreenshotJpegQuality),
+                static_cast<unsigned>((jpeg_size + 1023u) / 1024u),
+                static_cast<unsigned>(millis() - started_ms));
   return true;
 }
 
@@ -754,7 +767,7 @@ bool createUiScreenshot(String& error) {
     }
   }
 
-  const bool ok = saveDrawBufferAsBmp(draw_buf, String(kScreenshotPath), error);
+  const bool ok = saveDrawBufferAsJpeg(draw_buf, String(kScreenshotPath), error);
   lv_draw_buf_destroy(draw_buf);
   return ok;
 }
@@ -2615,10 +2628,10 @@ void WebAdminServer::handleDownloadScreenshot() {
   }
 
   String filename = Device::profile().key;
-  filename += "-ui-screenshot.bmp";
+  filename += "-ui-screenshot.jpg";
   server.sendHeader("Content-Disposition", "attachment; filename=\"" + filename + "\"");
   server.sendHeader("Cache-Control", "no-store");
-  server.streamFile(file, "image/bmp");
+  server.streamFile(file, "image/jpeg");
   file.close();
 }
 
