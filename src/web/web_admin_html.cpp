@@ -462,7 +462,8 @@ static void appendTileTabHTML(
             append_tile_type_fields_html(html, type_ctx);
 
   html += R"html(
-<div class="tile-actions">
+            </div><!-- /tile-settings-body -->
+            <div class="tile-actions">
                 <button type="button" class="btn" onclick="copyTile(')html";
   html += tab_id;
   html += R"html(')">)html";
@@ -479,7 +480,6 @@ static void appendTileTabHTML(
   html += tr.admin_delete;
   html += R"html(</button>
             </div>
-            </div><!-- /tile-settings-body -->
             </div><!-- /tile-specific-settings -->
           </div>
         </div>

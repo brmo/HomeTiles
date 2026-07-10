@@ -457,7 +457,9 @@ void appendAdminStyles(String& html) {
 
     /* Tile Editor */
     .tile-editor { display:flex; align-items:flex-start; gap:24px; }
-    .tile-editor-main { flex:0 1 auto; min-width:0; display:flex; flex-direction:column; gap:14px; }
+    /* Die Vorschau bleibt immer in ihrer geraetespezifischen Groesse;
+       das Settings-Panel nutzt nur den verbleibenden Desktop-Platz. */
+    .tile-editor-main { flex:0 0 auto; min-width:0; display:flex; flex-direction:column; gap:14px; }
     .tile-grid-scroll { max-width:100%; overflow-x:auto; }
     /* width:0 + min-width:100% - der Footer richtet sich nach der Grid-Breite,
        ohne dass sein (langer) Hinweistext die Spalte aufblaeht. */
@@ -661,7 +663,8 @@ void appendAdminStyles(String& html) {
     /* Settings Panel: sticky rechts, scrollt bei langem Inhalt intern
        (max. Viewport-Hoehe) statt die ganze Seite zu strecken. */
     .tile-settings {
-      flex:0 0 350px;
+      flex:1 1 300px;
+      min-width:300px;
       box-sizing:border-box;
       display:flex;
       flex-direction:column;
@@ -676,7 +679,7 @@ void appendAdminStyles(String& html) {
     }
     .tile-settings.hidden { display:none; }
     /* Kopf (Titel + Typ) bleibt stehen, nur der Body scrollt */
-    .tile-specific-settings { display:flex; flex-direction:column; min-height:0; }
+    .tile-specific-settings { display:flex; flex:1 1 auto; flex-direction:column; min-height:0; }
     .tile-settings-head { flex:0 0 auto; }
     .tile-settings-body {
       flex:1 1 auto;
@@ -685,6 +688,13 @@ void appendAdminStyles(String& html) {
       overscroll-behavior:contain;
       margin-right:-12px;
       padding-right:12px;
+    }
+    /* Die Aktionen bleiben im Desktop-Panel jederzeit erreichbar. */
+    .tile-specific-settings > .tile-actions {
+      flex:0 0 auto;
+      margin:10px 0 0;
+      padding-top:10px;
+      border-top:1px solid #232323;
     }
     /* Kompaktere Controls nur im Panel */
     .tile-settings label { font-size:12px; margin-bottom:4px; }
@@ -756,7 +766,7 @@ void appendAdminStyles(String& html) {
     @media (max-width: 1180px) {
       .tile-editor { flex-direction:column; align-items:stretch; }
       .tile-editor-main { flex:1 1 auto; }
-      .tile-settings { flex:1 1 auto; position:static; max-height:none; }
+      .tile-settings { flex:1 1 auto; min-width:0; position:static; max-height:none; }
     }
     @media (max-width: 780px) {
       body { height:auto; overflow:auto; }
