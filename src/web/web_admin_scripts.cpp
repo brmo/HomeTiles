@@ -106,6 +106,10 @@ void appendAdminScripts(String& html) {
     if (activeBtn) activeBtn.classList.add('active');
     try { localStorage.setItem('activeAdminTab', tabName); } catch (e) {}
     updateTileSettingsMaxHeight();
+    if (tabName.startsWith('tab-tiles-')) {
+      const tileTab = tabName.substring('tab-tiles-'.length);
+      selectTile(getTopLeftConfiguredTileIndex(tileTab), tileTab);
+    }
     if (tabName === 'tab-network') {
       window.setTimeout(() => {
         if (typeof loadFileManager === 'function' && !fileManagerLoaded) loadFileManager();
@@ -3758,7 +3762,6 @@ void appendAdminScripts(String& html) {
     const homeTab = tabByFolder[0] || tileTabs[0];
     if (homeTab) {
       switchTab('tab-tiles-' + homeTab);
-      selectTile(getTopLeftConfiguredTileIndex(homeTab), homeTab);
     } else {
       switchTab('tab-network');
     }
