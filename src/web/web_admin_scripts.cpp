@@ -1411,6 +1411,13 @@ void appendAdminScripts(String& html) {
     }
   }
   function getRememberedTileIndex(tab) {
+    const markedTile = document.querySelector('#tab-tiles-' + tab + ' .tile[data-selected="1"]');
+    if (markedTile && Number(markedTile.dataset.type || 0) !== 0) {
+      const markedIndex = Number(markedTile.dataset.index);
+      if (Number.isInteger(markedIndex) && markedIndex >= 0 && markedIndex < TILES_PER_GRID) {
+        return markedIndex;
+      }
+    }
     const index = Number(selectedTileByTab[tab]);
     if (!Number.isInteger(index) || index < 0 || index >= TILES_PER_GRID) return null;
     const tile = document.getElementById(tab + '-tile-' + index);
@@ -1775,9 +1782,14 @@ void appendAdminScripts(String& html) {
     currentTileIndex = index;
     currentTileTab = tab;
     persistSelectedTileState();
+    document.querySelectorAll('#tab-tiles-' + tab + ' .tile').forEach(t => delete t.dataset.selected);
     document.querySelectorAll('.tile').forEach(t => t.classList.remove('active', 'drop-target', 'dragging'));
     const tileId = tab + '-tile-' + index;
-    document.getElementById(tileId)?.classList.add('active');
+    const selectedTile = document.getElementById(tileId);
+    if (selectedTile) {
+      selectedTile.dataset.selected = '1';
+      selectedTile.classList.add('active');
+    }
     const settingsId = tab + 'Settings';
     const settingsPanel = document.getElementById(settingsId);
     if (settingsPanel) {
