@@ -2005,7 +2005,7 @@ void appendAdminScripts(String& html) {
     const tileElem = document.getElementById(tileId);
     if (!tileElem) return;
 
-    const wasActive = tileElem.classList.contains('active');
+    const wasActive = currentTileTab === tab && currentTileIndex >= 0;
     const typeWas = tileElem.dataset.type || '0';
     const title = document.getElementById(prefix + '_tile_title').value;
     const color = document.getElementById(prefix + '_tile_color').value;
@@ -2184,7 +2184,9 @@ void appendAdminScripts(String& html) {
         callTypeHandler(meta, 'load', prefix, data);
         syncGaugeUi(tab);
         const tileElem = document.getElementById(tab + '-tile-' + index);
-        if (tileElem) tileElem.classList.add('active');
+        if (tileElem) {
+          tileElem.classList.toggle('active', currentTileTab === tab && currentTileIndex === index);
+        }
         const draft = (drafts[tab] || {})[index];
         if (draft && draft._dirty) {
           applyDraft(tab, index);
@@ -2193,6 +2195,7 @@ void appendAdminScripts(String& html) {
           updateTilePreview(tab);
         }
         setupLivePreview(tab);
+        restoreCurrentTileSelectionUi();
     });
   }
 
