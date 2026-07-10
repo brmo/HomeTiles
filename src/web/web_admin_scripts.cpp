@@ -73,6 +73,13 @@ void appendAdminScripts(String& html) {
   appendJsEntry("otaFailed", tr.js_ota_failed);
   appendJsEntry("otaChooseFile", tr.ota_choose_file);
   appendJsEntry("otaNoFileSelected", tr.ota_no_file_selected);
+  appendJsEntry("otaGithubCheck", tr.system_check_updates_btn);
+  appendJsEntry("otaGithubChecking", tr.system_checking);
+  appendJsEntry("otaGithubUpToDate", tr.system_up_to_date);
+  appendJsEntry("otaGithubAvailable", tr.system_update_available_fmt);
+  appendJsEntry("otaGithubInstall", tr.system_install_btn_fmt);
+  appendJsEntry("otaGithubCheckFailed", tr.system_check_failed);
+  appendJsEntry("otaGithubDownloading", tr.system_downloading);
   html += R"html(  };
   function t(key) {
     return Object.prototype.hasOwnProperty.call(APP_I18N, key) ? APP_I18N[key] : key;
@@ -636,10 +643,145 @@ void appendAdminScripts(String& html) {
     }
   }
 
+  let githubFirmwareUpdateTag = '';
+
+  function formatGithubFirmwareText(key, tag) {
+    return String(t(key) || '').replace('%s', String(tag || ''));
+  }
+
+  function setGithubOtaUi(message, phase = 'idle', tone = '') {
+    const statusEl = document.getElementById('ota_github_status');
+    const progressEl = document.getElementById('ota_github_progress');
+    const progressBarEl = document.getElementById('ota_github_progress_bar');
+    if (statusEl) {
+      statusEl.textContent = message || '';
+      statusEl.classList.remove('error', 'success');
+      if (tone === 'error' || tone === 'success') statusEl.classList.add(tone);
+    }
+    if (progressEl) {
+      progressEl.classList.toggle('is-hidden', phase === 'idle');
+      progressEl.classList.toggle('active', phase === 'busy');
+    }
+    if (progressBarEl) progressBarEl.style.width = phase === 'done' ? '100%' : '0%';
+  }
+
+  function setFirmwareOtaControlsDisabled(disabled) {
+    const ids = ['ota_github_btn', 'ota_upload_btn', 'ota_choose_btn', 'ota_file'];
+    ids.forEach(id => {
+      const element = document.getElementById(id);
+      if (element) element.disabled = disabled;
+    });
+  }
+
+  function waitForGithubFirmwareResult(targetTag) {
+    const startedAt = Date.now();
+    const poll = async () => {
+      try {
+        const res = await fetch('/api/ota/github/status?ts=' + Date.now(), {
+          method: 'GET',
+          cache: 'no-store',
+          credentials: 'same-origin'
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) throw new Error('offline');
+        if (data.install_error) {
+          githubFirmwareUpdateTag = '';
+          const button = document.getElementById('ota_github_btn');
+          if (button) button.textContent = t('otaGithubCheck');
+          setGithubOtaUi(data.install_error, 'idle', 'error');
+          showNotification(data.install_error, false);
+          setFirmwareOtaControlsDisabled(false);
+          return;
+        }
+        if (!data.install_requested && data.current_version === targetTag) {
+          window.location.reload();
+          return;
+        }
+      } catch (e) {}
+
+      if (Date.now() - startedAt < 180000) {
+        window.setTimeout(poll, 1500);
+      } else {
+        setGithubOtaUi(t('otaReconnecting'), 'idle', 'error');
+        setFirmwareOtaControlsDisabled(false);
+      }
+    };
+    window.setTimeout(poll, 1200);
+  }
+
+  async function installGithubFirmware(tag) {
+    setFirmwareOtaControlsDisabled(true);
+    setGithubOtaUi(t('otaGithubDownloading'), 'busy');
+    showNotification(t('otaGithubDownloading'));
+    try {
+      const res = await fetch('/api/ota/github/install', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'tag=' + encodeURIComponent(tag),
+        cache: 'no-store',
+        credentials: 'same-origin'
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || t('otaFailed'));
+      }
+      setGithubOtaUi(t('otaGithubDownloading') + ' ' + t('otaReconnecting'), 'busy');
+      waitForGithubFirmwareResult(tag);
+    } catch (err) {
+      const message = err?.message || t('otaFailed');
+      setGithubOtaUi(message, 'idle', 'error');
+      showNotification(message, false);
+      setFirmwareOtaControlsDisabled(false);
+    }
+  }
+
+  async function checkOrInstallGithubFirmware() {
+    if (githubFirmwareUpdateTag) {
+      await installGithubFirmware(githubFirmwareUpdateTag);
+      return;
+    }
+
+    const button = document.getElementById('ota_github_btn');
+    setFirmwareOtaControlsDisabled(true);
+    if (button) button.textContent = t('otaGithubChecking');
+    setGithubOtaUi(t('otaGithubChecking'));
+    try {
+      const res = await fetch('/api/ota/github/check', {
+        method: 'POST',
+        cache: 'no-store',
+        credentials: 'same-origin'
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || t('otaGithubCheckFailed'));
+      }
+
+      if (data.update_available && data.latest_tag) {
+        githubFirmwareUpdateTag = data.latest_tag;
+        if (button) button.textContent = formatGithubFirmwareText('otaGithubInstall', data.latest_tag);
+        const message = formatGithubFirmwareText('otaGithubAvailable', data.latest_tag);
+        setGithubOtaUi(message, 'idle', 'success');
+        showNotification(message);
+      } else {
+        if (button) button.textContent = t('otaGithubCheck');
+        setGithubOtaUi(t('otaGithubUpToDate'), 'idle', 'success');
+        showNotification(t('otaGithubUpToDate'));
+      }
+    } catch (err) {
+      if (button) button.textContent = t('otaGithubCheck');
+      const message = err?.message || t('otaGithubCheckFailed');
+      setGithubOtaUi(message, 'idle', 'error');
+      showNotification(message, false);
+    } finally {
+      setFirmwareOtaControlsDisabled(false);
+    }
+  }
+
   async function uploadOtaFirmware() {
     const input = document.getElementById('ota_file');
     const button = document.getElementById('ota_upload_btn');
     const chooseBtn = document.getElementById('ota_choose_btn');
+    const githubBtn = document.getElementById('ota_github_btn');
     const statusEl = document.getElementById('ota_status');
     const progressEl = document.getElementById('ota_progress');
     const progressBarEl = document.getElementById('ota_progress_bar');
@@ -703,6 +845,7 @@ void appendAdminScripts(String& html) {
       button.textContent = button.dataset.defaultLabel || 'Update';
     }
     if (chooseBtn) chooseBtn.disabled = true;
+    if (githubBtn) githubBtn.disabled = true;
     input.disabled = true;
     setOtaUi(t('otaUploading') + ' 0%', 'busy', '', 0);
     showNotification(t('otaUploading'));
@@ -727,6 +870,7 @@ void appendAdminScripts(String& html) {
         button.textContent = button.dataset.defaultLabel || 'Update';
       }
       if (chooseBtn) chooseBtn.disabled = false;
+      if (githubBtn) githubBtn.disabled = false;
       input.disabled = false;
       return;
     }
@@ -762,6 +906,7 @@ void appendAdminScripts(String& html) {
           button.textContent = button.dataset.defaultLabel || 'Update';
         }
         if (chooseBtn) chooseBtn.disabled = false;
+        if (githubBtn) githubBtn.disabled = false;
         input.disabled = false;
         return;
       }
@@ -784,6 +929,7 @@ void appendAdminScripts(String& html) {
         button.textContent = button.dataset.defaultLabel || 'Update';
       }
       if (chooseBtn) chooseBtn.disabled = false;
+      if (githubBtn) githubBtn.disabled = false;
       input.disabled = false;
     };
 

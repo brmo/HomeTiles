@@ -4,7 +4,11 @@
 #include <Arduino.h>
 #include <WebServer.h>
 #include "src/core/config_manager.h"
+#include "src/core/github_update.h"
 #include "src/network/ha_bridge_config.h"
+
+typedef GithubUpdate::CheckResult (*web_github_check_callback_t)();
+typedef void (*web_github_install_callback_t)(const char* tag);
 
 // Webinterface für MQTT-Konfiguration im normalen Netzwerk
 // Läuft wenn das Gerät bereits mit WiFi verbunden ist
@@ -31,6 +35,10 @@ public:
   // Prüft ob Server läuft
   bool isRunning() const { return running; }
 
+  void setGithubUpdateCallbacks(web_github_check_callback_t check_cb,
+                                web_github_install_callback_t install_cb);
+  void setGithubUpdateInstallFailed(const char* error);
+
   // Request Handler (implemented in web_admin_handlers.cpp)
   void handleRoot();
   void handleSaveMQTT();
@@ -55,6 +63,9 @@ public:
   void handleOtaUploadDone();
   void handleStartOtaInstall();
   void handleGetOtaStatus();
+  void handleGithubUpdateCheck();
+  void handleGithubUpdateInstall();
+  void handleGetGithubUpdateStatus();
   void handleUploadIcon();
   void handleUploadIconDone();
   void handleFileManagerList();
@@ -76,6 +87,12 @@ public:
 
 private:
   bool running;
+  web_github_check_callback_t github_check_callback;
+  web_github_install_callback_t github_install_callback;
+  GithubUpdate::CheckResult last_github_check;
+  bool github_check_valid;
+  bool github_install_requested;
+  String github_install_error;
 };
 
 // Globale Instanz

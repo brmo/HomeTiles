@@ -17,6 +17,7 @@
 #include "src/core/board_hal.h"
 #include "src/core/display_manager.h"
 #include "src/core/firmware_metadata.h"
+#include "src/core/firmware_version.h"
 #include <Update.h>
 #include <driver/jpeg_encode.h>
 #include <esp_heap_caps.h>
@@ -2565,6 +2566,87 @@ void WebAdminServer::handleGetOtaStatus() {
   appendJsonEscaped(json, g_ota_upload_state.error);
   json += "\"}";
   sendChunkedResponse(server, 200, "application/json", json);
+}
+
+void WebAdminServer::handleGithubUpdateCheck() {
+  if (!github_check_callback) {
+    sendJsonError(server, 503, "GitHub update check is unavailable");
+    return;
+  }
+
+  // Ein fehlgeschlagenes GitHub-OTA kann auch dann zurueckgesetzt werden,
+  // wenn der urspruengliche Browser-Tab den Fehlerstatus nicht mehr abholt.
+  if (github_install_requested && github_install_error.length() > 0) {
+    github_install_requested = false;
+    github_install_error = "";
+    github_check_valid = false;
+  }
+  if (webAdminOtaInProgress() || github_install_requested) {
+    sendJsonError(server, 409, "A firmware update is already in progress");
+    return;
+  }
+
+  webAdminMarkActivity();
+  last_github_check = github_check_callback();
+  github_check_valid = true;
+
+  String json = "{\"success\":";
+  json += last_github_check.ok ? "true" : "false";
+  json += ",\"update_available\":";
+  json += last_github_check.update_available ? "true" : "false";
+  json += ",\"latest_tag\":\"";
+  appendJsonEscaped(json, last_github_check.latest_tag);
+  json += "\",\"current_version\":\"";
+  appendJsonEscaped(json, FW_VERSION);
+  json += "\"}";
+  sendChunkedResponse(server, last_github_check.ok ? 200 : 502, "application/json", json);
+}
+
+void WebAdminServer::handleGithubUpdateInstall() {
+  if (!github_install_callback) {
+    sendJsonError(server, 503, "GitHub update install is unavailable");
+    return;
+  }
+  if (webAdminOtaInProgress() || github_install_requested) {
+    sendJsonError(server, 409, "A firmware update is already in progress");
+    return;
+  }
+
+  const String requested_tag = server.arg("tag");
+  if (!github_check_valid || !last_github_check.ok || !last_github_check.update_available ||
+      requested_tag != last_github_check.latest_tag) {
+    sendJsonError(server, 412, "Check for updates before installing");
+    return;
+  }
+
+  github_install_requested = true;
+  github_install_error = "";
+  github_install_callback(last_github_check.latest_tag);
+
+  String json = "{\"success\":true,\"tag\":\"";
+  appendJsonEscaped(json, last_github_check.latest_tag);
+  json += "\"}";
+  sendChunkedResponse(server, 202, "application/json", json);
+}
+
+void WebAdminServer::handleGetGithubUpdateStatus() {
+  const bool clear_failed_install =
+      github_install_requested && github_install_error.length() > 0;
+
+  String json = "{\"success\":true,\"current_version\":\"";
+  appendJsonEscaped(json, FW_VERSION);
+  json += "\",\"install_requested\":";
+  json += github_install_requested ? "true" : "false";
+  json += ",\"install_error\":\"";
+  appendJsonEscaped(json, github_install_error);
+  json += "\"}";
+  sendChunkedResponse(server, 200, "application/json", json);
+
+  if (clear_failed_install) {
+    github_install_requested = false;
+    github_install_error = "";
+    github_check_valid = false;
+  }
 }
 
 bool webAdminOtaInProgress() {

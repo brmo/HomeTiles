@@ -1115,6 +1115,19 @@ String WebAdminServer::getAdminPage() {
                 <div class="settings-note ota-version-value">)html";
   html += current_firmware_name;
   html += R"html(</div>
+                <div class="settings-note"><strong>GitHub OTA:</strong></div>
+                <div class="settings-actions">
+                  <button class="btn" type="button" id="ota_github_btn" onclick="checkOrInstallGithubFirmware()">)html";
+  html += tr.system_check_updates_btn;
+  html += R"html(</button>
+                </div>
+                <div id="ota_github_status" class="settings-note ota-status"></div>
+                <div id="ota_github_progress" class="ota-progress is-hidden" aria-hidden="true">
+                  <div id="ota_github_progress_bar" class="ota-progress-bar"></div>
+                </div>
+                <div class="settings-note"><strong>)html";
+  html += tr.ota_firmware_file;
+  html += R"html(:</strong></div>
                 <input type="file" id="ota_file" accept=".bin,application/octet-stream" style="display:none" onchange="updateOtaFileName(this)">
                 <div class="file-picker">
                   <button class="btn btn-secondary btn-inline" type="button" id="ota_choose_btn" onclick="document.getElementById('ota_file').click()">)html";

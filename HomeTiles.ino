@@ -290,11 +290,7 @@ static void request_system_reboot() {
   system_reboot_pending = true;
 }
 
-static void apply_fw_check() {
-  // Die "Suche..."-Statuszeile noch auf den Schirm bringen, bevor der
-  // TLS-Handshake den Loop fuer 1-3 Sekunden blockiert
-  lv_refr_now(displayManager.getDisplay());
-
+static GithubUpdate::CheckResult perform_fw_check() {
   // Auch der reine Versions-Check braucht einen frischen GitHub-TLS-Handshake.
   // Auf ESP32-P4/SDIO-WiFi ist das stabiler, wenn MQTT kurz ruhig ist und der
   // interne PubSubClient-Puffer nicht gleichzeitig 16-32 KB SRAM festhaelt.
@@ -313,6 +309,15 @@ static void apply_fw_check() {
     networkManager.restoreMqttBufferNormal();
     Serial.println("[Update] Check: MQTT wieder freigegeben");
   }
+  return res;
+}
+
+static void apply_fw_check() {
+  // Die "Suche..."-Statuszeile noch auf den Schirm bringen, bevor der
+  // TLS-Handshake den Loop fuer 1-3 Sekunden blockiert
+  lv_refr_now(displayManager.getDisplay());
+
+  const GithubUpdate::CheckResult res = perform_fw_check();
   settings_fw_check_result(res.ok, res.latest_tag, res.update_available);
 }
 
@@ -361,6 +366,7 @@ static void apply_fw_install() {
   }
 
   Serial.printf("[Update] Fehlgeschlagen: %s\n", err.c_str());
+  webAdminServer.setGithubUpdateInstallFailed(err.c_str());
   settings_fw_install_failed(err.c_str());
   // Zurueck in den Normalbetrieb (Gegenstueck zur Vorbereitung oben)
   networkManager.restoreMqttBufferNormal();
@@ -654,6 +660,7 @@ void setup() {
   settings_set_fw_check_callback(request_fw_check);
   settings_set_fw_install_callback(request_fw_install);
   settings_set_system_reboot_callback(request_system_reboot);
+  webAdminServer.setGithubUpdateCallbacks(perform_fw_check, request_fw_install);
   ui_build_waiter = xTaskGetCurrentTaskHandle();
   xTaskCreatePinnedToCore(build_ui_task, "buildUI", 24576, nullptr, 2, nullptr, ARDUINO_RUNNING_CORE);
   if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(30000)) == 0) {

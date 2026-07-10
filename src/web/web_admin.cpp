@@ -5,7 +5,25 @@
 WebAdminServer webAdminServer;
 static volatile uint32_t g_web_admin_last_activity_ms = 0;
 
-WebAdminServer::WebAdminServer() : server(80), running(false) {}
+WebAdminServer::WebAdminServer()
+    : server(80),
+      running(false),
+      github_check_callback(nullptr),
+      github_install_callback(nullptr),
+      last_github_check(),
+      github_check_valid(false),
+      github_install_requested(false) {}
+
+void WebAdminServer::setGithubUpdateCallbacks(web_github_check_callback_t check_cb,
+                                               web_github_install_callback_t install_cb) {
+  github_check_callback = check_cb;
+  github_install_callback = install_cb;
+}
+
+void WebAdminServer::setGithubUpdateInstallFailed(const char* error) {
+  if (!github_install_requested) return;
+  github_install_error = error ? error : "Update failed";
+}
 
 void webAdminMarkActivity() {
   g_web_admin_last_activity_ms = millis();
@@ -52,6 +70,9 @@ bool WebAdminServer::start() {
     [this]() { this->handleOtaUpdate(); });
   server.on("/api/ota/install", HTTP_POST, [this]() { this->handleStartOtaInstall(); });
   server.on("/api/ota/status", HTTP_GET, [this]() { this->handleGetOtaStatus(); });
+  server.on("/api/ota/github/check", HTTP_POST, [this]() { this->handleGithubUpdateCheck(); });
+  server.on("/api/ota/github/install", HTTP_POST, [this]() { this->handleGithubUpdateInstall(); });
+  server.on("/api/ota/github/status", HTTP_GET, [this]() { this->handleGetGithubUpdateStatus(); });
   server.on("/api/upload_icon", HTTP_POST,
     [this]() { this->handleUploadIconDone(); },
     [this]() { this->handleUploadIcon(); });
