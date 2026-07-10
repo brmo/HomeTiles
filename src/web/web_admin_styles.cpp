@@ -294,6 +294,7 @@ void appendAdminStyles(String& html) {
     .settings-note { font-size:12px; color:var(--text-3); margin-top:4px; }
     .settings-actions { display:flex; gap:10px; flex-wrap:wrap; }
     .settings-actions .btn { width:auto; }
+    .ota-github-actions { margin-top:8px; }
     .file-picker { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:8px; }
     .file-picker-name { color:var(--text-3); font-size:14px; overflow-wrap:anywhere; }
     .btn-inline { width:auto; margin-top:0; }

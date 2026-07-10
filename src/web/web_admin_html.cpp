@@ -1122,7 +1122,7 @@ String WebAdminServer::getAdminPage() {
   html += current_firmware_name;
   html += R"html(</div>
                 <div class="settings-note"><strong>GitHub OTA:</strong></div>
-                <div class="settings-actions">
+                <div class="settings-actions ota-github-actions">
                   <button class="btn" type="button" id="ota_github_btn" onclick="checkOrInstallGithubFirmware()">)html";
   html += tr.system_check_updates_btn;
   html += R"html(</button>
