@@ -510,7 +510,11 @@ void appendAdminStyles(String& html) {
       background-clip:padding-box;
       clip-path: inset(0 round 11px);
     }
-    .tile.active {
+    /* Die Auswahl ist pro Ordner in data-selected gespeichert. Die active-
+       Klasse kann bei asynchronen Vorschau-Updates wechseln, die sichtbare
+       Markierung darf davon aber nicht abhaengen. */
+    .tile.active,
+    .tile[data-selected="1"] {
       border:3px solid #26a69a;
       box-shadow:0 0 12px rgba(38,166,154,0.55);
       border-radius:11px;
@@ -592,11 +596,13 @@ void appendAdminStyles(String& html) {
       border:1px solid rgba(255,255,255,0.24);
       box-shadow:0 1px 4px rgba(15,23,42,0.18);
     }
-    .tile.active .tile-resize-handle {
+    .tile.active .tile-resize-handle,
+    .tile[data-selected="1"] .tile-resize-handle {
       opacity:0.22;
       pointer-events:auto;
     }
     .tile.active:hover .tile-resize-handle,
+    .tile[data-selected="1"]:hover .tile-resize-handle,
     .tile.resizing .tile-resize-handle {
       opacity:0.58;
       pointer-events:auto;
@@ -627,9 +633,11 @@ void appendAdminStyles(String& html) {
       border-radius:6px;
       cursor:nwse-resize;
     }
-    .tile.active:hover { opacity:1; filter:none; }
+    .tile.active:hover,
+    .tile[data-selected="1"]:hover { opacity:1; filter:none; }
     .tile.empty { background:transparent !important; border:3px solid transparent; }
-    .tile.empty.active { border:3px solid #26a69a; box-shadow:0 0 12px rgba(38,166,154,0.55); }
+    .tile.empty.active,
+    .tile.empty[data-selected="1"] { border:3px solid #26a69a; box-shadow:0 0 12px rgba(38,166,154,0.55); }
     .tile.empty:hover:not(.active) { border-color:rgba(38,166,154,0.4); }
     .tile-title {
       color:#fff;
