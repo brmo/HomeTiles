@@ -81,7 +81,7 @@ void append_pixelanim_fields_html(String& html, const String& tab_id) {
 
   html += R"html(
               </select>
-              <div style="font-size:11px;color:#64748b;margin-top:4px;">)html";
+              <div style="font-size:11px;color:#8a8a8a;margin-top:4px;">)html";
   if (anims.empty()) {
     html += "Keine Animationen gefunden &mdash; .panim-Dateien nach /animations auf die SD-Karte legen.";
   } else {

@@ -15,7 +15,7 @@ void append_key_fields_html(String& html, const String& tab_id) {
               <input type="text" id=")html";
   html += tab_id;
   html += R"html(_key_macro" placeholder="z.B. ctrl+g">
-              <div style="font-size:11px;color:#64748b;margin-top:4px;">)html";
+              <div style="font-size:11px;color:#8a8a8a;margin-top:4px;">)html";
   html += tr.macro_examples;
   html += R"html(</div>
             </div>

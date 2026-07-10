@@ -105,11 +105,61 @@ void appendAdminScripts(String& html) {
     const activeBtn = Array.from(btns).find(btn => btn.getAttribute('onclick')?.includes("'" + tabName + "'"));
     if (activeBtn) activeBtn.classList.add('active');
     try { localStorage.setItem('activeAdminTab', tabName); } catch (e) {}
+    updateTileSettingsMaxHeight();
     if (tabName === 'tab-network') {
       window.setTimeout(() => {
         if (typeof loadFileManager === 'function' && !fileManagerLoaded) loadFileManager();
       }, 0);
     }
+  }
+
+  // Deckelt das Tile-Settings-Panel exakt auf den Platz unterhalb von
+  // Header/Tabs, damit es intern scrollt statt die Seite zu strecken.
+  function updateTileSettingsMaxHeight() {
+    document.querySelectorAll('.tile-settings').forEach(panel => {
+      panel.style.maxHeight = '';
+      if (window.innerWidth <= 1180) return;
+      const tab = panel.closest('.tab-content');
+      if (!tab || !tab.classList.contains('active')) return;
+      const top = panel.getBoundingClientRect().top + window.scrollY;
+      // Unterhalb des Panels liegen nur noch Card-Padding und Wrapper-Abstaende.
+      // Aus den Styles lesen (nicht ueber scrollHeight messen - der ist bei
+      // grossen Fenstern mindestens Viewport-Hoehe und wuerde das Panel
+      // faelschlich klein deckeln).
+      let below = 24;
+      const card = panel.closest('.card');
+      if (card) {
+        const ccs = getComputedStyle(card);
+        below = (parseFloat(ccs.paddingBottom) || 0) + (parseFloat(ccs.borderBottomWidth) || 0);
+        const wrapper = card.parentElement;
+        if (wrapper) {
+          const wcs = getComputedStyle(wrapper);
+          below += (parseFloat(wcs.paddingBottom) || 0) + (parseFloat(wcs.marginBottom) || 0);
+        }
+      }
+      const h = window.innerHeight - top - below;
+      if (h > 240) panel.style.maxHeight = h + 'px';
+    });
+  }
+  window.addEventListener('resize', updateTileSettingsMaxHeight);
+
+  // Fuellt die statisch gerenderten Uhr-Kacheln (--:-- Platzhalter) mit der
+  // aktuellen Zeit und haelt sie aktuell. Vom JS neu gerenderte Uhr-Kacheln
+  // bekommen ihre Zeit (inkl. Format) direkt beim Rendern.
+  function fillStaticClockPreviews() {
+    if (typeof getClockPreviewTime !== 'function') return;
+    document.querySelectorAll('.tile-clock-time').forEach(el => {
+      if (el.dataset.autoClock === '1' || el.textContent.trim() === '--:--') {
+        el.dataset.autoClock = '1';
+        el.textContent = getClockPreviewTime(0);
+      }
+    });
+    document.querySelectorAll('.tile-clock-date').forEach(el => {
+      if (el.dataset.autoClock === '1' || el.textContent.trim() === '--.--.----') {
+        el.dataset.autoClock = '1';
+        el.textContent = getClockPreviewDate(0);
+      }
+    });
   }
 
   function toggleStaticWifiFields() {
@@ -1955,6 +2005,13 @@ void appendAdminScripts(String& html) {
       html += '<div class="tile-title" id="' + tileId + '-title">' + title + '</div>';
     }
 
+    if (previewKind === 'weather') {
+      html += '<div class="tile-ghost-icon"><i class="mdi mdi-weather-partly-cloudy"></i></div>';
+    }
+    if (previewKind === 'media') {
+      html += '<div class="tile-ghost-icon"><i class="mdi mdi-music"></i></div>';
+    }
+
     if (previewKind === 'sensor') {
       const entitySelect = document.getElementById(prefix + (isEnergyType ? '_energy_entity' : '_sensor_entity'));
       const unitInput = document.getElementById(prefix + (isEnergyType ? '_energy_unit' : '_sensor_unit'));
@@ -2123,7 +2180,7 @@ void appendAdminScripts(String& html) {
   function showNotification(message, success = true) {
     const notification = document.getElementById('notification');
     notification.textContent = message;
-    notification.style.background = success ? '#10b981' : '#ef4444';
+    notification.style.background = success ? '#26a69a' : '#ef4444';
     notification.classList.add('show');
     setTimeout(() => { notification.classList.remove('show'); }, 3000);
   }
@@ -2759,6 +2816,13 @@ void appendAdminScripts(String& html) {
 
       if (tile.title && tile.title.length) {
         html += '<div class="tile-title" id="' + tab + '-tile-' + index + '-title">' + tile.title + '</div>';
+      }
+
+      if (previewKind === 'weather') {
+        html += '<div class="tile-ghost-icon"><i class="mdi mdi-weather-partly-cloudy"></i></div>';
+      }
+      if (previewKind === 'media') {
+        html += '<div class="tile-ghost-icon"><i class="mdi mdi-music"></i></div>';
       }
 
       if (previewKind === 'sensor') {
@@ -3535,6 +3599,9 @@ void appendAdminScripts(String& html) {
           return;
         }
         const tileIndex = parseInt(tile.dataset.index, 10);
+        if (currentTileIndex !== tileIndex || currentTileTab !== tab) {
+          selectTile(tileIndex, tab);
+        }
         const layout = getTileElementLayout(tab, tileIndex) ||
                        getTileLayoutFromData(tab, tileIndex);
         const anchorCell = getDragAnchorCell(tab, layout, e.clientX, e.clientY);
@@ -3677,6 +3744,9 @@ void appendAdminScripts(String& html) {
       enableTileDrag(tab);
       enableTileResize(tab);
     });
+    fillStaticClockPreviews();
+    setInterval(fillStaticClockPreviews, 30000);
+    updateTileSettingsMaxHeight();
   });
   </script>
 )html";

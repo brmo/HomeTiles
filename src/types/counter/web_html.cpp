@@ -15,7 +15,7 @@ void append_counter_fields_html(String& html, const String& tab_id) {
               <input id=")html";
   html += tab_id;
   html += R"html(_counter_value" type="number" value="0" min="0" step="1" placeholder="0">
-              <div style="font-size:11px;color:#64748b;margin-top:4px;">)html";
+              <div style="font-size:11px;color:#8a8a8a;margin-top:4px;">)html";
   html += tr.counter_hint;
   html += R"html(</div>
             </div>

@@ -70,15 +70,10 @@ void append_clock_scripts(String& html) {
   }
 
   function getClockPreviewCssPx(raw, fallback) {
-    switch (normalizeClockPreviewFont(raw, fallback)) {
-      case 20: return 14;
-      case 24: return 16;
-      case 28: return 18;
-      case 32: return 20;
-      case 40: return 24;
-      case 48: return 28;
-      default: return 14;
-    }
+    const n = normalizeClockPreviewFont(raw, fallback);
+    // Gleiche Skalierung wie die CSS-Variablen (LVGL-Pixel * Vorschau-Faktor)
+    const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--fs' + n));
+    return (v > 0) ? v : Math.round(n / 2);
   }
 
   function getClockPreviewTextStyle(raw, fallback, color) {

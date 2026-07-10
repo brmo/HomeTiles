@@ -615,6 +615,15 @@ bool DisplayManager::init() {
   lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565);
 #endif
   lv_display_set_antialiasing(disp, false);
+
+  // Default-Theme explizit mit HomeTiles-Tuerkis als Akzentfarbe initialisieren
+  // (sonst nimmt LVGL Blau fuer Fokus-Ringe, Switches, Checkboxen usw.).
+  // dark=false wie bisher (LV_THEME_DEFAULT_DARK 0) - nur der Akzent aendert sich.
+  if (lv_theme_t* theme = lv_theme_default_init(disp, lv_color_hex(0x26A69A),
+                                                lv_color_hex(0xC14444), false,
+                                                LV_FONT_DEFAULT)) {
+    lv_display_set_theme(disp, theme);
+  }
   g_bytes_per_pixel = lv_color_format_get_size(lv_display_get_color_format(disp));
   if (g_bytes_per_pixel == 0) {
     g_bytes_per_pixel = 2;

@@ -77,8 +77,8 @@ const KeyboardLayout* layout_for_config(uint8_t keyboard_layout, const char* lan
 constexpr uint32_t kKeyBg = 0x3A3A3A;
 constexpr uint32_t kKeyBgCtrl = 0x343034;      // RGB565-neutrales Mittelgrau fuer Steuertasten
 constexpr uint32_t kKeyBgPressed = 0x5A5A5A;
-constexpr uint32_t kKeyBgOk = 0x2E7D32;
-constexpr uint32_t kKeyBgOkPressed = 0x43A047;
+constexpr uint32_t kKeyBgOk = 0x26A69A;
+constexpr uint32_t kKeyBgOkPressed = 0x2CB5A8;
 constexpr uint32_t kKeyText = 0xEDEDED;
 
 // Buttonmatrix-Items kennen keine Einzel-Styles, und LVGLs Default-Theme legt

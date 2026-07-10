@@ -7,7 +7,7 @@ void append_text_styles(String& html) {
     .tile.text .tile-title { text-align:left; align-self:start; width:100%; }
     .tile.text .tile-text {
       color:#fff;
-      font-size:16px;
+      font-size:var(--fs28, 14px);
       text-align:center;
       white-space:pre-wrap;
       line-height:1.2;
@@ -16,22 +16,14 @@ void append_text_styles(String& html) {
       padding:0 8px;
       overflow:hidden;
     }
-    .tile.text .tile-text.sensor-value-size-default { font-size:28px; }
-    .tile.text .tile-text.sensor-value-size-40 { font-size:40px; }
-    .tile.text .tile-text.sensor-value-size-32 { font-size:32px; }
-    .tile.text .tile-text.sensor-value-size-24 { font-size:24px; }
-    .tile.text .tile-text.sensor-value-size-20 { font-size:20px; }
+    .tile.text .tile-text.sensor-value-size-default { font-size:var(--fs28, 14px); }
+    .tile.text .tile-text.sensor-value-size-40 { font-size:var(--fs40, 20px); }
+    .tile.text .tile-text.sensor-value-size-32 { font-size:var(--fs32, 16px); }
+    .tile.text .tile-text.sensor-value-size-24 { font-size:var(--fs24, 12px); }
+    .tile.text .tile-text.sensor-value-size-20 { font-size:var(--fs20, 10px); }
     .tile.text .tile-icon { position:absolute; top:10px; right:8px; }
     .tile-settings textarea {
-      width:100%;
-      padding:10px 12px;
-      border:1px solid #cbd5f0;
-      border-radius:10px;
       font-size:14px;
-      font-family:inherit;
-      box-sizing:border-box;
-      resize:vertical;
-      margin-bottom:12px;
     }
   </style>
 )html";

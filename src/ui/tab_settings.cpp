@@ -757,8 +757,14 @@ static void style_popup_textarea(lv_obj_t* ta) {
   lv_obj_set_style_border_color(ta, lv_color_hex(0x555555), 0);
   lv_obj_set_style_border_width(ta, 1, 0);
   lv_obj_set_style_border_opa(ta, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_color(ta, lv_color_hex(0x378ADD), LV_STATE_FOCUSED);
-  lv_obj_set_style_border_width(ta, 2, LV_STATE_FOCUSED);
+  // Fokus: nur Farbe + Outline (ausserhalb gezeichnet) - die Border-Breite
+  // bleibt konstant 1px, sonst waechst das LV_SIZE_CONTENT-Feld beim
+  // Fokussieren um 2px und alles darunter springt nach unten.
+  lv_obj_set_style_border_color(ta, lv_color_hex(0x26A69A), LV_STATE_FOCUSED);
+  lv_obj_set_style_outline_width(ta, 3, LV_STATE_FOCUSED);
+  lv_obj_set_style_outline_pad(ta, 0, LV_STATE_FOCUSED);
+  lv_obj_set_style_outline_color(ta, lv_color_hex(0x26A69A), LV_STATE_FOCUSED);
+  lv_obj_set_style_outline_opa(ta, LV_OPA_40, LV_STATE_FOCUSED);
   lv_obj_set_style_border_color(ta, lv_color_white(), LV_PART_CURSOR | LV_STATE_FOCUSED);
   lv_obj_set_style_border_width(ta, 2, LV_PART_CURSOR | LV_STATE_FOCUSED);
   lv_obj_set_style_border_side(ta, LV_BORDER_SIDE_LEFT, LV_PART_CURSOR | LV_STATE_FOCUSED);
@@ -791,7 +797,7 @@ static void style_popup_dropdown_list(lv_obj_t* list) {
   lv_obj_set_style_border_width(list, 1, LV_PART_MAIN);
   lv_obj_set_style_border_opa(list, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_pad_all(list, 6, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(list, lv_color_hex(0x1976D2), LV_PART_SELECTED);
+  lv_obj_set_style_bg_color(list, lv_color_hex(0x26A69A), LV_PART_SELECTED);
   lv_obj_set_style_bg_opa(list, LV_OPA_COVER, LV_PART_SELECTED);
   lv_obj_set_style_text_font(list, &ui_font_20, LV_PART_SELECTED);
   lv_obj_set_style_text_color(list, lv_color_white(), LV_PART_SELECTED);
@@ -1076,7 +1082,7 @@ static lv_obj_t* wifi_create_row(lv_obj_t* parent, const char* name_text, bool s
     lv_obj_t* check = lv_label_create(row);
     lv_label_set_text(check, getMdiChar("check").c_str());
     if (FONT_MDI_ICONS) lv_obj_set_style_text_font(check, FONT_MDI_ICONS, 0);
-    lv_obj_set_style_text_color(check, lv_color_hex(0x51CF66), 0);
+    lv_obj_set_style_text_color(check, lv_color_hex(0x26A69A), 0);
   }
 
   lv_obj_t* name = lv_label_create(row);
@@ -1647,7 +1653,7 @@ static void build_display_popup(lv_obj_t* parent) {
 
   // Rotation als vollbreiter Button mit Icon + Beschriftung im Button
   // (statt "Rotation"-Label links neben einem Icon-Button)
-  display_rotate_btn = create_popup_button(form, "", 0x2E7D32, on_display_rotate_clicked);
+  display_rotate_btn = create_popup_button(form, "", 0x26A69A, on_display_rotate_clicked);
   lv_obj_set_width(display_rotate_btn, LV_PCT(100));
   lv_obj_set_height(display_rotate_btn, 76);
   lv_obj_set_flex_flow(display_rotate_btn, LV_FLEX_FLOW_ROW);
@@ -1761,7 +1767,7 @@ static lv_obj_t* wifi_create_entry_row(lv_obj_t* parent, const char* label_text,
   lv_obj_set_style_pad_column(row, 14, 0);
 
   lv_obj_t* label = lv_label_create(row);
-  lv_label_set_text(label, label_text);
+  lv_label_set_text_fmt(label, "%s:", label_text);
   lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
   lv_obj_set_width(label, 160);
   lv_obj_set_style_text_font(label, &ui_font_24, 0);
@@ -1949,7 +1955,7 @@ static void build_wifi_popup(lv_obj_t* parent) {
   // Enter-Taste (on_settings_popup_save_clicked -> save_wifi_popup).
   // Direkt unter den Feldern (nicht mehr an den unteren Rand gedrueckt),
   // volle Inhaltsbreite wie der AP-Button.
-  lv_obj_t* wifi_connect_btn = create_popup_button(wifi_entry_view, tr().wifi_connect_btn, 0x2E7D32,
+  lv_obj_t* wifi_connect_btn = create_popup_button(wifi_entry_view, tr().wifi_connect_btn, 0x26A69A,
                                                    on_settings_popup_save_clicked);
   lv_obj_set_width(wifi_connect_btn, LV_PCT(100));
   lv_obj_set_height(wifi_connect_btn, 76);
@@ -2076,7 +2082,7 @@ static void build_localization_popup(lv_obj_t* parent) {
 
   // Speichern unten in voller Inhaltsbreite wie AP-/Verbinden-Button (das
   // Formular darueber bekommt per flex_grow die Resthoehe)
-  lv_obj_t* save_btn = create_popup_button(parent, tr().save, 0x2E7D32,
+  lv_obj_t* save_btn = create_popup_button(parent, tr().save, 0x26A69A,
                                            on_settings_popup_save_clicked);
   lv_obj_set_width(save_btn, LV_PCT(100));
   lv_obj_set_height(save_btn, 76);
@@ -2323,13 +2329,13 @@ static void build_system_popup(lv_obj_t* parent) {
   lv_obj_set_style_bg_color(system_progress_bar, lv_color_hex(0x1E1E1E), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(system_progress_bar, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(system_progress_bar, 9, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(system_progress_bar, lv_color_hex(0x2E7D32), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(system_progress_bar, lv_color_hex(0x26A69A), LV_PART_INDICATOR);
   lv_obj_set_style_bg_opa(system_progress_bar, LV_OPA_COVER, LV_PART_INDICATOR);
   lv_obj_set_style_radius(system_progress_bar, 9, LV_PART_INDICATOR);
   lv_bar_set_range(system_progress_bar, 0, 100);
   lv_obj_add_flag(system_progress_bar, LV_OBJ_FLAG_HIDDEN);
 
-  system_check_btn = create_popup_button(box, "", 0x2E7D32, on_system_check_clicked);
+  system_check_btn = create_popup_button(box, "", 0x26A69A, on_system_check_clicked);
   lv_obj_set_width(system_check_btn, LV_PCT(100));
   lv_obj_set_height(system_check_btn, 76);
   system_check_btn_label = lv_obj_get_child(system_check_btn, 0);

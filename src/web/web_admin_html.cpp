@@ -176,22 +176,9 @@ static void appendTileTabHTML(
   html += R"html(" data-folder-icon=")html";
   appendHtmlEscaped(html, folder.icon_name);
   html += R"html(">
-        <p class="hint">)html";
-  html += tr.admin_tile_hint;
-  html += R"html(</p>
-)html";
-  if (folder_id != 0) {
-    html += R"html(        <div style="margin-bottom:12px;">
-          <button type="button" class="btn btn-danger" style="padding:8px 16px;font-size:13px;" onclick="deleteFolder(')html";
-    html += tab_id;
-    html += R"html(')">)html";
-    html += tr.admin_delete_folder_tab;
-    html += R"html(</button>
-        </div>
-)html";
-  }
-  html += R"html(
         <div class="tile-editor">
+          <div class="tile-editor-main">
+          <div class="tile-grid-scroll">
           <!-- Grid Preview -->
           <div class="tile-grid">
 )html";
@@ -291,6 +278,12 @@ static void appendTileTabHTML(
     }
 
     const char* preview_kind = get_tile_type_preview_kind(tile.type);
+    if (preview_kind && strcmp(preview_kind, "weather") == 0) {
+      html += "<div class=\"tile-ghost-icon\"><i class=\"mdi mdi-weather-partly-cloudy\"></i></div>";
+    }
+    if (preview_kind && strcmp(preview_kind, "media") == 0) {
+      html += "<div class=\"tile-ghost-icon\"><i class=\"mdi mdi-music\"></i></div>";
+    }
     if (preview_kind && strcmp(preview_kind, "sensor") == 0) {
       html += "<div class=\"tile-value\" id=\"";
       html += tab_id;
@@ -334,6 +327,22 @@ static void appendTileTabHTML(
 
   html += R"html(
           </div>
+          </div>
+          <div class="folder-footer">
+            <p class="hint">)html";
+  html += tr.admin_tile_hint;
+  html += R"html(</p>
+)html";
+  if (folder_id != 0) {
+    html += R"html(            <button type="button" class="btn btn-danger btn-delete-folder" onclick="deleteFolder(')html";
+    html += tab_id;
+    html += R"html(')">)html";
+    html += tr.admin_delete_folder_tab;
+    html += R"html(</button>
+)html";
+  }
+  html += R"html(          </div>
+          </div>
 
           <!-- Settings Panel -->
           <div class="tile-settings" id=")html";
@@ -341,6 +350,7 @@ static void appendTileTabHTML(
   html += R"html(Settings">
             <!-- Tile Settings (Visible only when tile selected) -->
             <div class="tile-specific-settings hidden">
+            <div class="tile-settings-head">
               <h3 style="margin-top:0;">)html";
   html += tr.admin_tile_settings;
   html += R"html(</h3>
@@ -357,6 +367,8 @@ static void appendTileTabHTML(
   append_tile_type_select_options(html);
   html += R"html(
             </select>
+            </div>
+            <div class="tile-settings-body">
 
             <label>)html";
   html += tr.admin_title;
@@ -375,8 +387,8 @@ static void appendTileTabHTML(
   html += R"html(_tile_icon" placeholder=")html";
   html += tr.admin_icon_placeholder;
   html += R"html(">
-            <div style="font-size:11px;color:#64748b;margin-top:4px;">
-              Material Design Icons: <a href="https://pictogrammers.com/library/mdi/" target="_blank" style="color:#3b82f6;">)html";
+            <div style="font-size:11px;color:#8a8a8a;margin-top:4px;">
+              Material Design Icons: <a href="https://pictogrammers.com/library/mdi/" target="_blank" style="color:#4db6ac;">)html";
   html += tr.admin_icon_list;
   html += R"html(</a>
             </div>
@@ -397,8 +409,6 @@ static void appendTileTabHTML(
               <div class="layout-field">
                 <label>)html";
   html += tr.admin_column;
-  html += R"html( (1-)html";
-  html += String(GRID_COLS);
   html += R"html(</label>
                 <input type="number" id=")html";
   html += tab_id;
@@ -409,8 +419,6 @@ static void appendTileTabHTML(
               <div class="layout-field">
                 <label>)html";
   html += tr.admin_row;
-  html += R"html( (1-)html";
-  html += String(GRID_ROWS);
   html += R"html(</label>
                 <input type="number" id=")html";
   html += tab_id;
@@ -471,29 +479,7 @@ static void appendTileTabHTML(
   html += tr.admin_delete;
   html += R"html(</button>
             </div>
-            <div style="margin-top:12px;border-top:1px solid #e2e8f0;padding-top:10px;">
-              <div style="font-size:12px;color:#64748b;margin-bottom:6px;">)html";
-  html += tr.admin_import_export;
-  html += R"html(</div>
-              <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                <button type="button" class="btn" style="padding:8px 12px;font-size:12px;min-width:110px;" onclick="exportTilesConfig()">)html";
-  html += tr.admin_export;
-  html += R"html(</button>
-                <input type="file" id=")html";
-  html += tab_id;
-  html += R"html(_tile_import" accept="application/json" style="display:none" onchange="importTilesConfig(')html";
-  html += tab_id;
-  html += R"html(', this.files)">
-                <button type="button" class="btn" style="padding:8px 12px;font-size:12px;min-width:110px;" onclick="triggerTilesImport(')html";
-  html += tab_id;
-  html += R"html(')">)html";
-  html += tr.admin_import;
-  html += R"html(</button>
-              </div>
-              <div style="font-size:11px;color:#94a3b8;margin-top:6px;">)html";
-  html += tr.admin_import_overwrite;
-  html += R"html(</div>
-            </div>
+            </div><!-- /tile-settings-body -->
             </div><!-- /tile-specific-settings -->
           </div>
         </div>
@@ -703,23 +689,26 @@ String WebAdminServer::getAdminPage() {
 <body>
   <div class="wrapper">
     <div class="card">
-      <h1 style="display:flex;align-items:center;gap:12px;margin:0 0 8px;">
-        <svg width="36" height="36" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;" aria-hidden="true">
-          <rect width="48" height="48" rx="10" fill="#16181c"/>
-          <rect x="7" y="7" width="14" height="14" rx="3" fill="#ffffff"/>
-          <rect x="27" y="7" width="14" height="14" rx="3" fill="#ffffff"/>
-          <rect x="7" y="27" width="14" height="14" rx="3" fill="#ffffff"/>
-          <path d="M31.5 25.5h5v6h6v5h-6v6h-5v-6h-6v-5h6z" fill="#26a69a"/>
+      <div class="brand">
+        <svg width="44" height="44" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect x="4" y="4" width="17" height="17" rx="4" fill="#ffffff"/>
+          <rect x="27" y="4" width="17" height="17" rx="4" fill="#ffffff"/>
+          <rect x="4" y="27" width="17" height="17" rx="4" fill="#ffffff"/>
+          <path d="M33 26h5v6.5h6.5v5H38V44h-5v-6.5h-6.5v-5H33z" fill="#26a69a"/>
         </svg>
-        <span style="display:flex;flex-direction:column;gap:2px;">
-          <span style="font-size:28px;">)html";
+        <div>
+          <h1>)html";
   html += admin_heading_title;
-  html += R"html(</span>
-          <span style="font-size:14px;font-weight:400;color:#6b7280;">)html";
+  html += R"html(</h1>
+          <div class="device">)html";
   html += admin_heading_subtitle;
-  html += R"html(</span>
-        </span>
-      </h1>
+  html += R"html(</div>
+        </div>
+        <div class="brand-links">
+          <a class="brand-link" href="https://galusperes.github.io/HomeTiles/" target="_blank" rel="noopener"><i class="mdi mdi-book-open-variant"></i>Docs</a>
+          <a class="brand-link" href="https://github.com/GalusPeres/HomeTiles" target="_blank" rel="noopener"><i class="mdi mdi-github"></i>GitHub</a>
+        </div>
+      </div>
       
       <!-- Tab Navigation -->
       <div class="tab-nav">
@@ -776,43 +765,31 @@ String WebAdminServer::getAdminPage() {
   html += R"html(
       <!-- Tab 3: Settings (Network/MQTT Configuration) -->
       <div id="tab-network" class="tab-content">
-        <div class="status">
-          <div>
-            <div class="status-label">)html";
-  html += tr.wifi_status;
-  html += R"html(</div>
-            <div class="status-value">)html";
-  html += (WiFi.status() == WL_CONNECTED) ? tr.wifi_connected : tr.wifi_disconnected;
-  html += R"html(</div>
-          </div>
-          <div>
-            <div class="status-label">)html";
-  html += tr.ssid_label;
-  html += R"html(</div>
-            <div class="status-value">)html";
-  html += WiFi.SSID();
-  html += R"html(</div>
-          </div>
-          <div>
-            <div class="status-label">)html";
-  html += tr.ip_label;
-  html += R"html(</div>
-            <div class="status-value">)html";
-  html += WiFi.localIP().toString();
-  html += R"html(</div>
-          </div>
-        </div>
-
         <form id="admin_settings_form" action="/mqtt" method="POST">
           <div class="settings-section">
-            <div class="section-title">)html";
+            <div class="section-title-row">
+              <div class="section-title">)html";
   html += tr.admin_settings_wifi;
   html += R"html(</div>
+              <div class="wifi-inline-status"><span class="wifi-inline-dot)html";
+  if (WiFi.status() != WL_CONNECTED) {
+    html += " off";
+  }
+  html += R"html("></span>)html";
+  html += (WiFi.status() == WL_CONNECTED) ? tr.wifi_connected : tr.wifi_disconnected;
+  if (WiFi.status() == WL_CONNECTED) {
+    html += " \xC2\xB7 ";
+    appendHtmlEscaped(html, WiFi.SSID());
+    html += " \xC2\xB7 ";
+    html += WiFi.localIP().toString();
+  }
+  html += R"html(</div>
+            </div>
             <div class="settings-grid">
               <div>
                 <label for="wifi_ssid">)html";
   html += tr.ssid_label;
-  html += R"html(</label>
+  html += R"html(:</label>
                 <input type="text" id="wifi_ssid" name="wifi_ssid" value=")html";
   html += cfg.wifi_ssid;
   html += R"html(">
@@ -820,7 +797,7 @@ String WebAdminServer::getAdminPage() {
               <div>
                 <label for="wifi_pass">)html";
   html += tr.wifi_password_label;
-  html += R"html(</label>
+  html += R"html(:</label>
                 <div class="password-field">
                   <input type="password" id="wifi_pass" name="wifi_pass" value=")html";
   html += cfg.wifi_pass;
@@ -854,7 +831,7 @@ String WebAdminServer::getAdminPage() {
                 <div>
                 <label for="wifi_static_ip">)html";
   html += tr.wifi_static_ip_label;
-  html += R"html(</label>
+  html += R"html(:</label>
                 <input type="text" id="wifi_static_ip" name="wifi_static_ip" value=")html";
   html += cfg.wifi_static_ip;
   html += R"html(">
@@ -862,7 +839,7 @@ String WebAdminServer::getAdminPage() {
                 <div>
                 <label for="wifi_gateway">)html";
   html += tr.wifi_gateway_label;
-  html += R"html(</label>
+  html += R"html(:</label>
                 <input type="text" id="wifi_gateway" name="wifi_gateway" value=")html";
   html += cfg.wifi_gateway;
   html += R"html(">
@@ -870,7 +847,7 @@ String WebAdminServer::getAdminPage() {
                 <div>
                 <label for="wifi_subnet">)html";
   html += tr.wifi_subnet_label;
-  html += R"html(</label>
+  html += R"html(:</label>
                 <input type="text" id="wifi_subnet" name="wifi_subnet" value=")html";
   html += cfg.wifi_subnet;
   html += R"html(">
@@ -878,7 +855,7 @@ String WebAdminServer::getAdminPage() {
                 <div>
                 <label for="wifi_dns">)html";
   html += tr.wifi_dns_label;
-  html += R"html(</label>
+  html += R"html(:</label>
                 <input type="text" id="wifi_dns" name="wifi_dns" value=")html";
   html += cfg.wifi_dns;
   html += R"html(">
@@ -898,7 +875,7 @@ String WebAdminServer::getAdminPage() {
               <div>
                 <label for="mqtt_host">)html";
   html += tr.mqtt_host;
-  html += R"html(</label>
+  html += R"html(:</label>
                 <input type="text" id="mqtt_host" name="mqtt_host" value=")html";
   html += cfg.mqtt_host;
   html += R"html(">
@@ -906,7 +883,7 @@ String WebAdminServer::getAdminPage() {
               <div>
                 <label for="mqtt_port">)html";
   html += tr.mqtt_port;
-  html += R"html(</label>
+  html += R"html(:</label>
                 <input type="number" id="mqtt_port" name="mqtt_port" value=")html";
   html += String(cfg.mqtt_port ? cfg.mqtt_port : 1883);
   html += R"html(">
@@ -914,7 +891,7 @@ String WebAdminServer::getAdminPage() {
               <div>
                 <label for="mqtt_user">)html";
   html += tr.mqtt_username;
-  html += R"html(</label>
+  html += R"html(:</label>
                 <input type="text" id="mqtt_user" name="mqtt_user" value=")html";
   html += cfg.mqtt_user;
   html += R"html(">
@@ -922,7 +899,7 @@ String WebAdminServer::getAdminPage() {
               <div>
                 <label for="mqtt_pass">)html";
   html += tr.mqtt_password;
-  html += R"html(</label>
+  html += R"html(:</label>
                 <div class="password-field">
                   <input type="password" id="mqtt_pass" name="mqtt_pass" value=")html";
   html += cfg.mqtt_pass;
@@ -939,7 +916,7 @@ String WebAdminServer::getAdminPage() {
               <div class="settings-full">
                 <label for="mqtt_client_id">)html";
   html += tr.mqtt_client_id;
-  html += R"html(</label>
+  html += R"html(:</label>
                 <input type="text" id="mqtt_client_id" name="mqtt_client_id" placeholder=")html";
   html += tr.mqtt_client_id_placeholder;
   html += R"html(" value=")html";
@@ -952,7 +929,7 @@ String WebAdminServer::getAdminPage() {
               <div>
                 <label for="mqtt_base">)html";
   html += tr.mqtt_base_topic;
-  html += R"html(</label>
+  html += R"html(:</label>
                 <input type="text" id="mqtt_base" name="mqtt_base" value=")html";
   html += cfg.mqtt_base_topic;
   html += R"html(">
@@ -960,7 +937,7 @@ String WebAdminServer::getAdminPage() {
               <div>
                 <label for="ha_prefix">)html";
   html += tr.ha_prefix;
-  html += R"html(</label>
+  html += R"html(:</label>
                 <input type="text" id="ha_prefix" name="ha_prefix" value=")html";
   html += cfg.ha_prefix;
   html += R"html(">
@@ -1105,6 +1082,28 @@ String WebAdminServer::getAdminPage() {
 
           <div class="settings-section">
             <div class="section-title">)html";
+  html += tr.admin_import_export;
+  html += R"html(</div>
+            <div class="settings-grid">
+              <div class="settings-full">
+                <div class="settings-actions">
+                  <button type="button" class="btn" onclick="exportTilesConfig()">)html";
+  html += tr.admin_export;
+  html += R"html(</button>
+                  <input type="file" id="settings_tile_import" accept="application/json" style="display:none" onchange="importTilesConfig('settings', this.files)">
+                  <button type="button" class="btn" onclick="triggerTilesImport('settings')">)html";
+  html += tr.admin_import;
+  html += R"html(</button>
+                </div>
+                <div class="settings-note">)html";
+  html += tr.admin_import_overwrite;
+  html += R"html(</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <div class="section-title">)html";
   html += tr.admin_settings_ota;
   html += R"html(</div>
             <div class="settings-grid">
@@ -1187,10 +1186,10 @@ String WebAdminServer::getSuccessPage() {
   html += tr.save;
   html += R"html(</title>
   <style>
-    body { font-family: Arial, sans-serif; background:#eef2ff; height:100vh; margin:0; display:flex; align-items:center; justify-content:center; }
-    .box { background:#fff; padding:30px; border-radius:12px; box-shadow:0 15px 35px rgba(0,0,0,.2); text-align:center; }
-    h1 { margin:0 0 10px; color:#1f2937; }
-    p { margin:0; color:#4b5563; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; background:#0a0a0a; height:100vh; margin:0; display:flex; align-items:center; justify-content:center; }
+    .box { background:#1c1c1c; border:1px solid #2a2a2a; padding:32px; border-radius:22px; box-shadow:0 20px 60px rgba(0,0,0,.5); text-align:center; }
+    h1 { margin:0 0 10px; color:#ffffff; font-size:22px; }
+    p { margin:0; color:#8a8a8a; }
   </style>
   <script>setTimeout(function(){window.location.href='/'},1500);</script>
 </head>
@@ -1219,10 +1218,10 @@ String WebAdminServer::getBridgeSuccessPage() {
   html += tr.bridge_saved_title;
   html += R"html(</title>
   <style>
-    body { font-family: Arial, sans-serif; background:#eef2ff; height:100vh; margin:0; display:flex; align-items:center; justify-content:center; }
-    .box { background:#fff; padding:30px; border-radius:12px; box-shadow:0 15px 35px rgba(0,0,0,.2); text-align:center; }
-    h1 { margin:0 0 10px; color:#1f2937; }
-    p { margin:0; color:#4b5563; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; background:#0a0a0a; height:100vh; margin:0; display:flex; align-items:center; justify-content:center; }
+    .box { background:#1c1c1c; border:1px solid #2a2a2a; padding:32px; border-radius:22px; box-shadow:0 20px 60px rgba(0,0,0,.5); text-align:center; }
+    h1 { margin:0 0 10px; color:#ffffff; font-size:22px; }
+    p { margin:0; color:#8a8a8a; }
   </style>
   <script>setTimeout(function(){window.location.href='/'},1500);</script>
 </head>

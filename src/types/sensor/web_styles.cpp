@@ -11,32 +11,35 @@ void append_sensor_styles(String& html) {
       grid-column:1;
       grid-row:1;
       justify-self:end;
-      max-width:60%;
+      max-width:70%;
       overflow:hidden;
       text-overflow:ellipsis;
       white-space:nowrap;
     }
+    /* Wie auf dem Display: Wert+Einheit ein Label in derselben Schrift,
+       horizontal zentriert, vertikal Mitte + value-dy (LV_ALIGN_CENTER 0,28) */
     .tile-value {
+      position:absolute;
+      left:0;
+      right:0;
+      top:50%;
+      transform:translateY(calc(-50% + var(--value-dy, 14px)));
+      margin:0;
       color:#fff;
-      font-size:24px;
+      font-size:var(--fs28, 14px);
       font-weight:normal;
       text-align:center;
-      opacity:0.95;
       line-height:1;
-      align-self:center;
-      justify-self:center;
-      margin-left:-15px;
-      margin-top:9px;
     }
-    .tile-value.sensor-value-size-default { font-size:28px; }
-    .tile-value.sensor-value-size-40 { font-size:40px; }
-    .tile-value.sensor-value-size-32 { font-size:32px; }
-    .tile-value.sensor-value-size-24 { font-size:24px; }
-    .tile-value.sensor-value-size-20 { font-size:20px; }
-    .tile-unit { color:#e6e6e6; font-size:14px; opacity:0.95; margin-left:7px; }
+    .tile-value.sensor-value-size-default { font-size:var(--fs28, 14px); }
+    .tile-value.sensor-value-size-40 { font-size:var(--fs40, 20px); }
+    .tile-value.sensor-value-size-32 { font-size:var(--fs32, 16px); }
+    .tile-value.sensor-value-size-24 { font-size:var(--fs24, 12px); }
+    .tile-value.sensor-value-size-20 { font-size:var(--fs20, 10px); }
+    .tile-unit { color:inherit; font-size:inherit; margin-left:0.28em; }
     .tile.sensor .tile-icon {
       position:absolute;
-      top:4px;
+      top:8px;
       left:6px;
     }
   </style>

@@ -29,7 +29,7 @@ void append_text_fields_html(String& html, const String& tab_id) {
                 <option value="3">32</option>
                 <option value="4">40</option>
               </select>
-              <div style="font-size:11px;color:#64748b;margin-top:4px;">)html";
+              <div style="font-size:11px;color:#8a8a8a;margin-top:4px;">)html";
   html += tr.text_max_chars;
   html += R"html(</div>
             </div>

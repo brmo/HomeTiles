@@ -7,7 +7,7 @@ void append_counter_styles(String& html) {
     .tile.counter .tile-title { text-align:left; align-self:start; width:100%; }
     .tile.counter .tile-counter-value {
       color:#fff;
-      font-size:28px;
+      font-size:var(--fs28, 14px);
       font-weight:bold;
       text-align:center;
       align-self:center;

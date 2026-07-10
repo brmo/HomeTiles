@@ -11,14 +11,14 @@ void append_energy_styles(String& html) {
       grid-column:1;
       grid-row:1;
       justify-self:end;
-      max-width:60%;
+      max-width:70%;
       overflow:hidden;
       text-overflow:ellipsis;
       white-space:nowrap;
     }
     .tile.energy .tile-icon {
       position:absolute;
-      top:4px;
+      top:8px;
       left:6px;
     }
   </style>

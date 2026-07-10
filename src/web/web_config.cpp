@@ -245,6 +245,7 @@ String WebConfigServer::getConfigPage() {
   <title>)html";
   html += ap_page_title;
   html += R"html(</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='10' fill='%2316181c'/%3E%3Crect x='4' y='4' width='17' height='17' rx='4' fill='%23ffffff'/%3E%3Crect x='27' y='4' width='17' height='17' rx='4' fill='%23ffffff'/%3E%3Crect x='4' y='27' width='17' height='17' rx='4' fill='%23ffffff'/%3E%3Cpath d='M33 26h5v6.5h6.5v5H38V44h-5v-6.5h-6.5v-5H33z' fill='%2326a69a'/%3E%3C/svg%3E">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -353,11 +354,10 @@ String WebConfigServer::getConfigPage() {
   <div class="container">
     <div class="brand">
       <svg width="48" height="48" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;" aria-hidden="true">
-        <rect width="48" height="48" rx="10" fill="#16181c"/>
-        <rect x="7" y="7" width="14" height="14" rx="3" fill="#ffffff"/>
-        <rect x="27" y="7" width="14" height="14" rx="3" fill="#ffffff"/>
-        <rect x="7" y="27" width="14" height="14" rx="3" fill="#ffffff"/>
-        <path d="M31.5 25.5h5v6h6v5h-6v6h-5v-6h-6v-5h6z" fill="#26a69a"/>
+        <rect x="4" y="4" width="17" height="17" rx="4" fill="#ffffff"/>
+        <rect x="27" y="4" width="17" height="17" rx="4" fill="#ffffff"/>
+        <rect x="4" y="27" width="17" height="17" rx="4" fill="#ffffff"/>
+        <path d="M33 26h5v6.5h6.5v5H38V44h-5v-6.5h-6.5v-5H33z" fill="#26a69a"/>
       </svg>
       <div>
         <h1>HomeTiles</h1>
@@ -412,6 +412,7 @@ String WebConfigServer::getSuccessPage() {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Connecting...</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='10' fill='%2316181c'/%3E%3Crect x='4' y='4' width='17' height='17' rx='4' fill='%23ffffff'/%3E%3Crect x='27' y='4' width='17' height='17' rx='4' fill='%23ffffff'/%3E%3Crect x='4' y='27' width='17' height='17' rx='4' fill='%23ffffff'/%3E%3Cpath d='M33 26h5v6.5h6.5v5H38V44h-5v-6.5h-6.5v-5H33z' fill='%2326a69a'/%3E%3C/svg%3E">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -453,11 +454,10 @@ String WebConfigServer::getSuccessPage() {
 <body>
   <div class="container">
     <svg class="logo" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <rect width="48" height="48" rx="10" fill="#16181c"/>
-      <rect x="7" y="7" width="14" height="14" rx="3" fill="#ffffff"/>
-      <rect x="27" y="7" width="14" height="14" rx="3" fill="#ffffff"/>
-      <rect x="7" y="27" width="14" height="14" rx="3" fill="#ffffff"/>
-      <path d="M31.5 25.5h5v6h6v5h-6v6h-5v-6h-6v-5h6z" fill="#26a69a"/>
+      <rect x="4" y="4" width="17" height="17" rx="4" fill="#ffffff"/>
+      <rect x="27" y="4" width="17" height="17" rx="4" fill="#ffffff"/>
+      <rect x="4" y="27" width="17" height="17" rx="4" fill="#ffffff"/>
+      <path d="M33 26h5v6.5h6.5v5H38V44h-5v-6.5h-6.5v-5H33z" fill="#26a69a"/>
     </svg>
     <h1>Connecting...</h1>
     <p>HomeTiles is joining your network now.<br>This page will lose its connection - you can close it.</p>

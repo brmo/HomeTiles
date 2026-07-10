@@ -20,13 +20,13 @@ void append_clock_styles(String& html) {
     }
     .tile-clock-time {
       color:#fff;
-      font-size:28px;
+      font-size:var(--fs40, 20px);
       font-weight:600;
       line-height:1;
     }
     .tile-clock-date {
       color:#cbd5e1;
-      font-size:16px;
+      font-size:var(--fs20, 10px);
       font-weight:500;
       line-height:1.1;
     }
