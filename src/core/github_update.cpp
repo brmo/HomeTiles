@@ -352,6 +352,12 @@ struct HeadBufferCtx {
   uint8_t* data = nullptr;
   size_t capacity = 0;
   size_t len = 0;
+  // Nur fuer den Stage-Download gesetzt: meldet waehrend des Ladens
+  // Fortschritt, damit der Aufrufer (Activity-Timer/Status) weiterlaeuft.
+  size_t progress_base = 0;
+  size_t progress_total = 0;
+  uint32_t last_progress_ms = 0;
+  GithubUpdate::ProgressFn progress = nullptr;
 };
 
 bool storeHeadBytes(const uint8_t* data, size_t len, void* raw_ctx) {
@@ -367,6 +373,13 @@ bool storeBufferBytes(const uint8_t* data, size_t len, void* raw_ctx) {
   if (!ctx || !ctx->data || ctx->len + len > ctx->capacity) return false;
   memcpy(ctx->data + ctx->len, data, len);
   ctx->len += len;
+  if (ctx->progress) {
+    const uint32_t now_ms = millis();
+    if (now_ms - ctx->last_progress_ms >= 500) {
+      ctx->last_progress_ms = now_ms;
+      ctx->progress(ctx->progress_base + ctx->len, ctx->progress_total);
+    }
+  }
   return true;
 }
 
@@ -532,26 +545,19 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
       tag, String("hometiles_") + tag + "_" + Device::profile().key + ".bin");
   Serial.printf("[Update] Lade %s\n", url.c_str());
 
-  // Netzwerk-Lesepuffer und OTA-Staging liegen im PSRAM. Der GitHub/CDN-
-  // Download wird absichtlich in Range-Requests zerlegt und erst in PSRAM
-  // gepuffert. Update.write() laeuft danach ohne offene HTTPS-Verbindung, damit
-  // Flash-Writes SDIO-WLAN nicht mit RX-Puffern blockieren koennen.
+  // Netzwerk-Lesepuffer und OTA-Staging liegen im PSRAM. Der Download wird
+  // erst in PSRAM gepuffert; Update.write() laeuft danach ohne offene HTTPS-
+  // Verbindung, damit Flash-Writes SDIO-WLAN nicht mit RX-Puffern blockieren
+  // koennen. Der Stage-Puffer wird erst nach dem Header-Check alloziert,
+  // wenn die Image-Groesse bekannt ist (bevorzugt: komplettes Image).
   uint8_t* net_buf = static_cast<uint8_t*>(
       heap_caps_malloc(kInstallReadChunk, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (!net_buf) net_buf = static_cast<uint8_t*>(malloc(kInstallReadChunk));
-  uint8_t* stage_buf = static_cast<uint8_t*>(
-      heap_caps_malloc(kInstallStageBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  if (!stage_buf) stage_buf = static_cast<uint8_t*>(malloc(kInstallStageBytes));
-  if (!net_buf || !stage_buf) {
-    if (net_buf) free(net_buf);
-    if (stage_buf) free(stage_buf);
+  uint8_t* stage_buf = nullptr;
+  if (!net_buf) {
     error_out = "alloc failed";
     return false;
   }
-  Serial.printf("[Update] Staged Range-Download: %uB TCP RX, %uB Lesechunk, %uKB Stage\n",
-                static_cast<unsigned>(kSocketRxBufferBytes),
-                static_cast<unsigned>(kInstallReadChunk),
-                static_cast<unsigned>(kInstallStageBytes / 1024));
 
   bool failed = false;
   bool update_started = false;
@@ -612,6 +618,37 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
     }
   }
 
+  size_t stage_capacity = 0;
+  if (!failed) {
+    // Bevorzugt das komplette Image am Stueck nach PSRAM laden: nur eine
+    // weitere TLS-Verbindung statt einer pro 512KB-Stage. Jeder Handshake
+    // kostet kurzzeitig ~45KB internes RAM, und genau in so einer Spitze
+    // konnte der esp-hosted-SDIO-Treiber keine RX-Puffer mehr allozieren
+    // (assert sdio_rx_get_buffer, sdio_drv.c:896 - Crash beim Aufbau der
+    // dritten Range-Verbindung mitten im Install). Reicht der PSRAM nicht,
+    // faellt der Code auf die alten 512KB-Stages zurueck.
+    stage_capacity = total_sz - head_ctx.len;
+    stage_buf = static_cast<uint8_t*>(
+        heap_caps_malloc(stage_capacity, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!stage_buf) {
+      stage_capacity = kInstallStageBytes;
+      stage_buf = static_cast<uint8_t*>(heap_caps_malloc(
+          stage_capacity, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+      if (!stage_buf) stage_buf = static_cast<uint8_t*>(malloc(stage_capacity));
+    }
+    if (!stage_buf) {
+      error_out = "alloc failed";
+      failed = true;
+    } else {
+      Serial.printf("[Update] Staged Range-Download: %uB TCP RX, %uB Lesechunk, %uKB Stage%s\n",
+                    static_cast<unsigned>(kSocketRxBufferBytes),
+                    static_cast<unsigned>(kInstallReadChunk),
+                    static_cast<unsigned>(stage_capacity / 1024),
+                    (stage_capacity >= total_sz - head_ctx.len)
+                        ? " (komplettes Image)" : "");
+    }
+  }
+
   if (!failed) {
     if (!Update.begin(total_sz, U_FLASH)) {
       error_out = Update.errorString();
@@ -636,14 +673,17 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
 
       while (!failed && write_ctx.written < total_sz) {
         const size_t range_start = write_ctx.written;
-        size_t range_end = range_start + kInstallStageBytes - 1;
+        size_t range_end = range_start + stage_capacity - 1;
         if (range_end >= total_sz || range_end < range_start) {
           range_end = total_sz - 1;
         }
         const size_t expected_len = range_end - range_start + 1;
 
         size_t range_total = 0;
-        HeadBufferCtx stage_ctx{stage_buf, kInstallStageBytes, 0};
+        HeadBufferCtx stage_ctx{stage_buf, stage_capacity, 0};
+        stage_ctx.progress_base = range_start;
+        stage_ctx.progress_total = total_sz;
+        stage_ctx.progress = progress;
         if (!fetchHttpRange(url, range_start, range_end, net_buf, kInstallReadChunk,
                             storeBufferBytes, &stage_ctx, range_total,
                             error_out)) {
@@ -670,7 +710,7 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
     }
   }
 
-  free(stage_buf);
+  if (stage_buf) free(stage_buf);
   free(net_buf);
 
   if (failed) {
