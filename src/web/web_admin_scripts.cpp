@@ -2954,6 +2954,13 @@ void appendAdminScripts(String& html) {
 
     Promise.all([fetchSensorMetaCache(forceMetaFetch), ...tileRequests])
     .then(results => {
+      // Eine Aktualisierung kann kurz vor dem Drag gestartet worden sein und
+      // erst waehrenddessen eintreffen. In diesem Fall darf sie die lokale
+      // Vorschau nicht mit dem alten Geraetezustand ueberschreiben.
+      if (dragSource || resizeState) {
+        queueDeferredSensorRefresh(refreshTiles);
+        return;
+      }
       const sensorMeta = normalizeSensorMetaPayload(results[0] || {});
       sensorMetaCache = sensorMeta;
       tabs.forEach((tab, idx) => {
@@ -3781,7 +3788,9 @@ void appendAdminScripts(String& html) {
       if (data.success) {
         showNotification(t('tilesMovedSaved'));
         clearDeferredSensorRefresh();
-        loadSensorValues(true, true);
+        // applyLocalTileReorder hat den bestaetigten Stand bereits gesetzt.
+        // Kein komplettes Grid-Reload: das wuerde sichtbar zum alten Stand
+        // und wieder zur neuen Position springen koennen.
       } else {
         if (dragSource && dragSource.tab === tab) dragSource.dropCommitted = false;
         clearDeferredSensorRefresh();
