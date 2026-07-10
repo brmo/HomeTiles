@@ -110,6 +110,7 @@ void appendAdminScripts(String& html) {
       const tileTab = tabName.substring('tab-tiles-'.length);
       const rememberedIndex = getRememberedTileIndex(tileTab);
       selectTile(rememberedIndex === null ? getTopLeftConfiguredTileIndex(tileTab) : rememberedIndex, tileTab);
+      window.requestAnimationFrame(restoreCurrentTileSelectionUi);
     }
     if (tabName === 'tab-network') {
       window.setTimeout(() => {
@@ -1315,7 +1316,14 @@ void appendAdminScripts(String& html) {
     const settingsId = currentTileTab + 'Settings';
     document.getElementById(settingsId)?.classList.remove('hidden');
     const activeTile = document.getElementById(currentTileTab + '-tile-' + currentTileIndex);
-    if (activeTile) activeTile.classList.add('active');
+    if (activeTile) {
+      activeTile.classList.add('active');
+      window.requestAnimationFrame(() => {
+        if (currentTileTab && currentTileIndex >= 0) {
+          document.getElementById(currentTileTab + '-tile-' + currentTileIndex)?.classList.add('active');
+        }
+      });
+    }
   }
   function ensureNavigateTargetOption(folderId, label) {
     const folderValue = String(folderId);
@@ -1419,11 +1427,24 @@ void appendAdminScripts(String& html) {
     selectTile(index, targetTab);
     return true;
   }
-  function openFolderFromPreview(tab, index) {
-    const tile = getTilesData(tab)[index];
-    const tileEl = document.getElementById(tab + '-tile-' + index);
-    if (Number(tile?.type ?? tileEl?.dataset.type) !== 4) return;
-    const targetId = Number(tile?.navigate_target ?? tileEl?.dataset.navigateTarget);
+  function openPreviewNavigation(tileEl, tab) {
+    if (!tileEl) return;
+    const type = Number(tileEl.dataset.type);
+    if (type === 7) {
+      switchTab('tab-network');
+      return;
+    }
+    if (type === 8) {
+      const folderTab = document.getElementById('tab-tiles-' + tab);
+      const parentId = Number(folderTab?.dataset.folderParent);
+      const parentTab = tabByFolder[parentId];
+      if (parentTab) switchTab('tab-tiles-' + parentTab);
+      return;
+    }
+    if (type !== 4) return;
+    const index = Number(tileEl.dataset.index);
+    const tile = Number.isInteger(index) ? getTilesData(tab)[index] : null;
+    const targetId = Number(tile?.navigate_target ?? tileEl.dataset.navigateTarget);
     const targetTab = tabByFolder[targetId];
     if (targetTab) switchTab('tab-tiles-' + targetTab);
   }
@@ -3629,10 +3650,6 @@ void appendAdminScripts(String& html) {
     const grid = getTileGrid(tab);
     const tiles = document.querySelectorAll('#tab-tiles-' + tab + ' .tile');
     tiles.forEach(tile => {
-      tile.addEventListener('dblclick', () => {
-        const tileIndex = parseInt(tile.dataset.index, 10);
-        if (!isNaN(tileIndex)) openFolderFromPreview(tab, tileIndex);
-      });
       tile.addEventListener('dragstart', (e) => {
         if (resizeState) {
           e.preventDefault();

@@ -252,6 +252,8 @@ static void appendTileTabHTML(
     html += tileStyle;
     html += "\" onclick=\"selectTile(parseInt(this.dataset.index), '";
     html += tab_id;
+    html += "')\" ondblclick=\"openPreviewNavigation(this, '";
+    html += tab_id;
     html += "')\">";
 
     if (tile.type != TILE_EMPTY) {
