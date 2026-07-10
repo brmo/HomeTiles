@@ -5,6 +5,7 @@
 namespace {
 
 constexpr int kPreviewTargetHeight = 430;
+constexpr int kWideFourRowPreviewTargetHeight = 390;
 constexpr int kPreviewPad = 12;
 constexpr int kPreviewGap = 10;
 
@@ -16,10 +17,24 @@ int preview_gap_px() {
   return kPreviewGap;
 }
 
+int preview_target_height_px() {
+  // Tab5 (7x4) waere bei gleicher Hoehe deutlich breiter als die 8-Zoll-
+  // Vorschau (7x5). Mit 390 px erhalten beide 7-Spalten-Profile dieselbe
+  // Vorschau-Breite und lassen rechts Platz fuer ein einheitliches Panel.
+  if (GRID_COLS == 7 && GRID_ROWS == 4) return kWideFourRowPreviewTargetHeight;
+  return kPreviewTargetHeight;
+}
+
+int settings_panel_target_width_px() {
+  // Das quadratische 4-Spalten-B4 bekommt ein kompakteres Panel; bei den
+  // breiten 7-Spalten-Geraeten bleibt die bewaehrte 8-Zoll-Breite erhalten.
+  return (GRID_COLS <= 4) ? 340 : 390;
+}
+
 int preview_cell_h_px() {
   const int pad = preview_pad_px();
   const int gap = preview_gap_px();
-  int cell = (kPreviewTargetHeight - (2 * pad) - (gap * (GRID_ROWS - 1))) / GRID_ROWS;
+  int cell = (preview_target_height_px() - (2 * pad) - (gap * (GRID_ROWS - 1))) / GRID_ROWS;
   return (cell < 40) ? 40 : cell;
 }
 
@@ -62,6 +77,9 @@ void appendPreviewScaleVars(String& html) {
   emit("tile-pad-v", 24);     // Kachel pad_ver auf dem Display
   emit("tile-pad-h", 20);     // Kachel pad_hor auf dem Display
   emit("value-dy", 28);       // Sensorwert: LV_ALIGN_CENTER(0, 28)
+  html += "--settings-panel-width:";
+  html += String(settings_panel_target_width_px());
+  html += "px;";
   html += "}</style>\n";
 }
 
@@ -672,8 +690,11 @@ void appendAdminStyles(String& html) {
     /* Settings Panel: sticky rechts, scrollt bei langem Inhalt intern
        (max. Viewport-Hoehe) statt die ganze Seite zu strecken. */
     .tile-settings {
-      flex:1 1 300px;
+      flex:0 1 var(--settings-panel-width, 390px);
+      width:var(--settings-panel-width, 390px);
       min-width:300px;
+      max-width:var(--settings-panel-width, 390px);
+      margin-left:auto;
       box-sizing:border-box;
       display:flex;
       flex-direction:column;
@@ -775,7 +796,7 @@ void appendAdminStyles(String& html) {
     @media (max-width: 1180px) {
       .tile-editor { flex-direction:column; align-items:stretch; }
       .tile-editor-main { flex:1 1 auto; }
-      .tile-settings { flex:1 1 auto; min-width:0; position:static; max-height:none; }
+      .tile-settings { flex:1 1 auto; width:auto; min-width:0; max-width:none; margin-left:0; position:static; max-height:none; }
     }
     @media (max-width: 780px) {
       body { height:auto; overflow:auto; }
