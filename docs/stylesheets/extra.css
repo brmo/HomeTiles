@@ -22,9 +22,17 @@
   font-weight: 600;
 }
 
-/* Navigation und Inhaltsverzeichnis eine Spur kompakter */
+/* Navigation und Inhaltsverzeichnis */
 .md-nav {
-  font-size: 0.66rem;
+  font-size: 0.7rem;
+}
+
+/* Links in der linken Navigation als volle Zeilen mit Luft - die aktive
+   Pille wird dadurch gross und gut sichtbar statt eng um den Text */
+.md-sidebar--primary .md-nav__link {
+  padding: 0.4em 0.75em;
+  margin-top: 0.15em;
+  border-radius: 8px;
 }
 
 /* Tabellen lesbarer: etwas groesser als der Material-Mini-Default */

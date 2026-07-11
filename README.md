@@ -28,6 +28,7 @@ the whole chain: MQTT broker, bridge integration, and connecting the display.
 
 **Full documentation: https://galusperes.github.io/HomeTiles/**
 
+- [Flashing the Firmware](docs/flashing.md) — first installation over USB, factory images
 - [Home Assistant Setup Guide](docs/home-assistant-setup.md) — MQTT broker, bridge integration, first connection
 - [Bridge Integration](docs/bridge.md) — installation, panel settings, entity configuration
 - [Web Admin Panel](docs/web-admin.md) — creating tiles, drag & drop, folders, import/export

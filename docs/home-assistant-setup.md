@@ -5,7 +5,7 @@ No YAML editing is required.
 
 !!! note "What you need"
     - Home Assistant (any recent install type)
-    - A display with the [firmware flashed](updating.md#3-factory-flash-first-installation-full-reset)
+    - A display with the [firmware flashed](flashing.md)
     - 15 minutes
 
 ## How It Works

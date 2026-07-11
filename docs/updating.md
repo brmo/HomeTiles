@@ -41,23 +41,12 @@ updater falls back to it automatically if a release doesn't have the current-nam
 
 ## 3. Factory Flash (first installation / full reset)
 
-For a brand-new device or a full reset, flash the `-factory.bin` image — it's a
-complete flash image (its file size matches the chip's full flash size), so writing it
-at address `0x00000` wipes and reinstalls everything: bootloader, app, and the stored
-WiFi/MQTT/tile configuration. No separate erase step is needed.
+For a brand-new device or a full reset, flash the `-factory.bin` image over USB — it's
+a complete flash image that wipes and reinstalls everything: bootloader, app, and the
+stored WiFi/MQTT/tile configuration.
 
-Using the ESP Flash Download Tool (`ESP32P4 FLASH DOWNLOAD TOOL`):
-
-1. ChipType: `ESP32-P4`, WorkMode: `Develop`, LoadMode: `UART` → OK.
-2. Select the `-factory.bin` matching your device, address `0x0`.
-3. Pick the device's COM port (device connected via USB) and leave BAUD at `115200`.
-4. Click **START**. A manual reset after flashing may be required.
-
-**If you're resetting an already-paired device:** delete its entry in Home Assistant
-*before* expecting a new "discovered device" card to appear. The device's unique ID is
-derived from its MAC address, which survives a full flash wipe — Home Assistant treats
-the ID as already configured and won't show a fresh discovery card until the old entry
-is removed.
+The full walkthrough (tools, files, first boot, re-pairing after a reset) is on the
+[Flashing the Firmware](flashing.md) page.
 
 ## Building From Source
 

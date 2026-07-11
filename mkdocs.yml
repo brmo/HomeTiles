@@ -16,8 +16,8 @@ theme:
       primary: black
       accent: teal
   features:
-    - navigation.instant
     - navigation.sections
+    - navigation.expand
     - navigation.top
     - navigation.footer
     - content.code.copy
@@ -28,6 +28,7 @@ theme:
 nav:
   - Home: index.md
   - Setup:
+      - Flashing the Firmware: flashing.md
       - Home Assistant Setup: home-assistant-setup.md
       - Bridge Integration: bridge.md
   - Guide:
