@@ -17,8 +17,7 @@ theme:
       accent: teal
   features:
     - navigation.instant
-    - navigation.tabs
-    - navigation.tabs.sticky
+    - navigation.sections
     - navigation.top
     - navigation.footer
     - content.code.copy
