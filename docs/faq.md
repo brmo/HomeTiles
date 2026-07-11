@@ -68,6 +68,18 @@ Intentional — the display is suspended during the transfer to free memory. The
 restarts when the installation finishes. The on-device updater (Settings → System) keeps
 the screen on and shows a progress bar instead.
 
+## The update check fails even though WiFi works
+
+The HTTPS connection to GitHub needs a contiguous block of free working memory. After a
+long uptime the memory can be too fragmented for it, and the check fails with "check
+failed" while everything else keeps working. **Restarting the display fixes it** — use
+the restart button in the on-device System popup or in the web admin, then run the
+check again right after boot.
+
+Since **v0.4.6** the firmware frees memory automatically before the check and retries,
+so this should no longer happen — if it still does on a current version, please
+[report it](#the-display-crashed-or-restarted-by-itself).
+
 ## The update check says "up to date" but I expected an update
 
 The device compares its own version (shown in Settings → System) against the latest

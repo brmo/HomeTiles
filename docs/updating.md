@@ -17,6 +17,8 @@ Notes:
   both come back automatically.
 - If the install fails (network hiccup, crash), nothing is lost: the device keeps running
   the old version. Just try again.
+- If the update **check** itself fails even though WiFi works, restart the display and
+  check again — see the [FAQ](faq.md#the-update-check-fails-even-though-wifi-works).
 
 ## 2. Web Admin OTA Upload
 
