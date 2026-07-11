@@ -322,7 +322,16 @@ void appendAdminStyles(String& html) {
     .settings-full { grid-column:1 / -1; }
     .settings-note { font-size:12px; color:var(--text-3); margin-top:4px; }
     .settings-actions { display:flex; gap:10px; flex-wrap:wrap; }
-    .settings-actions .btn { width:auto; }
+    /* Alle Buttons in Settings-Aktionszeilen einheitlich kompakt (gleiches
+       Mass wie .file-picker), sonst mischen sich grosse .btn, versetzte
+       .btn-secondary (margin-top) und kleine Datei-Buttons im selben Bereich. */
+    .settings-actions .btn {
+      width:auto;
+      margin-top:0;
+      padding:10px 14px;
+      font-size:14px;
+      flex:0 0 auto;
+    }
     .ota-github-actions { margin-top:8px; }
     .file-picker { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:8px; }
     .file-picker-name { color:var(--text-3); font-size:14px; overflow-wrap:anywhere; }

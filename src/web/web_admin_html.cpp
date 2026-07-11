@@ -1029,10 +1029,10 @@ String WebAdminServer::getAdminPage() {
     }
     html += R"html(
                 <div class="settings-actions" id="coredump_actions">
-                  <button class="btn btn-secondary btn-inline" type="button" onclick="window.location.href='/api/coredump'">)html";
+                  <button class="btn btn-secondary" type="button" onclick="window.location.href='/api/coredump'">)html";
     html += is_german ? "Core-Dump herunterladen" : "Download core dump";
     html += R"html(</button>
-                  <button class="btn btn-secondary btn-inline" type="button" onclick="eraseCoreDump()">)html";
+                  <button class="btn btn-secondary" type="button" onclick="eraseCoreDump()">)html";
     html += is_german ? "Core-Dump l&ouml;schen" : "Delete core dump";
     html += R"html(</button>
                 </div>
