@@ -150,6 +150,57 @@ jobs:
             --build-dir "build/ci/${{ matrix.key }}" \
             --device-key "${{ matrix.key }}"
 
+      - name: Archive private debug symbols
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          SYMBOLS_DEPLOY_KEY: ${{ secrets.SYMBOLS_DEPLOY_KEY }}
+          SYMBOLS_REPOSITORY: GalusPeres/HomeTiles-symbols
+          DEVICE_KEY: ${{ matrix.key }}
+        run: |
+          set -euo pipefail
+
+          elf_path="build/ci/${DEVICE_KEY}/HomeTiles.ino.elf"
+          archive_name="hometiles_${GITHUB_REF_NAME}_${DEVICE_KEY}.elf.gz"
+          archive_path="${RUNNER_TEMP}/${archive_name}"
+          test -f "${elf_path}"
+          gzip -9 -c "${elf_path}" > "${archive_path}"
+
+          install -m 700 -d "${HOME}/.ssh"
+          printf '%s\n' "${SYMBOLS_DEPLOY_KEY}" > "${HOME}/.ssh/id_ed25519"
+          chmod 600 "${HOME}/.ssh/id_ed25519"
+          ssh-keyscan -t ed25519 github.com > "${HOME}/.ssh/known_hosts"
+          chmod 644 "${HOME}/.ssh/known_hosts"
+
+          symbols_dir="${RUNNER_TEMP}/hometiles-symbols"
+          git clone --depth 1 "git@github.com:${SYMBOLS_REPOSITORY}.git" "${symbols_dir}"
+          cd "${symbols_dir}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # The three matrix jobs finish independently. Retry against the
+          # latest private main branch if another device pushed first.
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            git reset --hard origin/main
+            mkdir -p "${GITHUB_REF_NAME}"
+            cp "${archive_path}" "${GITHUB_REF_NAME}/${archive_name}"
+            git add "${GITHUB_REF_NAME}/${archive_name}"
+
+            if git diff --cached --quiet; then
+              exit 0
+            fi
+
+            git commit -m "Archive ${GITHUB_REF_NAME} ${DEVICE_KEY} symbols"
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            sleep $((attempt * 2))
+          done
+
+          echo "Failed to archive ${archive_name} after concurrent push retries" >&2
+          exit 1
+
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         with:
