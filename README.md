@@ -47,6 +47,7 @@ the whole chain: MQTT broker, bridge integration, and connecting the display.
 - Anti-aliased UI rendering — no more jagged edges on switches, sliders, and popup corners
 - More reliable on-device GitHub updates: the installer now downloads the image in one pass, fixing a crash that could occur mid-update
 - Screenshot export now uses the hardware JPEG encoder
+- Built-in crash diagnostics: after a crash the device writes a crash log and keeps a core dump, both downloadable from the web admin — see [FAQ](https://galusperes.github.io/HomeTiles/faq/#the-display-crashed-or-restarted-by-itself) for how to report a crash
 
 <details>
 <summary>Highlights of the v0.3.x releases</summary>

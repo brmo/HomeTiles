@@ -41,6 +41,27 @@ Temporary LCD image retention, typical for these panels: static high-contrast co
 cold panel. It fades as the display warms up and is not permanent burn-in. A shorter
 display sleep timeout reduces it.
 
+## The display crashed or restarted by itself
+
+The firmware records crash diagnostics automatically: after a crash, the next boot
+appends the reset reason and a summary (crashed task, program counter, registers) to a
+crash log, and the full crash state is kept in flash as a core dump. Please report it —
+these files are exactly what's needed to find and fix the bug:
+
+1. Open the web admin panel and go to **Screenshot & Diagnostics**.
+2. Click **Download crash log** to get `crashlog.txt`.
+3. If a stored core dump is shown, download it too and **pack the `.bin` into a
+   `.zip`** — GitHub does not accept raw `.bin` attachments.
+4. [Open an issue](https://github.com/GalusPeres/HomeTiles/issues) describing what the
+   display was doing when it crashed (which firmware version, which popup or action, how
+   often it happens), and attach both files by dragging them into the issue text box.
+
+!!! note "What's in a core dump?"
+    A snapshot of the firmware's working memory at the moment of the crash. It can
+    contain things currently on screen or in memory — tile titles, entity names, sensor
+    values. If you'd rather not share that, attach only the crash log; it already
+    narrows down the crash location.
+
 ## The screen goes black during a web admin OTA upload
 
 Intentional — the display is suspended during the transfer to free memory. The device

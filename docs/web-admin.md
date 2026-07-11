@@ -85,6 +85,23 @@ a layout to a second device.
 !!! warning
     Import overwrites all tiles in existing folders.
 
+## Screenshot & Diagnostics
+
+**Create & Download Screenshot** saves a JPEG of the current screen to the microSD
+card and downloads it in the browser (requires a card).
+
+**Download crash log** fetches `crashlog.txt`: whenever the display crashes or
+restarts unexpectedly, the firmware appends the reset reason and a crash summary
+(crashed task, program counter, registers) to this file on the next boot. If no
+crash has ever been recorded, the button just says so.
+
+After a crash the firmware also keeps a **core dump** — a full snapshot of the
+crash — in a dedicated flash partition. When one is stored, the section shows a
+summary line plus buttons to download or delete it.
+
+Found a crash? Please [report it](faq.md#the-display-crashed-or-restarted-by-itself) —
+the crash log and core dump are exactly what's needed to fix it.
+
 ## Firmware Update
 
 The Firmware section checks GitHub for new releases and installs them, or takes a
