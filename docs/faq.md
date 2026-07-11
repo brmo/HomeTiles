@@ -8,10 +8,17 @@ Work through this checklist:
    Services → HomeTiles Bridge → Configure → Entity Configuration**)
 2. Are the display's MQTT settings correct (host, port, credentials)? Check the web admin.
 3. Do the base topic and HA prefix match between the display and the integration entry?
-4. Is the panel listed as a device under the bridge integration? If not, restart the
-   display once — it announces itself on every connect.
+4. Is the panel listed as a device under the bridge integration? If not, tap
+   **Settings → System → Pairing** on the display — it re-announces itself.
 
 More details in the [Home Assistant Setup Guide](home-assistant-setup.md).
+
+## The display is missing in Home Assistant / I deleted it there
+
+Tap **Settings → System → Pairing** on the display: it reconnects MQTT and republishes
+its discovery data, and the device reappears under the bridge integration. If you
+deleted the device in Home Assistant, do that first — Home Assistant ignores discovery
+from device IDs it still knows.
 
 ## The display briefly flashes blue when saving or updating (Waveshare)
 

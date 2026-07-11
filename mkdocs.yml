@@ -17,6 +17,8 @@ theme:
       accent: teal
   features:
     - navigation.instant
+    - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.top
     - navigation.footer
     - content.code.copy
@@ -26,19 +28,23 @@ theme:
 
 nav:
   - Home: index.md
-  - Home Assistant Setup: home-assistant-setup.md
-  - Bridge Integration: bridge.md
-  - Web Admin Panel: web-admin.md
-  - On-Device UI: device-ui.md
-  - Tile Types: tiles.md
-  - Firmware Updates: updating.md
-  - FAQ & Troubleshooting: faq.md
+  - Setup:
+      - Home Assistant Setup: home-assistant-setup.md
+      - Bridge Integration: bridge.md
+  - Guide:
+      - Web Admin Panel: web-admin.md
+      - On-Device UI: device-ui.md
+      - Tile Types: tiles.md
+  - Help:
+      - Firmware Updates: updating.md
+      - FAQ & Troubleshooting: faq.md
 
 extra_css:
   - stylesheets/extra.css
 
 markdown_extensions:
   - admonition
+  - pymdownx.details
   - attr_list
   - md_in_html
   - toc:

@@ -3,75 +3,38 @@
 Tile-based firmware that turns ESP32-P4 touch displays into Home Assistant control
 panels — configured entirely in the browser, updated over the air, connected via MQTT.
 
-![Home dashboard](images/8in-home.png){ width="75%" }
+![Home dashboard](images/8in-home.png){ width="82%" .ht-hero }
 
-<div class="grid cards" markdown>
+## New Here? Three Steps
 
--   :material-rocket-launch:{ .lg .middle } **Get started**
+<div class="ht-steps" markdown>
 
-    ---
+1.  **Connect everything**
 
-    MQTT broker, bridge integration, and connecting your first display — step by step
+    Set up the MQTT broker, install the bridge integration, flash the firmware,
+    and pair the display with Home Assistant.
 
-    [:octicons-arrow-right-24: Home Assistant Setup](home-assistant-setup.md)
+    [Home Assistant Setup :octicons-arrow-right-24:](home-assistant-setup.md)
 
--   :material-pencil-ruler:{ .lg .middle } **Build your dashboard**
+2.  **Build your dashboard**
 
-    ---
+    Open the display's admin panel in your browser: click a cell, pick a tile
+    type, done. Drag & drop, folders, everything saves automatically.
 
-    The browser-based editor: create tiles with a click, drag & drop, folders, import/export
+    [Web Admin Panel :octicons-arrow-right-24:](web-admin.md)
 
-    [:octicons-arrow-right-24: Web Admin Panel](web-admin.md)
+3.  **Use the display**
 
--   :material-gesture-tap:{ .lg .middle } **Use the display**
+    Control lights with a color wheel, check sensor history, energy statistics,
+    weather, and media — all in touch popups on the device.
 
-    ---
-
-    Popups for lights, history, energy, weather, and media — plus the on-device settings
-
-    [:octicons-arrow-right-24: On-Device UI](device-ui.md)
-
--   :material-view-grid-plus:{ .lg .middle } **Tile reference**
-
-    ---
-
-    Every tile type: sensors, lights, scenes, weather, energy, media, and more
-
-    [:octicons-arrow-right-24: Tile Types](tiles.md)
-
--   :material-transit-connection-variant:{ .lg .middle } **Bridge integration**
-
-    ---
-
-    Panel settings, entity configuration, scene aliases, and the MQTT topic reference
-
-    [:octicons-arrow-right-24: Bridge Integration](bridge.md)
-
--   :material-update:{ .lg .middle } **Stay up to date**
-
-    ---
-
-    On-device updater, web OTA upload, and factory flashing
-
-    [:octicons-arrow-right-24: Firmware Updates](updating.md)
-
--   :material-help-circle:{ .lg .middle } **Something not working?**
-
-    ---
-
-    Common questions and known quirks, explained honestly
-
-    [:octicons-arrow-right-24: FAQ & Troubleshooting](faq.md)
-
--   :material-github:{ .lg .middle } **Source & releases**
-
-    ---
-
-    MIT-licensed firmware and bridge, prebuilt binaries for every device
-
-    [:octicons-arrow-right-24: GitHub](https://github.com/GalusPeres/HomeTiles)
+    [On-Device UI :octicons-arrow-right-24:](device-ui.md)
 
 </div>
+
+Looking for something specific? [Tile Types](tiles.md) ·
+[Firmware Updates](updating.md) · [FAQ & Troubleshooting](faq.md) ·
+[GitHub](https://github.com/GalusPeres/HomeTiles)
 
 ## Supported Devices
 
@@ -85,10 +48,15 @@ The same firmware runs on all devices; every release ships prebuilt binaries for
 
 ## How It Works
 
-```
-Display  <-- MQTT -->  MQTT Broker  <-- MQTT -->  Bridge Integration (Home Assistant)
-```
+<div class="ht-flow">
+  <span class="ht-node">Display</span>
+  <span class="ht-link">←&thinsp;MQTT&thinsp;→</span>
+  <span class="ht-node">MQTT Broker</span>
+  <span class="ht-link">←&thinsp;MQTT&thinsp;→</span>
+  <span class="ht-node">Bridge Integration<small>Home Assistant</small></span>
+</div>
 
-The display never talks to Home Assistant directly. The bridge integration pushes entity
-states, icons, weather, history, and energy data over MQTT — and executes the commands
-the display sends back.
+The display never talks to Home Assistant directly. The
+[bridge integration](bridge.md) pushes entity states, icons, weather, history,
+and energy data over MQTT — and executes the commands the display sends back.
+Firmware and bridge are MIT-licensed and developed together.

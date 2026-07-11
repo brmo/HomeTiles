@@ -5,6 +5,11 @@ is the Home Assistant side of the project: a custom integration that pushes enti
 states, icons, sensor history, weather forecasts, and energy data to the displays via
 MQTT, and executes the light/switch/media/scene commands coming back.
 
+Every display appears as its own device under the integration — with its base topic
+and status entities — no matter how many panels you run:
+
+![Bridge integration with three panels](images/bridge-devices.png){ width="88%" }
+
 ## Requirements
 
 - Home Assistant 2025.11 or newer
@@ -29,17 +34,20 @@ Home Assistant `custom_components` directory and restart Home Assistant.
 
 ## Adding A Panel
 
-Add the integration once via **Settings → Devices & Services → Add Integration**:
+Add the integration once via **Settings → Devices & Services → Add Integration**
+(search for **HomeTiles Bridge**):
 
 | Field | Meaning |
 | --- | --- |
-| Base topic | MQTT namespace of the panel — must match the display's base topic (default `tab5`). **Unique per panel.** |
+| Base topic | MQTT namespace of the panel — must match the display's **Device topic base** (web admin → Settings → MQTT). **Unique per panel.** |
 | HA prefix | Topic prefix for entity state publishing (default `ha/statestream`) — same on all panels and displays. |
 | Device name / manufacturer / model | Optional metadata shown in the device registry. |
 
 **Additional panels are discovered automatically:** every display announces itself over
 MQTT when it connects. The first announcement links up with your manually created entry;
-any further display gets its own integration entry without manual steps.
+any further display gets its own integration entry without manual steps. A display that
+went missing (for example after being deleted in Home Assistant) can re-announce itself
+at any time via its on-device **Settings → System → Pairing** button.
 
 ## Configuration
 
