@@ -1,9 +1,6 @@
 ## <img src="docs/images/favicon.svg" width="34" alt="" align="top"> HomeTiles
 
-<!-- TODO Bild da? Dann diese Zeile aktivieren und die b4-Zeile darunter loeschen:
-<img align="right" width="38%" src="docs/images/8inch-home.png" alt="Home dashboard on the Waveshare 8 inch display">
--->
-<img align="right" width="38%" src="docs/images/b4-home.png" alt="Waveshare B4 home dashboard">
+<img align="right" width="42%" src="docs/images/8in-home.png" alt="Home dashboard on the Waveshare 8 inch display">
 
 Tile-based ESP32-P4 firmware for Home Assistant dashboards with a fully configurable web interface.
 
@@ -33,12 +30,25 @@ the whole chain: MQTT broker, bridge integration, and connecting the display.
 
 - [Home Assistant Setup Guide](docs/home-assistant-setup.md) — MQTT broker, bridge integration, first connection
 - [Bridge Integration](docs/bridge.md) — installation, panel settings, entity configuration
+- [Web Admin Panel](docs/web-admin.md) — creating tiles, drag & drop, folders, import/export
+- [On-Device UI](docs/device-ui.md) — popups and on-device settings, with screenshots
 - [Tile Types](docs/tiles.md) — every tile type and what it needs
 - [Firmware Updates](docs/updating.md) — on-device updater, web OTA, factory flash
 - [FAQ & Troubleshooting](docs/faq.md) — common questions and known quirks
 - [BOARD_SETTINGS.md](BOARD_SETTINGS.md) — Arduino IDE build settings per device
 
-## Highlights Of The v0.3.x Releases
+## Highlights Of The v0.4.x Releases
+
+- Redesigned web admin panel: live tile grid preview, pinned tile settings panel, smoother drag & drop, and per-folder selection memory
+- Firmware updates from the browser: the web admin can now run the GitHub update check itself, in addition to the manual file upload
+- New on-device WiFi **Disconnect** button (keeps the saved credentials) and a **Pairing** button that re-announces the device to Home Assistant without touching any settings
+- Consistent button colors across the device, web admin, and captive portal: green for go-actions, red only for deleting
+- Anti-aliased UI rendering — no more jagged edges on switches, sliders, and popup corners
+- More reliable on-device GitHub updates: the installer now downloads the image in one pass, fixing a crash that could occur mid-update
+- Screenshot export now uses the hardware JPEG encoder
+
+<details>
+<summary>Highlights of the v0.3.x releases</summary>
 
 - New in v0.3.1: automatic device pairing — a freshly connected device (no MQTT credentials configured on it yet) announces itself on the network, shows up as a "discovered device" card in Home Assistant, and the bridge pushes your existing MQTT broker's credentials to it automatically once confirmed. No manual host/user/password entry required on the device itself.
 - Fixed in v0.3.3: the display could wake itself up out of sleep — without being touched — whenever a background data update arrived. It now only wakes on an actual touch, and tiles stay up to date in the background the whole time it's asleep, so there's no lag when you do wake it.
@@ -48,6 +58,8 @@ the whole chain: MQTT broker, bridge integration, and connecting the display.
 - Polished branding across the on-device System popup and the web admin panel
 - More reliable tile storage: tile grids and the folder index are written atomically, avoiding partial/corrupted saves
 - Smoother MQTT behavior under load, with traffic throttled during heavy rendering/DMA activity
+
+</details>
 
 <details>
 <summary>Highlights of the v0.2.x releases</summary>
@@ -59,10 +71,6 @@ the whole chain: MQTT broker, bridge integration, and connecting the display.
 - General UI polish across tiles and popups
 
 </details>
-
-<!-- TODO Bilder da? Dann diesen Block aktivieren:
-<img src="docs/images/8inch-settings.png" alt="On-device settings" width="32%"> <img src="docs/images/8inch-system-update.png" alt="System popup with available update" width="32%"> <img src="docs/images/8inch-wifi-list.png" alt="On-device WiFi network list" width="32%">
--->
 
 ## Overview
 
@@ -85,76 +93,43 @@ Device-specific Arduino IDE settings are documented in [BOARD_SETTINGS.md](BOARD
 
 ## Screenshots
 
-<!-- ============================================================
-TODO: Neue Screenshot-Sektion - aktivieren, sobald die Bilder in
-docs/images/ liegen, dann die ALTE Sektion darunter loeschen.
+Captured on the Waveshare 8" — the same firmware and web admin panel run on all supported devices.
 
-<img src="docs/images/8inch-home.png" alt="Home dashboard, Waveshare 8 inch" width="32%"> <img src="docs/images/tab5-home.png" alt="Home dashboard, M5Stack Tab5" width="32%"> <img src="docs/images/b4-home.png" alt="Home dashboard, Waveshare 4B" width="32%">
+### On The Device
 
-The same firmware runs on all supported devices - shown here on the Waveshare 8", the M5Stack Tab5, and the Waveshare 4B. The remaining screenshots were captured on the 8" display.
+Home dashboard, folder view, and the settings menu:
 
-### Main Views
-
-Folder view, on-device settings, and the built-in firmware updater:
-
-<img src="docs/images/8inch-folder.png" alt="Folder view" width="32%"> <img src="docs/images/8inch-settings.png" alt="On-device settings" width="32%"> <img src="docs/images/8inch-system-update.png" alt="System popup with available update" width="32%">
-
-### On-Device WiFi Setup
-
-Network scan with on-screen keyboard, and Access Point mode with QR code:
-
-<img src="docs/images/8inch-wifi-list.png" alt="WiFi network list" width="32%"> <img src="docs/images/8inch-wifi-ap.png" alt="Access Point mode with QR code" width="32%">
+<img src="docs/images/8in-home.png" alt="Home dashboard" width="32%"> <img src="docs/images/8in-folder-lighting.png" alt="Folder view with light tiles and scenes" width="32%"> <img src="docs/images/8in-settings.png" alt="On-device settings menu" width="32%">
 
 ### Popups
+
+Light control — brightness, color, and color temperature:
+
+<img src="docs/images/8in-light-brightness.png" alt="Light popup brightness view" width="32%"> <img src="docs/images/8in-light-color.png" alt="Light popup color wheel" width="32%"> <img src="docs/images/8in-light-temperature.png" alt="Light popup color temperature view" width="32%">
 
 Energy statistics (day and week) and sensor history:
 
-<img src="docs/images/8inch-energy-day.png" alt="Energy popup day view" width="32%"> <img src="docs/images/8inch-energy-week.png" alt="Energy popup week view" width="32%"> <img src="docs/images/8inch-sensor-history.png" alt="Sensor history popup" width="32%">
+<img src="docs/images/8in-energy-24h.png" alt="Energy popup day view" width="32%"> <img src="docs/images/8in-energy-7d.png" alt="Energy popup week view" width="32%"> <img src="docs/images/8in-sensor-popup-7d.png" alt="Sensor history popup" width="32%">
 
-Light control, media player, and weather forecast:
+Weather forecast, media player, and the system popup with the built-in updater:
 
-<img src="docs/images/8inch-light.png" alt="Light popup" width="32%"> <img src="docs/images/8inch-media.png" alt="Media player popup" width="32%"> <img src="docs/images/8inch-weather.png" alt="Weather popup" width="32%">
+<img src="docs/images/8in-weather-popup.png" alt="Weather popup" width="32%"> <img src="docs/images/8in-media-popup.png" alt="Media player popup" width="32%"> <img src="docs/images/8in-system-popup.png" alt="System popup with update check and pairing" width="32%">
 
-### Web Admin
+### Web Admin Panel
 
-Built-in web admin interface for tiles, folders, WiFi, MQTT, and layout configuration:
-
-<p>
-  <img src="docs/images/web-admin-layout.png" alt="Web admin layout editor" width="100%">
-</p>
-
-microSD file manager:
+The dashboard is built entirely in the browser — click a tile to edit it, drag & drop to move it, every change saves automatically:
 
 <p>
-  <img src="docs/images/web-admin-files.png" alt="Web admin file manager" width="100%">
+  <img src="docs/images/web-admin-home.png" alt="Web admin panel with tile grid and tile settings" width="100%">
 </p>
-============================================================ -->
 
-The screenshots below were captured on the Waveshare B4 with an older firmware version; new ones are coming. The same firmware and web admin panel run on all supported devices.
-
-### Main Views
-
-Home dashboard, folder view, and settings screen:
-
-<img src="docs/images/b4-home.png" alt="Home dashboard" width="32%"> <img src="docs/images/b4-folder-lights.png" alt="Folder view" width="32%"> <img src="docs/images/b4-settings.png" alt="Settings view" width="32%">
-
-### Popups
-
-Sensor history views:
-
-<img src="docs/images/b4-sensor-popup-water-24h.png" alt="Sensor popup water 24 hour view" width="32%"> <img src="docs/images/b4-sensor-popup-water-7d.png" alt="Sensor popup water 7 day view" width="32%"> <img src="docs/images/b4-weather-popup.png" alt="Weather popup" width="32%">
-
-Light control views:
-
-<img src="docs/images/b4-light-popup-brightness-off.png" alt="Light popup on off view" width="24%"> <img src="docs/images/b4-light-popup-brightness.png" alt="Light popup brightness view" width="24%"> <img src="docs/images/b4-light-popup-color.png" alt="Light popup color view" width="24%"> <img src="docs/images/b4-light-popup-temperature.png" alt="Light popup temperature view" width="24%">
-
-### Web Admin
-
-Built-in web admin interface for tiles, folders, WiFi, MQTT, and layout configuration:
+WiFi, MQTT, and localization settings without touching code:
 
 <p>
-  <img src="docs/images/web-admin.png" alt="Web admin interface" width="100%">
+  <img src="docs/images/web-admin-settings.png" alt="Web admin settings tab" width="100%">
 </p>
+
+More screenshots and how everything works: [Web Admin Panel](docs/web-admin.md) and [On-Device UI](docs/device-ui.md).
 
 ## Features
 
@@ -171,19 +146,8 @@ Built-in web admin interface for tiles, folders, WiFi, MQTT, and layout configur
 - microSD file manager in the web admin (upload, download, rename, delete, folders)
 - Runtime storage on internal LittleFS; microSD is optional
 - Screenshot export to microSD from the web interface
-- Tile types currently include:
-  - clock
-  - counter
-  - energy
-  - empty
-  - key
-  - media
-  - navigate
-  - scene
-  - sensor
-  - switch
-  - text
-  - weather
+- Tile types currently include: sensor, energy, weather, scene, switch, media,
+  folder, clock, text, counter, key, animation, and empty — see [Tile Types](docs/tiles.md)
 
 ## Installation
 
@@ -219,11 +183,11 @@ latest GitHub release and installs it directly.
 ## First Setup
 
 1. Flash the firmware and boot the device.
-2. Open `Settings` → `WLAN` on the device. Either:
+2. Open `Settings` → `WiFi` on the device. Either:
    - pick your network from the scan list and enter the password with the on-screen keyboard, or
    - enable Access Point mode: connect to the device hotspot (password `12345678`, QR code shown on screen) and enter your WiFi credentials in the captive portal.
 3. After saving, the device restarts and connects to your WiFi network.
-4. The device IP address is shown in the on-device WLAN settings.
+4. The device IP address is shown in the on-device WiFi settings.
 5. Open the web admin panel through that IP address.
 6. Install the [HomeTiles Bridge](https://github.com/GalusPeres/HomeTiles-Bridge) integration in Home Assistant, if you haven't already.
 7. As long as the device has no MQTT credentials configured on it yet, it announces itself on the network automatically. A "discovered device" card appears under Settings → Devices & Services in Home Assistant — confirm it, and the bridge pushes your existing MQTT broker's credentials to the device for you, no typing required.

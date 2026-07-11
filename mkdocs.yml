@@ -28,6 +28,8 @@ nav:
   - Home: index.md
   - Home Assistant Setup: home-assistant-setup.md
   - Bridge Integration: bridge.md
+  - Web Admin Panel: web-admin.md
+  - On-Device UI: device-ui.md
   - Tile Types: tiles.md
   - Firmware Updates: updating.md
   - FAQ & Troubleshooting: faq.md

@@ -5,10 +5,12 @@ need the first one.
 
 ## 1. On-Device Updater (recommended)
 
-Open **Settings → System** on the display and tap the update check button. The device
+Open **Settings → System** on the display and tap **Check for updates**. The device
 looks up the latest [GitHub release](https://github.com/GalusPeres/HomeTiles/releases/latest),
 and if a newer version exists, offers to install it. The download and installation run
 directly on the device with a progress bar; afterwards it restarts into the new version.
+
+![System popup with the update check](images/8in-system-popup.png){ width="65%" }
 
 Notes:
 - The device briefly disconnects from MQTT and stops the web admin during the install —
@@ -18,9 +20,12 @@ Notes:
 
 ## 2. Web Admin OTA Upload
 
-Open the web admin panel (`http://<display-ip>/`), go to the OTA section, and upload the
-update binary for your device manually. The screen turns off during the installation —
-this is intentional (it frees memory for the transfer) and the device restarts when done.
+Open the [web admin panel](web-admin.md) (`http://<display-ip>/`), go to the Firmware
+section, and either run the same GitHub update check from the browser or upload the
+update binary manually. During a manual upload the screen turns off — this is
+intentional (it frees memory for the transfer) and the device restarts when done.
+
+![Firmware section in the web admin](images/web-admin-firmware.png)
 
 Use the asset matching your device from the release page:
 

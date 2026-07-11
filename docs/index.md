@@ -3,7 +3,7 @@
 Tile-based firmware that turns ESP32-P4 touch displays into Home Assistant control
 panels — configured entirely in the browser, updated over the air, connected via MQTT.
 
-![Home dashboard](images/b4-home.png){ width="65%" }
+![Home dashboard](images/8in-home.png){ width="75%" }
 
 <div class="grid cards" markdown>
 
@@ -15,6 +15,30 @@ panels — configured entirely in the browser, updated over the air, connected v
 
     [:octicons-arrow-right-24: Home Assistant Setup](home-assistant-setup.md)
 
+-   :material-pencil-ruler:{ .lg .middle } **Build your dashboard**
+
+    ---
+
+    The browser-based editor: create tiles with a click, drag & drop, folders, import/export
+
+    [:octicons-arrow-right-24: Web Admin Panel](web-admin.md)
+
+-   :material-gesture-tap:{ .lg .middle } **Use the display**
+
+    ---
+
+    Popups for lights, history, energy, weather, and media — plus the on-device settings
+
+    [:octicons-arrow-right-24: On-Device UI](device-ui.md)
+
+-   :material-view-grid-plus:{ .lg .middle } **Tile reference**
+
+    ---
+
+    Every tile type: sensors, lights, scenes, weather, energy, media, and more
+
+    [:octicons-arrow-right-24: Tile Types](tiles.md)
+
 -   :material-transit-connection-variant:{ .lg .middle } **Bridge integration**
 
     ---
@@ -22,14 +46,6 @@ panels — configured entirely in the browser, updated over the air, connected v
     Panel settings, entity configuration, scene aliases, and the MQTT topic reference
 
     [:octicons-arrow-right-24: Bridge Integration](bridge.md)
-
--   :material-view-grid-plus:{ .lg .middle } **Build your dashboard**
-
-    ---
-
-    Every tile type: sensors, lights, scenes, weather, energy, media, and more
-
-    [:octicons-arrow-right-24: Tile Types](tiles.md)
 
 -   :material-update:{ .lg .middle } **Stay up to date**
 

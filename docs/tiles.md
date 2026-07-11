@@ -1,11 +1,12 @@
 # Tile Types
 
 Everything on the dashboard is a tile on a grid. Tiles are created, moved, resized, and
-configured in the web admin panel (`http://<display-ip>/`). Tiles that show Home Assistant
+configured in the [web admin panel](web-admin.md). Tiles that show Home Assistant
 data need their entity to be exposed through the bridge integration first — see the
 [Home Assistant Setup Guide](home-assistant-setup.md), Step 5.
 
-Most data tiles have a popup with more detail. Whether the popup opens on a **tap** or a
+Most data tiles have a popup with more detail — shown with screenshots on the
+[On-Device UI](device-ui.md) page. Whether the popup opens on a **tap** or a
 **long press** is configurable per tile in the web admin.
 
 ## Home Assistant Tiles
@@ -52,7 +53,12 @@ A simple tap counter: tap to count up, long-press to reset.
 
 ### Folder
 Opens a sub-page with its own tile grid. A back tile is placed on the sub-page
-automatically. Use folders to group lights, rooms, or feature areas.
+automatically. Use folders to group lights, rooms, or feature areas — see
+[Folders](web-admin.md#folders) in the web admin guide.
+
+### Animation
+Plays a low-res pixel-art animation from a `.panim` file in the `/animations`
+folder of the microSD card — a purely decorative element.
 
 ### Key
 Sends a key/button command to PC clients connected to the display's built-in WebSocket
