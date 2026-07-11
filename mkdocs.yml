@@ -26,7 +26,7 @@ theme:
     repo: fontawesome/brands/github
 
 nav:
-  - Home: index.md
+  - Overview: index.md
   - Setup:
       - Flashing the Firmware: flashing.md
       - Home Assistant Setup: home-assistant-setup.md
