@@ -1177,14 +1177,12 @@ String WebAdminServer::getAdminPage() {
                   <button class="btn btn-secondary btn-inline" type="button" id="ota_choose_btn" onclick="document.getElementById('ota_file').click()">)html";
   html += tr.ota_choose_file;
   html += R"html(</button>
+                  <button class="btn btn-go btn-inline" type="button" id="ota_upload_btn" onclick="uploadOtaFirmware()">)html";
+  html += tr.ota_upload_install;
+  html += R"html(</button>
                   <span id="ota_file_name" class="file-picker-name">)html";
   html += tr.ota_no_file_selected;
   html += R"html(</span>
-                </div>
-                <div class="settings-actions">
-                  <button class="btn btn-go" type="button" id="ota_upload_btn" onclick="uploadOtaFirmware()">)html";
-  html += tr.ota_upload_install;
-  html += R"html(</button>
                 </div>
                 <div id="ota_status" class="settings-note ota-status"></div>
                 <div id="ota_progress" class="ota-progress is-hidden" aria-hidden="true">
