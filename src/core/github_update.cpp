@@ -6,6 +6,7 @@
 #include <WiFiClientSecure.h>
 #include <esp_heap_caps.h>
 #include <lwip/sockets.h>
+#include <mbedtls/ssl.h>  // MBEDTLS_ERR_SSL_ALLOC_FAILED
 #include <stdlib.h>
 #include <string.h>
 
@@ -166,7 +167,9 @@ void logCheckNetworkState(const char* label, const String& url) {
                 static_cast<unsigned>(ESP.getFreePsram() / 1024));
 }
 
-void logCheckFailureDetails(int code, WiFiClientSecure& client, const String& url) {
+// Gibt den mbedTLS-Fehlercode zurueck (0 = keiner), damit der Aufrufer
+// Speicher-Fehlschlaege (MBEDTLS_ERR_SSL_ALLOC_FAILED) erkennen kann.
+int logCheckFailureDetails(int code, WiFiClientSecure& client, const String& url) {
   char tls_error[96] = {};
   const int tls_code = client.lastError(tls_error, sizeof(tls_error));
 
@@ -191,6 +194,7 @@ void logCheckFailureDetails(int code, WiFiClientSecure& client, const String& ur
                 dns_ok,
                 github_ip.toString().c_str(),
                 url.c_str());
+  return tls_code;
 }
 
 typedef bool (*RangeDataFn)(const uint8_t* data, size_t len, void* ctx);
@@ -496,7 +500,8 @@ CheckResult checkLatest() {
       } else {
         Serial.printf("[Update] Check fehlgeschlagen: HTTP %d\n", code);
       }
-      logCheckFailureDetails(code, client, url);
+      result.tls_alloc_failed =
+          logCheckFailureDetails(code, client, url) == MBEDTLS_ERR_SSL_ALLOC_FAILED;
       return result;
     }
 

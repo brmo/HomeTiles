@@ -84,6 +84,9 @@ bool WebAdminServer::start() {
   server.on("/api/files/upload", HTTP_POST,
     [this]() { this->handleFileManagerUploadDone(); },
     [this]() { this->handleFileManagerUpload(); });
+  server.on("/api/coredump", HTTP_GET, [this]() { this->handleCoreDumpDownload(); });
+  server.on("/api/coredump/erase", HTTP_POST, [this]() { this->handleCoreDumpErase(); });
+  server.on("/api/crashlog", HTTP_GET, [this]() { this->handleCrashLogDownload(); });
 
   server.begin();
   running = true;

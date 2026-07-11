@@ -219,6 +219,44 @@ void appendAdminScripts(String& html) {
     return (document.documentElement.lang || '').toLowerCase().startsWith('de') ? de : en;
   }
 
+  async function downloadCrashLog() {
+    try {
+      const res = await fetch('/api/crashlog?ts=' + Date.now());
+      if (res.status === 404) {
+        showNotification(fileManagerText('Kein Absturz aufgezeichnet.', 'No crash recorded.'));
+        return;
+      }
+      if (!res.ok) throw new Error();
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'crashlog.txt';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      showNotification(fileManagerText('Download fehlgeschlagen.', 'Download failed.'), false);
+    }
+  }
+
+  async function eraseCoreDump() {
+    if (!confirm(fileManagerText('Gespeicherten Core-Dump wirklich l\u00f6schen?', 'Really delete the stored core dump?'))) return;
+    try {
+      const res = await fetch('/api/coredump/erase', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || fileManagerText('L\u00f6schen fehlgeschlagen.', 'Delete failed.'));
+      }
+      const actions = document.getElementById('coredump_actions');
+      if (actions) actions.style.display = 'none';
+      showNotification(fileManagerText('Core-Dump gel\u00f6scht.', 'Core dump deleted.'));
+    } catch (err) {
+      showNotification(err?.message || fileManagerText('L\u00f6schen fehlgeschlagen.', 'Delete failed.'), false);
+    }
+  }
+
   function normalizeFileManagerClientPath(raw) {
     let path = String(raw || '').trim().replaceAll('\\', '/');
     if (!path) path = '/';

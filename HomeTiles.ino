@@ -16,6 +16,7 @@
 #include "src/core/display_manager.h"
 #include "src/core/power_manager.h"
 #include "src/core/config_manager.h"
+#include "src/core/crash_log.h"
 #include "src/core/firmware_version.h"
 #include "src/core/github_update.h"
 #include "src/core/lvgl_tick_service.h"
@@ -317,8 +318,47 @@ static GithubUpdate::CheckResult perform_fw_check() {
     delay(50);
   }
 
-  GithubUpdate::CheckResult res = GithubUpdate::checkLatest();
+  // mbedTLS alloziert nur internes RAM (~45KB in mehreren Bloecken, groesster
+  // ~17KB) - PSRAM hilft dem Handshake nicht. Nach laengerer Laufzeit ist der
+  // interne Heap dafuer oft zu fragmentiert (8"-Log 2026-07-11: int=74KB,
+  // largest=30KB -> "SSL - Memory allocation failed"). Dann wie beim Install
+  // das SRAM-Draw-Band (bis 72KB) kurz nach PSRAM parken; der Loop-Task
+  // blockiert waehrend des Checks ohnehin, es rendert also niemand aus dem
+  // langsamen Puffer. Nach Boot (int~126KB, largest~53KB) bleibt das Band wo
+  // es ist.
+  bool draw_band_parked = false;
+  const auto park_draw_band = [&draw_band_parked]() {
+    if (draw_band_parked) return;
+    draw_band_parked = true;
+    displayManager.setBufferLines(8);  // unter SRAM-Minimum -> PSRAM-Puffer
+    delay(20);
+  };
+  {
+    const size_t int_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    const size_t int_largest =
+        heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+    if (int_free < 96 * 1024 || int_largest < 40 * 1024) {
+      Serial.printf("[Update] Check: int-RAM knapp (frei=%uKB largest=%uKB), Draw-Band -> PSRAM\n",
+                    static_cast<unsigned>(int_free / 1024),
+                    static_cast<unsigned>(int_largest / 1024));
+      park_draw_band();
+    }
+  }
 
+  GithubUpdate::CheckResult res = GithubUpdate::checkLatest();
+  if (!res.ok && res.tls_alloc_failed && !draw_band_parked) {
+    // Heap sah ausreichend aus, der Handshake bekam trotzdem keinen Speicher:
+    // Draw-Band doch parken und einmal neu versuchen.
+    Serial.println("[Update] Check: TLS-Alloc fehlgeschlagen, Draw-Band -> PSRAM und neuer Versuch");
+    park_draw_band();
+    res = GithubUpdate::checkLatest();
+  }
+
+  if (draw_band_parked) {
+    displayManager.restoreBufferLinesAfterOta(SCREEN_HEIGHT / Device::kDisplayFlushBands);
+    lv_obj_invalidate(lv_screen_active());
+    lv_refr_now(displayManager.getDisplay());
+  }
   if (quiet_mqtt_for_check) {
     networkManager.restoreMqttBufferNormal();
     Serial.println("[Update] Check: MQTT wieder freigegeben");
@@ -495,6 +535,12 @@ void setup() {
   Serial.println("[Setup] LittleFS OK");
   log_memory_status("after-littlefs");
   Serial.flush();
+
+  // Nach einem Absturz: Reset-Grund + Core-Dump-Zusammenfassung an
+  // /crashlog.txt anhaengen (Web-Admin: Abschnitt "Absturzbericht").
+  // Bewusst frueh, damit der Eintrag auch dann geschrieben ist, wenn ein
+  // spaeterer Init-Schritt gleich wieder abstuerzen sollte.
+  CrashLog::logBootDiagnostics();
 
   // SD Card (optional, for screenshots)
   Serial.println("[Setup] SD Card init...");

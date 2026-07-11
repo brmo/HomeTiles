@@ -15,10 +15,14 @@
 #include "src/types/clock/clock_format.h"
 #include "src/devices/device.h"
 #include "src/core/board_hal.h"
+#include "src/core/crash_log.h"
 #include "src/core/display_manager.h"
 #include "src/core/firmware_metadata.h"
 #include "src/core/firmware_version.h"
+#include <LittleFS.h>
 #include <Update.h>
+#include <esp_core_dump.h>
+#include <esp_partition.h>
 #include <driver/jpeg_encode.h>
 #include <esp_heap_caps.h>
 #include <lvgl.h>
@@ -2714,6 +2718,74 @@ void WebAdminServer::handleDownloadScreenshot() {
   server.sendHeader("Content-Disposition", "attachment; filename=\"" + filename + "\"");
   server.sendHeader("Cache-Control", "no-store");
   server.streamFile(file, "image/jpeg");
+  file.close();
+}
+
+// ========== Crash-Diagnose ==========
+// Der IDF-Panic-Handler legt bei jeder Panic einen Core-Dump in der
+// coredump-Partition ab (siehe src/core/crash_log.h). Diese Endpunkte machen
+// ihn ohne USB-Kabel zugaenglich; crashlog.txt liegt im LittleFS und waere im
+// File Manager (nur microSD) sonst unsichtbar.
+
+void WebAdminServer::handleCoreDumpDownload() {
+  webAdminMarkActivity();
+  size_t dump_addr = 0;
+  size_t dump_size = 0;
+  if (esp_core_dump_image_get(&dump_addr, &dump_size) != ESP_OK ||
+      dump_size == 0) {
+    server.send(404, "text/plain", "No core dump stored");
+    return;
+  }
+  const esp_partition_t* part = esp_partition_find_first(
+      ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_COREDUMP, nullptr);
+  if (!part || dump_addr < part->address ||
+      dump_addr - part->address + dump_size > part->size) {
+    server.send(500, "text/plain", "Core dump partition mismatch");
+    return;
+  }
+
+  String filename = Device::profile().key;
+  filename += "-coredump.bin";
+  server.sendHeader("Content-Disposition",
+                    "attachment; filename=\"" + filename + "\"");
+  server.sendHeader("Cache-Control", "no-store");
+  server.setContentLength(dump_size);
+  server.send(200, "application/octet-stream", "");
+
+  uint8_t buf[1024];
+  size_t offset = dump_addr - part->address;
+  size_t remaining = dump_size;
+  while (remaining > 0) {
+    const size_t chunk = remaining < sizeof(buf) ? remaining : sizeof(buf);
+    if (esp_partition_read(part, offset, buf, chunk) != ESP_OK) break;
+    server.sendContent(reinterpret_cast<const char*>(buf), chunk);
+    offset += chunk;
+    remaining -= chunk;
+    yield();
+  }
+}
+
+void WebAdminServer::handleCoreDumpErase() {
+  webAdminMarkActivity();
+  const esp_err_t err = esp_core_dump_image_erase();
+  if (err != ESP_OK) {
+    sendJsonError(server, 500, String("Erase failed: ") + esp_err_to_name(err));
+    return;
+  }
+  server.send(200, "application/json", "{\"success\":true}");
+}
+
+void WebAdminServer::handleCrashLogDownload() {
+  webAdminMarkActivity();
+  File file = LittleFS.open(CrashLog::kLogPath, FILE_READ);
+  if (!file) {
+    server.send(404, "text/plain", "No crash log stored");
+    return;
+  }
+  server.sendHeader("Content-Disposition",
+                    "attachment; filename=\"crashlog.txt\"");
+  server.sendHeader("Cache-Control", "no-store");
+  server.streamFile(file, "text/plain");
   file.close();
 }
 

@@ -13,6 +13,7 @@
 #include "src/web/web_admin_tile_helpers.h"
 #include "src/tiles/tile_config.h"
 #include "src/types/types_registry.h"
+#include "src/core/crash_log.h"
 #include "src/core/device_entities.h"
 #include "src/core/firmware_version.h"
 #include "src/core/i18n.h"
@@ -1002,10 +1003,47 @@ String WebAdminServer::getAdminPage() {
                   <button class="btn" type="button" onclick="createScreenshotAndDownload()">)html";
   html += tr.screenshot_create_download;
   html += R"html(</button>
+                  <button class="btn btn-secondary" type="button" onclick="downloadCrashLog()">)html";
+  html += is_german ? "Crash-Log herunterladen" : "Download crash log";
+  html += R"html(</button>
                 </div>
                 <div class="settings-note">)html";
   html += tr.screenshot_saved_note;
-  html += R"html(</div>
+  html += R"html(</div>)html";
+
+  // Core-Dump nur anbieten, wenn tatsaechlich einer in der coredump-Partition
+  // liegt (der Panic-Handler legt ihn bei jeder Panic automatisch ab, siehe
+  // src/core/crash_log.h). crashlog.txt liegt im LittleFS und braucht den
+  // eigenen Download-Button oben, weil der File Manager nur die microSD zeigt.
+  if (CrashLog::hasCoreDump()) {
+    const String summary = CrashLog::coreDumpSummaryLine();
+    html += R"html(
+                <div class="settings-note"><strong>)html";
+    html += is_german ? "Gespeicherter Core-Dump" : "Stored core dump";
+    html += R"html(:</strong></div>)html";
+    if (summary.length()) {
+      html += R"html(
+                <div class="settings-note ota-version-value">)html";
+      html += summary;
+      html += R"html(</div>)html";
+    }
+    html += R"html(
+                <div class="settings-actions" id="coredump_actions">
+                  <button class="btn btn-secondary btn-inline" type="button" onclick="window.location.href='/api/coredump'">)html";
+    html += is_german ? "Core-Dump herunterladen" : "Download core dump";
+    html += R"html(</button>
+                  <button class="btn btn-secondary btn-inline" type="button" onclick="eraseCoreDump()">)html";
+    html += is_german ? "Core-Dump l&ouml;schen" : "Delete core dump";
+    html += R"html(</button>
+                </div>
+                <div class="settings-note">)html";
+    html += is_german
+        ? "Der Core-Dump l&auml;sst sich am PC mit esp-coredump und dem Build-ELF zu einem vollst&auml;ndigen Stacktrace aufl&ouml;sen."
+        : "Decode the core dump on a PC with esp-coredump and the build ELF to get a full stack trace.";
+    html += R"html(</div>)html";
+  }
+
+  html += R"html(
               </div>
             </div>
           </div>

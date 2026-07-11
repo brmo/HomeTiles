@@ -31,6 +31,7 @@ constexpr const char* kRepoUrl =
 struct CheckResult {
   bool ok = false;                // Anfrage erfolgreich beantwortet
   bool update_available = false;  // latest_tag ist neuer als FW_VERSION
+  bool tls_alloc_failed = false;  // Handshake scheiterte an internem RAM
   char latest_tag[24] = {};       // z.B. "v0.3.0"
 };
 

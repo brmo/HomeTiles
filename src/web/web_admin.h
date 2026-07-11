@@ -75,6 +75,9 @@ public:
   void handleFileManagerMkdir();
   void handleFileManagerUpload();
   void handleFileManagerUploadDone();
+  void handleCoreDumpDownload();
+  void handleCoreDumpErase();
+  void handleCrashLogDownload();
 
   // HTML-Seiten (implemented in web_admin_html.cpp)
   String getAdminPage();
