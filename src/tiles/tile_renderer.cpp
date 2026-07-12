@@ -2067,7 +2067,9 @@ static void update_media_popup_from_widgets(GridType grid_type,
                              widgets.cover_clip &&
                              !lv_obj_has_flag(widgets.cover_clip, LV_OBJ_FLAG_HIDDEN);
   if (cover_visible) {
-    init.cover_dsc = widgets.cover_ref->dsc;
+    init.cover_dsc = widgets.cover_ref->popup_dsc
+                         ? widgets.cover_ref->popup_dsc
+                         : widgets.cover_ref->dsc;
     init.cover_hash = widgets.cover_ref->url_hash;
   }
   update_media_popup(init);
@@ -2292,6 +2294,66 @@ static lv_image_dsc_t* make_media_cover_decoded_jpeg_dsc(const uint8_t* data, si
                 static_cast<unsigned>(dst_w),
                 static_cast<unsigned>(dst_h),
                 static_cast<unsigned>(final_bytes));
+  return dsc;
+}
+
+static lv_image_dsc_t* make_media_tile_cover_dsc(const lv_image_dsc_t* source) {
+  if (!source || !source->data ||
+      source->header.cf != LV_COLOR_FORMAT_RGB565_SWAPPED ||
+      source->header.w == 0 || source->header.h == 0) {
+    return nullptr;
+  }
+
+  constexpr uint16_t kTileCoverMaxSide = 120;
+  if (source->header.w <= kTileCoverMaxSide &&
+      source->header.h <= kTileCoverMaxSide) {
+    return nullptr;
+  }
+
+  uint16_t dst_w = source->header.w;
+  uint16_t dst_h = source->header.h;
+  if (dst_w >= dst_h) {
+    dst_w = kTileCoverMaxSide;
+    dst_h = static_cast<uint16_t>((static_cast<uint32_t>(source->header.h) * dst_w) /
+                                  source->header.w);
+  } else {
+    dst_h = kTileCoverMaxSide;
+    dst_w = static_cast<uint16_t>((static_cast<uint32_t>(source->header.w) * dst_h) /
+                                  source->header.h);
+  }
+  if (dst_w == 0) dst_w = 1;
+  if (dst_h == 0) dst_h = 1;
+
+  const size_t bytes = static_cast<size_t>(dst_w) * dst_h * sizeof(uint16_t);
+  uint16_t* pixels = static_cast<uint16_t*>(alloc_media_cover_memory(bytes, true));
+  if (!pixels) return nullptr;
+
+  const uint16_t* src_pixels = reinterpret_cast<const uint16_t*>(source->data);
+  const uint16_t src_w = source->header.w;
+  const uint16_t src_h = source->header.h;
+  for (uint16_t y = 0; y < dst_h; ++y) {
+    const uint16_t sy = static_cast<uint16_t>((static_cast<uint32_t>(y) * src_h) / dst_h);
+    for (uint16_t x = 0; x < dst_w; ++x) {
+      const uint16_t sx = static_cast<uint16_t>((static_cast<uint32_t>(x) * src_w) / dst_w);
+      pixels[static_cast<size_t>(y) * dst_w + x] =
+          src_pixels[static_cast<size_t>(sy) * src_w + sx];
+    }
+  }
+
+  lv_image_dsc_t* dsc = static_cast<lv_image_dsc_t*>(
+      alloc_media_cover_memory(sizeof(lv_image_dsc_t)));
+  if (!dsc) {
+    free(pixels);
+    return nullptr;
+  }
+  memset(dsc, 0, sizeof(*dsc));
+  dsc->header.magic = LV_IMAGE_HEADER_MAGIC;
+  dsc->header.cf = LV_COLOR_FORMAT_RGB565_SWAPPED;
+  dsc->header.w = dst_w;
+  dsc->header.h = dst_h;
+  dsc->header.stride = dst_w * 2;
+  dsc->data_size = bytes;
+  dsc->data = reinterpret_cast<const uint8_t*>(pixels);
   return dsc;
 }
 
@@ -2824,6 +2886,7 @@ static void process_media_cover_results() {
       pause_display_ppa_for_media_update();
     }
     lv_image_dsc_t* old = ref->dsc;
+    lv_image_dsc_t* old_popup = ref->popup_dsc;
     lv_image_set_src(widgets.cover_image, result.dsc);
     const bool cover_visibility_changed = set_media_cover_visible(widgets, true);
     if (widgets.icon_label) lv_obj_clear_flag(widgets.icon_label, LV_OBJ_FLAG_HIDDEN);
@@ -2832,6 +2895,7 @@ static void process_media_cover_results() {
     }
 
     ref->dsc = result.dsc;
+    ref->popup_dsc = nullptr;
     ref->url_hash = result.url_hash;
     ref->failed_url_hash = 0;
     ref->failed_at_ms = 0;
@@ -2843,6 +2907,7 @@ static void process_media_cover_results() {
     }
     result.dsc = nullptr;
     free_media_cover_dsc(old);
+    free_media_cover_dsc(old_popup);
   }
 }
 
@@ -2934,16 +2999,28 @@ static bool update_media_cover_from_base64(MediaTileWidgets& widgets, const Stri
     return true;
   }
 
-  lv_image_dsc_t* dsc = make_media_cover_dsc_from_base64(encoded);
-  if (!dsc) {
+  lv_image_dsc_t* decoded_dsc = make_media_cover_dsc_from_base64(encoded);
+  if (!decoded_dsc) {
     Serial.println("[MediaCover] MQTT Cover konnte nicht dekodiert werden");
     return false;
+  }
+
+  // Keep the tile descriptor at 120px so routine LVGL redraws never rescale
+  // the 240px popup artwork. The high-resolution descriptor is retained only
+  // for the popup and therefore has no cost while navigating the normal UI.
+  lv_image_dsc_t* tile_dsc = make_media_tile_cover_dsc(decoded_dsc);
+  lv_image_dsc_t* popup_dsc = nullptr;
+  lv_image_dsc_t* dsc = decoded_dsc;
+  if (tile_dsc) {
+    dsc = tile_dsc;
+    popup_dsc = decoded_dsc;
   }
 
   if (media_widgets_are_visible(widgets)) {
     pause_display_ppa_for_media_update();
   }
   lv_image_dsc_t* old = ref->dsc;
+  lv_image_dsc_t* old_popup = ref->popup_dsc;
   lv_image_set_src(widgets.cover_image, dsc);
   const bool cover_visibility_changed = set_media_cover_visible(widgets, true);
   if (widgets.icon_label) lv_obj_clear_flag(widgets.icon_label, LV_OBJ_FLAG_HIDDEN);
@@ -2952,12 +3029,14 @@ static bool update_media_cover_from_base64(MediaTileWidgets& widgets, const Stri
   }
 
   ref->dsc = dsc;
+  ref->popup_dsc = popup_dsc;
   ref->source_url = "mqtt";
   ref->url_hash = hash;
   ref->requested_url_hash = 0;
   ref->failed_url_hash = 0;
   ref->failed_at_ms = 0;
   free_media_cover_dsc(old);
+  free_media_cover_dsc(old_popup);
   Serial.println("[MediaCover] MQTT Cover geladen");
   return true;
 }

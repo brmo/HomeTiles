@@ -45,12 +45,21 @@ struct MediaPopupEventData {
 };
 
 static void free_cover_dsc(MediaCoverRef* ref) {
-  if (!ref || !ref->dsc) return;
-  if (ref->dsc->data) {
-    free(const_cast<uint8_t*>(ref->dsc->data));
+  if (!ref) return;
+  if (ref->dsc) {
+    if (ref->dsc->data) {
+      free(const_cast<uint8_t*>(ref->dsc->data));
+    }
+    free(ref->dsc);
+    ref->dsc = nullptr;
   }
-  free(ref->dsc);
-  ref->dsc = nullptr;
+  if (ref->popup_dsc) {
+    if (ref->popup_dsc->data) {
+      free(const_cast<uint8_t*>(ref->popup_dsc->data));
+    }
+    free(ref->popup_dsc);
+    ref->popup_dsc = nullptr;
+  }
   ref->source_url = "";
   ref->url_hash = 0;
   ref->requested_url_hash = 0;
@@ -140,7 +149,9 @@ static void show_media_popup_event_cb(lv_event_t* e) {
                              widgets.cover_clip &&
                              !lv_obj_has_flag(widgets.cover_clip, LV_OBJ_FLAG_HIDDEN);
   if (cover_visible) {
-    init.cover_dsc = widgets.cover_ref->dsc;
+    init.cover_dsc = widgets.cover_ref->popup_dsc
+                         ? widgets.cover_ref->popup_dsc
+                         : widgets.cover_ref->dsc;
     init.cover_hash = widgets.cover_ref->url_hash;
   }
   show_media_popup(init);

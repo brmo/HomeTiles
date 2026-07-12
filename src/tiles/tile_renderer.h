@@ -68,6 +68,7 @@ struct WeatherTileWidgets {
 
 struct MediaCoverRef {
   lv_image_dsc_t* dsc = nullptr;
+  lv_image_dsc_t* popup_dsc = nullptr;
   String source_url;
   uint32_t url_hash = 0;
   uint32_t requested_url_hash = 0;

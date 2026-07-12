@@ -36,8 +36,9 @@ constexpr int kCoverTop = 104;
 constexpr int kCoverTextGap = 20;
 constexpr int kTitleTop = kCoverTop + kCoverSize + kCoverTextGap;
 constexpr int kSeekTop = 470 + (kHeightExtra / 2);
-constexpr int kControlsTop = popup_layout::kNavY - kControlButtonSize - 12;
-constexpr int kSeekWidth = kCardWidth - (kCardPad * 2) - 190;
+constexpr int kControlsTop = popup_layout::kNavY - kControlButtonSize - 36;
+constexpr int kSeekWidth = kCardWidth - (kCardPad * 2) - 220;
+constexpr int kSeekTimeGap = 22;
 constexpr int kSeekSliderHeight = 10;
 constexpr int kSeekSliderKnobSize = 26;
 constexpr int kSeekSliderClickPad = 18;
@@ -304,13 +305,17 @@ static void set_seek_widgets(MediaPopupContext* ctx, float position, bool update
   const bool available = ctx->has_media_position && ctx->media_duration > 0.0f;
   if (!available) {
     lv_obj_add_state(ctx->seek_slider, LV_STATE_DISABLED);
-    if (ctx->seek_current_label) lv_label_set_text(ctx->seek_current_label, "--:--");
-    if (ctx->seek_duration_label) lv_label_set_text(ctx->seek_duration_label, "--:--");
+    lv_obj_add_flag(ctx->seek_slider, LV_OBJ_FLAG_HIDDEN);
+    if (ctx->seek_current_label) lv_obj_add_flag(ctx->seek_current_label, LV_OBJ_FLAG_HIDDEN);
+    if (ctx->seek_duration_label) lv_obj_add_flag(ctx->seek_duration_label, LV_OBJ_FLAG_HIDDEN);
     if (update_slider) lv_slider_set_value(ctx->seek_slider, 0, LV_ANIM_OFF);
     return;
   }
 
   lv_obj_clear_state(ctx->seek_slider, LV_STATE_DISABLED);
+  lv_obj_clear_flag(ctx->seek_slider, LV_OBJ_FLAG_HIDDEN);
+  if (ctx->seek_current_label) lv_obj_clear_flag(ctx->seek_current_label, LV_OBJ_FLAG_HIDDEN);
+  if (ctx->seek_duration_label) lv_obj_clear_flag(ctx->seek_duration_label, LV_OBJ_FLAG_HIDDEN);
   if (position < 0.0f) position = 0.0f;
   if (position > ctx->media_duration) position = ctx->media_duration;
   if (update_slider) {
@@ -676,14 +681,22 @@ void show_media_popup(const MediaPopupInit& init) {
   lv_obj_set_width(ctx->seek_current_label, 80);
   lv_obj_set_style_text_align(ctx->seek_current_label, LV_TEXT_ALIGN_RIGHT, 0);
   lv_label_set_text(ctx->seek_current_label, "--:--");
-  lv_obj_align_to(ctx->seek_current_label, ctx->seek_slider, LV_ALIGN_OUT_LEFT_MID, -12, 0);
+  lv_obj_align_to(ctx->seek_current_label,
+                  ctx->seek_slider,
+                  LV_ALIGN_OUT_LEFT_MID,
+                  -kSeekTimeGap,
+                  0);
 
   ctx->seek_duration_label = lv_label_create(card);
   set_label_style(ctx->seek_duration_label, lv_color_hex(0xD8DEE9), &ui_font_20);
   lv_obj_set_width(ctx->seek_duration_label, 80);
   lv_obj_set_style_text_align(ctx->seek_duration_label, LV_TEXT_ALIGN_LEFT, 0);
   lv_label_set_text(ctx->seek_duration_label, "--:--");
-  lv_obj_align_to(ctx->seek_duration_label, ctx->seek_slider, LV_ALIGN_OUT_RIGHT_MID, 12, 0);
+  lv_obj_align_to(ctx->seek_duration_label,
+                  ctx->seek_slider,
+                  LV_ALIGN_OUT_RIGHT_MID,
+                  kSeekTimeGap,
+                  0);
 
   ctx->volume_row = lv_obj_create(card);
   lv_obj_remove_style_all(ctx->volume_row);
