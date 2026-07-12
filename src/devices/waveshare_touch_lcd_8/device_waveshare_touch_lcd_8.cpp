@@ -73,7 +73,7 @@ constexpr int32_t kPpaMinRotateWidth = 600;
 // If re-registering the PPA client fails (e.g. no internal heap for the driver
 // state at that moment), don't stay on the slow CPU rotate until reboot: retry
 // the re-init on this interval from the rotate path.
-constexpr uint32_t kPpaReinitRetryMs = 3000;
+constexpr uint32_t kPpaReinitRetryMs = 1000;
 
 esp_lcd_dsi_bus_handle_t g_dsi_bus = nullptr;
 esp_lcd_panel_io_handle_t g_panel_io = nullptr;
@@ -88,6 +88,7 @@ bool g_ppa_async_ready = false;           // true once the PPA done-callback is 
 uint32_t g_ppa_cooldown_until_ms = 0;     // while active, flushes use CPU rotate
 uint8_t g_ppa_consecutive_faults = 0;     // resets to 0 on any successful rotate
 uint32_t g_ppa_reinit_at_ms = 0;          // 0 = no pending re-init retry
+bool g_ppa_reset_pending = false;          // true while a wedged client is being retired
 
 DEV_I2C_Port g_i2c = {};
 bool g_i2c_ready = false;
@@ -174,18 +175,27 @@ bool IRAM_ATTR on_ppa_trans_done(ppa_client_handle_t, ppa_event_data_t*, void* u
 // Tear down a wedged PPA client and bring up a fresh one so the UI heals itself
 // instead of staying on the slow CPU rotate until a power cycle. A stalled
 // non-blocking rotate keeps its transaction in the client's single pending slot;
-// ppa_unregister_client() is non-blocking and just refuses (without freeing) while
-// that slot is busy, so we never block here. If the unregister was refused we still
-// spin up a fresh client (the old one is leaked, but faults are rare). Anything that
-// ultimately fails leaves g_ppa_handle == nullptr -> CPU-only rotate: slow for full
-// repaints, but never a freeze or a crash.
+// ppa_unregister_client() is non-blocking and refuses while that slot is busy.
+// Keep the old handle in that case and retry retiring it after the pending transfer
+// has drained. Dropping that handle leaks a client slot and can leave the device on
+// CPU-only rotation until reboot.
 void reset_ppa_client() {
   g_ppa_async_ready = false;
+  g_ppa_reset_pending = true;
   ppa_client_handle_t old = g_ppa_handle;
-  g_ppa_handle = nullptr;  // stop draw_landscape_area from submitting mid-reset
   if (old) {
-    ppa_unregister_client(old);
+    const esp_err_t unregister_err = ppa_unregister_client(old);
+    if (unregister_err != ESP_OK) {
+      g_ppa_handle = old;
+      g_ppa_reinit_at_ms = millis() + kPpaReinitRetryMs;
+      if (!g_ppa_reinit_at_ms) g_ppa_reinit_at_ms = 1;
+      Serial.printf("[Device/WaveshareTouchLCD8] PPA client busy err=%d, retry reset in %lu ms\n",
+                    static_cast<int>(unregister_err),
+                    static_cast<unsigned long>(kPpaReinitRetryMs));
+      return;
+    }
   }
+  g_ppa_handle = nullptr;
 
   ppa_client_config_t ppa_cfg = {};
   ppa_cfg.oper_type = PPA_OPERATION_SRM;
@@ -213,7 +223,14 @@ void reset_ppa_client() {
         (ppa_client_register_event_callbacks(fresh, &ppa_cbs) == ESP_OK);
   }
   g_ppa_handle = fresh;
+  if (!g_ppa_async_ready) {
+    g_ppa_reinit_at_ms = millis() + kPpaReinitRetryMs;
+    if (!g_ppa_reinit_at_ms) g_ppa_reinit_at_ms = 1;
+    Serial.println("[Device/WaveshareTouchLCD8] PPA timeout callback unavailable, retrying client reset");
+    return;
+  }
   g_ppa_reinit_at_ms = 0;
+  g_ppa_reset_pending = false;
   Serial.println("[Device/WaveshareTouchLCD8] PPA client reset after fault");
 }
 
@@ -525,13 +542,14 @@ bool draw_landscape_area(int32_t x, int32_t y, int32_t w, int32_t h, const uint1
     dst_y = x;
   }
 
-  if (!g_ppa_handle && g_ppa_reinit_at_ms &&
+  if (g_ppa_reinit_at_ms &&
       static_cast<int32_t>(millis() - g_ppa_reinit_at_ms) >= 0) {
     g_ppa_reinit_at_ms = 0;
     reset_ppa_client();
   }
 
-  if (g_ppa_handle && g_panel_fb_ready && !ppa_cooldown_active() && w >= kPpaMinRotateWidth) {
+  if (g_ppa_handle && g_ppa_async_ready && !g_ppa_reset_pending && g_panel_fb_ready &&
+      !ppa_cooldown_active() && w >= kPpaMinRotateWidth) {
     uint16_t* fb = panel_fb();
     if (fb) {
       flush_cache_for_dma(data, static_cast<size_t>(w) * static_cast<size_t>(h) * sizeof(uint16_t));
@@ -587,15 +605,6 @@ bool draw_landscape_area(int32_t x, int32_t y, int32_t w, int32_t h, const uint1
           Serial.printf("[Device/WaveshareTouchLCD8] PPA rotate submit failed err=%d -> CPU cooldown\n",
                         static_cast<int>(err));
           note_ppa_fault();
-        }
-      } else {
-        oper.mode = PPA_TRANS_MODE_BLOCKING;
-        const esp_err_t err = ppa_do_scale_rotate_mirror(g_ppa_handle, &oper);
-        if (err == ESP_OK) {
-          ppa_ok = true;
-        } else {
-          Serial.printf("[Device/WaveshareTouchLCD8] PPA rotate failed err=%d, falling back to CPU\n",
-                        static_cast<int>(err));
         }
       }
 
@@ -897,13 +906,15 @@ bool init_display() {
     Serial.printf("[Device/WaveshareTouchLCD8] PPA client register failed err=%d, falling back to CPU rotate\n",
                   static_cast<int>(ppa_err));
     g_ppa_handle = nullptr;
+    g_ppa_reset_pending = true;
     g_ppa_reinit_at_ms = millis() + kPpaReinitRetryMs;
     if (!g_ppa_reinit_at_ms) g_ppa_reinit_at_ms = 1;
   } else {
+    g_ppa_reset_pending = false;
     log_step("PPA client registered");
     // Arm the done-callback so draw_landscape_area can use the timeout-safe
-    // non-blocking path. If anything here fails we simply keep the old blocking
-    // behaviour (no worse than before).
+    // non-blocking path. If this fails, stay on the bounded CPU fallback and
+    // retry the client instead of entering an unbounded blocking PPA call.
     g_ppa_done = xSemaphoreCreateBinary();
     if (g_ppa_done) {
       ppa_event_callbacks_t ppa_cbs = {};
@@ -912,8 +923,13 @@ bool init_display() {
         g_ppa_async_ready = true;
         log_step("PPA timeout-safe mode ready");
       } else {
-        Serial.println("[Device/WaveshareTouchLCD8] PPA event cb register failed, using blocking PPA");
+        Serial.println("[Device/WaveshareTouchLCD8] PPA event cb register failed, retrying safely");
       }
+    }
+    if (!g_ppa_async_ready) {
+      g_ppa_reset_pending = true;
+      g_ppa_reinit_at_ms = millis() + kPpaReinitRetryMs;
+      if (!g_ppa_reinit_at_ms) g_ppa_reinit_at_ms = 1;
     }
   }
 

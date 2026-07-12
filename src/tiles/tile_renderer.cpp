@@ -14,9 +14,6 @@
 #include "src/core/config_manager.h"
 #include "src/core/i18n.h"
 #include "src/web/web_admin.h"
-#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
-#include "src/devices/waveshare_touch_lcd_8/device_waveshare_touch_lcd_8.h"
-#endif
 #include <Arduino.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
@@ -78,12 +75,6 @@ MediaTileWidgets* tile_renderer_get_media_widgets(GridType grid_type) {
   if (grid_type == GridType::TAB1) return g_tab1_media;
   if (grid_type == GridType::TAB2) return g_tab2_media;
   return g_tab0_media;
-}
-
-static void pause_display_ppa_for_media_update() {
-#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
-  DeviceWaveshareTouchLCD8::pausePpaFor(350);
-#endif
 }
 
 SwitchState* tile_renderer_get_switch_states(GridType grid_type) {
@@ -2882,9 +2873,6 @@ static void process_media_cover_results() {
       continue;
     }
 
-    if (media_widgets_are_visible(widgets)) {
-      pause_display_ppa_for_media_update();
-    }
     lv_image_dsc_t* old = ref->dsc;
     lv_image_dsc_t* old_popup = ref->popup_dsc;
     lv_image_set_src(widgets.cover_image, result.dsc);
@@ -3016,9 +3004,6 @@ static bool update_media_cover_from_base64(MediaTileWidgets& widgets, const Stri
     popup_dsc = decoded_dsc;
   }
 
-  if (media_widgets_are_visible(widgets)) {
-    pause_display_ppa_for_media_update();
-  }
   lv_image_dsc_t* old = ref->dsc;
   lv_image_dsc_t* old_popup = ref->popup_dsc;
   lv_image_set_src(widgets.cover_image, dsc);
@@ -3185,10 +3170,6 @@ void update_media_tile_state(GridType grid_type, uint8_t grid_index, const char*
                                       (cover_ref->dsc || cover_ref->requested_url_hash != 0);
   const bool should_update_cover = is_json_payload &&
                                    (media_text_changed || !cover_ready_or_pending);
-  if ((media_text_changed || should_update_cover) && media_widgets_are_visible(widgets)) {
-    pause_display_ppa_for_media_update();
-  }
-
   if (widgets.play_pause_label) {
     String icon = getMdiChar(media_icon_for_state(state));
     if (icon.length()) {
