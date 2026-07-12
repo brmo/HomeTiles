@@ -66,7 +66,11 @@ uint32_t g_ppa_reinit_at_ms = 0;  // 0 = kein Re-Init noetig
 bool g_ppa_wedged = false;
 uint32_t g_ppa_wedged_since_ms = 0;
 uint32_t g_ppa_wedge_retry_at_ms = 0;
-constexpr uint32_t kPpaWedgeResetRetryMs = 5000;
+uint32_t g_ppa_wedge_retry_delay_ms = 0;
+uint8_t g_ppa_wedge_reset_attempts = 0;
+constexpr uint32_t kPpaWedgeResetRetryMs = 5000;      // erster Versuch, danach verdoppelnd
+constexpr uint32_t kPpaWedgeResetRetryMaxMs = 60000;  // Backoff-Deckel
+constexpr uint8_t kPpaWedgeResetMaxAttempts = 8;      // danach nur noch still lauschen
 
 uint8_t to_panel_rotation(uint8_t logical_rotation) {
   logical_rotation &= 0x03;
@@ -296,7 +300,8 @@ bool rect_inside_logical_bounds(int32_t x, int32_t y, int32_t w, int32_t h) {
 bool ppa_rotate_to_panel(int32_t x, int32_t y, int32_t w, int32_t h, const uint16_t* data) {
   if (g_ppa_wedged) {
     // Spaete Fertigmeldung der verklemmten Transaktion? Dann ist die Engine
-    // wieder frei und der Client laesst sich sauber neu aufsetzen.
+    // wieder frei und der Client laesst sich sauber neu aufsetzen. Dieses
+    // Lauschen ist kostenlos und laeuft deshalb unbegrenzt weiter.
     if (g_ppa_done && xSemaphoreTake(g_ppa_done, 0) == pdTRUE) {
       Serial.printf("[Device/M5StacksTab5] PPA Verklemmung geloest (Transaktion nach %lu ms doch fertig), Client-Reset\n",
                     static_cast<unsigned long>(millis() - g_ppa_wedged_since_ms));
@@ -304,15 +309,26 @@ bool ppa_rotate_to_panel(int32_t x, int32_t y, int32_t w, int32_t h, const uint1
       g_ppa_consecutive_faults = 0;
       reset_ppa_client();
       pause_ppa_for(kPpaFaultCooldownMs);
-    } else if (static_cast<int32_t>(millis() - g_ppa_wedge_retry_at_ms) >= 0) {
+    } else if (g_ppa_wedge_reset_attempts < kPpaWedgeResetMaxAttempts &&
+               static_cast<int32_t>(millis() - g_ppa_wedge_retry_at_ms) >= 0) {
       // Ohne Fertigmeldung klappt der Reset nur, wenn die Transaktion still
-      // abgelaufen ist — der Versuch ist billig (unregister verweigert sonst).
-      g_ppa_wedge_retry_at_ms = millis() + kPpaWedgeResetRetryMs;
+      // abgelaufen ist. Jeder Versuch erzeugt eine Fehlerzeile des IDF-
+      // Treibers — deshalb Backoff (5s -> 10s -> ... -> 60s) und nach
+      // kPpaWedgeResetMaxAttempts Schluss damit; das stille Semaphore-
+      // Lauschen oben bleibt als Recovery-Chance bestehen.
+      ++g_ppa_wedge_reset_attempts;
+      g_ppa_wedge_retry_delay_ms *= 2;
+      if (g_ppa_wedge_retry_delay_ms > kPpaWedgeResetRetryMaxMs) {
+        g_ppa_wedge_retry_delay_ms = kPpaWedgeResetRetryMaxMs;
+      }
+      g_ppa_wedge_retry_at_ms = millis() + g_ppa_wedge_retry_delay_ms;
       if (reset_ppa_client()) {
         Serial.println("[Device/M5StacksTab5] PPA Verklemmung geloest (Client-Reset erfolgreich)");
         g_ppa_wedged = false;
         g_ppa_consecutive_faults = 0;
         pause_ppa_for(kPpaFaultCooldownMs);
+      } else if (g_ppa_wedge_reset_attempts >= kPpaWedgeResetMaxAttempts) {
+        Serial.println("[Device/M5StacksTab5] PPA Reset-Versuche erschoepft — CPU-Modus bis zur spaeten Fertigmeldung oder Neustart");
       }
     }
     return false;
@@ -410,7 +426,9 @@ bool ppa_rotate_to_panel(int32_t x, int32_t y, int32_t w, int32_t h, const uint1
       // Client dann sauber neu auf.
       g_ppa_wedged = true;
       g_ppa_wedged_since_ms = millis();
+      g_ppa_wedge_retry_delay_ms = kPpaWedgeResetRetryMs;
       g_ppa_wedge_retry_at_ms = millis() + kPpaWedgeResetRetryMs;
+      g_ppa_wedge_reset_attempts = 0;
       g_ppa_ready = false;
       Serial.printf("[Device/M5StacksTab5] PPA VERKLEMMT: rotate %ldx%ld src=(%ld,%ld) dst=(%ld,%ld) rot=%d — CPU-Fallback, Recovery aktiv\n",
                     static_cast<long>(w), static_cast<long>(h),

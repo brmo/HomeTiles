@@ -2231,16 +2231,26 @@ static lv_image_dsc_t* make_media_cover_decoded_jpeg_hw_dsc(const uint8_t* data,
     return nullptr;
   }
 
-  jpeg_decode_engine_cfg_t engine_cfg{};
-  engine_cfg.intr_priority = 0;
-  engine_cfg.timeout_ms = 100;
-  jpeg_decoder_handle_t decoder = nullptr;
-  err = jpeg_new_decoder_engine(&engine_cfg, &decoder);
-  if (err != ESP_OK || !decoder) {
-    free(decoded);
-    Serial.printf("[MediaCover] HW JPEG Engine nicht verfuegbar: %s\n",
-                  esp_err_to_name(err));
-    return nullptr;
+  // Die Decode-Engine wird EINMAL angelegt und dauerhaft behalten. Engine-
+  // Erzeugung/-Abbau acquired/released den 2D-DMA-Pool, den sich der JPEG-
+  // Block mit der PPA (Display-Rotation) teilt — dieses Churn pro Cover stand
+  // in Verdacht, auf dem Tab5 gelegentlich eine PPA-Transaktion im Pool zu
+  // verlieren ("PPA VERKLEMMT", nur per Reboot heilbar). Eine persistente
+  // Engine haelt den Pool stabil referenziert und spart nebenbei den
+  // Erzeugungs-Overhead pro Cover.
+  static jpeg_decoder_handle_t s_media_jpeg_decoder = nullptr;
+  if (!s_media_jpeg_decoder) {
+    jpeg_decode_engine_cfg_t engine_cfg{};
+    engine_cfg.intr_priority = 0;
+    engine_cfg.timeout_ms = 100;
+    err = jpeg_new_decoder_engine(&engine_cfg, &s_media_jpeg_decoder);
+    if (err != ESP_OK || !s_media_jpeg_decoder) {
+      s_media_jpeg_decoder = nullptr;
+      free(decoded);
+      Serial.printf("[MediaCover] HW JPEG Engine nicht verfuegbar: %s\n",
+                    esp_err_to_name(err));
+      return nullptr;
+    }
   }
 
   jpeg_decode_cfg_t decode_cfg{};
@@ -2250,21 +2260,24 @@ static lv_image_dsc_t* make_media_cover_decoded_jpeg_hw_dsc(const uint8_t* data,
   decode_cfg.rgb_order = JPEG_DEC_RGB_ELEMENT_ORDER_RGB;
   decode_cfg.conv_std = JPEG_YUV_RGB_CONV_STD_BT601;
   uint32_t decoded_bytes = 0;
-  err = jpeg_decoder_process(decoder,
+  err = jpeg_decoder_process(s_media_jpeg_decoder,
                              &decode_cfg,
                              data,
                              static_cast<uint32_t>(len),
                              reinterpret_cast<uint8_t*>(decoded),
                              static_cast<uint32_t>(allocated_bytes),
                              &decoded_bytes);
-  const esp_err_t delete_err = jpeg_del_decoder_engine(decoder);
-  if (err != ESP_OK || delete_err != ESP_OK || decoded_bytes < requested_bytes) {
+  if (err != ESP_OK || decoded_bytes < requested_bytes) {
     free(decoded);
-    Serial.printf("[MediaCover] HW JPEG decode fehlgeschlagen: decode=%s delete=%s bytes=%u/%u\n",
+    Serial.printf("[MediaCover] HW JPEG decode fehlgeschlagen: decode=%s bytes=%u/%u\n",
                   esp_err_to_name(err),
-                  esp_err_to_name(delete_err),
                   static_cast<unsigned>(decoded_bytes),
                   static_cast<unsigned>(requested_bytes));
+    // Nach einem Fehlschlag (z.B. Timeout mitten im Transfer) die Engine
+    // verwerfen und beim naechsten Cover frisch aufbauen, statt mit
+    // moeglicherweise haengendem Zustand weiterzuarbeiten.
+    jpeg_del_decoder_engine(s_media_jpeg_decoder);
+    s_media_jpeg_decoder = nullptr;
     return nullptr;
   }
 
