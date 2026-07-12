@@ -25,6 +25,10 @@
 #include <freertos/task.h>
 #include <libb64/cdecode.h>
 #include <libs/tjpgd/tjpgd.h>
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+#include <driver/jpeg_decode.h>
+#include <soc/soc_caps.h>
+#endif
 #include <math.h>
 #include <stdlib.h>
 #include <time.h>
@@ -2178,6 +2182,154 @@ static bool read_media_cover_jpeg_size(const uint8_t* data, size_t len, uint16_t
   return true;
 }
 
+#if defined(CONFIG_IDF_TARGET_ESP32P4) && SOC_JPEG_DECODE_SUPPORTED
+static uint32_t media_cover_align16(uint32_t value) {
+  return (value + 15U) & ~15U;
+}
+
+// ESP32-P4 has a dedicated JPEG block. The old path below uses TJpgDec in
+// software and writes every decoded pixel individually to PSRAM. Decode RGB565
+// directly with the hardware instead; the driver allocator returns the
+// DMA/cache-aligned PSRAM buffer required by the JPEG peripheral. A bounded
+// timeout plus the unchanged software path below keeps malformed/unsupported
+// JPEGs from breaking cover updates.
+static lv_image_dsc_t* make_media_cover_decoded_jpeg_hw_dsc(const uint8_t* data,
+                                                             size_t len) {
+  if (!is_media_cover_jpeg(data, len) || len < 32 || len > UINT32_MAX) return nullptr;
+
+  const uint32_t started_ms = millis();
+  jpeg_decode_picture_info_t info{};
+  esp_err_t err = jpeg_decoder_get_info(data, static_cast<uint32_t>(len), &info);
+  if (err != ESP_OK || info.width == 0 || info.height == 0 ||
+      info.width > 512U || info.height > 512U) {
+    Serial.printf("[MediaCover] HW JPEG info fehlgeschlagen: %s (%ux%u)\n",
+                  esp_err_to_name(err),
+                  static_cast<unsigned>(info.width),
+                  static_cast<unsigned>(info.height));
+    return nullptr;
+  }
+
+  // The common bridge artwork is 240x240 and therefore naturally aligned.
+  // For unusual non-16-aligned radio logos keep using TJpgDec: IDF revisions
+  // differ in whether decoded_size reports packed or padded rows, and guessing
+  // that stride would risk a distorted image.
+  if ((info.width & 15U) != 0 || (info.height & 15U) != 0) return nullptr;
+
+  const uint32_t padded_w = media_cover_align16(info.width);
+  const uint32_t padded_h = media_cover_align16(info.height);
+  const size_t requested_bytes =
+      static_cast<size_t>(padded_w) * padded_h * sizeof(uint16_t);
+  jpeg_decode_memory_alloc_cfg_t mem_cfg{};
+  mem_cfg.buffer_direction = JPEG_DEC_ALLOC_OUTPUT_BUFFER;
+  size_t allocated_bytes = 0;
+  uint16_t* decoded = static_cast<uint16_t*>(
+      jpeg_alloc_decoder_mem(requested_bytes, &mem_cfg, &allocated_bytes));
+  if (!decoded || allocated_bytes < requested_bytes) {
+    free(decoded);
+    Serial.printf("[MediaCover] HW JPEG PSRAM-Puffer fehlt: %u Bytes\n",
+                  static_cast<unsigned>(requested_bytes));
+    return nullptr;
+  }
+
+  jpeg_decode_engine_cfg_t engine_cfg{};
+  engine_cfg.intr_priority = 0;
+  engine_cfg.timeout_ms = 100;
+  jpeg_decoder_handle_t decoder = nullptr;
+  err = jpeg_new_decoder_engine(&engine_cfg, &decoder);
+  if (err != ESP_OK || !decoder) {
+    free(decoded);
+    Serial.printf("[MediaCover] HW JPEG Engine nicht verfuegbar: %s\n",
+                  esp_err_to_name(err));
+    return nullptr;
+  }
+
+  jpeg_decode_cfg_t decode_cfg{};
+  decode_cfg.output_format = JPEG_DECODE_OUT_FORMAT_RGB565;
+  // RGB order yields big-endian RGB565 bytes. That is exactly the byte layout
+  // represented by LV_COLOR_FORMAT_RGB565_SWAPPED on the little-endian P4.
+  decode_cfg.rgb_order = JPEG_DEC_RGB_ELEMENT_ORDER_RGB;
+  decode_cfg.conv_std = JPEG_YUV_RGB_CONV_STD_BT601;
+  uint32_t decoded_bytes = 0;
+  err = jpeg_decoder_process(decoder,
+                             &decode_cfg,
+                             data,
+                             static_cast<uint32_t>(len),
+                             reinterpret_cast<uint8_t*>(decoded),
+                             static_cast<uint32_t>(allocated_bytes),
+                             &decoded_bytes);
+  const esp_err_t delete_err = jpeg_del_decoder_engine(decoder);
+  if (err != ESP_OK || delete_err != ESP_OK || decoded_bytes < requested_bytes) {
+    free(decoded);
+    Serial.printf("[MediaCover] HW JPEG decode fehlgeschlagen: decode=%s delete=%s bytes=%u/%u\n",
+                  esp_err_to_name(err),
+                  esp_err_to_name(delete_err),
+                  static_cast<unsigned>(decoded_bytes),
+                  static_cast<unsigned>(requested_bytes));
+    return nullptr;
+  }
+
+  constexpr uint16_t kMaxCoverSide = 240;
+  uint16_t dst_w = static_cast<uint16_t>(info.width);
+  uint16_t dst_h = static_cast<uint16_t>(info.height);
+  if (dst_w > kMaxCoverSide || dst_h > kMaxCoverSide) {
+    if (dst_w >= dst_h) {
+      dst_w = kMaxCoverSide;
+      dst_h = static_cast<uint16_t>((info.height * dst_w) / info.width);
+    } else {
+      dst_h = kMaxCoverSide;
+      dst_w = static_cast<uint16_t>((info.width * dst_h) / info.height);
+    }
+    if (dst_w == 0) dst_w = 1;
+    if (dst_h == 0) dst_h = 1;
+  }
+
+  uint16_t* final_pixels = decoded;
+  size_t final_bytes = static_cast<size_t>(dst_w) * dst_h * sizeof(uint16_t);
+  const bool needs_copy = padded_w != info.width || padded_h != info.height ||
+                          dst_w != info.width || dst_h != info.height;
+  if (needs_copy) {
+    final_pixels = static_cast<uint16_t*>(alloc_media_cover_memory(final_bytes, true));
+    if (!final_pixels) {
+      free(decoded);
+      return nullptr;
+    }
+    for (uint16_t y = 0; y < dst_h; ++y) {
+      const uint32_t sy = (static_cast<uint32_t>(y) * info.height) / dst_h;
+      for (uint16_t x = 0; x < dst_w; ++x) {
+        const uint32_t sx = (static_cast<uint32_t>(x) * info.width) / dst_w;
+        final_pixels[static_cast<size_t>(y) * dst_w + x] =
+            decoded[static_cast<size_t>(sy) * padded_w + sx];
+      }
+    }
+    free(decoded);
+  }
+
+  lv_image_dsc_t* dsc = static_cast<lv_image_dsc_t*>(
+      alloc_media_cover_memory(sizeof(lv_image_dsc_t)));
+  if (!dsc) {
+    free(final_pixels);
+    return nullptr;
+  }
+  memset(dsc, 0, sizeof(*dsc));
+  dsc->header.magic = LV_IMAGE_HEADER_MAGIC;
+  dsc->header.cf = LV_COLOR_FORMAT_RGB565_SWAPPED;
+  dsc->header.w = dst_w;
+  dsc->header.h = dst_h;
+  dsc->header.stride = dst_w * 2;
+  dsc->data_size = final_bytes;
+  dsc->data = reinterpret_cast<const uint8_t*>(final_pixels);
+
+  Serial.printf("[MediaCover] HW JPEG: %ux%u -> %ux%u, %u Bytes in %u ms\n",
+                static_cast<unsigned>(info.width),
+                static_cast<unsigned>(info.height),
+                static_cast<unsigned>(dst_w),
+                static_cast<unsigned>(dst_h),
+                static_cast<unsigned>(final_bytes),
+                static_cast<unsigned>(millis() - started_ms));
+  return dsc;
+}
+#endif
+
 static lv_image_dsc_t* make_media_cover_decoded_jpeg_dsc(const uint8_t* data, size_t len) {
   if (!is_media_cover_jpeg(data, len) || len < 32) return nullptr;
 
@@ -2380,6 +2532,12 @@ static lv_image_dsc_t* make_media_cover_raw_dsc(const uint8_t* data, size_t len)
 static lv_image_dsc_t* make_media_cover_dsc_from_bytes(const uint8_t* data, size_t len) {
   if (!data || len < 32) return nullptr;
   if (is_media_cover_jpeg(data, len)) {
+#if defined(CONFIG_IDF_TARGET_ESP32P4) && SOC_JPEG_DECODE_SUPPORTED
+    if (lv_image_dsc_t* hardware = make_media_cover_decoded_jpeg_hw_dsc(data, len)) {
+      return hardware;
+    }
+    Serial.println("[MediaCover] HW JPEG nicht nutzbar, Software-Fallback");
+#endif
     return make_media_cover_decoded_jpeg_dsc(data, len);
   }
   if (is_media_cover_png(data, len)) {
@@ -2398,6 +2556,7 @@ static lv_image_dsc_t* make_media_cover_dsc_from_bytes(const uint8_t* data, size
 
 static lv_image_dsc_t* make_media_cover_dsc_from_base64(const String& encoded) {
   if (!encoded.length()) return nullptr;
+  const uint32_t started_ms = millis();
   const size_t cap = base64_decode_expected_len(encoded.length()) + 4;
   if (cap < 32 || cap > (96U * 1024U)) return nullptr;
 
@@ -2422,8 +2581,13 @@ static lv_image_dsc_t* make_media_cover_dsc_from_base64(const String& encoded) {
                 decoded_len,
                 decoded[0], decoded[1], decoded[2], decoded[3]);
 
+  const uint32_t base64_done_ms = millis();
   lv_image_dsc_t* dsc = make_media_cover_dsc_from_bytes(decoded, static_cast<size_t>(decoded_len));
   free(decoded);
+  Serial.printf("[MediaCover] Verarbeitung: base64=%u ms bild=%u ms gesamt=%u ms\n",
+                static_cast<unsigned>(base64_done_ms - started_ms),
+                static_cast<unsigned>(millis() - base64_done_ms),
+                static_cast<unsigned>(millis() - started_ms));
   return dsc;
 }
 
@@ -2996,7 +3160,9 @@ static bool update_media_cover_from_base64(MediaTileWidgets& widgets, const Stri
   // Keep the tile descriptor at 120px so routine LVGL redraws never rescale
   // the 240px popup artwork. The high-resolution descriptor is retained only
   // for the popup and therefore has no cost while navigating the normal UI.
+  const uint32_t tile_scale_started_ms = millis();
   lv_image_dsc_t* tile_dsc = make_media_tile_cover_dsc(decoded_dsc);
+  const uint32_t tile_scale_ms = millis() - tile_scale_started_ms;
   lv_image_dsc_t* popup_dsc = nullptr;
   lv_image_dsc_t* dsc = decoded_dsc;
   if (tile_dsc) {
@@ -3022,7 +3188,8 @@ static bool update_media_cover_from_base64(MediaTileWidgets& widgets, const Stri
   ref->failed_at_ms = 0;
   free_media_cover_dsc(old);
   free_media_cover_dsc(old_popup);
-  Serial.println("[MediaCover] MQTT Cover geladen");
+  Serial.printf("[MediaCover] MQTT Cover geladen (Tile-Skalierung=%u ms)\n",
+                static_cast<unsigned>(tile_scale_ms));
   return true;
 }
 
@@ -3168,8 +3335,10 @@ void update_media_tile_state(GridType grid_type, uint8_t grid_index, const char*
   MediaCoverRef* cover_ref = widgets.cover_ref;
   const bool cover_ready_or_pending = cover_ref &&
                                       (cover_ref->dsc || cover_ref->requested_url_hash != 0);
+  const bool has_embedded_cover =
+      is_json_payload && strstr(payload_start, "\"entity_picture_data\"") != nullptr;
   const bool should_update_cover = is_json_payload &&
-                                   (media_text_changed || !cover_ready_or_pending);
+                                   (has_embedded_cover || !cover_ready_or_pending);
   if (widgets.play_pause_label) {
     String icon = getMdiChar(media_icon_for_state(state));
     if (icon.length()) {

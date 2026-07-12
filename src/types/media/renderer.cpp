@@ -33,6 +33,7 @@ struct MediaEventData {
   lv_obj_t* media_title_label = nullptr;
   lv_obj_t* media_subtitle_label = nullptr;
   bool reset_text_scroll = false;
+  lv_obj_t* control_label = nullptr;
 };
 
 struct MediaPopupEventData {
@@ -97,7 +98,17 @@ static void media_command_event_cb(lv_event_t* e) {
     reset_media_label_scroll(data->media_title_label);
     reset_media_label_scroll(data->media_subtitle_label);
   }
-  mqttPublishMediaCommand(data->entity_id.c_str(), data->command ? data->command : "play_pause");
+  const char* command = data->command ? data->command : "play_pause";
+  if (strcmp(command, "play_pause") == 0 && data->control_label) {
+    const char* current = lv_label_get_text(data->control_label);
+    const String pause_icon = getMdiChar("pause");
+    const String next_icon = getMdiChar(
+        current && pause_icon.length() && strcmp(current, pause_icon.c_str()) == 0
+            ? "play"
+            : "pause");
+    lv_label_set_text(data->control_label, next_icon.c_str());
+  }
+  mqttPublishMediaCommand(data->entity_id.c_str(), command);
 }
 
 static void media_event_data_delete_cb(lv_event_t* e) {
@@ -223,10 +234,11 @@ static lv_obj_t* create_media_control_button(lv_obj_t* parent,
   }
 
   MediaEventData* data = new MediaEventData{entity_id,
-                                            command,
-                                            media_title_label,
-                                            media_subtitle_label,
-                                            reset_text_scroll};
+                                             command,
+                                             media_title_label,
+                                             media_subtitle_label,
+                                             reset_text_scroll,
+                                             label};
   lv_obj_add_event_cb(btn, media_command_event_cb, LV_EVENT_SHORT_CLICKED, data);
   lv_obj_add_event_cb(btn, media_event_data_delete_cb, LV_EVENT_DELETE, data);
   return label;

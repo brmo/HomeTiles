@@ -1072,12 +1072,12 @@ static String buildHaStatestreamTopic(const String& entity_id, const char* suffi
 static void rebuildDynamicRoutes(std::vector<DynamicSensorRoute>& routes) {
   routes.clear();
 
-  auto add_route = [&](const String& entity, int slot_index) {
+  auto add_route = [&](const String& entity, int slot_index, const char* suffix = "state") {
     String ent = entity;
     ent.trim();
     if (!ent.length()) return;
 
-    String topic = buildHaStatestreamTopic(ent, "state");
+    String topic = buildHaStatestreamTopic(ent, suffix);
     auto it = std::find_if(
         routes.begin(),
         routes.end(),
@@ -1117,6 +1117,12 @@ static void rebuildDynamicRoutes(std::vector<DynamicSensorRoute>& routes) {
       if ((slot.type == TILE_SENSOR || slot.type == TILE_SWITCH || slot.type == TILE_MEDIA) &&
           slot.entity[0]) {
         add_route(String(slot.entity), -1);
+        if (slot.type == TILE_MEDIA) {
+          // New bridges publish cover-free state changes here first. Keep the
+          // normal state subscription as well for retained full payloads and
+          // compatibility with older bridge versions.
+          add_route(String(slot.entity), -1, "state_fast");
+        }
       }
     }
   };

@@ -447,7 +447,24 @@ static void on_media_command(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   MediaCommandData* data = static_cast<MediaCommandData*>(lv_event_get_user_data(e));
   if (!data || !data->ctx || !data->ctx->entity_id.length()) return;
-  mqttPublishMediaCommand(data->ctx->entity_id.c_str(), data->command ? data->command : "play_pause");
+  const char* command = data->command ? data->command : "play_pause";
+
+  // Play/pause is safe to reflect immediately. HA remains authoritative and
+  // the next state packet corrects the icon if the service call fails, but the
+  // button no longer appears frozen while MQTT/HA round-trips.
+  if (strcmp(command, "play_pause") == 0) {
+    MediaPopupContext* ctx = data->ctx;
+    const float position = current_media_position(ctx);
+    ctx->is_playing = !ctx->is_playing;
+    ctx->media_position = position;
+    ctx->media_position_received_ms = millis();
+    if (ctx->play_pause_label) {
+      const String icon = getMdiChar(ctx->is_playing ? "pause" : "play");
+      lv_label_set_text(ctx->play_pause_label, icon.c_str());
+    }
+  }
+
+  mqttPublishMediaCommand(data->ctx->entity_id.c_str(), command);
 }
 
 static void on_media_command_delete(lv_event_t* e) {
