@@ -2125,6 +2125,12 @@ static void* alloc_media_cover_memory(size_t bytes, bool prefer_psram = false) {
 
 static void free_media_cover_dsc(lv_image_dsc_t*& dsc) {
   if (!dsc) return;
+  // LVGL cached Dekodier-Ergebnisse und Header PER POINTER-ADRESSE
+  // (LV_CACHE_DEF_SIZE aktiv). Ohne Drop liefert ein spaeterer malloc mit
+  // zufaellig derselben Adresse einen Cache-Hit auf das ALTE Bild --
+  // sichtbar als sporadische Artefakte alter Cover beim Titelwechsel.
+  // Nur vom LVGL-Task aufrufen (der Cover-Worker nutzt inline free).
+  lv_image_cache_drop(dsc);
   if (dsc->data) {
     free(const_cast<uint8_t*>(dsc->data));
   }
@@ -2981,7 +2987,14 @@ static void media_cover_worker_task(void*) {
       if ((g_media_cover_result_full_count++ % 5) == 0) {
         Serial.println("[MediaCover] Ergebnis-Queue voll, Cover verworfen");
       }
-      free_media_cover_dsc(result.dsc);
+      // Inline statt free_media_cover_dsc(): das dort enthaltene
+      // lv_image_cache_drop() ist LVGL-API und darf nicht vom Worker-Task
+      // laufen. Dieser dsc war nie Image-Source, hat also keinen Cache-Eintrag.
+      if (result.dsc) {
+        if (result.dsc->data) free(const_cast<uint8_t*>(result.dsc->data));
+        free(result.dsc);
+        result.dsc = nullptr;
+      }
     }
   }
 }

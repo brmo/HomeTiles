@@ -102,6 +102,34 @@ static constexpr size_t kEntityCacheSize = TILES_PER_GRID * 8;
 static EntityCacheEntry g_entity_cache[kEntityCacheSize];
 static size_t g_entity_cache_cursor = 0;
 
+// Media-Sonderfall beim Cache-Update: Die Bridge schickt zu jedem State-
+// Wechsel zuerst das cover-lose state_fast und ueberspringt bei schnellen
+// Folgen (Positions-Ticks) oft das volle Payload ("stale media payload").
+// Wuerde das fast-Payload den Eintrag glatt ersetzen, verloere der Cache das
+// eingebettete Cover -- nach einem Grid-Reload (Web-Admin-Save) bliebe das
+// Cover dann bis zum naechsten Titelwechsel leer. Die Bridge haengt die drei
+// entity_picture_*-Felder geschlossen ans JSON-Ende an; genau diesen Block
+// ins neue Payload uebernehmen.
+static bool merge_cached_cover_fields(const String& old_payload, String& new_payload) {
+  // > 2: ein leeres "{}" wuerde nach dem Einfuegen von ",..." invalid.
+  if (new_payload.length() <= 2 || new_payload[0] != '{' ||
+      new_payload[new_payload.length() - 1] != '}') return false;
+  if (new_payload.indexOf("\"entity_picture_data\"") >= 0) return false;
+  const int cover_start = old_payload.indexOf("\"entity_picture_data\"");
+  if (cover_start < 1) return false;
+  const int cover_end = old_payload.lastIndexOf('}');
+  if (cover_end <= cover_start) return false;
+
+  String merged;
+  merged.reserve(new_payload.length() + (cover_end - cover_start) + 2);
+  merged = new_payload.substring(0, new_payload.length() - 1);
+  merged += ',';
+  merged += old_payload.substring(cover_start, cover_end);
+  merged += '}';
+  new_payload = merged;
+  return true;
+}
+
 static void cache_entity_payload_at(const char* entity_id, const char* payload, uint32_t updated_ms, bool keep_newer) {
   if (!entity_id || !payload || entity_id[0] == '\0') return;
   if (updated_ms == 0) updated_ms = millis();
@@ -115,6 +143,17 @@ static void cache_entity_payload_at(const char* entity_id, const char* payload, 
       if (entry.payload.equals(payload)) {
         entry.updated_ms = updated_ms;
         return;
+      }
+      // Billige Vorfilter (Sensoren sind kein JSON-Objekt, nur Media-Eintraege
+      // enthalten Cover-Daten), erst dann die String-Arbeit des Merges.
+      if (payload[0] == '{' && strstr(payload, "\"entity_picture_data\"") == nullptr &&
+          entry.payload.indexOf("\"entity_picture_data\"") >= 0) {
+        String incoming = payload;
+        if (merge_cached_cover_fields(entry.payload, incoming)) {
+          entry.payload = incoming;
+          entry.updated_ms = updated_ms;
+          return;
+        }
       }
       entry.payload = payload;
       entry.updated_ms = updated_ms;

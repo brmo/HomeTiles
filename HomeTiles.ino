@@ -1209,6 +1209,22 @@ void loop() {
     log_memory_status("runtime-60s");
   }
 
+  // Neuen Heap-Tiefststand SOFORT melden (nicht erst im 60s-Raster): ein
+  // "Min seit Boot: 4 KB" ohne Zeitpunkt laesst sich keinem Verursacher
+  // zuordnen. Schwelle 8 KB haelt das Log frei von Normalbetriebs-Rauschen.
+  {
+    static uint32_t last_reported_min_heap = 0xFFFFFFFF;
+    const uint32_t min_heap = ESP.getMinFreeHeap();
+    if (min_heap + 8192 < last_reported_min_heap) {
+      last_reported_min_heap = min_heap;
+      Serial.printf("[Mem] NEUER TIEFSTSTAND: min=%u KB (frei=%u KB, largest=%u KB) @ %lu ms\n",
+                    static_cast<unsigned>(min_heap / 1024),
+                    static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+                    static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024),
+                    static_cast<unsigned long>(now));
+    }
+  }
+
 
   if (now - last_status_update > 2000UL) {
     last_status_update = now;

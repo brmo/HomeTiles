@@ -110,6 +110,9 @@ static void* alloc_popup_memory(size_t bytes, bool prefer_psram = false) {
 
 static void free_cover_dsc(lv_image_dsc_t*& dsc) {
   if (!dsc) return;
+  // Cache-Eintrag (Key = dsc-Adresse) mit entsorgen, sonst zeigt ein
+  // spaeterer dsc an derselben malloc-Adresse das alte Bild (Artefakte).
+  lv_image_cache_drop(dsc);
   if (dsc->data) {
     free(const_cast<uint8_t*>(dsc->data));
   }

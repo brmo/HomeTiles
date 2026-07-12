@@ -48,6 +48,9 @@ struct MediaPopupEventData {
 static void free_cover_dsc(MediaCoverRef* ref) {
   if (!ref) return;
   if (ref->dsc) {
+    // Cache-Eintrag (Key = dsc-Adresse) mit entsorgen, sonst zeigt ein
+    // spaeterer dsc an derselben malloc-Adresse das alte Bild (Artefakte).
+    lv_image_cache_drop(ref->dsc);
     if (ref->dsc->data) {
       free(const_cast<uint8_t*>(ref->dsc->data));
     }
@@ -55,6 +58,7 @@ static void free_cover_dsc(MediaCoverRef* ref) {
     ref->dsc = nullptr;
   }
   if (ref->popup_dsc) {
+    lv_image_cache_drop(ref->popup_dsc);
     if (ref->popup_dsc->data) {
       free(const_cast<uint8_t*>(ref->popup_dsc->data));
     }
