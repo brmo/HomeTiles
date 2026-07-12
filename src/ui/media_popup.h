@@ -11,6 +11,10 @@ struct MediaPopupInit {
   String media_title;
   String media_subtitle;
   bool is_playing = false;
+  bool has_media_position = false;
+  float media_position = 0.0f;
+  float media_duration = 0.0f;
+  uint32_t media_position_received_ms = 0;
   bool has_volume = false;
   float volume_level = 0.0f;
   bool is_muted = false;

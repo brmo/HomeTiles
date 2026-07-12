@@ -130,6 +130,24 @@ static void logMdnsHeap(const char* tag) {
                 tag, dma_free / 1024, dma_largest / 1024);
 }
 
+static void logNetworkHeap(const char* tag) {
+  const uint32_t int_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+  const uint32_t int_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+  const uint32_t dma_free =
+      heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+  const uint32_t dma_largest =
+      heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+  const uint32_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+  Serial.printf("[Network/Mem] %s | Int free=%u KB | Int largest=%u KB | "
+                "DMA free=%u KB | DMA largest=%u KB | PSRAM free=%u KB\n",
+                tag ? tag : "?",
+                static_cast<unsigned>(int_free / 1024),
+                static_cast<unsigned>(int_largest / 1024),
+                static_cast<unsigned>(dma_free / 1024),
+                static_cast<unsigned>(dma_largest / 1024),
+                static_cast<unsigned>(psram_free / 1024));
+}
+
 static bool parseConfiguredIp(const char* value, IPAddress& out) {
   if (!value || !value[0]) return false;
   String text = value;
@@ -186,6 +204,7 @@ void Tab5NetworkManager::init() {
 
   // WiFi-Setup
   WiFi.mode(WIFI_STA);
+  logNetworkHeap("after-WiFi.mode");
   WiFi.setAutoReconnect(true);
   WiFi.persistent(false);
   wifi_retry_at = 0;  // Sofortiger Verbindungsversuch
@@ -303,6 +322,7 @@ void Tab5NetworkManager::connectMqtt() {
 
   Serial.println("✓ MQTT verbunden");
   mqtt_connected_at = millis();
+  logNetworkHeap("after-MQTT-connect");
 
   // Status publizieren und die Antwort-Topics direkt subscriben -- direkter
   // Client-Zugriff ist hier safe, weil connectMqtt() ausschliesslich auf dem
@@ -862,6 +882,10 @@ void Tab5NetworkManager::update() {
     }
   } else {
     // Verbunden
+
+    if (!was_connected) {
+      logNetworkHeap("WiFi-connected");
+    }
 
     // WebAdmin starten wenn gerade verbunden
     if (!was_connected && !webAdminServer.isRunning()) {

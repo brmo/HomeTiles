@@ -2055,6 +2055,10 @@ static void update_media_popup_from_widgets(GridType grid_type,
   init.media_subtitle = media_label_text(widgets.media_subtitle_label);
   init.is_playing = state_override.length() ? media_is_playing_state(state_override)
                                             : media_widget_is_playing(widgets);
+  init.has_media_position = widgets.has_media_position;
+  init.media_position = widgets.media_position;
+  init.media_duration = widgets.media_duration;
+  init.media_position_received_ms = widgets.media_position_received_ms;
   init.has_volume = widgets.has_media_volume;
   init.volume_level = widgets.media_volume_level;
   init.is_muted = widgets.media_is_muted;
@@ -2228,7 +2232,11 @@ static lv_image_dsc_t* make_media_cover_decoded_jpeg_dsc(const uint8_t* data, si
     return nullptr;
   }
 
-  constexpr uint16_t kMaxCoverSide = 160;
+  // Keep enough resolution for the 240x240 media popup. The tile itself still
+  // renders the same descriptor at its smaller size. Older firmware keeps its
+  // previous 160px limit, so the bridge can publish the larger JPEG without a
+  // protocol/version split.
+  constexpr uint16_t kMaxCoverSide = 240;
   uint16_t dst_w = ctx.w;
   uint16_t dst_h = ctx.h;
   if (dst_w > kMaxCoverSide || dst_h > kMaxCoverSide) {
@@ -3017,6 +3025,10 @@ void update_media_tile_state(GridType grid_type, uint8_t grid_index, const char*
   String channel;
   float volume_level = 0.0f;
   bool has_volume_level = false;
+  float media_position = 0.0f;
+  float media_duration = 0.0f;
+  bool has_media_position = false;
+  bool has_media_duration = false;
   bool is_muted = false;
   bool has_muted = false;
 
@@ -3033,6 +3045,8 @@ void update_media_tile_state(GridType grid_type, uint8_t grid_index, const char*
     if (!has_volume_level) {
       has_volume_level = extract_json_number_field_cstr(payload_start, "volume", volume_level);
     }
+    has_media_position = extract_json_number_field_cstr(payload_start, "media_position", media_position);
+    has_media_duration = extract_json_number_field_cstr(payload_start, "media_duration", media_duration);
     has_muted = extract_json_bool_field_cstr(payload_start, "is_volume_muted", is_muted);
     if (!has_muted) {
       has_muted = extract_json_bool_field_cstr(payload_start, "muted", is_muted);
@@ -3066,6 +3080,10 @@ void update_media_tile_state(GridType grid_type, uint8_t grid_index, const char*
   widgets.has_media_volume = has_volume_level;
   widgets.media_volume_level = has_volume_level ? volume_level : 0.0f;
   if (has_muted) widgets.media_is_muted = is_muted;
+  widgets.has_media_position = has_media_position && has_media_duration && media_duration > 0.0f;
+  widgets.media_position = widgets.has_media_position ? media_position : 0.0f;
+  widgets.media_duration = widgets.has_media_position ? media_duration : 0.0f;
+  widgets.media_position_received_ms = widgets.has_media_position ? millis() : 0;
 
   String main_text = media_first_non_empty(title, channel);
   const bool has_real_media_title = main_text.length() > 0;

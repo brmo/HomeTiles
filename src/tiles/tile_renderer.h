@@ -89,6 +89,10 @@ struct MediaTileWidgets {
   lv_obj_t* state_label = nullptr;
   uint32_t last_payload_hash = 0;
   uint32_t last_media_text_hash = 0;
+  bool has_media_position = false;
+  float media_position = 0.0f;
+  float media_duration = 0.0f;
+  uint32_t media_position_received_ms = 0;
   bool has_media_volume = false;
   float media_volume_level = 0.0f;
   bool media_is_muted = false;

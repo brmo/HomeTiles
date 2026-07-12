@@ -128,6 +128,10 @@ static void show_media_popup_event_cb(lv_event_t* e) {
   init.media_title = media_label_text(widgets.media_title_label);
   init.media_subtitle = media_label_text(widgets.media_subtitle_label);
   init.is_playing = media_widget_is_playing(widgets);
+  init.has_media_position = widgets.has_media_position;
+  init.media_position = widgets.media_position;
+  init.media_duration = widgets.media_duration;
+  init.media_position_received_ms = widgets.media_position_received_ms;
   init.has_volume = widgets.has_media_volume;
   init.volume_level = widgets.media_volume_level;
   init.is_muted = widgets.media_is_muted;
@@ -445,6 +449,10 @@ lv_obj_t* render_media_tile(lv_obj_t* parent,
     target[index].has_media_volume = false;
     target[index].media_volume_level = 0.0f;
     target[index].media_is_muted = false;
+    target[index].has_media_position = false;
+    target[index].media_position = 0.0f;
+    target[index].media_duration = 0.0f;
+    target[index].media_position_received_ms = 0;
   }
 
   if (tile.sensor_entity.length()) {

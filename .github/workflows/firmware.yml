@@ -120,6 +120,32 @@ jobs:
           arduino-cli core list
           arduino-cli lib list
 
+      - name: Apply ESP-Hosted 3.3.7 TX allocation fix
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ar_bin="$(find "$HOME/.arduino15/packages/esp32/tools" -type f -path '*/bin/riscv32-esp-elf-ar' -print -quit)"
+          test -x "$ar_bin"
+
+          for variant in esp32p4-libs esp32p4_es-libs; do
+            archive="$HOME/.arduino15/packages/esp32/tools/${variant}/${ARDUINO_CORE_VERSION}/lib/libespressif__esp_hosted.a"
+            fixed_object="$GITHUB_WORKSPACE/tools/esp-hosted-3.3.7-tx-fix/${variant}/transport_drv.c.obj"
+            test -f "$archive"
+            test -f "$fixed_object"
+
+            work_dir="$(mktemp -d)"
+            cp "$fixed_object" "$work_dir/transport_drv.c.obj"
+            "$ar_bin" rs "$archive" "$work_dir/transport_drv.c.obj"
+            (
+              cd "$work_dir"
+              rm transport_drv.c.obj
+              "$ar_bin" x "$archive" transport_drv.c.obj
+              cmp transport_drv.c.obj "$fixed_object"
+            )
+            rm -rf "$work_dir"
+          done
+
       - name: Verify release tag matches firmware version
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash

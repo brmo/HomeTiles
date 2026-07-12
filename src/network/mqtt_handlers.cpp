@@ -1617,6 +1617,34 @@ void mqttPublishMediaCommand(const char* entity_id, const char* command) {
   Serial.printf("Media command -> MQTT '%s' (%s)\n", topic, queued ? "queued" : "queue-full");
 }
 
+void mqttPublishMediaSeek(const char* entity_id, float position_seconds) {
+  if (!entity_id || !*entity_id) return;
+  if (position_seconds < 0.0f) position_seconds = 0.0f;
+
+  if (!networkManager.isMqttConnected()) {
+    Serial.printf("Media seek skipped (MQTT offline): %s\n", entity_id);
+    return;
+  }
+
+  const char* topic = mqttTopics.topic(TopicKey::MEDIA_CMND);
+  if (!topic || !*topic) {
+    Serial.printf("Media seek skipped (no topic): %s\n", entity_id);
+    return;
+  }
+
+  char payload[288];
+  snprintf(payload,
+           sizeof(payload),
+           "{\"entity_id\":\"%s\",\"command\":\"media_seek\",\"seek_position\":%.1f}",
+           entity_id,
+           position_seconds);
+  bool queued = networkManager.mqttEnqueuePublish(topic, payload, false);
+  Serial.printf("Media seek -> MQTT '%s' %.1fs (%s)\n",
+                topic,
+                position_seconds,
+                queued ? "queued" : "queue-full");
+}
+
 void mqttPublishMediaVolume(const char* entity_id, float volume_level) {
   if (!entity_id || !*entity_id) return;
   if (volume_level < 0.0f) volume_level = 0.0f;

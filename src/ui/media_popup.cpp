@@ -13,6 +13,7 @@
 #include "src/tiles/tile_renderer_shared.h"
 #include "src/ui/energy_popup.h"
 #include "src/ui/light_popup.h"
+#include "src/ui/popup_layout.h"
 #include "src/ui/sensor_popup.h"
 #include "src/ui/weather_popup.h"
 
@@ -27,28 +28,24 @@ constexpr int kCardHeight = SCREEN_HEIGHT - (kCardMargin * 2);
 constexpr int kCardPad = 20;
 constexpr int kHeaderIconOffsetX = 0;
 constexpr int kHeaderIconOffsetY = 0;
-constexpr int kCoverSize = 120;
-constexpr int kVolumeBottom = 82;
-constexpr int kControlsBottom = kVolumeBottom + 66;
+constexpr int kCoverSize = 240;
 constexpr int kControlButtonSize = 78;
 constexpr int kControlSideOffset = 116;
-constexpr int kControlsTop = kCardHeight - kControlsBottom - kControlButtonSize;
-constexpr int kHeaderContentBottom = 96;
-constexpr int kCoverTextGap = 48;
-constexpr int kTitleBlockHeight = 84;
-constexpr int kCoverTextGroupHeight = kCoverSize + kCoverTextGap + kTitleBlockHeight;
-constexpr int kCoverTopAuto =
-    kHeaderContentBottom + ((kControlsTop - kHeaderContentBottom - kCoverTextGroupHeight) / 3);
-constexpr int kCoverTop = kCoverTopAuto < 112 ? 112 : kCoverTopAuto;
+constexpr int kHeightExtra = (kCardHeight > 712) ? (kCardHeight - 712) : 0;
+constexpr int kCoverTop = 104;
+constexpr int kCoverTextGap = 20;
 constexpr int kTitleTop = kCoverTop + kCoverSize + kCoverTextGap;
+constexpr int kSeekTop = 470 + (kHeightExtra / 2);
+constexpr int kControlsTop = popup_layout::kNavY - kControlButtonSize - 12;
+constexpr int kSeekWidth = kCardWidth - (kCardPad * 2) - 190;
+constexpr int kSeekSliderHeight = 10;
+constexpr int kSeekSliderKnobSize = 26;
+constexpr int kSeekSliderClickPad = 18;
 constexpr int kVolumeWidth = (kCardWidth >= 760) ? 410 : 330;
 constexpr int kVolumeSliderHeight = 16;
 constexpr int kVolumeSliderKnobSize = 36;
 constexpr int kVolumeSliderClickPad = 20;
-constexpr int kVolumeCenterBottom = kVolumeBottom + (kVolumeSliderHeight / 2);
 constexpr int kVolumeSideOffset = (kVolumeWidth / 2) + 70;
-constexpr int kVolumeButtonBottom = kVolumeCenterBottom - (kControlButtonSize / 2);
-constexpr int kVolumePercentBottom = kVolumeCenterBottom - 13;
 
 struct MediaPopupContext;
 
@@ -68,6 +65,10 @@ struct MediaPopupContext {
   lv_obj_t* fallback_icon = nullptr;
   lv_obj_t* media_title_label = nullptr;
   lv_obj_t* media_subtitle_label = nullptr;
+  lv_obj_t* seek_slider = nullptr;
+  lv_obj_t* seek_current_label = nullptr;
+  lv_obj_t* seek_duration_label = nullptr;
+  lv_obj_t* volume_row = nullptr;
   lv_obj_t* volume_slider = nullptr;
   lv_obj_t* volume_icon_label = nullptr;
   lv_obj_t* volume_label = nullptr;
@@ -77,6 +78,14 @@ struct MediaPopupContext {
   lv_image_dsc_t* cover_dsc = nullptr;
   uint32_t cover_hash = 0;
   uint32_t bg_color = 0x2A2A2A;
+  bool has_media_position = false;
+  bool is_playing = false;
+  bool seek_dragging = false;
+  bool updating_seek = false;
+  float media_position = 0.0f;
+  float media_duration = 0.0f;
+  uint32_t media_position_received_ms = 0;
+  lv_timer_t* progress_timer = nullptr;
   bool has_volume = false;
   bool is_muted = false;
   int32_t last_volume_pct = 35;
@@ -260,6 +269,87 @@ static void update_volume(MediaPopupContext* ctx, const MediaPopupInit& init) {
   set_volume_widgets(ctx, pct, init.is_muted);
 }
 
+static void format_media_time(float seconds, char* out, size_t out_len) {
+  if (!out || out_len == 0) return;
+  if (seconds < 0.0f) seconds = 0.0f;
+  uint32_t total = static_cast<uint32_t>(seconds + 0.5f);
+  const uint32_t hours = total / 3600U;
+  const uint32_t minutes = (total % 3600U) / 60U;
+  const uint32_t secs = total % 60U;
+  if (hours > 0) {
+    snprintf(out, out_len, "%lu:%02lu:%02lu",
+             static_cast<unsigned long>(hours),
+             static_cast<unsigned long>(minutes),
+             static_cast<unsigned long>(secs));
+  } else {
+    snprintf(out, out_len, "%lu:%02lu",
+             static_cast<unsigned long>(minutes),
+             static_cast<unsigned long>(secs));
+  }
+}
+
+static float current_media_position(const MediaPopupContext* ctx) {
+  if (!ctx || !ctx->has_media_position) return 0.0f;
+  float position = ctx->media_position;
+  if (ctx->is_playing && !ctx->seek_dragging && ctx->media_position_received_ms != 0) {
+    position += static_cast<float>(static_cast<uint32_t>(millis() - ctx->media_position_received_ms)) / 1000.0f;
+  }
+  if (position < 0.0f) position = 0.0f;
+  if (position > ctx->media_duration) position = ctx->media_duration;
+  return position;
+}
+
+static void set_seek_widgets(MediaPopupContext* ctx, float position, bool update_slider) {
+  if (!ctx || !ctx->seek_slider) return;
+  const bool available = ctx->has_media_position && ctx->media_duration > 0.0f;
+  if (!available) {
+    lv_obj_add_state(ctx->seek_slider, LV_STATE_DISABLED);
+    if (ctx->seek_current_label) lv_label_set_text(ctx->seek_current_label, "--:--");
+    if (ctx->seek_duration_label) lv_label_set_text(ctx->seek_duration_label, "--:--");
+    if (update_slider) lv_slider_set_value(ctx->seek_slider, 0, LV_ANIM_OFF);
+    return;
+  }
+
+  lv_obj_clear_state(ctx->seek_slider, LV_STATE_DISABLED);
+  if (position < 0.0f) position = 0.0f;
+  if (position > ctx->media_duration) position = ctx->media_duration;
+  if (update_slider) {
+    ctx->updating_seek = true;
+    const int32_t value = static_cast<int32_t>((position / ctx->media_duration) * 1000.0f + 0.5f);
+    lv_slider_set_value(ctx->seek_slider, value, LV_ANIM_OFF);
+    ctx->updating_seek = false;
+  }
+
+  char current_text[16];
+  char duration_text[16];
+  format_media_time(position, current_text, sizeof(current_text));
+  format_media_time(ctx->media_duration, duration_text, sizeof(duration_text));
+  if (ctx->seek_current_label) lv_label_set_text(ctx->seek_current_label, current_text);
+  if (ctx->seek_duration_label) lv_label_set_text(ctx->seek_duration_label, duration_text);
+}
+
+static void update_seek(MediaPopupContext* ctx, const MediaPopupInit& init) {
+  if (!ctx || !ctx->seek_slider) return;
+  ctx->is_playing = init.is_playing;
+  ctx->has_media_position = init.has_media_position && init.media_duration > 0.0f;
+  ctx->media_duration = ctx->has_media_position ? init.media_duration : 0.0f;
+  if (!ctx->seek_dragging) {
+    ctx->media_position = ctx->has_media_position ? init.media_position : 0.0f;
+    ctx->media_position_received_ms = ctx->has_media_position
+                                          ? (init.media_position_received_ms != 0
+                                                 ? init.media_position_received_ms
+                                                 : millis())
+                                          : 0;
+    set_seek_widgets(ctx, current_media_position(ctx), true);
+  }
+}
+
+static void media_progress_timer_cb(lv_timer_t* timer) {
+  MediaPopupContext* ctx = timer ? static_cast<MediaPopupContext*>(lv_timer_get_user_data(timer)) : nullptr;
+  if (!ctx || !ctx->card || lv_obj_has_flag(ctx->card, LV_OBJ_FLAG_HIDDEN) || ctx->seek_dragging) return;
+  set_seek_widgets(ctx, current_media_position(ctx), true);
+}
+
 static void apply_init_to_context(MediaPopupContext* ctx, const MediaPopupInit& init) {
   if (!ctx) return;
   ctx->entity_id = init.entity_id;
@@ -316,6 +406,7 @@ static void apply_init_to_context(MediaPopupContext* ctx, const MediaPopupInit& 
   if (ctx->play_pause_label) {
     lv_obj_set_style_text_color(ctx->play_pause_label, lv_color_hex(ctx->bg_color), 0);
   }
+  update_seek(ctx, init);
   update_volume(ctx, init);
   update_cover(ctx, init.cover_dsc, init.cover_hash);
 }
@@ -338,6 +429,10 @@ static void on_overlay_delete(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_DELETE) return;
   MediaPopupContext* ctx = static_cast<MediaPopupContext*>(lv_event_get_user_data(e));
   if (!ctx) return;
+  if (ctx->progress_timer) {
+    lv_timer_delete(ctx->progress_timer);
+    ctx->progress_timer = nullptr;
+  }
   free_cover_dsc(ctx->cover_dsc);
   if (g_media_popup_ctx == ctx) g_media_popup_ctx = nullptr;
   delete ctx;
@@ -371,6 +466,27 @@ static void on_volume_slider_event(lv_event_t* e) {
   }
 }
 
+static void on_seek_slider_event(lv_event_t* e) {
+  const lv_event_code_t code = lv_event_get_code(e);
+  if (code != LV_EVENT_VALUE_CHANGED && code != LV_EVENT_RELEASED) return;
+  MediaPopupContext* ctx = static_cast<MediaPopupContext*>(lv_event_get_user_data(e));
+  if (!ctx || !ctx->seek_slider || !ctx->has_media_position || ctx->updating_seek) return;
+
+  int32_t raw = lv_slider_get_value(ctx->seek_slider);
+  if (raw < 0) raw = 0;
+  if (raw > 1000) raw = 1000;
+  const float position = ctx->media_duration * (static_cast<float>(raw) / 1000.0f);
+  ctx->seek_dragging = code != LV_EVENT_RELEASED;
+  set_seek_widgets(ctx, position, false);
+
+  if (code == LV_EVENT_RELEASED) {
+    ctx->media_position = position;
+    ctx->media_position_received_ms = millis();
+    ctx->seek_dragging = false;
+    mqttPublishMediaSeek(ctx->entity_id.c_str(), position);
+  }
+}
+
 static void on_volume_mute_click(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   MediaPopupContext* ctx = static_cast<MediaPopupContext*>(lv_event_get_user_data(e));
@@ -394,7 +510,7 @@ static lv_obj_t* create_control_button(lv_obj_t* parent,
                                        bool primary) {
   lv_obj_t* btn = lv_button_create(parent);
   lv_obj_set_size(btn, kControlButtonSize, kControlButtonSize);
-  lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, x_ofs, -kControlsBottom);
+  lv_obj_align(btn, LV_ALIGN_TOP_MID, x_ofs, kControlsTop);
   lv_obj_set_style_bg_color(btn, primary ? lv_color_white() : lv_color_black(), LV_PART_MAIN | LV_STATE_DEFAULT);
   lv_obj_set_style_bg_opa(btn, primary ? LV_OPA_COVER : LV_OPA_TRANSP, LV_PART_MAIN | LV_STATE_DEFAULT);
   lv_obj_set_style_bg_color(btn, primary ? lv_color_hex(0xD8D8D8) : lv_color_white(), LV_PART_MAIN | LV_STATE_PRESSED);
@@ -532,11 +648,55 @@ void show_media_popup(const MediaPopupInit& init) {
   lv_obj_set_style_text_align(ctx->media_subtitle_label, LV_TEXT_ALIGN_CENTER, 0);
   lv_label_set_long_mode(ctx->media_subtitle_label, LV_LABEL_LONG_SCROLL);
   apply_popup_scroll_style(ctx->media_subtitle_label);
-  lv_obj_align_to(ctx->media_subtitle_label, ctx->media_title_label, LV_ALIGN_OUT_BOTTOM_MID, 0, 12);
+  lv_obj_align_to(ctx->media_subtitle_label, ctx->media_title_label, LV_ALIGN_OUT_BOTTOM_MID, 0, 8);
 
-  lv_obj_t* volume_btn = lv_button_create(card);
+  ctx->seek_slider = lv_slider_create(card);
+  lv_obj_set_size(ctx->seek_slider, kSeekWidth, kSeekSliderHeight);
+  lv_obj_align(ctx->seek_slider, LV_ALIGN_TOP_MID, 0, kSeekTop);
+  lv_slider_set_range(ctx->seek_slider, 0, 1000);
+  lv_slider_set_value(ctx->seek_slider, 0, LV_ANIM_OFF);
+  lv_obj_set_style_width(ctx->seek_slider, kSeekSliderKnobSize, LV_PART_KNOB);
+  lv_obj_set_style_height(ctx->seek_slider, kSeekSliderKnobSize, LV_PART_KNOB);
+  lv_obj_set_ext_click_area(ctx->seek_slider, kSeekSliderClickPad);
+  lv_obj_set_style_bg_color(ctx->seek_slider, lv_color_white(), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(ctx->seek_slider, LV_OPA_30, LV_PART_MAIN);
+  lv_obj_set_style_radius(ctx->seek_slider, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(ctx->seek_slider, lv_color_white(), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_opa(ctx->seek_slider, LV_OPA_COVER, LV_PART_INDICATOR);
+  lv_obj_set_style_radius(ctx->seek_slider, LV_RADIUS_CIRCLE, LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(ctx->seek_slider, lv_color_white(), LV_PART_KNOB);
+  lv_obj_set_style_bg_opa(ctx->seek_slider, LV_OPA_COVER, LV_PART_KNOB);
+  lv_obj_set_style_radius(ctx->seek_slider, LV_RADIUS_CIRCLE, LV_PART_KNOB);
+  lv_obj_clear_flag(ctx->seek_slider, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(ctx->seek_slider, on_seek_slider_event, LV_EVENT_VALUE_CHANGED, ctx);
+  lv_obj_add_event_cb(ctx->seek_slider, on_seek_slider_event, LV_EVENT_RELEASED, ctx);
+
+  ctx->seek_current_label = lv_label_create(card);
+  set_label_style(ctx->seek_current_label, lv_color_hex(0xD8DEE9), &ui_font_20);
+  lv_obj_set_width(ctx->seek_current_label, 80);
+  lv_obj_set_style_text_align(ctx->seek_current_label, LV_TEXT_ALIGN_RIGHT, 0);
+  lv_label_set_text(ctx->seek_current_label, "--:--");
+  lv_obj_align_to(ctx->seek_current_label, ctx->seek_slider, LV_ALIGN_OUT_LEFT_MID, -12, 0);
+
+  ctx->seek_duration_label = lv_label_create(card);
+  set_label_style(ctx->seek_duration_label, lv_color_hex(0xD8DEE9), &ui_font_20);
+  lv_obj_set_width(ctx->seek_duration_label, 80);
+  lv_obj_set_style_text_align(ctx->seek_duration_label, LV_TEXT_ALIGN_LEFT, 0);
+  lv_label_set_text(ctx->seek_duration_label, "--:--");
+  lv_obj_align_to(ctx->seek_duration_label, ctx->seek_slider, LV_ALIGN_OUT_RIGHT_MID, 12, 0);
+
+  ctx->volume_row = lv_obj_create(card);
+  lv_obj_remove_style_all(ctx->volume_row);
+  lv_obj_set_size(ctx->volume_row, popup_layout::kContentWidth, popup_layout::kNavHeight);
+  lv_obj_align(ctx->volume_row, LV_ALIGN_BOTTOM_MID, 0, -popup_layout::kNavBottomInset);
+  lv_obj_set_style_bg_opa(ctx->volume_row, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(ctx->volume_row, 0, 0);
+  lv_obj_set_style_pad_all(ctx->volume_row, 0, 0);
+  lv_obj_clear_flag(ctx->volume_row, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* volume_btn = lv_button_create(ctx->volume_row);
   lv_obj_set_size(volume_btn, kControlButtonSize, kControlButtonSize);
-  lv_obj_align(volume_btn, LV_ALIGN_BOTTOM_MID, -kVolumeSideOffset, -kVolumeButtonBottom);
+  lv_obj_align(volume_btn, LV_ALIGN_CENTER, -kVolumeSideOffset, 0);
   lv_obj_set_style_bg_color(volume_btn, lv_color_black(), LV_PART_MAIN | LV_STATE_DEFAULT);
   lv_obj_set_style_bg_opa(volume_btn, LV_OPA_TRANSP, LV_PART_MAIN | LV_STATE_DEFAULT);
   lv_obj_set_style_bg_color(volume_btn, lv_color_white(), LV_PART_MAIN | LV_STATE_PRESSED);
@@ -555,9 +715,9 @@ void show_media_popup(const MediaPopupInit& init) {
   lv_obj_center(ctx->volume_icon_label);
   lv_obj_clear_flag(ctx->volume_icon_label, LV_OBJ_FLAG_CLICKABLE);
 
-  ctx->volume_slider = lv_slider_create(card);
+  ctx->volume_slider = lv_slider_create(ctx->volume_row);
   lv_obj_set_size(ctx->volume_slider, kVolumeWidth, kVolumeSliderHeight);
-  lv_obj_align(ctx->volume_slider, LV_ALIGN_BOTTOM_MID, 0, -kVolumeBottom);
+  lv_obj_align(ctx->volume_slider, LV_ALIGN_CENTER, 0, 0);
   lv_slider_set_range(ctx->volume_slider, 0, 100);
   lv_slider_set_value(ctx->volume_slider, 0, LV_ANIM_OFF);
   lv_obj_set_style_width(ctx->volume_slider, kVolumeSliderKnobSize, LV_PART_KNOB);
@@ -576,12 +736,12 @@ void show_media_popup(const MediaPopupInit& init) {
   lv_obj_add_event_cb(ctx->volume_slider, on_volume_slider_event, LV_EVENT_VALUE_CHANGED, ctx);
   lv_obj_add_event_cb(ctx->volume_slider, on_volume_slider_event, LV_EVENT_RELEASED, ctx);
 
-  ctx->volume_label = lv_label_create(card);
+  ctx->volume_label = lv_label_create(ctx->volume_row);
   set_label_style(ctx->volume_label, lv_color_hex(0xD8DEE9), &ui_font_20);
   lv_label_set_text(ctx->volume_label, "0%");
   lv_obj_set_width(ctx->volume_label, kControlButtonSize);
   lv_obj_set_style_text_align(ctx->volume_label, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_align(ctx->volume_label, LV_ALIGN_BOTTOM_MID, kVolumeSideOffset, -kVolumePercentBottom);
+  lv_obj_align(ctx->volume_label, LV_ALIGN_CENTER, kVolumeSideOffset, 0);
 
   ctx->previous_label = create_control_button(card,
                                               ctx,
@@ -610,6 +770,7 @@ void show_media_popup(const MediaPopupInit& init) {
   lv_obj_move_foreground(close_btn);
 
   apply_init_to_context(ctx, init);
+  ctx->progress_timer = lv_timer_create(media_progress_timer_cb, 1000, ctx);
   lv_obj_add_event_cb(overlay, on_overlay_click, LV_EVENT_CLICKED, ctx);
   lv_obj_add_event_cb(overlay, on_overlay_delete, LV_EVENT_DELETE, ctx);
 }
