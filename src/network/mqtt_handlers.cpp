@@ -1111,6 +1111,7 @@ static void rebuildDynamicRoutes(std::vector<DynamicSensorRoute>& routes) {
   // ueber den PSRAM-Ordner-Entity-Cache von TileConfig -- der Flash-Read pro
   // Ordner (~20ms) faellt nur beim ersten Scan bzw. nach einer Grid-Aenderung
   // an, danach ist der komplette Ordner-Durchlauf praktisch kostenlos.
+  bool has_media_tiles = false;
   auto add_grid_entities = [&](const FolderEntitySlotView* slots, size_t count) {
     for (size_t i = 0; i < count; ++i) {
       const FolderEntitySlotView& slot = slots[i];
@@ -1118,6 +1119,7 @@ static void rebuildDynamicRoutes(std::vector<DynamicSensorRoute>& routes) {
           slot.entity[0]) {
         add_route(String(slot.entity), -1);
         if (slot.type == TILE_MEDIA) {
+          has_media_tiles = true;
           // New bridges publish cover-free state changes here first. Keep the
           // normal state subscription as well for retained full payloads and
           // compatibility with older bridge versions.
@@ -1147,6 +1149,26 @@ static void rebuildDynamicRoutes(std::vector<DynamicSensorRoute>& routes) {
     // between folders keeps the UI breathing during the reload.
     lvglServiceDuringBlockingWork();
   }
+
+  // Media-States mit eingebettetem Cover (~19 KB) brauchen einen groesseren
+  // Empfangspuffer als die 16-KB-Basis; der Worker gleicht die Groesse an.
+  networkManager.setMqttMediaBufferNeeded(has_media_tiles);
+}
+
+// Boot-Scan fuer setup(): steht schon VOR networkManager.init() ein Media-Tile
+// in der gespeicherten Konfiguration, wird der MQTT-Puffer gleich in der
+// passenden Groesse angelegt -- das retained Cover direkt nach dem ersten
+// Subscribe ginge sonst verloren (Grow waere erst nach dem Sturmfenster dran).
+bool mqttAnyMediaTileConfigured() {
+  const std::vector<FolderEntry>& folders = tileConfig.getFolders();
+  FolderEntitySlotView slots[TILES_PER_GRID];
+  for (const auto& folder : folders) {
+    if (!tileConfig.getFolderEntitiesCached(folder.id, slots, TILES_PER_GRID)) continue;
+    for (size_t i = 0; i < TILES_PER_GRID; ++i) {
+      if (slots[i].type == TILE_MEDIA && slots[i].entity[0]) return true;
+    }
+  }
+  return false;
 }
 
 static void rebuildDynamicWeatherRoutes(std::vector<DynamicWeatherRoute>& routes) {

@@ -56,11 +56,17 @@ uint32_t g_ppa_cooldown_until_ms = 0;
 uint32_t g_ppa_fallback_log_count = 0;
 uint32_t g_ppa_fallback_log_window_ms = 0;
 uint32_t g_ppa_reinit_at_ms = 0;  // 0 = kein Re-Init noetig
-// Bekannte IDF-Luecke (TODO in ppa_core.c): eine SRM-Transaktion mit
-// unguenstigen Parametern verklemmt die 2D-DMA endgueltig — die Engine ist
-// dann tot, unregister schlaegt fehl ("client still has unprocessed trans"),
-// jeder weitere Versuch erzeugt nur die Fehler-Kaskade und leakt Clients.
-bool g_ppa_dead = false;
+// Bekannte IDF-Luecke (TODO in ppa_core.c): eine SRM-Transaktion kann die
+// 2D-DMA blockieren — unregister schlaegt dann fehl ("client still has
+// unprocessed trans"). Frueher war das ein endgueltiges "PPA aus bis Reboot".
+// In der Praxis (Bus-Last durch HW-JPEG-Cover, PixelAnim, DSI-Scanout) kommt
+// die Transaktion aber oft doch noch durch, nur weit nach der 480-ms-Frist.
+// Deshalb: verklemmt melden, per CPU weiterzeichnen und auf die spaete
+// Fertigmeldung lauschen — danach den Client sauber neu aufsetzen.
+bool g_ppa_wedged = false;
+uint32_t g_ppa_wedged_since_ms = 0;
+uint32_t g_ppa_wedge_retry_at_ms = 0;
+constexpr uint32_t kPpaWedgeResetRetryMs = 5000;
 
 uint8_t to_panel_rotation(uint8_t logical_rotation) {
   logical_rotation &= 0x03;
@@ -112,19 +118,22 @@ void pause_ppa_for(uint32_t duration_ms) {
   g_ppa_cooldown_until_ms = millis() + duration_ms;
 }
 
-void reset_ppa_client() {
+// true = frischer Client einsatzbereit. Bei verweigertem Unregister (offene
+// Transaktion im einzigen Pending-Slot) bleibt das alte Handle erhalten und
+// der Aufrufer versucht es spaeter erneut — Wegwerfen wuerde Client-Slot und
+// Heap leaken (gleiches Muster wie beim 8-Zoll-Geraet seit v0.4.11).
+bool reset_ppa_client() {
   g_ppa_ready = false;
   g_ppa_async_ready = false;
 
-  ppa_client_handle_t old = g_ppa_handle;
-  g_ppa_handle = nullptr;
-  if (old) {
-    const esp_err_t unreg_err = ppa_unregister_client(old);
+  if (g_ppa_handle) {
+    const esp_err_t unreg_err = ppa_unregister_client(g_ppa_handle);
     if (unreg_err != ESP_OK) {
-      // Haengt meist an einer noch offenen Transaktion; Handle verfaellt dann.
-      Serial.printf("[Device/M5StacksTab5] PPA unregister err=%d\n",
+      Serial.printf("[Device/M5StacksTab5] PPA unregister verweigert err=%d (Transaktion offen), Retry folgt\n",
                     static_cast<int>(unreg_err));
+      return false;
     }
+    g_ppa_handle = nullptr;
   }
 
   ppa_client_config_t ppa_cfg = {};
@@ -141,7 +150,7 @@ void reset_ppa_client() {
                   static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
                   static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024),
                   static_cast<unsigned long>(kPpaReinitRetryMs));
-    return;
+    return false;
   }
 
   if (g_ppa_done) {
@@ -154,12 +163,14 @@ void reset_ppa_client() {
   g_ppa_ready = (g_panel_fb != nullptr);
   g_ppa_reinit_at_ms = 0;
   Serial.println("[Device/M5StacksTab5] PPA client reset");
+  return g_ppa_ready;
 }
 
 void note_ppa_fault() {
-  // Kein Client-Reset mehr: mit einer offenen (verklemmten) Transaktion kann
-  // ppa_unregister_client nie gelingen — der Reset leakt nur Clients und
-  // Heap. Verklemmung wird direkt im Rotate-Pfad erkannt (g_ppa_dead).
+  // Kein Client-Reset hier: mit einer offenen (verklemmten) Transaktion kann
+  // ppa_unregister_client nicht gelingen. Verklemmung wird direkt im
+  // Rotate-Pfad erkannt (g_ppa_wedged) und dort ueber die spaete
+  // Fertigmeldung wieder aufgeloest.
   Serial.printf("[Device/M5StacksTab5] PPA fault #%u (int frei=%u KB, largest=%u KB)\n",
                 static_cast<unsigned>(g_ppa_consecutive_faults + 1),
                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
@@ -283,7 +294,27 @@ bool rect_inside_logical_bounds(int32_t x, int32_t y, int32_t w, int32_t h) {
 }
 
 bool ppa_rotate_to_panel(int32_t x, int32_t y, int32_t w, int32_t h, const uint16_t* data) {
-  if (g_ppa_dead) {
+  if (g_ppa_wedged) {
+    // Spaete Fertigmeldung der verklemmten Transaktion? Dann ist die Engine
+    // wieder frei und der Client laesst sich sauber neu aufsetzen.
+    if (g_ppa_done && xSemaphoreTake(g_ppa_done, 0) == pdTRUE) {
+      Serial.printf("[Device/M5StacksTab5] PPA Verklemmung geloest (Transaktion nach %lu ms doch fertig), Client-Reset\n",
+                    static_cast<unsigned long>(millis() - g_ppa_wedged_since_ms));
+      g_ppa_wedged = false;
+      g_ppa_consecutive_faults = 0;
+      reset_ppa_client();
+      pause_ppa_for(kPpaFaultCooldownMs);
+    } else if (static_cast<int32_t>(millis() - g_ppa_wedge_retry_at_ms) >= 0) {
+      // Ohne Fertigmeldung klappt der Reset nur, wenn die Transaktion still
+      // abgelaufen ist — der Versuch ist billig (unregister verweigert sonst).
+      g_ppa_wedge_retry_at_ms = millis() + kPpaWedgeResetRetryMs;
+      if (reset_ppa_client()) {
+        Serial.println("[Device/M5StacksTab5] PPA Verklemmung geloest (Client-Reset erfolgreich)");
+        g_ppa_wedged = false;
+        g_ppa_consecutive_faults = 0;
+        pause_ppa_for(kPpaFaultCooldownMs);
+      }
+    }
     return false;
   }
   if (!g_ppa_ready || !g_ppa_handle) {
@@ -373,12 +404,15 @@ bool ppa_rotate_to_panel(int32_t x, int32_t y, int32_t w, int32_t h, const uint1
         g_ppa_consecutive_faults = 0;
         return true;
       }
-      // Endgueltig verklemmt (IDF-TODO: "SRM parameter error blocks at
-      // 2D-DMA, transaction can never finish"): Engine ist tot, unregister
-      // unmoeglich. Sauber auf M5GFX zurueckfallen statt Fehler-Kaskade.
-      g_ppa_dead = true;
+      // Verklemmt (IDF-TODO: "SRM parameter error blocks at 2D-DMA"): auf
+      // M5GFX zurueckfallen, aber NICHT bis zum Reboot aufgeben — der
+      // Wedge-Block oben lauscht auf die spaete Fertigmeldung und setzt den
+      // Client dann sauber neu auf.
+      g_ppa_wedged = true;
+      g_ppa_wedged_since_ms = millis();
+      g_ppa_wedge_retry_at_ms = millis() + kPpaWedgeResetRetryMs;
       g_ppa_ready = false;
-      Serial.printf("[Device/M5StacksTab5] PPA VERKLEMMT: rotate %ldx%ld src=(%ld,%ld) dst=(%ld,%ld) rot=%d — PPA aus bis Reboot\n",
+      Serial.printf("[Device/M5StacksTab5] PPA VERKLEMMT: rotate %ldx%ld src=(%ld,%ld) dst=(%ld,%ld) rot=%d — CPU-Fallback, Recovery aktiv\n",
                     static_cast<long>(w), static_cast<long>(h),
                     static_cast<long>(x), static_cast<long>(y),
                     static_cast<long>(dst_x), static_cast<long>(dst_y),

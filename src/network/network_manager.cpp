@@ -18,6 +18,11 @@ Tab5NetworkManager networkManager;
 
 static constexpr uint16_t kMqttBufferOta = 1024;
 static constexpr uint16_t kMqttBufferNormal = 16 * 1024;
+// Sobald Media-Tiles konfiguriert sind, muss der "normale" Puffer die
+// Bridge-Media-States mit eingebettetem 240px-Cover fassen (~14 KB JPEG ->
+// ~19 KB Base64+JSON). Mit 16 KB verwirft PubSubClient diese Pakete komplett;
+// Cover kamen dann nur zufaellig waehrend eines 32-KB-Large-Fensters durch.
+static constexpr uint16_t kMqttBufferMedia = 24 * 1024;
 static constexpr uint16_t kMqttBufferLarge = 32 * 1024;
 static constexpr uint32_t kMqttPostConnectQuietMs = 3000;
 static constexpr uint8_t kMqttOutboundDrainNormal = 12;
@@ -232,7 +237,7 @@ void Tab5NetworkManager::init() {
     // MQTT-Setup (vor Worker-Start, daher direkter Client-Zugriff okay)
     mqtt_client.setClient(net_client);
     mqtt_client.setServer(cfg.mqtt_host, cfg.mqtt_port);
-    setMqttBufferSize(kMqttBufferNormal, "init");
+    setMqttBufferSize(mqttNormalBufferSize(), "init");
     mqtt_client.setCallback(mqttCallback);
   } else {
     Serial.println("MQTT: keine Konfiguration vorhanden - ueberspringe Verbindung");
@@ -280,8 +285,8 @@ void Tab5NetworkManager::connectMqtt() {
   mqtt_retry_at = millis() + 3000UL;  // Retry in 3s
 
   if (WiFi.status() != WL_CONNECTED) return;
-  if (mqtt_large_until == 0 && mqtt_client.getBufferSize() < kMqttBufferNormal) {
-    setMqttBufferSize(kMqttBufferNormal, "connect");
+  if (mqtt_large_until == 0 && mqtt_client.getBufferSize() < mqttNormalBufferSize()) {
+    setMqttBufferSize(mqttNormalBufferSize(), "connect");
   }
 
   if (!configManager.isConfigured()) {
@@ -404,8 +409,8 @@ void Tab5NetworkManager::serviceMqttWorker() {
     mqtt_post_connect_pending = false;
     mqtt_post_connect_ready_at = 0;
     mqtt_large_until = 0;
-    if (mqtt_buffer_size > kMqttBufferNormal) {
-      setMqttBufferSize(kMqttBufferNormal, "reconfig");
+    if (mqtt_buffer_size > mqttNormalBufferSize()) {
+      setMqttBufferSize(mqttNormalBufferSize(), "reconfig");
     }
     mqtt_connected_flag = false;
 
@@ -443,7 +448,7 @@ void Tab5NetworkManager::serviceMqttWorker() {
   if (mqtt_restore_normal_requested) {
     mqtt_restore_normal_requested = false;
     mqtt_large_until = 0;
-    setMqttBufferSize(kMqttBufferNormal, "normal");
+    setMqttBufferSize(mqttNormalBufferSize(), "normal");
     mqtt_suspended = false;  // nach abgebrochenem OTA weitermachen
     return;
   }
@@ -456,8 +461,8 @@ void Tab5NetworkManager::serviceMqttWorker() {
     mqtt_post_connect_pending = false;
     mqtt_post_connect_ready_at = 0;
     mqtt_large_until = 0;
-    if (mqtt_buffer_size > kMqttBufferNormal) {
-      setMqttBufferSize(kMqttBufferNormal, "disconnect");
+    if (mqtt_buffer_size > mqttNormalBufferSize()) {
+      setMqttBufferSize(mqttNormalBufferSize(), "disconnect");
     }
     mqtt_connected_flag = false;
     mqtt_disconnect_requested = false;
@@ -568,10 +573,24 @@ void Tab5NetworkManager::drainOutboundQueue(uint8_t max_commands) {
 // laeuft nur noch auf dem Worker, weil setBufferSize() den Client anfasst.
 void Tab5NetworkManager::serviceBufferHousekeeping(uint32_t now_ms) {
   const uint32_t large_until = mqtt_large_until;
-  if (large_until == 0) return;
+  if (large_until == 0) {
+    // Kein Large-Fenster aktiv: Normalgroesse an die Media-Konfiguration
+    // angleichen (Media-Tile hinzugefuegt/entfernt -> 24 KB rauf/runter).
+    // OTA-Modus (1-KB-Puffer) nicht anfassen; Grows warten wie der
+    // Large-Grow das Startup-Sturmfenster ab, Shrinks sind sofort okay.
+    const uint16_t normal_size = mqttNormalBufferSize();
+    if (mqtt_buffer_size != 0 && mqtt_buffer_size != kMqttBufferOta &&
+        mqtt_buffer_size != normal_size &&
+        (mqtt_buffer_size > normal_size ||
+         mqtt_connected_at == 0 ||
+         (uint32_t)(now_ms - mqtt_connected_at) >= kMqttStormWindowMs)) {
+      setMqttBufferSize(normal_size, "media-config");
+    }
+    return;
+  }
   if ((int32_t)(now_ms - large_until) >= 0) {
     mqtt_large_until = 0;
-    setMqttBufferSize(kMqttBufferNormal, "normal");
+    setMqttBufferSize(mqttNormalBufferSize(), "normal");
   } else if (mqtt_buffer_size < kMqttBufferLarge &&
              (mqtt_connected_at == 0 ||
               (uint32_t)(now_ms - mqtt_connected_at) >= kMqttStormWindowMs)) {
@@ -668,6 +687,10 @@ void Tab5NetworkManager::deferMqttReconnect(uint32_t hold_ms) {
 }
 
 // ========== MQTT-Status ==========
+uint16_t Tab5NetworkManager::mqttNormalBufferSize() const {
+  return mqtt_media_buffer_needed ? kMqttBufferMedia : kMqttBufferNormal;
+}
+
 bool Tab5NetworkManager::setMqttBufferSize(uint16_t size, const char* reason) {
   if (size == 0) return false;
   const uint16_t before = mqtt_client.getBufferSize();

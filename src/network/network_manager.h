@@ -79,6 +79,12 @@ public:
   void requestLargeMqttBuffer(uint32_t hold_ms = 15000);
   void restoreMqttBufferNormal();
 
+  // Media-Tiles konfiguriert? Dann faehrt der Worker den "normalen" Puffer auf
+  // kMqttBufferMedia (24 KB) statt 16 KB, damit Bridge-States mit eingebettetem
+  // Cover (~19 KB) nicht von PubSubClient verworfen werden. Wird beim Boot aus
+  // der Tile-Config gesetzt und bei jedem Route-Rebuild aktuell gehalten.
+  void setMqttMediaBufferNeeded(bool needed) { mqtt_media_buffer_needed = needed; }
+
   // WiFi-Status
   bool isWifiConnected() const;
   bool wasPreviouslyConnected() const { return was_connected; }
@@ -147,6 +153,10 @@ private:
   volatile uint32_t mqtt_post_connect_ready_at = 0;
   volatile uint32_t mqtt_large_until = 0;
   volatile uint16_t mqtt_buffer_size = 0;  // Spiegel der Client-Puffergroesse, Worker pflegt
+  volatile bool mqtt_media_buffer_needed = false;  // Media-Tiles vorhanden -> 24-KB-Normalpuffer
+
+  // Zielgroesse des "normalen" Puffers abhaengig von der Media-Konfiguration.
+  uint16_t mqttNormalBufferSize() const;
 
   // Einmalig in init() gebaut (vor Worker-Start), danach nur noch gelesen.
   String bridge_apply_topic_;

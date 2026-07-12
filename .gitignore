@@ -12,6 +12,9 @@
 # Lokale Design-Vorschau (Web-Admin-Snapshot), nicht Teil des Projekts
 /webadmin-preview/
 
+# MkDocs-Build-Output (lokale Docs-Vorschau; GitHub Actions baut selbst)
+/site/
+
 # Backup-Dateien
 *.bak
 *~

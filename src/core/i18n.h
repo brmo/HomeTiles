@@ -29,6 +29,7 @@ struct Strings {
   const char* admin_delete_folder_tab;
   const char* admin_tile_settings;
   const char* admin_type;
+  const char* admin_folder_type_locked;
   const char* admin_title;
   const char* admin_tile_title_placeholder;
   const char* admin_icon_label;

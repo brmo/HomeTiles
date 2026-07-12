@@ -375,6 +375,11 @@ static void appendTileTabHTML(
   append_tile_type_select_options(html);
   html += R"html(
             </select>
+            <p class="hint hidden" id=")html";
+  html += tab_id;
+  html += R"html(_tile_type_hint">)html";
+  html += tr.admin_folder_type_locked;
+  html += R"html(</p>
             </div>
             <div class="tile-settings-body">
 

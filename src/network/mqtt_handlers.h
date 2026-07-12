@@ -39,5 +39,8 @@ void mqttServiceLocalSensors();
 void mqttReloadDynamicSlots();
 void mqttRequestDynamicSlotsReload(uint32_t quiet_ms = 3000);
 void mqttServiceDynamicSlotsReload();
+// Boot-Scan fuer setup(): Media-Tile in der gespeicherten Config? Ergebnis
+// steuert die Startgroesse des MQTT-Empfangspuffers (Cover-Payloads ~19 KB).
+bool mqttAnyMediaTileConfigured();
 
 #endif // MQTT_HANDLERS_H

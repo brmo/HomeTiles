@@ -780,6 +780,10 @@ void setup() {
   if (has_config) {
     Serial.println("[Setup] Network init...");
     Serial.flush();
+    // Vor init(): Media-Tiles in der Config verlangen den 24-KB-Empfangs-
+    // puffer ab der ersten Verbindung, sonst verwirft PubSubClient das
+    // retained Cover-Payload direkt nach dem Subscribe.
+    networkManager.setMqttMediaBufferNeeded(mqttAnyMediaTileConfigured());
     networkManager.init();
     if (WiFi.status() == WL_CONNECTED) uiManager.scheduleNtpSync(0);
     Serial.println("[Setup] Network OK");

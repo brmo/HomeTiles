@@ -2500,6 +2500,43 @@ static lv_image_dsc_t* make_media_tile_cover_dsc(const lv_image_dsc_t* source) {
   return dsc;
 }
 
+// Pixel-Kopie eines fertigen Cover-Deskriptors. Das Ownership-Modell bleibt
+// dadurch unveraendert: jedes Tile besitzt weiterhin seine eigenen Puffer und
+// alle bestehenden Free-Pfade passen ohne Refcounting.
+static lv_image_dsc_t* clone_media_cover_dsc(const lv_image_dsc_t* source) {
+  if (!source || !source->data || !source->data_size) return nullptr;
+  uint8_t* pixels = static_cast<uint8_t*>(
+      alloc_media_cover_memory(source->data_size, true));
+  if (!pixels) return nullptr;
+  memcpy(pixels, source->data, source->data_size);
+  lv_image_dsc_t* dsc = static_cast<lv_image_dsc_t*>(
+      alloc_media_cover_memory(sizeof(lv_image_dsc_t)));
+  if (!dsc) {
+    free(pixels);
+    return nullptr;
+  }
+  *dsc = *source;
+  dsc->data = pixels;
+  return dsc;
+}
+
+// Mehrere Media-Tiles mit derselben Quelle: hat ein anderes Tile dasselbe
+// Cover (gleicher Hash) bereits fertig dekodiert, liefert das dessen Ref --
+// der Aufrufer klont die Pixel, statt base64+JPEG+Skalierung zu wiederholen.
+static const MediaCoverRef* find_decoded_media_cover_sibling(const MediaCoverRef* self,
+                                                             uint32_t hash) {
+  if (!hash) return nullptr;
+  MediaTileWidgets* const grids[] = {g_tab0_media, g_tab1_media, g_tab2_media};
+  for (MediaTileWidgets* grid : grids) {
+    for (uint8_t i = 0; i < TILES_PER_GRID; ++i) {
+      const MediaCoverRef* ref = grid[i].cover_ref;
+      if (!ref || ref == self) continue;
+      if (ref->url_hash == hash && ref->dsc) return ref;
+    }
+  }
+  return nullptr;
+}
+
 static lv_image_dsc_t* make_media_cover_raw_dsc(const uint8_t* data, size_t len) {
   if (!data || len < 32) return nullptr;
 
@@ -3129,6 +3166,38 @@ static void update_media_cover(GridType grid_type,
     ref->failed_url_hash = 0;
     ref->failed_at_ms = 0;
   }
+
+  // Hat ein anderes Tile dieselbe URL schon heruntergeladen und dekodiert,
+  // Pixel klonen statt einen weiteren HTTP-Download zu starten.
+  if (const MediaCoverRef* sibling = find_decoded_media_cover_sibling(ref, hash)) {
+    lv_image_dsc_t* cloned = clone_media_cover_dsc(sibling->dsc);
+    lv_image_dsc_t* cloned_popup =
+        sibling->popup_dsc ? clone_media_cover_dsc(sibling->popup_dsc) : nullptr;
+    if (cloned && (cloned_popup || !sibling->popup_dsc)) {
+      lv_image_dsc_t* old = ref->dsc;
+      lv_image_dsc_t* old_popup = ref->popup_dsc;
+      lv_image_set_src(widgets.cover_image, cloned);
+      const bool cover_visibility_changed = set_media_cover_visible(widgets, true);
+      if (widgets.icon_label) lv_obj_clear_flag(widgets.icon_label, LV_OBJ_FLAG_HIDDEN);
+      if (cover_visibility_changed) {
+        set_media_cover_text_layout(widgets, true);
+      }
+      ref->dsc = cloned;
+      ref->popup_dsc = cloned_popup;
+      ref->source_url = url;
+      ref->url_hash = hash;
+      ref->requested_url_hash = 0;
+      ref->failed_url_hash = 0;
+      ref->failed_at_ms = 0;
+      free_media_cover_dsc(old);
+      free_media_cover_dsc(old_popup);
+      Serial.println("[MediaCover] Cover von Nachbar-Tile uebernommen (kein Download)");
+      return;
+    }
+    free_media_cover_dsc(cloned);
+    free_media_cover_dsc(cloned_popup);
+  }
+
   if (media_cover_has_hidden_ancestor(widgets.cover_clip ? widgets.cover_clip : widgets.cover_image)) return;
 
   queue_media_cover_request(grid_type, grid_index, ref, url, hash);
@@ -3151,23 +3220,41 @@ static bool update_media_cover_from_base64(MediaTileWidgets& widgets, const Stri
     return true;
   }
 
-  lv_image_dsc_t* decoded_dsc = make_media_cover_dsc_from_base64(encoded);
-  if (!decoded_dsc) {
-    Serial.println("[MediaCover] MQTT Cover konnte nicht dekodiert werden");
-    return false;
+  // Zeigt ein anderes Media-Tile dieselbe Quelle, ist das Cover dort schon
+  // fertig dekodiert und skaliert -- Pixel klonen statt alles zu wiederholen.
+  lv_image_dsc_t* dsc = nullptr;
+  lv_image_dsc_t* popup_dsc = nullptr;
+  uint32_t tile_scale_ms = 0;
+  bool adopted_from_sibling = false;
+  if (const MediaCoverRef* sibling = find_decoded_media_cover_sibling(ref, hash)) {
+    dsc = clone_media_cover_dsc(sibling->dsc);
+    popup_dsc = sibling->popup_dsc ? clone_media_cover_dsc(sibling->popup_dsc) : nullptr;
+    if (dsc && (popup_dsc || !sibling->popup_dsc)) {
+      adopted_from_sibling = true;
+    } else {
+      free_media_cover_dsc(dsc);
+      free_media_cover_dsc(popup_dsc);
+    }
   }
 
-  // Keep the tile descriptor at 120px so routine LVGL redraws never rescale
-  // the 240px popup artwork. The high-resolution descriptor is retained only
-  // for the popup and therefore has no cost while navigating the normal UI.
-  const uint32_t tile_scale_started_ms = millis();
-  lv_image_dsc_t* tile_dsc = make_media_tile_cover_dsc(decoded_dsc);
-  const uint32_t tile_scale_ms = millis() - tile_scale_started_ms;
-  lv_image_dsc_t* popup_dsc = nullptr;
-  lv_image_dsc_t* dsc = decoded_dsc;
-  if (tile_dsc) {
-    dsc = tile_dsc;
-    popup_dsc = decoded_dsc;
+  if (!adopted_from_sibling) {
+    lv_image_dsc_t* decoded_dsc = make_media_cover_dsc_from_base64(encoded);
+    if (!decoded_dsc) {
+      Serial.println("[MediaCover] MQTT Cover konnte nicht dekodiert werden");
+      return false;
+    }
+
+    // Keep the tile descriptor at 120px so routine LVGL redraws never rescale
+    // the 240px popup artwork. The high-resolution descriptor is retained only
+    // for the popup and therefore has no cost while navigating the normal UI.
+    const uint32_t tile_scale_started_ms = millis();
+    lv_image_dsc_t* tile_dsc = make_media_tile_cover_dsc(decoded_dsc);
+    tile_scale_ms = millis() - tile_scale_started_ms;
+    dsc = decoded_dsc;
+    if (tile_dsc) {
+      dsc = tile_dsc;
+      popup_dsc = decoded_dsc;
+    }
   }
 
   lv_image_dsc_t* old = ref->dsc;
@@ -3188,8 +3275,12 @@ static bool update_media_cover_from_base64(MediaTileWidgets& widgets, const Stri
   ref->failed_at_ms = 0;
   free_media_cover_dsc(old);
   free_media_cover_dsc(old_popup);
-  Serial.printf("[MediaCover] MQTT Cover geladen (Tile-Skalierung=%u ms)\n",
-                static_cast<unsigned>(tile_scale_ms));
+  if (adopted_from_sibling) {
+    Serial.println("[MediaCover] MQTT Cover von Nachbar-Tile uebernommen (kein Re-Decode)");
+  } else {
+    Serial.printf("[MediaCover] MQTT Cover geladen (Tile-Skalierung=%u ms)\n",
+                  static_cast<unsigned>(tile_scale_ms));
+  }
   return true;
 }
 

@@ -1445,6 +1445,21 @@ void WebAdminServer::handleRestart() {
   BoardHAL::restart();
 }
 
+// Enthaelt der Ordner noch echte Kacheln (Back-Tile zaehlt nicht)? Bei
+// Lesefehlern konservativ "ja" -- dann bleibt der Typwechsel gesperrt, statt
+// versehentlich einen vollen Ordner zu verwaisen.
+static bool folderHasContent(uint16_t folder_id) {
+  if (folder_id == 0) return true;  // Root ist nie ueber ein Ordner-Tile erreichbar
+  std::unique_ptr<TileGridConfig> grid(new (std::nothrow) TileGridConfig{});
+  if (!grid) return true;
+  if (!tileConfig.loadFolderGrid(folder_id, *grid)) return true;
+  for (size_t i = 0; i < TILES_PER_GRID; ++i) {
+    const TileType t = grid->tiles[i].type;
+    if (t != TILE_EMPTY && t != TILE_BACK) return true;
+  }
+  return false;
+}
+
 void WebAdminServer::handleGetTiles() {
   // GET /api/tiles?folder=<id>[&index=0-23]
   webAdminMarkActivity();
@@ -1519,6 +1534,11 @@ void WebAdminServer::handleGetTiles() {
     out += String((tile.type == TILE_SWITCH && tile.sensor_decimals == 1) ? 1 : 0);
     out += ",\"navigate_target\":";
     out += String((tile.type == TILE_FOLDER) ? getNavigateTargetId(tile) : 0);
+    // Der Editor sperrt den Typwechsel fuer nicht-leere Ordner (Inhalt wuerde
+    // sonst verwaisen); Loeschen bleibt erlaubt.
+    out += ",\"folder_empty\":";
+    out += (tile.type == TILE_FOLDER && !folderHasContent(getNavigateTargetId(tile)))
+               ? "true" : "false";
     out += "}";
   };
 
@@ -1619,7 +1639,23 @@ void WebAdminServer::handleSaveTiles() {
     }
   }
 
-  const bool deleting_folder = (previous_tile.type == TILE_FOLDER && type == TILE_EMPTY);
+  // Ordner-Tile: Typwechsel nur, wenn der Ordner leer ist -- sonst wuerden
+  // seine Kacheln verwaisen (Grid bleibt gespeichert, ist aber unerreichbar).
+  // Loeschen (type -> EMPTY) bleibt immer erlaubt und raeumt den Ordner mit ab.
+  if (previous_tile.type == TILE_FOLDER && type != TILE_FOLDER && type != TILE_EMPTY) {
+    const uint16_t target_id = getNavigateTargetId(previous_tile);
+    if (target_id != 0 && folderHasContent(target_id)) {
+      server.send(409, "application/json",
+                  "{\"success\":false,\"error\":\"Folder not empty\"}");
+      return;
+    }
+  }
+
+  // Jeder Wechsel weg vom Ordner-Typ entfernt auch den Ordner selbst: beim
+  // Loeschen mitsamt Inhalt, bei der (nur fuer leere Ordner erlaubten)
+  // Typumwandlung den leeren Grid -- sonst bliebe ein verwaister Ordner-Tab
+  // im Web-Admin zurueck.
+  const bool deleting_folder = (previous_tile.type == TILE_FOLDER && type != TILE_FOLDER);
 
   // Update tile data
   tile.type = static_cast<TileType>(type);

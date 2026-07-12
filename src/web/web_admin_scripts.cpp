@@ -2188,6 +2188,7 @@ void appendAdminScripts(String& html) {
         if (currentTileTab !== tab || currentTileIndex !== index) return;
         const prefix = tab;
         syncTileTypeSelectValue(document.getElementById(prefix + '_tile_type'), data.type || 0);
+        applyFolderTypeLock(prefix, Number(data.type) === 4 && data.folder_empty === false);
         resetAllTypeFields(tab);
         updateTileType(tab);
         document.getElementById(prefix + '_tile_title').value = data.title || '';
@@ -2307,6 +2308,19 @@ void appendAdminScripts(String& html) {
   function resetAllTypeFields(tab) {
     const metas = Object.values(TILE_TYPE_REGISTRY || {});
     metas.forEach(meta => callTypeHandler(meta, 'reset', tab));
+  }
+
+  function applyFolderTypeLock(tab, locked) {
+    const sel = document.getElementById(tab + '_tile_type');
+    if (sel) {
+      for (const opt of sel.options) {
+        // Ordner behalten und Leeren/Loeschen bleiben erlaubt; alle anderen
+        // Typen sind gesperrt, solange der Ordner noch Kacheln enthaelt.
+        opt.disabled = locked && opt.value !== '4' && opt.value !== '0';
+      }
+    }
+    const hint = document.getElementById(tab + '_tile_type_hint');
+    if (hint) hint.classList.toggle('hidden', !locked);
   }
 
   function resetTile(tab) {
