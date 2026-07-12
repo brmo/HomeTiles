@@ -1,10 +1,8 @@
-# Keep Arduino-ESP32 >= 3.3.8: 3.3.7's ESP32-P4 esp-hosted transport
-# asserts when its 1536-byte WiFi TX buffer cannot be allocated.
 profiles:
   tab5:
     fqbn: esp32:esp32:m5stack_tab5:UploadSpeed=921600,USBMode=hwcdc,CDCOnBoot=cdc,MSCOnBoot=default,DFUOnBoot=default,UploadMode=default,CPUFreq=360,FlashFreq=80,FlashMode=qio,FlashSize=16M,PartitionScheme=default,DebugLevel=none,PSRAM=enabled,EraseFlash=none,JTAGAdapter=default
     platforms:
-      - platform: esp32:esp32 (3.3.10)
+      - platform: esp32:esp32 (3.3.7)
         platform_index_url: https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
     libraries:
       - ArduinoJson (7.4.3)
@@ -20,7 +18,7 @@ profiles:
   waveshare_b4:
     fqbn: esp32:esp32:esp32p4:UploadSpeed=921600,USBMode=default,CDCOnBoot=default,MSCOnBoot=default,DFUOnBoot=default,UploadMode=default,FlashFreq=80,FlashMode=qio,FlashSize=32M,PartitionScheme=app13M_data7M_32MB,DebugLevel=none,PSRAM=enabled,EraseFlash=none,JTAGAdapter=default
     platforms:
-      - platform: esp32:esp32 (3.3.10)
+      - platform: esp32:esp32 (3.3.7)
         platform_index_url: https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
     libraries:
       - ArduinoJson (7.4.3)
@@ -36,7 +34,7 @@ profiles:
   waveshare_8:
     fqbn: esp32:esp32:esp32p4:UploadSpeed=921600,USBMode=default,CDCOnBoot=default,MSCOnBoot=default,DFUOnBoot=default,UploadMode=default,FlashFreq=80,FlashMode=qio,FlashSize=32M,PartitionScheme=app13M_data7M_32MB,DebugLevel=none,PSRAM=enabled,EraseFlash=none,JTAGAdapter=default,ChipVariant=prev3
     platforms:
-      - platform: esp32:esp32 (3.3.10)
+      - platform: esp32:esp32 (3.3.7)
         platform_index_url: https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
     libraries:
       - ArduinoJson (7.4.3)
