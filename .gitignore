@@ -41,6 +41,10 @@ Thumbs.db
 .tmp_fonts/
 libraries/
 
+# Lokale Medienquellen (die optimierten Web-Versionen liegen unter docs/)
+docs/images/IMG_4804.JPG.jpeg
+docs/videos/IMG_4807.MOV
+
 # SD-Karten-Inhalte (Animationen etc. bleiben lokal, nicht im Repo)
 sd-card/
 

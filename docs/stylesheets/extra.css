@@ -140,6 +140,17 @@
   margin: 1.2em auto 1.6em;
 }
 
+/* Browser-native demo video, matching the rounded documentation imagery */
+.md-typeset video.ht-demo {
+  display: block;
+  width: 100%;
+  max-width: 1200px;
+  aspect-ratio: 16 / 9;
+  margin: 1.2em auto 0.6em;
+  border-radius: 10px;
+  background: #000;
+}
+
 /* Gefuehrter Einstieg: nummerierte Schritte mit Akzent-Ziffern */
 .ht-steps {
   margin: 1.2em 0 1.6em;

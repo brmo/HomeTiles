@@ -5,6 +5,16 @@ panels — configured entirely in the browser, updated over the air, connected v
 
 ![Home dashboard](images/8in-home.png){ width="82%" .ht-hero }
 
+## Demo
+
+<video class="ht-demo" controls playsinline preload="metadata" poster="images/hometiles-demo-poster.jpg" aria-label="HomeTiles device demo">
+  <source src="videos/hometiles-demo.mp4" type="video/mp4">
+</video>
+
+[Download the demo video](videos/hometiles-demo.mp4)
+
+![HomeTiles running on all three supported ESP32-P4 displays](images/hometiles-supported-devices.png){ width="100%" .ht-hero }
+
 ## New Here? Three Steps
 
 <div class="ht-steps" markdown>
