@@ -11,10 +11,6 @@ panels — configured entirely in the browser, updated over the air, connected v
   <source src="videos/hometiles-demo.mp4" type="video/mp4">
 </video>
 
-[Download the demo video](videos/hometiles-demo.mp4)
-
-![HomeTiles running on all three supported ESP32-P4 displays](images/hometiles-supported-devices.png){ width="100%" .ht-hero }
-
 ## New Here? Three Steps
 
 <div class="ht-steps" markdown>
@@ -47,6 +43,8 @@ Looking for something specific? [Tile Types](tiles.md) ·
 [GitHub](https://github.com/GalusPeres/HomeTiles)
 
 ## Supported Devices
+
+![HomeTiles running on all three supported ESP32-P4 displays](images/hometiles-supported-devices.png){ width="100%" .ht-hero }
 
 | Device | Display |
 | --- | --- |

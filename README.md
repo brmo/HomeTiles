@@ -14,8 +14,6 @@
 
 <img src="docs/images/hometiles-supported-devices.png" alt="HomeTiles running on the M5Stack Tab5, Waveshare 8 inch display, and Waveshare 4B" width="92%">
 
-<sub>HomeTiles running on the Waveshare 4B, M5Stack Tab5, and Waveshare 8&Prime;</sub>
-
 </div>
 
 The project supports multiple ESP32-P4 touch displays and combines:
@@ -113,21 +111,29 @@ Captured on the Waveshare 8" — the same firmware and web admin panel run on al
 
 Home dashboard, folder view, and the settings menu:
 
-<img src="docs/images/8in-home.png" alt="Home dashboard" width="32%"> <img src="docs/images/8in-folder-lighting.png" alt="Folder view with light tiles and scenes" width="32%"> <img src="docs/images/8in-settings.png" alt="On-device settings menu" width="32%">
+<p align="center">
+  <img src="docs/images/8in-home.png" alt="Home dashboard" width="32%"> <img src="docs/images/8in-folder-lighting.png" alt="Folder view with light tiles and scenes" width="32%"> <img src="docs/images/8in-settings.png" alt="On-device settings menu" width="32%">
+</p>
 
 ### Popups
 
 Light control — brightness, color, and color temperature:
 
-<img src="docs/images/8in-light-brightness.png" alt="Light popup brightness view" width="32%"> <img src="docs/images/8in-light-color.png" alt="Light popup color wheel" width="32%"> <img src="docs/images/8in-light-temperature.png" alt="Light popup color temperature view" width="32%">
+<p align="center">
+  <img src="docs/images/8in-light-brightness.png" alt="Light popup brightness view" width="32%"> <img src="docs/images/8in-light-color.png" alt="Light popup color wheel" width="32%"> <img src="docs/images/8in-light-temperature.png" alt="Light popup color temperature view" width="32%">
+</p>
 
 Energy statistics (day and week) and sensor history:
 
-<img src="docs/images/8in-energy-24h.png" alt="Energy popup day view" width="32%"> <img src="docs/images/8in-energy-7d.png" alt="Energy popup week view" width="32%"> <img src="docs/images/8in-sensor-popup-7d.png" alt="Sensor history popup" width="32%">
+<p align="center">
+  <img src="docs/images/8in-energy-24h.png" alt="Energy popup day view" width="32%"> <img src="docs/images/8in-energy-7d.png" alt="Energy popup week view" width="32%"> <img src="docs/images/8in-sensor-popup-7d.png" alt="Sensor history popup" width="32%">
+</p>
 
 Weather forecast, media player, and the system popup with the built-in updater:
 
-<img src="docs/images/8in-weather-popup.png" alt="Weather popup" width="32%"> <img src="docs/images/8in-media-popup.png" alt="Media player popup" width="32%"> <img src="docs/images/8in-system-popup.png" alt="System popup with update check and pairing" width="32%">
+<p align="center">
+  <img src="docs/images/8in-weather-popup.png" alt="Weather popup" width="32%"> <img src="docs/images/8in-media-popup.png" alt="Media player popup" width="32%"> <img src="docs/images/8in-system-popup.png" alt="System popup with update check and pairing" width="32%">
+</p>
 
 ### Web Admin Panel
 

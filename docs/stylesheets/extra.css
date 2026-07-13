@@ -159,6 +159,12 @@
   margin-left: auto;
 }
 
+/* Bildreihen (mehrere Screenshots in einem Absatz) ebenfalls zentrieren,
+   damit Einzelbilder und Reihen dieselbe Achse haben */
+.md-typeset p:has(> img + img) {
+  text-align: center;
+}
+
 /* Gefuehrter Einstieg: nummerierte Schritte mit Akzent-Ziffern */
 .ht-steps {
   margin: 1.2em 0 1.6em;
