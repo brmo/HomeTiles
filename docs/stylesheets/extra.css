@@ -151,6 +151,14 @@
   background: #000;
 }
 
+/* Center standalone screenshots without disturbing two- or three-image rows */
+.md-typeset p > img:only-child,
+.md-typeset p > a:only-child > img:only-child {
+  display: block;
+  margin-right: auto;
+  margin-left: auto;
+}
+
 /* Gefuehrter Einstieg: nummerierte Schritte mit Akzent-Ziffern */
 .ht-steps {
   margin: 1.2em 0 1.6em;

@@ -5,12 +5,12 @@ bring up detail popups. Everything shown here is configured in the
 [web admin panel](web-admin.md) — the device is for using the dashboard, not
 building it.
 
-![Home dashboard](images/8in-home.png)
+![Home dashboard](images/8in-home.png){ width="70%" }
 
 Folders open as full-screen sub-pages with their own grid; the back tile in the
 top-left corner returns to the previous page.
 
-![Folder page with light tiles and scenes](images/8in-folder-lighting.png)
+![Folder page with light tiles and scenes](images/8in-folder-lighting.png){ width="70%" }
 
 ## Popups
 

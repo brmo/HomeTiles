@@ -1,12 +1,16 @@
 ## <img src="docs/images/favicon.svg" width="34" alt="" align="top"> HomeTiles
 
-**[▶ Demo](https://galusperes.github.io/HomeTiles/#demo)** ·
-[Documentation](https://galusperes.github.io/HomeTiles/) ·
-[Latest release](https://github.com/GalusPeres/HomeTiles/releases/latest)
+Tile-based ESP32-P4 firmware for Home Assistant dashboards with a fully configurable web interface.
+
+<p align="center">
+  <a href="https://galusperes.github.io/HomeTiles/#demo"><strong>Live demo</strong></a>
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://galusperes.github.io/HomeTiles/"><strong>Documentation</strong></a>
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://github.com/GalusPeres/HomeTiles/releases/latest"><strong>Latest release</strong></a>
+</p>
 
 <img align="right" width="42%" src="docs/images/8in-home.png" alt="Home dashboard on the Waveshare 8 inch display">
-
-Tile-based ESP32-P4 firmware for Home Assistant dashboards with a fully configurable web interface.
 
 The project supports multiple ESP32-P4 touch displays and combines:
 
