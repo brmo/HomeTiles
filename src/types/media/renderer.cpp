@@ -79,6 +79,10 @@ static void free_cover_dsc(MediaCoverRef* ref) {
 static void cover_ref_delete_cb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_DELETE) return;
   MediaCoverRef* ref = static_cast<MediaCoverRef*>(lv_event_get_user_data(e));
+  // Erst alle Widget-Array-Eintraege auf diesen Ref vergessen, dann freigeben
+  // — sonst liest der Cover-Retry spaeter freigegebenen Speicher (Crash beim
+  // Loeschen eines Media-Tiles im Web-Admin, v0.4.16).
+  tile_renderer_forget_media_widgets(ref);
   free_cover_dsc(ref);
   delete ref;
 }

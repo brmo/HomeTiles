@@ -86,6 +86,20 @@ MediaTileWidgets* tile_renderer_get_media_widgets(GridType grid_type) {
   return g_tab0_media;
 }
 
+void tile_renderer_forget_media_widgets(const MediaCoverRef* ref) {
+  if (!ref) return;
+  MediaTileWidgets* const grids[] = {g_tab0_media, g_tab1_media, g_tab2_media};
+  for (MediaTileWidgets* grid : grids) {
+    for (uint8_t i = 0; i < TILES_PER_GRID; ++i) {
+      if (grid[i].cover_ref == ref) {
+        // Alle lv_obj-Zeiger dieses Slots gehoeren zur selben Karte und sind
+        // nach deren Delete genauso tot — kompletten Eintrag zuruecksetzen.
+        grid[i] = MediaTileWidgets{};
+      }
+    }
+  }
+}
+
 SwitchState* tile_renderer_get_switch_states(GridType grid_type) {
   if (grid_type == GridType::TAB1) return g_tab1_switch_states;
   if (grid_type == GridType::TAB2) return g_tab2_switch_states;

@@ -39,6 +39,13 @@ bool is_light_entity_id(const String& entity_id);
 void update_switch_tile_state(GridType grid_type, uint8_t grid_index, const char* payload);
 void update_media_tile_state(GridType grid_type, uint8_t grid_index, const char* payload);
 
+// Beim Zerstoeren einer Media-Karte (LV_EVENT_DELETE) aufrufen: nullt alle
+// Widget-Array-Eintraege, die noch auf diesen (gleich freigegebenen) Ref
+// zeigen. Ohne das behaelt z.B. ein per Web-Admin geloeschter Tile-Slot
+// seinen Eintrag dauerhaft und der Cover-Retry liest freigegebenen Speicher
+// (Absturz "Load access fault" in String::startsWith, v0.4.16-Coredump).
+void tile_renderer_forget_media_widgets(const MediaCoverRef* ref);
+
 static inline uint32_t brighten_rgb_color(uint32_t color, uint8_t delta) {
   const uint16_t r = ((color >> 16) & 0xFFu) + delta;
   const uint16_t g = ((color >> 8) & 0xFFu) + delta;
