@@ -1,16 +1,24 @@
-## <img src="docs/images/favicon.svg" width="34" alt="" align="top"> HomeTiles
+<div align="center">
 
-Tile-based ESP32-P4 firmware for Home Assistant dashboards with a fully configurable web interface.
+<img src="docs/images/favicon.svg" width="72" alt="HomeTiles logo">
 
-<p align="center">
-  <a href="https://galusperes.github.io/HomeTiles/#demo"><strong>Live demo</strong></a>
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="https://galusperes.github.io/HomeTiles/"><strong>Documentation</strong></a>
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="https://github.com/GalusPeres/HomeTiles/releases/latest"><strong>Latest release</strong></a>
-</p>
+# HomeTiles
 
-<img align="right" width="42%" src="docs/images/8in-home.png" alt="Home dashboard on the Waveshare 8 inch display">
+**Tile-based ESP32-P4 firmware for Home Assistant dashboards<br>with a fully configurable web interface.**
+
+<a href="https://galusperes.github.io/HomeTiles/#demo"><strong>Live demo</strong></a>
+&nbsp;·&nbsp;
+<a href="https://galusperes.github.io/HomeTiles/"><strong>Documentation</strong></a>
+&nbsp;·&nbsp;
+<a href="https://github.com/GalusPeres/HomeTiles/releases/latest"><strong>Latest release</strong></a>
+
+<br>
+
+<img src="docs/images/hometiles-supported-devices.png" alt="HomeTiles running on the M5Stack Tab5, Waveshare 8 inch display, and Waveshare 4B" width="92%">
+
+<sub>HomeTiles running on the Waveshare 4B, M5Stack Tab5, and Waveshare 8&Prime;</sub>
+
+</div>
 
 The project supports multiple ESP32-P4 touch displays and combines:
 
@@ -19,12 +27,6 @@ The project supports multiple ESP32-P4 touch displays and combines:
 - on-device settings: WiFi setup, display, language, firmware updates
 - firmware updates directly on the device (GitHub releases) or via the web interface
 - full dashboard configuration through the built-in web admin panel
-
-<br clear="both">
-
-<p align="center">
-  <img src="docs/images/hometiles-supported-devices.png" alt="HomeTiles running on the M5Stack Tab5, Waveshare 8 inch display, and Waveshare 4B" width="100%">
-</p>
 
 ## Requirements
 
