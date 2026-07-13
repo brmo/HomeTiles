@@ -1,8 +1,6 @@
 <div align="center">
 
-<img src="docs/images/favicon.svg" width="72" alt="HomeTiles logo">
-
-# HomeTiles
+# <img src="docs/images/favicon.svg" width="42" alt="" align="top"> HomeTiles
 
 **Tile-based ESP32-P4 firmware for Home Assistant dashboards<br>with a fully configurable web interface.**
 
