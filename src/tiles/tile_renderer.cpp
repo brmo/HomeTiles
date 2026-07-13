@@ -12,6 +12,7 @@
 #include "src/tiles/tile_renderer_fonts.h"
 #include "src/tiles/tile_renderer_shared.h"
 #include "src/core/config_manager.h"
+#include "src/core/dma2d_arbiter.h"
 #include "src/core/i18n.h"
 #include "src/web/web_admin.h"
 #include <Arduino.h>
@@ -33,6 +34,10 @@
 #include <stdlib.h>
 #include <time.h>
 #include <vector>
+
+// lvgl.h exportiert lv_image_cache_drop() in 9.5 nicht mehr, die Deklaration
+// liegt nur noch im Instanz-Header.
+#include <misc/cache/instance/lv_image_cache.h>
 
 /* === Layout-Konstanten === */
 
@@ -2266,25 +2271,34 @@ static lv_image_dsc_t* make_media_cover_decoded_jpeg_hw_dsc(const uint8_t* data,
   decode_cfg.rgb_order = JPEG_DEC_RGB_ELEMENT_ORDER_RGB;
   decode_cfg.conv_std = JPEG_YUV_RGB_CONV_STD_BT601;
   uint32_t decoded_bytes = 0;
-  err = jpeg_decoder_process(s_media_jpeg_decoder,
-                             &decode_cfg,
-                             data,
-                             static_cast<uint32_t>(len),
-                             reinterpret_cast<uint8_t*>(decoded),
-                             static_cast<uint32_t>(allocated_bytes),
-                             &decoded_bytes);
-  if (err != ESP_OK || decoded_bytes < requested_bytes) {
-    free(decoded);
-    Serial.printf("[MediaCover] HW JPEG decode fehlgeschlagen: decode=%s bytes=%u/%u\n",
-                  esp_err_to_name(err),
-                  static_cast<unsigned>(decoded_bytes),
-                  static_cast<unsigned>(requested_bytes));
-    // Nach einem Fehlschlag (z.B. Timeout mitten im Transfer) die Engine
-    // verwerfen und beim naechsten Cover frisch aufbauen, statt mit
-    // moeglicherweise haengendem Zustand weiterzuarbeiten.
-    jpeg_del_decoder_engine(s_media_jpeg_decoder);
-    s_media_jpeg_decoder = nullptr;
-    return nullptr;
+  {
+    // Nie parallel zu einer laufenden PPA-Rotation dekodieren (geteilter
+    // 2D-DMA-Pool, siehe dma2d_arbiter.h). Nach Timeout trotzdem dekodieren:
+    // lieber ein theoretisches Restrisiko als eine haengende Cover-Pipeline.
+    Dma2dArbiterGuard dma2d_guard(2000);
+    if (!dma2d_guard.locked()) {
+      Serial.println("[MediaCover] 2D-DMA-Arbiter Timeout, decode ungeschuetzt");
+    }
+    err = jpeg_decoder_process(s_media_jpeg_decoder,
+                               &decode_cfg,
+                               data,
+                               static_cast<uint32_t>(len),
+                               reinterpret_cast<uint8_t*>(decoded),
+                               static_cast<uint32_t>(allocated_bytes),
+                               &decoded_bytes);
+    if (err != ESP_OK || decoded_bytes < requested_bytes) {
+      free(decoded);
+      Serial.printf("[MediaCover] HW JPEG decode fehlgeschlagen: decode=%s bytes=%u/%u\n",
+                    esp_err_to_name(err),
+                    static_cast<unsigned>(decoded_bytes),
+                    static_cast<unsigned>(requested_bytes));
+      // Nach einem Fehlschlag (z.B. Timeout mitten im Transfer) die Engine
+      // verwerfen und beim naechsten Cover frisch aufbauen, statt mit
+      // moeglicherweise haengendem Zustand weiterzuarbeiten.
+      jpeg_del_decoder_engine(s_media_jpeg_decoder);
+      s_media_jpeg_decoder = nullptr;
+      return nullptr;
+    }
   }
 
   constexpr uint16_t kMaxCoverSide = 240;

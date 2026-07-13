@@ -17,6 +17,10 @@
 #include "src/ui/sensor_popup.h"
 #include "src/ui/weather_popup.h"
 
+// lvgl.h exportiert lv_image_cache_drop() in 9.5 nicht mehr, die Deklaration
+// liegt nur noch im Instanz-Header.
+#include <misc/cache/instance/lv_image_cache.h>
+
 namespace {
 
 constexpr int kCardMargin = 4;

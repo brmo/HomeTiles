@@ -7,6 +7,9 @@
 #include <driver/ppa.h>
 #include <esp_cache.h>
 #include <esp_heap_caps.h>
+#include <soc/ppa_reg.h>
+
+#include "src/core/dma2d_arbiter.h"
 #include <LittleFS.h>
 #include <M5Unified.h>
 #include <SD.h>
@@ -26,7 +29,11 @@ constexpr int32_t kPanelHeight = 1280;
 constexpr size_t kPanelFrameBytes =
     static_cast<size_t>(kPanelWidth) * static_cast<size_t>(kPanelHeight) * sizeof(uint16_t);
 constexpr size_t kCacheLineSize = 64;
-constexpr int32_t kPpaMinRotateWidth = 32;
+// PPA nur fuer breite Repaints (Swipes, Vollbild) — kleine Rechtecke rotiert
+// die CPU schneller als der Transaktions-Overhead und jede eingesparte
+// Transaktion senkt das Risiko der Pool-Verklemmung. 600 ist die seit
+// v0.4.11 empirisch stabile Schwelle des 8-Zoll-Geraets.
+constexpr int32_t kPpaMinRotateWidth = 600;
 constexpr int32_t kPpaMinRotateHeight = 8;   // duenne Streifen: Treiber validiert keine Mindesthoehe, Verdacht auf 2D-DMA-Verklemmung
 constexpr uint32_t kPpaRotateTimeoutMs = 80;
 constexpr uint32_t kPpaWedgeGraceMs = 400;   // Nachfrist: nur langsam (Bus-Last) oder endgueltig verklemmt?
@@ -328,7 +335,9 @@ bool ppa_rotate_to_panel(int32_t x, int32_t y, int32_t w, int32_t h, const uint1
         g_ppa_consecutive_faults = 0;
         pause_ppa_for(kPpaFaultCooldownMs);
       } else if (g_ppa_wedge_reset_attempts >= kPpaWedgeResetMaxAttempts) {
-        Serial.println("[Device/M5StacksTab5] PPA Reset-Versuche erschoepft — CPU-Modus bis zur spaeten Fertigmeldung oder Neustart");
+        Serial.printf("[Device/M5StacksTab5] PPA Reset-Versuche erschoepft — CPU-Modus bis zur spaeten Fertigmeldung oder Neustart (int_raw=0x%08lx err_st=0x%08lx)\n",
+                      static_cast<unsigned long>(REG_READ(PPA_INT_RAW_REG)),
+                      static_cast<unsigned long>(REG_READ(PPA_SR_PARAM_ERR_ST_REG)));
       }
     }
     return false;
@@ -365,6 +374,16 @@ bool ppa_rotate_to_panel(int32_t x, int32_t y, int32_t w, int32_t h, const uint1
   if (dst_x < 0 || dst_y < 0 || (dst_x + dst_w) > kPanelWidth ||
       (dst_y + dst_h) > kPanelHeight) {
     log_ppa_fallback("mapped rect outside panel");
+    return false;
+  }
+
+  // Nie parallel zum HW-JPEG-Decode (geteilter 2D-DMA-Pool, siehe
+  // dma2d_arbiter.h) — die Ueberlappung ist der Hauptverdaechtige fuer die
+  // verlorenen Transaktionen. Kommt der Lock nicht rechtzeitig frei, malt
+  // die CPU dieses eine Rechteck.
+  Dma2dArbiterGuard dma2d_guard(250);
+  if (!dma2d_guard.locked()) {
+    log_ppa_fallback("2D-DMA-Arbiter belegt");
     return false;
   }
 
@@ -430,11 +449,18 @@ bool ppa_rotate_to_panel(int32_t x, int32_t y, int32_t w, int32_t h, const uint1
       g_ppa_wedge_retry_at_ms = millis() + kPpaWedgeResetRetryMs;
       g_ppa_wedge_reset_attempts = 0;
       g_ppa_ready = false;
-      Serial.printf("[Device/M5StacksTab5] PPA VERKLEMMT: rotate %ldx%ld src=(%ld,%ld) dst=(%ld,%ld) rot=%d — CPU-Fallback, Recovery aktiv\n",
+      // Forensik: SR_EOF (Bit0) gesetzt => Hardware wurde fertig, aber der
+      // Done-Interrupt ging verloren. Bit2 => Parameterfehler (Detail in
+      // err_st). Beides 0 => Transaktion wurde nie gestartet (Pool-Race).
+      Serial.printf("[Device/M5StacksTab5] PPA VERKLEMMT: rotate %ldx%ld src=(%ld,%ld) dst=(%ld,%ld) rot=%d int_raw=0x%08lx err_st=0x%08lx (int frei=%u KB, largest=%u KB) — CPU-Fallback, Recovery aktiv\n",
                     static_cast<long>(w), static_cast<long>(h),
                     static_cast<long>(x), static_cast<long>(y),
                     static_cast<long>(dst_x), static_cast<long>(dst_y),
-                    (g_rotation & 0x02) ? 90 : 270);
+                    (g_rotation & 0x02) ? 90 : 270,
+                    static_cast<unsigned long>(REG_READ(PPA_INT_RAW_REG)),
+                    static_cast<unsigned long>(REG_READ(PPA_SR_PARAM_ERR_ST_REG)),
+                    static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+                    static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024));
       return false;
     }
     g_ppa_consecutive_faults = 0;

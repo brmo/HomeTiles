@@ -13,6 +13,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+// lvgl.h exportiert lv_image_cache_drop() in 9.5 nicht mehr, die Deklaration
+// liegt nur noch im Instanz-Header.
+#include <misc/cache/instance/lv_image_cache.h>
+
 namespace {
 
 #if defined(DEVICE_WAVESHARE_4B)
