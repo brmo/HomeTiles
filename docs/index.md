@@ -11,25 +11,32 @@ panels — configured entirely in the browser, updated over the air, connected v
   <source src="videos/hometiles-demo.mp4" type="video/mp4">
 </video>
 
-## New Here? Three Steps
+## New Here? Four Steps
 
 <div class="ht-steps" markdown>
 
-1.  **Connect everything**
+1.  **Flash the firmware**
 
-    Set up the MQTT broker, install the bridge integration, flash the firmware,
-    and pair the display with Home Assistant.
+    Download the prebuilt binaries for your device and flash them once over
+    USB — every update after that installs over the air.
+
+    [Flashing the Firmware :octicons-arrow-right-24:](flashing.md)
+
+2.  **Connect everything**
+
+    Set up the MQTT broker, install the bridge integration, and pair the
+    display with Home Assistant.
 
     [Home Assistant Setup :octicons-arrow-right-24:](home-assistant-setup.md)
 
-2.  **Build your dashboard**
+3.  **Build your dashboard**
 
     Open the display's admin panel in your browser: click a cell, pick a tile
     type, done. Drag & drop, folders, everything saves automatically.
 
     [Web Admin Panel :octicons-arrow-right-24:](web-admin.md)
 
-3.  **Use the display**
+4.  **Use the display**
 
     Control lights with a color wheel, check sensor history, energy statistics,
     weather, and media — all in touch popups on the device.
