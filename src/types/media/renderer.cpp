@@ -491,16 +491,18 @@ lv_obj_t* render_media_tile(lv_obj_t* parent,
   }
 
   if (tile.sensor_entity.length()) {
-    MediaPopupEventData* popup_data = new MediaPopupEventData{
-      tile.sensor_entity,
-      title_text,
-      icon_name,
-      card_color,
-      grid_type,
-      index
-    };
-    lv_obj_add_event_cb(card, show_media_popup_event_cb, LV_EVENT_SHORT_CLICKED, popup_data);
-    lv_obj_add_event_cb(card, media_popup_event_data_delete_cb, LV_EVENT_DELETE, popup_data);
+    if (grid_type != GridType::SCREENSAVER) {
+      MediaPopupEventData* popup_data = new MediaPopupEventData{
+        tile.sensor_entity,
+        title_text,
+        icon_name,
+        card_color,
+        grid_type,
+        index
+      };
+      lv_obj_add_event_cb(card, show_media_popup_event_cb, LV_EVENT_SHORT_CLICKED, popup_data);
+      lv_obj_add_event_cb(card, media_popup_event_data_delete_cb, LV_EVENT_DELETE, popup_data);
+    }
 
     String initial = haBridgeConfig.findSensorInitialValue(tile.sensor_entity);
     if (initial.length()) {

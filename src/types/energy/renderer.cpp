@@ -148,7 +148,7 @@ lv_obj_t* render_energy_tile(lv_obj_t* parent,
     target[index].series = nullptr;
   }
 
-  if (tile.sensor_entity.length()) {
+  if (tile.sensor_entity.length() && grid_type != GridType::SCREENSAVER) {
     bool icon_override = false;
     if (tile.icon_name.length() && !isMdiIconDisabled(tile.icon_name)) {
       icon_override = true;

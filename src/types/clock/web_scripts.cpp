@@ -192,7 +192,7 @@ void append_clock_scripts(String& html) {
     }
     if (dateEl) {
       dateEl.textContent = getClockPreviewDate(dateFormat);
-      applyClockPreviewTextStyle(dateEl, dateFont, 24, '#cbd5e1', '1.1');
+      applyClockPreviewTextStyle(dateEl, dateFont, 24, '#fff', '1.1');
     }
   }
 

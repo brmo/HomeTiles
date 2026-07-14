@@ -237,7 +237,10 @@ lv_obj_set_style_bg_grad_dir(container, LV_GRAD_DIR_NONE, LV_PART_MAIN | LV_STAT
       index,
       use_switch_widget
     };
-    const bool popup_on_short = getTilePopupOpenMode(tile) == TILE_POPUP_OPEN_SHORT_PRESS;
+    const bool allow_popup = grid_type != GridType::SCREENSAVER;
+    const bool popup_on_short =
+        allow_popup &&
+        getTilePopupOpenMode(tile) == TILE_POPUP_OPEN_SHORT_PRESS;
     const lv_event_code_t popup_event =
         popup_on_short ? LV_EVENT_SHORT_CLICKED : LV_EVENT_LONG_PRESSED;
     const lv_event_code_t toggle_event =
@@ -254,18 +257,20 @@ lv_obj_set_style_bg_grad_dir(container, LV_GRAD_DIR_NONE, LV_PART_MAIN | LV_STAT
         toggle_event,
         event_data);
 
-    lv_obj_add_event_cb(
-        container,
-        [](lv_event_t* e) {
-          lv_event_code_t code = lv_event_get_code(e);
-          if (code != LV_EVENT_SHORT_CLICKED && code != LV_EVENT_LONG_PRESSED) return;
-          SwitchEventData* data = static_cast<SwitchEventData*>(lv_event_get_user_data(e));
-          if (!data) return;
-          LightPopupInit init = build_light_popup_init(data);
-          show_light_popup(init);
-        },
-        popup_event,
-        event_data);
+    if (allow_popup) {
+      lv_obj_add_event_cb(
+          container,
+          [](lv_event_t* e) {
+            lv_event_code_t code = lv_event_get_code(e);
+            if (code != LV_EVENT_SHORT_CLICKED && code != LV_EVENT_LONG_PRESSED) return;
+            SwitchEventData* data = static_cast<SwitchEventData*>(lv_event_get_user_data(e));
+            if (!data) return;
+            LightPopupInit init = build_light_popup_init(data);
+            show_light_popup(init);
+          },
+          popup_event,
+          event_data);
+    }
 
     lv_obj_add_event_cb(
         container,

@@ -25,7 +25,7 @@ void append_clock_styles(String& html) {
       line-height:1;
     }
     .tile-clock-date {
-      color:#cbd5e1;
+      color:#fff;
       font-size:var(--fs20, 10px);
       font-weight:500;
       line-height:1.1;

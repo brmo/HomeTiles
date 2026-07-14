@@ -251,7 +251,10 @@ lv_obj_set_style_bg_grad_dir(card, LV_GRAD_DIR_NONE, LV_PART_MAIN | LV_STATE_PRE
     target[index].series = series;
   }
 
-  if (tile.sensor_entity.length()) {
+  // Der Screensaver wird per PPA als fertiger Vollbildframe praesentiert.
+  // Popups erzeugen dort eine zweite Overlay-Ebene und sind in diesem Modus
+  // bewusst deaktiviert; auf allen normalen Grids bleibt das Verhalten gleich.
+  if (tile.sensor_entity.length() && grid_type != GridType::SCREENSAVER) {
     bool icon_override = false;
     if (tile.icon_name.length() && !isMdiIconDisabled(tile.icon_name)) {
       icon_override = true;

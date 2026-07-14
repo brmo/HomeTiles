@@ -616,7 +616,7 @@ void appendAdminStyles(String& html) {
       text-shadow:none;
     }
     .screensaver-grid-clock.dragging { cursor:grabbing; }
-    #screensaverClockDate { color:#d0d0d0; }
+    #screensaverClockDate { color:#fff; }
     .screensaver-clock-resize-handle {
       position:absolute;
       right:-12px;

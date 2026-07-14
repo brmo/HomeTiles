@@ -117,20 +117,24 @@ void append_sensor_fields_html(String& html, const String& tab_id, const std::ve
   html += tab_id;
   html += R"html(_sensor_graph_height" min="20" max="200" step="1" placeholder="60">
                 </div>
-                <label>)html";
-  html += tr.popup_open;
-  html += R"html(</label>
+)html";
+  if (tab_id != "screensaver") {
+    html += R"html(                <label>)html";
+    html += tr.popup_open;
+    html += R"html(</label>
                 <select id=")html";
-  html += tab_id;
-  html += R"html(_sensor_popup_open_mode">
+    html += tab_id;
+    html += R"html(_sensor_popup_open_mode">
                   <option value="0">)html";
-  html += tr.long_press;
-  html += R"html(</option>
+    html += tr.long_press;
+    html += R"html(</option>
                   <option value="1">)html";
-  html += tr.short_press;
-  html += R"html(</option>
+    html += tr.short_press;
+    html += R"html(</option>
                 </select>
-                <label>)html";
+)html";
+  }
+  html += R"html(                <label>)html";
   html += tr.sensor_value_y_offset;
   html += R"html(</label>
                 <input type="number" id=")html";

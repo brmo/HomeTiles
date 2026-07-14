@@ -171,7 +171,7 @@ lv_obj_t* create_clock_widget(lv_obj_t* parent,
   if (config.show_date) {
     date_label = lv_label_create(stack);
     if (date_label) {
-      set_label_style(date_label, lv_color_hex(0xD0D0D0),
+      set_label_style(date_label, lv_color_white(),
                       get_clock_font(config.date_font_size, 20));
       if (config.fill_parent) lv_obj_set_width(date_label, LV_PCT(100));
       lv_obj_set_style_text_align(date_label, LV_TEXT_ALIGN_CENTER, 0);

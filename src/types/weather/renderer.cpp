@@ -285,7 +285,7 @@ lv_obj_set_style_bg_grad_dir(card, LV_GRAD_DIR_NONE, LV_PART_MAIN | LV_STATE_PRE
     target[index] = widgets;
   }
 
-  if (tile.sensor_entity.length()) {
+  if (tile.sensor_entity.length() && grid_type != GridType::SCREENSAVER) {
     WeatherEventData* data = new WeatherEventData{
       tile.sensor_entity,
       location,
