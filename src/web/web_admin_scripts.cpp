@@ -1163,6 +1163,50 @@ void appendAdminScripts(String& html) {
     if (typeof fn === 'function') return fn(...args);
   }
 
+  function rebuildEntitySelect(id, entries) {
+    const el = document.getElementById(id);
+    if (!el || !Array.isArray(entries)) return;
+    const keep = el.value;
+    const placeholder = el.options.length ? el.options[0].cloneNode(true) : null;
+    el.innerHTML = '';
+    if (placeholder) el.appendChild(placeholder);
+    for (const entry of entries) {
+      if (!entry || entry.v === undefined) continue;
+      const opt = document.createElement('option');
+      opt.value = entry.v;
+      opt.textContent = entry.t || entry.v;
+      el.appendChild(opt);
+    }
+    el.value = keep;
+    if (keep && el.value !== keep) {
+      // Gespeicherte Entity fehlt in der aktuellen Bridge-Liste (z.B. Bridge
+      // offline): Auswahl behalten statt sie beim naechsten Autosave zu leeren.
+      const opt = document.createElement('option');
+      opt.value = keep;
+      opt.textContent = keep;
+      el.appendChild(opt);
+      el.value = keep;
+    }
+  }
+
+  // Holt die Entity-Listen frisch von der Firmware und baut alle Editor-
+  // Dropdowns des Tabs neu auf. Neue Entitaeten tauchen so ohne Seiten-
+  // Reload auf, sobald man eine Kachel oeffnet.
+  function refreshEntityOptionLists(tab) {
+    fetch('/api/entity_options')
+      .then(res => res.json())
+      .then(data => {
+        if (!data || !data.success) return;
+        rebuildEntitySelect(tab + '_sensor_entity', data.sensors);
+        rebuildEntitySelect(tab + '_energy_entity', data.energy);
+        rebuildEntitySelect(tab + '_weather_entity', data.weathers);
+        rebuildEntitySelect(tab + '_switch_entity', data.switches);
+        rebuildEntitySelect(tab + '_media_entity', data.media);
+        rebuildEntitySelect(tab + '_scene_alias', data.scenes);
+      })
+      .catch(() => {});
+  }
+
   function collectTypeFieldValues(tab) {
     const prefix = tab;
     const typeValue = document.getElementById(prefix + '_tile_type')?.value || '0';
@@ -1735,6 +1779,7 @@ void appendAdminScripts(String& html) {
     if (spanHEl) spanHEl.value = d.span_h || '1';
     const meta = getTileTypeMeta(d.type || '0');
     callTypeHandler(meta, 'load', prefix, d);
+    refreshEntityOptionLists(prefix);
     syncGaugeUi(tab);
     updateTilePreview(tab);
     return true;
@@ -1787,6 +1832,7 @@ void appendAdminScripts(String& html) {
     if (spanHEl) spanHEl.value = data.span_h || '1';
     const meta = getTileTypeMeta(typeValue);
     callTypeHandler(meta, 'load', prefix, data);
+    refreshEntityOptionLists(prefix);
     syncGaugeUi(tab);
   }
 
@@ -1926,6 +1972,7 @@ void appendAdminScripts(String& html) {
     const clockDateFontSelect = document.getElementById(prefix + '_clock_date_font');
     const clockTimeFormatSelect = document.getElementById(prefix + '_clock_time_format');
     const clockDateFormatSelect = document.getElementById(prefix + '_clock_date_format');
+    const clockWallpaperSelect = document.getElementById(prefix + '_clock_wallpaper');
     const counterInput = document.getElementById(prefix + '_counter_value');
     const settingsPanel = document.getElementById(prefix + 'Settings');
 
@@ -2004,6 +2051,11 @@ void appendAdminScripts(String& html) {
       bindLive(clockDateFormatSelect, 'change', 'clockDateFormat', onClockDateFormatChanged);
       bindLive(clockDateFormatSelect, 'input', 'clockDateFormat', onClockDateFormatChanged);
     }
+    if (clockWallpaperSelect) {
+      const onClockWallpaperChanged = () => { updateDraft(tab); scheduleAutoSave(tab); };
+      bindLive(clockWallpaperSelect, 'change', 'clockWallpaper', onClockWallpaperChanged);
+      bindLive(clockWallpaperSelect, 'input', 'clockWallpaper', onClockWallpaperChanged);
+    }
 
     if (settingsPanel && settingsPanel.dataset.clockLiveBound !== '1') {
       const delegatedClockRefresh = (e) => {
@@ -2026,6 +2078,11 @@ void appendAdminScripts(String& html) {
           target.id === (prefix + '_clock_date_format')
         ) {
           updateClockValuePreview(tab);
+          updateDraft(tab);
+          scheduleAutoSave(tab);
+          return;
+        }
+        if (target.id === (prefix + '_clock_wallpaper')) {
           updateDraft(tab);
           scheduleAutoSave(tab);
         }
@@ -2221,6 +2278,7 @@ void appendAdminScripts(String& html) {
         }
         const meta = colorMeta;
         callTypeHandler(meta, 'load', prefix, data);
+        refreshEntityOptionLists(prefix);
         syncGaugeUi(tab);
         const tileElem = document.getElementById(tab + '-tile-' + index);
         if (tileElem) {
@@ -2797,6 +2855,7 @@ void appendAdminScripts(String& html) {
       fd.append('key_modifier', tile.key_modifier || 20);
       fd.append('clock_time_format', (tile.sensor_gauge_min !== undefined && tile.sensor_gauge_min !== null) ? tile.sensor_gauge_min : 0);
       fd.append('clock_date_format', (tile.sensor_gauge_max !== undefined && tile.sensor_gauge_max !== null) ? tile.sensor_gauge_max : 0);
+      fd.append('clock_wallpaper', tile.clock_wallpaper || tile.scene_alias || '');
     } else if (safeType === 11) {
       fd.append('counter_value', tile.counter_value || tile.scene_alias || '0');
     } else if (safeType === 12) {

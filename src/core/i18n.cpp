@@ -254,7 +254,11 @@ static const Strings kStringsDe = {
 
     "Trennen",
     "Koppeln",
-    "Koppeln: MQTT verbindet neu..."};
+    "Koppeln: MQTT verbindet neu...",
+
+    "Screensaver-Bild",
+    "JPEG-Dateien (ideal 1280x800) in den SD-Ordner /wallpapers legen. "
+    "Tippen auf die Kachel startet den Screensaver."};
 
 static const Strings kStringsEn = {
     "en",
@@ -508,7 +512,11 @@ static const Strings kStringsEn = {
 
     "Disconnect",
     "Pairing",
-    "Pairing: reconnecting MQTT..."};
+    "Pairing: reconnecting MQTT...",
+
+    "Screensaver image",
+    "Put JPEG files (ideally 1280x800) into the /wallpapers folder on the "
+    "SD card. Tapping the tile starts the screensaver."};
 
 const char* normalize_language_code(const char* language_code) {
   if (!language_code || !language_code[0]) return kStringsEn.code;

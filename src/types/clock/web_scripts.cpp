@@ -122,6 +122,39 @@ void append_clock_scripts(String& html) {
     if (!timeEl.checked && !dateEl.checked) timeEl.checked = true;
   }
 
+  // Holt die Dateiliste frisch vom File-Manager-Endpoint und baut die
+  // Dropdown-Optionen neu auf. So tauchen neu hochgeladene Bilder ohne
+  // Seiten-Reload auf, sobald man eine Uhr-Kachel oeffnet.
+  function refreshClockWallpaperOptions(tab, selected) {
+    const el = document.getElementById(tab + '_clock_wallpaper');
+    if (!el) return;
+    const target = (selected !== undefined) ? selected : el.value;
+    fetch('/api/files/list?fs=sd&path=' + encodeURIComponent('/wallpapers'))
+      .then(res => res.json())
+      .then(data => {
+        if (!data || !data.success || !Array.isArray(data.entries)) return;
+        const names = data.entries
+          .filter(e => e && !e.dir && /\.jpe?g$/i.test(e.name || ''))
+          .map(e => e.name)
+          .sort((a, b) => a.localeCompare(b));
+        // Erste Option ("keine Auswahl") behalten, Rest neu aufbauen. Eine
+        // zwischenzeitliche Nutzer-Auswahl gewinnt gegen den Load-Wert.
+        const keep = el.value || target || '';
+        const placeholder = el.options.length ? el.options[0].cloneNode(true) : null;
+        el.innerHTML = '';
+        if (placeholder) el.appendChild(placeholder);
+        for (const name of names) {
+          const opt = document.createElement('option');
+          opt.value = name;
+          opt.textContent = name;
+          el.appendChild(opt);
+        }
+        el.value = keep;
+        if (el.value !== keep) el.value = '';
+      })
+      .catch(() => {});
+  }
+
   function loadClockFields(tab, data) {
     const timeFontEl = document.getElementById(tab + '_clock_time_font');
     if (timeFontEl) {
@@ -142,6 +175,16 @@ void append_clock_scripts(String& html) {
     if (dateFormatEl) {
       const dateFormat = (data && data.sensor_gauge_max !== undefined) ? data.sensor_gauge_max : (data ? data.clock_date_format : 0);
       dateFormatEl.value = String(dateFormat !== undefined ? dateFormat : 0);
+    }
+    const wallpaperEl = document.getElementById(tab + '_clock_wallpaper');
+    if (wallpaperEl) {
+      // Der Dateiname liegt in scene_alias (siehe Firmware web_handler).
+      const wallpaper = (data && (data.clock_wallpaper !== undefined ? data.clock_wallpaper
+                                 : data.scene_alias)) || '';
+      wallpaperEl.value = wallpaper;
+      // Liste frisch von der SD-Karte holen; setzt auch die Auswahl, falls
+      // die Datei in den server-gerenderten Optionen noch fehlte.
+      refreshClockWallpaperOptions(tab, wallpaper);
     }
     if (data && (data.clock_show_time !== undefined || data.clock_show_date !== undefined)) {
       const showTime = String(data.clock_show_time || '0') === '1';
@@ -200,6 +243,7 @@ void append_clock_scripts(String& html) {
     formData.append('key_modifier', document.getElementById(tab + '_clock_date_font')?.value || '20');
     formData.append('clock_time_format', document.getElementById(tab + '_clock_time_format')?.value || '0');
     formData.append('clock_date_format', document.getElementById(tab + '_clock_date_format')?.value || '0');
+    formData.append('clock_wallpaper', document.getElementById(tab + '_clock_wallpaper')?.value || '');
   }
 
   function resetClockFields(tab) {
@@ -212,6 +256,9 @@ void append_clock_scripts(String& html) {
     if (timeFormatEl) timeFormatEl.value = '0';
     const dateFormatEl = document.getElementById(tab + '_clock_date_format');
     if (dateFormatEl) dateFormatEl.value = '0';
+    const wallpaperEl = document.getElementById(tab + '_clock_wallpaper');
+    if (wallpaperEl) wallpaperEl.value = '';
+    refreshClockWallpaperOptions(tab, '');
   }
   </script>
 )html";

@@ -22,6 +22,7 @@
 #include <driver/ppa.h>
 #include <hal/lcd_types.h>
 
+#include "src/core/dma2d_arbiter.h"
 #include "src/devices/waveshare_touch_lcd_8/waveshare_sdmmc.h"
 #include "src/devices/waveshare_touch_lcd_8/vendor/displays_config.h"
 #include "src/devices/waveshare_touch_lcd_8/vendor/gt911.h"
@@ -1025,6 +1026,107 @@ void DeviceWaveshareTouchLCD8::displayPushPixels(int32_t x, int32_t y, int32_t w
 void DeviceWaveshareTouchLCD8::displayPushPixelsDMA(int32_t x, int32_t y, int32_t w, int32_t h,
                                                     const uint16_t* data) {
   draw_landscape_area(x, y, w, h, data);
+}
+
+bool DeviceWaveshareTouchLCD8::displayTryFullFramePreview(
+    int32_t x, int32_t y, int32_t w, int32_t h,
+    const uint16_t* data, size_t data_size, bool byte_swap) {
+  // Dieser Pfad ist absichtlich komplett getrennt vom normalen Flush: Bei
+  // jedem Problem zeichnet LVGL wie bisher weiter. Insbesondere gibt es hier
+  // KEINEN CPU-Fallback fuer das rund 2 MB grosse Vollbild.
+  static bool preview_disabled_after_fault = false;
+  if (preview_disabled_after_fault || !data ||
+      (reinterpret_cast<uintptr_t>(data) & (kCacheLineSize - 1)) != 0 ||
+      w < kPpaMinRotateWidth || h <= 0 || !g_panel_fb_ready ||
+      !g_ppa_handle || !g_ppa_async_ready || !g_ppa_done ||
+      g_ppa_reset_pending || ppa_cooldown_active()) {
+    return false;
+  }
+
+  const size_t required_bytes =
+      static_cast<size_t>(w) * static_cast<size_t>(h) * sizeof(uint16_t);
+  if (data_size < required_bytes) return false;
+
+  const int32_t logical_w = display_cfg.height;
+  const int32_t logical_h = display_cfg.width;
+  if (x < 0 || y < 0 || (x + w) > logical_w || (y + h) > logical_h) {
+    return false;
+  }
+
+  uint16_t* fb = panel_fb();
+  if (!fb) return false;
+
+  // Nicht auf einen parallel laufenden JPEG-Decode warten: Nach kurzer Frist
+  // ist der bewaehrte LVGL-Pfad schneller und vor allem risikolos.
+  Dma2dArbiterGuard dma2d_guard(25);
+  if (!dma2d_guard.locked()) return false;
+
+  int32_t dst_x = 0;
+  int32_t dst_y = 0;
+  const int32_t dst_w = h;
+  const int32_t dst_h = w;
+  ppa_srm_rotation_angle_t rotation_angle;
+  if (g_rotation & 0x02) {
+    dst_x = y;
+    dst_y = logical_w - x - w;
+    rotation_angle = PPA_SRM_ROTATION_ANGLE_90;
+  } else {
+    dst_x = logical_h - y - h;
+    dst_y = x;
+    rotation_angle = PPA_SRM_ROTATION_ANGLE_270;
+  }
+  if (dst_x < 0 || dst_y < 0 || (dst_x + dst_w) > display_cfg.width ||
+      (dst_y + dst_h) > display_cfg.height) {
+    return false;
+  }
+
+  flush_cache_for_dma(data, required_bytes);
+
+  ppa_srm_oper_config_t oper = {};
+  oper.in.buffer = data;
+  oper.in.pic_w = w;
+  oper.in.pic_h = h;
+  oper.in.block_w = w;
+  oper.in.block_h = h;
+  oper.in.block_offset_x = 0;
+  oper.in.block_offset_y = 0;
+  oper.in.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+
+  oper.out.buffer = fb;
+  oper.out.buffer_size = panel_frame_bytes();
+  oper.out.pic_w = display_cfg.width;
+  oper.out.pic_h = display_cfg.height;
+  oper.out.block_offset_x = dst_x;
+  oper.out.block_offset_y = dst_y;
+  oper.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+
+  oper.rotation_angle = rotation_angle;
+  oper.scale_x = 1.0f;
+  oper.scale_y = 1.0f;
+  oper.rgb_swap = false;
+  oper.byte_swap = byte_swap;
+  oper.mode = PPA_TRANS_MODE_NON_BLOCKING;
+  oper.user_data = g_ppa_done;
+
+  xSemaphoreTake(g_ppa_done, 0);
+  const esp_err_t err = ppa_do_scale_rotate_mirror(g_ppa_handle, &oper);
+  if (err != ESP_OK) {
+    preview_disabled_after_fault = true;
+    Serial.printf("[Screensaver/PPA] Preview submit fehlgeschlagen: %d\n",
+                  static_cast<int>(err));
+    note_ppa_fault();
+    return false;
+  }
+  if (xSemaphoreTake(g_ppa_done, pdMS_TO_TICKS(kPpaRotateTimeoutMs)) != pdTRUE) {
+    preview_disabled_after_fault = true;
+    Serial.println("[Screensaver/PPA] Preview timeout, normaler LVGL-Pfad");
+    note_ppa_fault();
+    return false;
+  }
+
+  g_ppa_consecutive_faults = 0;
+  mark_dirty_rect(dst_x, dst_y, dst_w, dst_h);
+  return true;
 }
 
 void DeviceWaveshareTouchLCD8::displayWaitDMA() {

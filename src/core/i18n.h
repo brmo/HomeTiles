@@ -264,6 +264,10 @@ struct Strings {
   const char* wifi_disconnect_btn;
   const char* system_pair_btn;
   const char* system_pair_status;
+
+  // Clock-Tile: Bild-Screensaver (JPEG aus SD-Ordner /wallpapers)
+  const char* clock_wallpaper_label;
+  const char* clock_wallpaper_hint;
 };
 
 const Strings& strings(const char* language_code);

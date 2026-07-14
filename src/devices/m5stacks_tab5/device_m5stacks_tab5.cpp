@@ -304,7 +304,8 @@ bool rect_inside_logical_bounds(int32_t x, int32_t y, int32_t w, int32_t h) {
          (y + h) <= kLogicalHeight;
 }
 
-bool ppa_rotate_to_panel(int32_t x, int32_t y, int32_t w, int32_t h, const uint16_t* data) {
+bool ppa_rotate_to_panel(int32_t x, int32_t y, int32_t w, int32_t h,
+                         const uint16_t* data, bool byte_swap) {
   if (g_ppa_wedged) {
     // Spaete Fertigmeldung der verklemmten Transaktion? Dann ist die Engine
     // wieder frei und der Client laesst sich sauber neu aufsetzen. Dieses
@@ -412,7 +413,7 @@ bool ppa_rotate_to_panel(int32_t x, int32_t y, int32_t w, int32_t h, const uint1
   oper.scale_x = 1.0f;
   oper.scale_y = 1.0f;
   oper.rgb_swap = false;
-  oper.byte_swap = true;  // LVGL uses RGB565_SWAPPED on Tab5, panel framebuffer is RGB565.
+  oper.byte_swap = byte_swap;
 
   if (g_ppa_async_ready && g_ppa_done) {
     oper.mode = PPA_TRANS_MODE_NON_BLOCKING;
@@ -480,7 +481,8 @@ bool ppa_rotate_to_panel(int32_t x, int32_t y, int32_t w, int32_t h, const uint1
 
 void push_pixels_with_ppa_fallback(int32_t x, int32_t y, int32_t w, int32_t h,
                                    const uint16_t* data, bool dma) {
-  if (ppa_rotate_to_panel(x, y, w, h, data)) {
+  // LVGL uses RGB565_SWAPPED on Tab5, der Panel-Framebuffer RGB565.
+  if (ppa_rotate_to_panel(x, y, w, h, data, true)) {
     return;
   }
 
@@ -536,6 +538,23 @@ void DeviceM5StacksTab5::displayPushPixelsDMA(int32_t x, int32_t y, int32_t w, i
   }
 
   push_pixels_with_ppa_fallback(x, y, w, h, data, true);
+}
+
+bool DeviceM5StacksTab5::displayTryFullFramePreview(
+    int32_t x, int32_t y, int32_t w, int32_t h,
+    const uint16_t* data, size_t data_size, bool byte_swap) {
+  if (!g_display_ready || !data || !rect_inside_logical_bounds(x, y, w, h) ||
+      !g_ppa_async_ready || !g_ppa_done ||
+      (reinterpret_cast<uintptr_t>(data) & (kCacheLineSize - 1)) != 0) {
+    return false;
+  }
+  const size_t required_bytes =
+      static_cast<size_t>(w) * static_cast<size_t>(h) * sizeof(uint16_t);
+  if (data_size < required_bytes) return false;
+
+  // Kein M5GFX-/CPU-Fallback an dieser Stelle: false bedeutet, dass LVGL den
+  // identischen vorbereiteten Puffer auf seinem normalen Weg zeichnet.
+  return ppa_rotate_to_panel(x, y, w, h, data, byte_swap);
 }
 
 void DeviceM5StacksTab5::displayWaitDMA() {

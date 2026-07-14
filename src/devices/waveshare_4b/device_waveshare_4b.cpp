@@ -313,6 +313,14 @@ void DeviceWaveshare4B::displayPushPixelsDMA(int32_t x, int32_t y, int32_t w, in
   displayPushPixels(x, y, w, h, data);
 }
 
+bool DeviceWaveshare4B::displayTryFullFramePreview(
+    int32_t, int32_t, int32_t, int32_t,
+    const uint16_t*, size_t, bool) {
+  // Der B4 braucht keine zusaetzliche Rotationsvorschau. LVGL zeichnet den
+  // vorbereiteten Vollbildpuffer bereits ueber den normalen Displaypfad.
+  return false;
+}
+
 void DeviceWaveshare4B::displayWaitDMA() {
 }
 

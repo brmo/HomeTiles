@@ -6,6 +6,7 @@
 #include "src/tiles/tile_renderer_fonts.h"
 #include "src/tiles/mdi_icons.h"
 #include "src/fonts/ui_fonts.h"
+#include "src/ui/image_screensaver.h"
 #include <Arduino.h>
 #include <time.h>
 
@@ -74,6 +75,8 @@ static const lv_font_t* get_clock_date_font(const Tile& tile) {
 struct ClockTileData {
   uint8_t time_format = clock_tile::TIME_FORMAT_24H;
   uint8_t date_format = clock_tile::DATE_FORMAT_DMY;
+  uint8_t flags = 1;
+  String wallpaper;  // Screensaver-Bild in /wallpapers (leer = kein Tap-Ziel)
   lv_obj_t* time_label = nullptr;
   lv_obj_t* date_label = nullptr;
   lv_timer_t* timer = nullptr;
@@ -197,6 +200,9 @@ lv_obj_set_style_bg_grad_dir(card, LV_GRAD_DIR_NONE, LV_PART_MAIN | LV_STATE_PRE
   lv_obj_set_style_pad_gap(stack, 6, 0);
   lv_obj_set_style_bg_opa(stack, LV_OPA_TRANSP, 0);
   lv_obj_remove_flag(stack, LV_OBJ_FLAG_SCROLLABLE);
+  // Der Stack fuellt die ganze Kachel und wuerde als klickbares lv_obj jeden
+  // Tap schlucken, bevor er den Button erreicht — durchreichen an die Karte.
+  lv_obj_remove_flag(stack, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_align(stack, LV_ALIGN_CENTER, 0, has_header ? 18 : 0);
 
   lv_obj_t* time_lbl = nullptr;
@@ -224,10 +230,32 @@ lv_obj_set_style_bg_grad_dir(card, LV_GRAD_DIR_NONE, LV_PART_MAIN | LV_STATE_PRE
   ClockTileData* data = new ClockTileData{};
   data->time_format = resolve_clock_time_format(tile);
   data->date_format = resolve_clock_date_format(tile);
+  data->flags = flags;
+  data->wallpaper = tile.scene_alias;
   data->time_label = time_lbl;
   data->date_label = date_lbl;
   update_clock_labels(data);
   data->timer = lv_timer_create(clock_timer_cb, 1000, data);
+
+  // Tap oeffnet den Bild-Screensaver, wenn ein Hintergrundbild gewaehlt ist.
+  if (data->wallpaper.length() > 0) {
+    preload_image_screensaver(data->wallpaper);
+    lv_obj_add_event_cb(
+        card,
+        [](lv_event_t* e) {
+          ClockTileData* data = static_cast<ClockTileData*>(lv_event_get_user_data(e));
+          if (!data || !data->wallpaper.length()) return;
+          ImageScreensaverInit init;
+          init.file_name = data->wallpaper;
+          init.time_format = data->time_format;
+          init.date_format = data->date_format;
+          init.show_time = (data->flags & 1) != 0;
+          init.show_date = (data->flags & 2) != 0;
+          show_image_screensaver(init);
+        },
+        LV_EVENT_CLICKED,
+        data);
+  }
 
   lv_obj_add_event_cb(
       card,

@@ -2,6 +2,8 @@
 #include "src/web/web_admin_html.h"
 #include "src/core/i18n.h"
 #include "src/web/web_admin_utils.h"
+#include "src/core/device_entities.h"
+#include "src/network/ha_bridge_config.h"
 #include "src/network/network_manager.h"
 #include "src/network/mqtt_handlers.h"
 #include "src/ui/tab_settings.h"
@@ -1966,6 +1968,117 @@ void WebAdminServer::handleUploadIconDone() {
   String json = "{\"ok\":true,\"path\":\"";
   appendJsonEscaped(json, path);
   json += "\"}";
+  sendChunkedResponse(server, 200, "application/json", json);
+}
+
+// Liefert die aktuellen Entity-Listen der HA-Bridge als JSON ({v: id, t:
+// Anzeigetext} pro Eintrag). Die Dropdowns im Tile-Editor befuellen sich
+// damit beim Oeffnen einer Kachel frisch, statt auf das einmal gerenderte
+// Seiten-HTML angewiesen zu sein — neue Entitaeten (und Wallpapers, siehe
+// /api/files/list) waren sonst erst nach einem Seiten-Reload waehlbar.
+// Die Label-Formate spiegeln die append_*_fields_html der Typ-Module.
+void WebAdminServer::handleGetEntityOptions() {
+  webAdminMarkActivity();
+  const HaBridgeConfigData& ha = haBridgeConfig.get();
+
+  auto appendPair = [](String& json, const String& value, const String& label, bool& first) {
+    if (!first) json += ",";
+    first = false;
+    json += "{\"v\":\"";
+    appendJsonEscaped(json, value);
+    json += "\",\"t\":\"";
+    appendJsonEscaped(json, label);
+    json += "\"}";
+  };
+
+  auto appendHumanizedList = [&](String& json, const char* key, const std::vector<String>& ids) {
+    json += "\"";
+    json += key;
+    json += "\":[";
+    bool first = true;
+    for (const auto& id : ids) {
+      appendPair(json, id, humanizeIdentifier(id, true) + " - " + id, first);
+    }
+    json += "]";
+  };
+
+  // Wie label_already_has_unit_suffix im Energy-Formular.
+  auto hasUnitSuffix = [](const String& name, const String& unit) {
+    String n = name;
+    n.trim();
+    String u = unit;
+    u.trim();
+    if (!n.length() || !u.length()) return false;
+    String suffix = "(" + u + ")";
+    n.toLowerCase();
+    suffix.toLowerCase();
+    return n.endsWith(suffix);
+  };
+
+  String json = "{\"success\":true,";
+  appendHumanizedList(json, "sensors", parseSensorList(ha.sensors_text));
+  json += ",";
+  appendHumanizedList(json, "weathers", parseSensorList(ha.weathers_text));
+  json += ",";
+
+  json += "\"energy\":[";
+  {
+    bool first = true;
+    for (const auto& id : parseSensorList(ha.energy_text)) {
+      String name = haBridgeConfig.findSensorName(id);
+      if (!name.length()) name = humanizeIdentifier(id, true);
+      const String unit = haBridgeConfig.findSensorUnit(id);
+      String label = name;
+      if (unit.length() && !hasUnitSuffix(label, unit)) {
+        label += " (";
+        label += unit;
+        label += ")";
+      }
+      label += " - ";
+      label += id;
+      appendPair(json, id, label, first);
+    }
+  }
+  json += "],\"media\":[";
+  {
+    bool first = true;
+    for (const auto& id : parseSensorList(ha.media_players_text)) {
+      String name = haBridgeConfig.findSensorName(id);
+      if (!name.length()) name = humanizeIdentifier(id, true);
+      appendPair(json, id, name + " - " + id, first);
+    }
+  }
+  json += "],";
+
+  // Lichter + Schalter + Geraete-Entities, dedupliziert — gleiche Reihenfolge
+  // wie buildAdminFolderTabFragments.
+  {
+    std::vector<String> switch_options;
+    auto addSwitchOption = [&](const String& entry) {
+      if (!entry.length()) return;
+      for (const auto& existing : switch_options) {
+        if (existing.equalsIgnoreCase(entry)) return;
+      }
+      switch_options.push_back(entry);
+    };
+    for (const auto& opt : parseSensorList(ha.lights_text)) addSwitchOption(opt);
+    for (const auto& opt : parseSensorList(ha.switches_text)) addSwitchOption(opt);
+    addSwitchOption(kEntityDisplayBrightness);
+    addSwitchOption(kEntityDisplayRotate);
+    addSwitchOption(kEntityDisplaySleep);
+    appendHumanizedList(json, "switches", switch_options);
+  }
+
+  json += ",\"scenes\":[";
+  {
+    bool first = true;
+    for (const auto& scene : parseSceneList(ha.scene_alias_text)) {
+      appendPair(json, scene.alias,
+                 humanizeIdentifier(scene.alias, false) + " - " + scene.entity,
+                 first);
+    }
+  }
+  json += "]}";
   sendChunkedResponse(server, 200, "application/json", json);
 }
 

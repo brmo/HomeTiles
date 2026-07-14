@@ -54,6 +54,7 @@ public:
   void handleGetFolderTab();
   void handleDeleteFolder();
   void handleGetSensorValues();
+  void handleGetEntityOptions();
   void handleGetSdImages();
   void handleGetSdIcons();
   void handleCreateScreenshot();

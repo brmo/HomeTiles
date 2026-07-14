@@ -28,6 +28,13 @@ void displayPushPixelsDMA(int32_t x, int32_t y, int32_t w, int32_t h,
   DeviceImpl::displayPushPixelsDMA(x, y, w, h, data);
 }
 
+bool displayTryFullFramePreview(int32_t x, int32_t y, int32_t w, int32_t h,
+                                const uint16_t* data, size_t data_size,
+                                bool byte_swap) {
+  return DeviceImpl::displayTryFullFramePreview(
+      x, y, w, h, data, data_size, byte_swap);
+}
+
 void displayWaitDMA() {
   DeviceImpl::displayWaitDMA();
 }

@@ -60,6 +60,7 @@ bool WebAdminServer::start() {
   server.on("/api/folders/tab", HTTP_GET, [this]() { this->handleGetFolderTab(); });
   server.on("/api/folders/delete", HTTP_POST, [this]() { this->handleDeleteFolder(); });
   server.on("/api/sensor_values", HTTP_GET, [this]() { this->handleGetSensorValues(); });
+  server.on("/api/entity_options", HTTP_GET, [this]() { this->handleGetEntityOptions(); });
   server.on("/api/sd_images", HTTP_GET, [this]() { this->handleGetSdImages(); });
   server.on("/api/sd_icons", HTTP_GET, [this]() { this->handleGetSdIcons(); });
   server.on("/api/screenshot", HTTP_POST, [this]() { this->handleCreateScreenshot(); });

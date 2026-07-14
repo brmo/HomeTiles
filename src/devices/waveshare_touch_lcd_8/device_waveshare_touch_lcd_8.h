@@ -31,6 +31,13 @@ void displayPushPixels(int32_t x, int32_t y, int32_t w, int32_t h,
                        const uint16_t* data);
 void displayPushPixelsDMA(int32_t x, int32_t y, int32_t w, int32_t h,
                           const uint16_t* data);
+// Best-effort full-image preview straight into the physical framebuffer.
+// Uses only the already registered, timeout-protected PPA client and never
+// falls back to a full CPU rotation. false leaves the normal LVGL path in
+// charge, which completes or replaces any partial preview.
+bool displayTryFullFramePreview(int32_t x, int32_t y, int32_t w, int32_t h,
+                                const uint16_t* data, size_t data_size,
+                                bool byte_swap);
 void displayWaitDMA();
 void displayCommit();
 void displayFillScreen(uint16_t color);
