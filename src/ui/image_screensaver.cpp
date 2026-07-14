@@ -52,6 +52,15 @@ struct ScreensaverState {
   uint32_t next_wallpaper_ms = 0;
   uint32_t next_slot_refresh_ms = 0;
   String slot_payloads[TILES_PER_GRID];
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+  // Fertiger LVGL-Frame fuer ruhige Diawechsel: Wallpaper, Uhr, Kacheln und
+  // ein eventuell offenes Popup werden zuerst unsichtbar in PSRAM gerendert
+  // und erst danach gemeinsam per PPA auf das Panel geschrieben.
+  uint8_t* composite_storage = nullptr;
+  size_t composite_storage_size = 0;
+  lv_draw_buf_t composite_draw_buf{};
+  bool composite_draw_buf_ready = false;
+#endif
 };
 
 ScreensaverState* g_state = nullptr;
@@ -131,6 +140,76 @@ void set_image_src_without_invalidation(lv_obj_t* image, const void* src) {
   lv_image_set_src(image, src);
   if (display) lv_display_enable_invalidation(display, true);
 }
+
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+bool ensure_composite_draw_buf(ScreensaverState* st) {
+  if (!st) return false;
+  const uint32_t width = Device::kScreenWidth;
+  const uint32_t height = Device::kScreenHeight;
+  const uint32_t stride = width * sizeof(uint16_t);
+  const size_t needed = static_cast<size_t>(stride) * height;
+  if (needed > UINT32_MAX) return false;
+
+  if (st->composite_draw_buf_ready && st->composite_storage &&
+      st->composite_storage_size >= needed) {
+    return true;
+  }
+
+  if (st->composite_storage) {
+    free(st->composite_storage);
+    st->composite_storage = nullptr;
+  }
+  st->composite_storage_size = 0;
+  st->composite_draw_buf_ready = false;
+
+  st->composite_storage = static_cast<uint8_t*>(heap_caps_aligned_alloc(
+      kPpaBufferAlignment, needed,
+      MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA | MALLOC_CAP_8BIT));
+  if (!st->composite_storage) {
+    Serial.printf("[Screensaver] Composite-Puffer fehlt: %u Bytes\n",
+                  static_cast<unsigned>(needed));
+    return false;
+  }
+
+  if (lv_draw_buf_init(&st->composite_draw_buf, width, height,
+                       LV_COLOR_FORMAT_RGB565, stride,
+                       st->composite_storage,
+                       static_cast<uint32_t>(needed)) != LV_RESULT_OK) {
+    free(st->composite_storage);
+    st->composite_storage = nullptr;
+    return false;
+  }
+  st->composite_storage_size = needed;
+  st->composite_draw_buf_ready = true;
+  return true;
+}
+
+bool present_composited_screensaver_frame(ScreensaverState* st) {
+  if (!st || !st->overlay || !ensure_composite_draw_buf(st)) return false;
+  lv_display_t* display = lv_obj_get_display(st->overlay);
+  lv_obj_t* top_layer = display ? lv_display_get_layer_top(display) : nullptr;
+  if (!top_layer) return false;
+
+  const uint32_t snapshot_started = millis();
+  // Der komplette Top-Layer ist absichtlich die Quelle. So bleibt auch ein
+  // Popup sichtbar und die Diashow muss waehrenddessen nicht angehalten werden.
+  if (lv_snapshot_take_to_draw_buf(top_layer, LV_COLOR_FORMAT_RGB565,
+                                   &st->composite_draw_buf) != LV_RESULT_OK) {
+    Serial.println("[Screensaver] Composite-Snapshot fehlgeschlagen");
+    return false;
+  }
+
+  const bool preview_ok = Device::displayTryFullFramePreview(
+      0, 0, Device::kScreenWidth, Device::kScreenHeight,
+      reinterpret_cast<const uint16_t*>(st->composite_draw_buf.data),
+      st->composite_draw_buf.data_size,
+      false);  // Snapshot ist natives RGB565, nicht RGB565_SWAPPED.
+  Serial.printf("[Screensaver] Composite-Preview %s in %u ms\n",
+                preview_ok ? "OK" : "uebersprungen",
+                static_cast<unsigned>(millis() - snapshot_started));
+  return preview_ok;
+}
+#endif
 
 bool is_jpeg(const uint8_t* data, size_t len) {
   return data && len >= 3 && data[0] == 0xFF && data[1] == 0xD8;
@@ -727,8 +806,8 @@ bool apply_wallpaper(ScreensaverState* st, int index, bool allow_fallback,
       wallpaper, Device::kScreenWidth, Device::kScreenHeight, st->image);
   if (!dsc) return false;
   // Die Quelle intern sofort umstellen, aber noch keinen bildschirmgrossen
-  // LVGL-Redraw ausloesen. Auf den gedrehten P4-Geraeten uebernimmt PPA die
-  // Wallpaper-Pixel; LVGL zeichnet danach nur die darueberliegenden Elemente.
+  // LVGL-Redraw ausloesen. Auf den gedrehten P4-Geraeten rendert LVGL daraus
+  // zunaechst den unsichtbaren Gesamtframe; nur dieser geht danach an PPA.
   set_image_src_without_invalidation(st->image, dsc);
   lv_obj_remove_flag(st->image, LV_OBJ_FLAG_HIDDEN);
   st->active_wallpaper = index;
@@ -736,36 +815,21 @@ bool apply_wallpaper(ScreensaverState* st, int index, bool allow_fallback,
   st->next_wallpaper_ms = millis() +
       static_cast<uint32_t>(wallpaper.duration_seconds) * 1000U;
 
-  // Auch ein gerade neu dekodiertes Dia liegt jetzt als vollstaendiger,
-  // ausgerichteter Vollbildpuffer im PSRAM vor. Deshalb jedes Bild durch den
-  // geraetespezifischen Hardwarepfad (auf P4: PPA) schicken, nicht nur den
-  // bereits vorgeladenen Cache-Treffer. Andernfalls baut LVGL Folgebilder
-  // sichtbar zeilenweise auf.
+  // Auf den gedrehten P4-Geraeten darf PPA nicht zuerst nur das Wallpaper auf
+  // den sichtbaren Puffer schreiben: dabei waeren Uhr und Kacheln bis zu ihrem
+  // anschliessenden LVGL-Redraw wirklich weg und wuerden sichtbar blinken.
+  // Stattdessen wird der komplette Top-Layer unsichtbar zusammengesetzt und
+  // als fertiger Frame praesentiert. Der B4 bleibt beim bewaehrten LVGL-Pfad.
   const uint32_t started = millis();
-  const bool preview_ok = Device::displayTryFullFramePreview(
-      0, 0, Device::kScreenWidth, Device::kScreenHeight,
-      reinterpret_cast<const uint16_t*>(dsc->data), dsc->data_size, true);
+  bool preview_ok = false;
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+  preview_ok = present_composited_screensaver_frame(st);
+#endif
   Serial.printf("[Screensaver] Hardware-Preview %s (%s) in %u ms\n",
                 preview_ok ? "OK" : "uebersprungen",
                 cache_hit ? "cache" : "decode",
                 static_cast<unsigned>(millis() - started));
-  // Der Hardwarepfad schreibt das Vollbild ausserhalb von LVGL direkt auf
-  // das Panel. Uhr und Kacheln deshalb noch in demselben Aufruf gezielt neu
-  // zeichnen. Wichtig: nicht den bildschirmgrossen transparenten Grid-
-  // Container invalidieren, denn das wuerde wieder das ganze Bild ueber den
-  // normalen LVGL-Pfad schicken.
-  if (preview_ok) {
-    if (st->clock_box) lv_obj_invalidate(st->clock_box);
-    if (st->slot_grid) {
-      const uint32_t child_count = lv_obj_get_child_count(st->slot_grid);
-      for (uint32_t i = 0; i < child_count; ++i) {
-        lv_obj_t* child = lv_obj_get_child(st->slot_grid, static_cast<int32_t>(i));
-        if (child) lv_obj_invalidate(child);
-      }
-    }
-    lv_display_t* display = lv_obj_get_display(st->overlay);
-    if (display) lv_refr_now(display);
-  } else {
+  if (!preview_ok) {
     // B4 bzw. jeder sichere PPA-Fallback: dort muss LVGL das neue Bild wie
     // bisher selbst zeichnen.
     lv_obj_invalidate(st->image);
@@ -872,25 +936,6 @@ int find_config_wallpaper(const String& name, bool enabled_only) {
   return -1;
 }
 
-bool has_visible_overlay_above_screensaver(const ScreensaverState* st) {
-  if (!st || !st->overlay) return false;
-  lv_obj_t* top = lv_layer_top();
-  const uint32_t count = lv_obj_get_child_count(top);
-  bool after_screensaver = false;
-  for (uint32_t i = 0; i < count; ++i) {
-    lv_obj_t* child = lv_obj_get_child(top, static_cast<int32_t>(i));
-    if (child == st->overlay) {
-      after_screensaver = true;
-      continue;
-    }
-    if (after_screensaver && child &&
-        !lv_obj_has_flag(child, LV_OBJ_FLAG_HIDDEN)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 void clear_live_wallpaper(ScreensaverState* st) {
   if (!st || !st->image) return;
   lv_image_set_src(st->image, nullptr);
@@ -977,18 +1022,11 @@ void global_screensaver_timer_cb(lv_timer_t* timer) {
   const auto& config = screensaverConfig.get();
   if (config.use_wallpapers && st->active_wallpaper >= 0 &&
       static_cast<int32_t>(now - st->next_wallpaper_ms) >= 0) {
-    // Ein Popup liegt ebenfalls auf lv_layer_top. Ein direkter PPA-
-    // Vollbildwechsel wuerde es fuer einen Frame uebermalen; waehrend eines
-    // offenen Popups die Diashow deshalb einfach kurz anhalten.
-    if (has_visible_overlay_above_screensaver(st)) {
-      st->next_wallpaper_ms = now + 500U;
+    const int next = next_enabled_wallpaper(st->active_wallpaper);
+    if (next >= 0 && next != st->active_wallpaper) {
+      apply_wallpaper(st, next, false);
     } else {
-      const int next = next_enabled_wallpaper(st->active_wallpaper);
-      if (next >= 0 && next != st->active_wallpaper) {
-        apply_wallpaper(st, next, false);
-      } else {
-        st->next_wallpaper_ms = now + 1000U;
-      }
+      st->next_wallpaper_ms = now + 1000U;
     }
   }
 }
@@ -1013,6 +1051,12 @@ void on_global_overlay_delete(lv_event_t* e) {
     g_state = nullptr;
   }
   if (st->timer) lv_timer_delete(st->timer);
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+  if (st->composite_storage) {
+    free(st->composite_storage);
+    st->composite_storage = nullptr;
+  }
+#endif
   delete st;
 }
 
