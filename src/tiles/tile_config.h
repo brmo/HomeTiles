@@ -65,6 +65,10 @@ struct Tile {
   String title;
   String icon_name;
   uint32_t bg_color;
+  // Fuer normale Kacheln derzeit immer voll deckend. Der Screensaver nutzt
+  // dasselbe Tile-Objekt und kann damit seinen Hintergrund transparent
+  // zeichnen. Persistiert im bereits vorhandenen Reserved-Byte von V7.
+  uint8_t background_opacity;
 
   uint8_t col;
   uint8_t row;
@@ -97,6 +101,7 @@ struct Tile {
   Tile()
       : type(TILE_EMPTY),
         bg_color(0),
+        background_opacity(255),
         col(0),
         row(0),
         span_w(1),
@@ -205,10 +210,17 @@ struct FolderEntityCacheEntry;
 
 class TileConfig {
 public:
+  // Eigenstaendiges Grid fuer den Screensaver. Die reservierte Storage-ID
+  // ist kein Ordner und erscheint deshalb weder in der Ordnerliste noch in
+  // der Navigation. Gespeichert wird trotzdem im exakt gleichen gepackten
+  // LittleFS-Format wie jedes normale Kachel-Grid.
+  static constexpr uint16_t kScreensaverGridStorageId = 0xFFFE;
+
   TileConfig();
 
   bool load();
   bool loadFolderGrid(uint16_t folder_id, TileGridConfig& out);
+  bool loadScreensaverGrid(TileGridConfig& out);
   bool loadFolderGridEntitiesOnly(uint16_t folder_id, TileEntitySlot* out, size_t count);
   // Wie loadFolderGridEntitiesOnly(), aber ueber einen PSRAM-Cache: der
   // Flash-Read (~20ms pro Ordner, mehr als ein halber 33ms-Frame bei 30fps)
@@ -218,6 +230,7 @@ public:
   bool getFolderEntitiesCached(uint16_t folder_id, FolderEntitySlotView* out, size_t count);
   void invalidateFolderEntityCache();
   bool saveFolderGrid(uint16_t folder_id, const TileGridConfig& grid);
+  bool saveScreensaverGrid(const TileGridConfig& grid);
 
   bool setActiveFolder(uint16_t folder_id);
   bool setActiveFolderCached(uint16_t folder_id, const TileGridConfig& grid);
@@ -256,8 +269,10 @@ private:
 
   bool loadFolders();
   bool saveFolders() const;
-  bool loadGrid(uint16_t folder_id, TileGridConfig& grid);
-  bool saveGrid(uint16_t folder_id, const TileGridConfig& grid);
+  bool loadGrid(uint16_t folder_id, TileGridConfig& grid,
+                bool ensure_navigation_tile = true);
+  bool saveGrid(uint16_t folder_id, const TileGridConfig& grid,
+                bool ensure_navigation_tile = true);
   uint16_t nextFolderId() const;
   void ensureRootFolder();
   bool ensureSettingsTile(TileGridConfig& grid);

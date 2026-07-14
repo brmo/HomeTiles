@@ -33,6 +33,8 @@
 #include "src/ui/tab_settings.h"
 #include "src/ui/boot_splash.h"
 #include "src/ui/tab_tiles_unified.h"
+#include "src/ui/image_screensaver.h"
+#include "src/ui/screensaver_config.h"
 #include "src/game/game_controls_config.h"
 #include "src/game/game_ws_server.h"
 #include "src/tiles/tile_config.h"
@@ -590,6 +592,7 @@ void setup() {
   haBridgeConfig.load();
   gameControlsConfig.load();
   tileConfig.load();
+  screensaverConfig.load();
   if (has_config) {
     displayManager.setRotation(configManager.getConfig().display_rotation_quarters);
   }
@@ -715,6 +718,7 @@ void setup() {
   Serial.println("[Setup] Building UI...");
   Serial.flush();
   ui_scene_cb = mqttPublishScene;
+  image_screensaver_set_scene_callback(mqttPublishScene);
   ui_hotspot_cb = set_hotspot_mode;
   settings_set_wifi_reconnect_callback(request_wifi_reconnect);
   settings_set_wifi_disconnect_callback(request_wifi_disconnect);
@@ -731,6 +735,7 @@ void setup() {
   ui_build_waiter = nullptr;
   Serial.println("[Setup] UI built");
   Serial.flush();
+  preload_image_screensaver();
 
   uiManager.updateStatusbar();
   Serial.println("[Setup] Statusbar updated");
@@ -989,6 +994,7 @@ void loop() {
   }
 #endif
 
+  service_image_screensaver_auto(displayManager.getLastActivityTime());
   if (first_run) Serial.println("[Loop] powerManager.update()...");
   powerManager.update(displayManager.getLastActivityTime());
 

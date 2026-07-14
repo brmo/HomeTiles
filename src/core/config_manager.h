@@ -59,6 +59,8 @@ struct DeviceConfig {
   uint8_t wake_mode_battery;     // 0=Touch, 1=IMU
   bool auto_sleep_enabled;     // Auto-Sleep aktiv?
   uint16_t auto_sleep_seconds; // Seconds until auto-sleep (5-3600)
+  bool auto_screensaver_enabled;     // Screensaver nach Inaktivitaet?
+  uint16_t auto_screensaver_seconds; // Seconds until screensaver (5-3600)
   bool auto_sleep_battery_enabled;     // Auto-Sleep aktiv im Batteriebetrieb?
   uint16_t auto_sleep_battery_seconds; // Seconds until auto-sleep (5-3600)
   uint8_t status_time_font_size;      // 24 or 48
@@ -86,6 +88,8 @@ public:
                            uint8_t rotation_quarters,
                            uint8_t wake_mode_mains,
                            uint8_t wake_mode_battery);
+
+  bool saveScreensaverTimeout(bool enabled, uint16_t seconds);
 
   void setRuntimeDisplayRotation(bool rotate_180);
   void setRuntimeDisplayRotationQuarters(uint8_t rotation_quarters);

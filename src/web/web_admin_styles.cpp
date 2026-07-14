@@ -49,6 +49,12 @@ int preview_cell_w_px() {
   return (cell_w < 40) ? 40 : cell_w;
 }
 
+int preview_scaled_exact_px(int lvgl_px) {
+  const int cell_h = preview_cell_h_px();
+  const int scaled = (lvgl_px * cell_h + (GRID_CELL_H / 2)) / GRID_CELL_H;
+  return scaled < 1 ? 1 : scaled;
+}
+
 }  // namespace
 
 namespace {
@@ -87,6 +93,15 @@ void appendPreviewScaleVars(String& html) {
   html += "px;";
   html += "--admin-wrapper-width:";
   html += String(admin_wrapper_target_width_px());
+  html += "px;";
+  const int image_bleed = preview_scaled_exact_px(4);
+  const int image_inset = preview_pad_px() > image_bleed
+                              ? preview_pad_px() - image_bleed
+                              : 0;
+  html += "--screensaver-image-inset:";
+  html += String(image_inset);
+  html += "px;--screensaver-image-radius:";
+  html += String(preview_scaled_exact_px(26));
   html += "px;";
   html += "}</style>\n";
 }
@@ -532,6 +547,52 @@ void appendAdminStyles(String& html) {
       width:fit-content;
       height:fit-content;
     }
+    .screensaver-tile-grid {
+      position:relative;
+      overflow:hidden;
+      isolation:isolate;
+      touch-action:none;
+      user-select:none;
+    }
+    .screensaver-grid-image-frame {
+      position:absolute;
+      inset:var(--screensaver-image-inset);
+      z-index:0;
+      overflow:hidden;
+      border-radius:var(--screensaver-image-radius);
+      pointer-events:none;
+      user-select:none;
+    }
+    .screensaver-tile-grid.selected-background .screensaver-grid-image-frame {
+      box-shadow:0 0 0 3px #26a69a, 0 0 12px rgba(38,166,154,0.55);
+    }
+    .screensaver-grid-image {
+      position:absolute;
+      inset:0;
+      width:100%;
+      height:100%;
+      object-fit:cover;
+      pointer-events:none;
+      user-select:none;
+    }
+    .screensaver-grid-clock {
+      position:absolute;
+      z-index:3;
+      color:#fff;
+      text-align:center;
+      line-height:1.1;
+      transform:translate(-50%,-50%);
+      cursor:grab;
+      touch-action:none;
+      text-shadow:0 2px 8px rgba(0,0,0,.8);
+      white-space:nowrap;
+    }
+    .screensaver-grid-clock.dragging { cursor:grabbing; }
+    .screensaver-tile-grid > .tile,
+    .screensaver-tile-grid > .tile-drop-placeholder,
+    .screensaver-tile-grid > .tile-resize-placeholder {
+      z-index:2;
+    }
 
     /* Display-aehnliche Kacheln (50% Skalierung) */
     /* Display: Title=TOP_LEFT, Value=CENTER(-30,18), Unit=RIGHT_MID */
@@ -735,6 +796,13 @@ void appendAdminStyles(String& html) {
     .tile-settings.hidden { display:none; }
     /* Kopf (Titel + Typ) bleibt stehen, nur der Body scrollt */
     .tile-specific-settings { display:flex; flex:1 1 auto; flex-direction:column; min-height:0; }
+    .screensaver-background-settings { display:flex; flex:1 1 auto; flex-direction:column; min-height:0; }
+    .screensaver-background-settings.hidden { display:none; }
+    .screensaver-background-settings > .tile-settings-body {
+      flex:1 1 auto;
+      min-height:0;
+      overflow-y:auto;
+    }
     .tile-settings-head { flex:0 0 auto; }
     .tile-settings-body {
       flex:1 1 auto;
@@ -815,6 +883,22 @@ void appendAdminStyles(String& html) {
     .inline-checkbox input { width:auto; padding:0; margin:0; flex:0 0 auto; }
     .clock-toggle-row { display:grid; grid-template-columns:repeat(2, minmax(120px, max-content)); gap:8px 18px; align-items:center; justify-content:start; margin-bottom:8px; }
     .clock-toggle-row .inline-checkbox { display:inline-flex; width:auto; margin-top:0; white-space:nowrap; }
+
+    /* Screensaverspezifische Felder innerhalb des normalen Tile-Editors. */
+    .screensaver-fixed-type { display:grid; grid-template-columns:1fr 1.35fr; gap:10px; align-items:center; margin-bottom:10px; }
+    .screensaver-fixed-type label { margin:0; }
+    .screensaver-fixed-type input { margin:0; }
+    .screensaver-wallpaper-heading { color:var(--text-2); font-weight:800; font-size:12px; letter-spacing:.08em; text-transform:uppercase; margin:18px 0 8px; }
+    .screensaver-wallpaper-list { display:flex; flex-direction:column; gap:7px; max-height:190px; overflow:auto; }
+    .screensaver-wallpaper-row { display:grid; grid-template-columns:auto 1fr auto auto; align-items:center; gap:7px; padding:7px; border:1px solid var(--line); border-radius:10px; background:var(--well); }
+    .screensaver-wallpaper-row.active { border-color:#26b5aa; }
+    .screensaver-wallpaper-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
+    .screensaver-wallpaper-move { width:30px; height:30px; padding:0; margin:0; border-radius:8px; }
+    .screensaver-wallpaper-controls { margin-top:12px; }
+    .screensaver-focus-grid, .screensaver-two-fields { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .screensaver-two-fields label { margin:0; }
+    .screensaver-two-fields input, .screensaver-two-fields select { margin-top:5px; }
+    .screensaver-save-state { min-height:20px; margin-top:12px; color:var(--text-2); font-size:12px; }
 
     /* Schmales Fenster: Settings-Panel rueckt unter die Grid-Vorschau,
        das Grid selbst scrollt bei Bedarf horizontal (.tile-grid-scroll). */

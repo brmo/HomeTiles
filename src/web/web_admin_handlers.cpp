@@ -12,6 +12,8 @@
 #include "src/tiles/tile_config.h"
 #include "src/ui/tab_tiles_unified.h"
 #include "src/ui/ui_manager.h"
+#include "src/ui/image_screensaver.h"
+#include "src/ui/screensaver_config.h"
 #include "src/web/web_admin_tile_helpers.h"
 #include "src/types/types_registry.h"
 #include "src/types/clock/clock_format.h"
@@ -1004,9 +1006,10 @@ static std::vector<PlacementCandidate> buildPlacementCandidates(
     uint8_t span_w,
     uint8_t span_h,
     int preferred_col,
-    int preferred_row) {
+    int preferred_row,
+    uint8_t first_row = 0) {
   std::vector<PlacementCandidate> out;
-  for (uint8_t row = 0; row < GRID_ROWS; ++row) {
+  for (uint8_t row = first_row; row < GRID_ROWS; ++row) {
     for (uint8_t col = 0; col < GRID_COLS; ++col) {
       TileRect rect{};
       if (!buildTileRect(col, row, span_w, span_h, rect)) continue;
@@ -1033,7 +1036,8 @@ static bool findPlacementForTile(
     size_t tile_index,
     int preferred_col,
     int preferred_row,
-    const std::vector<size_t>& floating_indices) {
+    const std::vector<size_t>& floating_indices,
+    uint8_t first_row = 0) {
   if (tile_index >= TILES_PER_GRID) return false;
   Tile& tile = grid.tiles[tile_index];
   const uint8_t span_w = tile.span_w < 1 ? 1 : tile.span_w;
@@ -1046,7 +1050,8 @@ static bool findPlacementForTile(
   };
 
   const std::vector<PlacementCandidate> candidates =
-      buildPlacementCandidates(span_w, span_h, preferred_col, preferred_row);
+      buildPlacementCandidates(span_w, span_h, preferred_col, preferred_row,
+                               first_row);
   for (const PlacementCandidate& candidate : candidates) {
     if (!can_place(candidate.col, candidate.row)) continue;
     tile.col = candidate.col;
@@ -1061,8 +1066,10 @@ static bool applySmartReorder(
     TileGridConfig& grid,
     size_t from_index,
     uint8_t target_col,
-    uint8_t target_row) {
+    uint8_t target_row,
+    uint8_t first_row = 0) {
   if (from_index >= TILES_PER_GRID) return false;
+  if (target_row < first_row) return false;
   Tile& moving_tile = grid.tiles[from_index];
   if (moving_tile.type == TILE_EMPTY) return false;
 
@@ -1105,7 +1112,8 @@ static bool applySmartReorder(
 
     const int preferred_col = (displaced_index == displaced_indices.front()) ? from_col : grid.tiles[displaced_index].col;
     const int preferred_row = (displaced_index == displaced_indices.front()) ? from_row : grid.tiles[displaced_index].row;
-    if (findPlacementForTile(grid, displaced_index, preferred_col, preferred_row, floating_indices)) {
+    if (findPlacementForTile(grid, displaced_index, preferred_col, preferred_row,
+                             floating_indices, first_row)) {
       continue;
     }
 
@@ -1471,13 +1479,28 @@ void WebAdminServer::handleGetTiles() {
   }
 
   uint16_t folder_id = 0;
-  if (!parseFolderIdArg(server, folder_id) || !tileConfig.folderExists(folder_id)) {
+  if (!parseFolderIdArg(server, folder_id)) {
+    server.send(404, "application/json", "{\"error\":\"Folder not found\"}");
+    return;
+  }
+  const bool screensaver_grid =
+      folder_id == TileConfig::kScreensaverGridStorageId;
+  if (!screensaver_grid && !tileConfig.folderExists(folder_id)) {
     server.send(404, "application/json", "{\"error\":\"Folder not found\"}");
     return;
   }
 
   TileGridConfig grid{};
-  tileConfig.loadFolderGrid(folder_id, grid);
+  bool loaded = true;
+  if (screensaver_grid) {
+    grid = screensaverConfig.tileGrid();
+  } else {
+    loaded = tileConfig.loadFolderGrid(folder_id, grid);
+  }
+  if (!loaded) {
+    server.send(500, "application/json", "{\"error\":\"Grid load failed\"}");
+    return;
+  }
 
   auto appendTileJson = [&](String& out, const Tile& tile) {
     out += "{\"type\":";
@@ -1488,6 +1511,8 @@ void WebAdminServer::handleGetTiles() {
     appendJsonEscaped(out, tile.icon_name);
     out += "\",\"bg_color\":";
     out += String(tile.bg_color);
+    out += ",\"background_opacity\":";
+    out += String(tile.background_opacity);
     out += ",\"col\":";
     out += String(tile.col);
     out += ",\"row\":";
@@ -1577,13 +1602,26 @@ void WebAdminServer::handleSaveTiles() {
   }
 
   uint16_t folder_id = 0;
-  if (!parseFolderIdArg(server, folder_id) || !tileConfig.folderExists(folder_id)) {
+  if (!parseFolderIdArg(server, folder_id)) {
+    server.send(404, "application/json", "{\"success\":false,\"error\":\"Folder not found\"}");
+    return;
+  }
+  const bool screensaver_grid =
+      folder_id == TileConfig::kScreensaverGridStorageId;
+  if (!screensaver_grid && !tileConfig.folderExists(folder_id)) {
     server.send(404, "application/json", "{\"success\":false,\"error\":\"Folder not found\"}");
     return;
   }
 
   int index = server.arg("index").toInt();
   int type = server.arg("type").toInt();
+
+  if (screensaver_grid && type != TILE_EMPTY && type != TILE_SENSOR &&
+      type != TILE_SCENE && type != TILE_SWITCH) {
+    server.send(400, "application/json",
+                "{\"success\":false,\"error\":\"Tile type not supported in screensaver\"}");
+    return;
+  }
 
   if (index < 0 || index >= TILES_PER_GRID) {
     server.send(400, "application/json", "{\"success\":false,\"error\":\"Invalid parameters\"}");
@@ -1598,16 +1636,23 @@ void WebAdminServer::handleSaveTiles() {
   // Never overwrite a folder from a failed load: a single tile edit rewrites the
   // whole grid, so if the existing grid can't be read we must abort instead of
   // persisting an (empty) grid over every tile in the folder.
-  if (!tileConfig.loadFolderGrid(folder_id, *grid)) {
+  bool grid_loaded = true;
+  if (screensaver_grid) {
+    *grid = screensaverConfig.tileGrid();
+  } else {
+    grid_loaded = tileConfig.loadFolderGrid(folder_id, *grid);
+  }
+  if (!grid_loaded) {
     server.send(500, "application/json", "{\"success\":false,\"error\":\"Folder load failed\"}");
     return;
   }
 
   Tile& tile = grid->tiles[index];
   Tile previous_tile = tile;
-  const bool is_root = (folder_id == 0);
+  const bool is_root = (!screensaver_grid && folder_id == 0);
   const bool was_settings_tile = is_root && previous_tile.type == TILE_SETTINGS;
-  const bool was_back_tile = (!is_root) && previous_tile.type == TILE_BACK;
+  const bool was_back_tile =
+      (!screensaver_grid && !is_root) && previous_tile.type == TILE_BACK;
   const bool force_settings_tile = was_settings_tile;
   const bool force_back_tile = was_back_tile;
 
@@ -1657,7 +1702,8 @@ void WebAdminServer::handleSaveTiles() {
   // Loeschen mitsamt Inhalt, bei der (nur fuer leere Ordner erlaubten)
   // Typumwandlung den leeren Grid -- sonst bliebe ein verwaister Ordner-Tab
   // im Web-Admin zurueck.
-  const bool deleting_folder = (previous_tile.type == TILE_FOLDER && type != TILE_FOLDER);
+  const bool deleting_folder =
+      !screensaver_grid && previous_tile.type == TILE_FOLDER && type != TILE_FOLDER;
 
   // Update tile data
   tile.type = static_cast<TileType>(type);
@@ -1669,6 +1715,10 @@ void WebAdminServer::handleSaveTiles() {
     tile.bg_color = 0;
   } else if (server.hasArg("bg_color")) {
     tile.bg_color = makeTileBgColor(static_cast<uint32_t>(server.arg("bg_color").toInt()));
+  }
+  if (server.hasArg("background_opacity")) {
+    tile.background_opacity = static_cast<uint8_t>(constrain(
+        server.arg("background_opacity").toInt(), 0, 255));
   }
 
   // Parse layout (0-based col/row, span >= 1)
@@ -1685,7 +1735,8 @@ void WebAdminServer::handleSaveTiles() {
   }
   if (server.hasArg("row")) {
     int raw = server.arg("row").toInt();
-    if (raw < 0) raw = 0;
+    const int first_row = screensaver_grid && GRID_ROWS > 1 ? GRID_ROWS - 2 : 0;
+    if (raw < first_row) raw = first_row;
     if (raw >= GRID_ROWS) raw = GRID_ROWS - 1;
     row = static_cast<uint8_t>(raw);
   }
@@ -1700,6 +1751,10 @@ void WebAdminServer::handleSaveTiles() {
     if (raw < 1) raw = 1;
     if (raw > GRID_ROWS) raw = GRID_ROWS;
     span_h = static_cast<uint8_t>(raw);
+  }
+
+  if (screensaver_grid && GRID_ROWS > 1 && row < GRID_ROWS - 2) {
+    row = GRID_ROWS - 2;
   }
 
   clamp_media_tile_span(static_cast<TileType>(type), span_w, span_h);
@@ -1762,24 +1817,33 @@ void WebAdminServer::handleSaveTiles() {
     }
   }
 
-  bool success = tileConfig.saveFolderGrid(folder_id, *grid);
+  bool success = screensaver_grid
+                     ? screensaverConfig.replaceTileGrid(*grid)
+                     : tileConfig.saveFolderGrid(folder_id, *grid);
   if (success) {
     Serial.printf("[WebAdmin] Tile folder %u[%d] gespeichert - Type: %d\n", static_cast<unsigned>(folder_id), index, type);
 
-    const bool routes_changed = deleting_folder || tileChangeAffectsDynamicMqttRoutes(previous_tile, tile);
-    if (routes_changed) {
-      // Mehrere schnelle Tile-Edits duerfen nur einen teuren Route-Rebuild
-      // ausloesen. Der Loop fuehrt ihn nach laengerer Admin-Ruhe aus, damit
-      // kein Subscribe-Burst parallel zum naechsten Grid-Save laeuft.
-      mqttRequestDynamicSlotsReload(5000);
-      Serial.println("[WebAdmin] MQTT Routes fuer spaeteren Rebuild markiert");
-    } else {
-      Serial.println("[WebAdmin] MQTT Routes unveraendert (kein Rebuild fuer Style/Layout)");
+    if (!screensaver_grid) {
+      const bool routes_changed =
+          deleting_folder || tileChangeAffectsDynamicMqttRoutes(previous_tile, tile);
+      if (routes_changed) {
+        // Mehrere schnelle Tile-Edits duerfen nur einen teuren Route-Rebuild
+        // ausloesen. Der Loop fuehrt ihn nach laengerer Admin-Ruhe aus, damit
+        // kein Subscribe-Burst parallel zum naechsten Grid-Save laeuft.
+        mqttRequestDynamicSlotsReload(5000);
+        Serial.println("[WebAdmin] MQTT Routes fuer spaeteren Rebuild markiert");
+      } else {
+        Serial.println("[WebAdmin] MQTT Routes unveraendert (kein Rebuild fuer Style/Layout)");
+      }
     }
 
-    tiles_invalidate_folder(folder_id);
-    if (tileConfig.getActiveFolderId() == folder_id) {
-      tiles_request_reload_if_loaded(GridType::TAB0);
+    if (!screensaver_grid) {
+      tiles_invalidate_folder(folder_id);
+      if (tileConfig.getActiveFolderId() == folder_id) {
+        tiles_request_reload_if_loaded(GridType::TAB0);
+      }
+    } else {
+      image_screensaver_tiles_changed();
     }
 
     String response = "{\"success\":true";
@@ -1804,7 +1868,13 @@ void WebAdminServer::handleReorderTiles() {
   }
 
   uint16_t folder_id = 0;
-  if (!parseFolderIdArg(server, folder_id) || !tileConfig.folderExists(folder_id)) {
+  if (!parseFolderIdArg(server, folder_id)) {
+    server.send(404, "application/json", "{\"success\":false,\"error\":\"Folder not found\"}");
+    return;
+  }
+  const bool screensaver_grid =
+      folder_id == TileConfig::kScreensaverGridStorageId;
+  if (!screensaver_grid && !tileConfig.folderExists(folder_id)) {
     server.send(404, "application/json", "{\"success\":false,\"error\":\"Folder not found\"}");
     return;
   }
@@ -1819,7 +1889,13 @@ void WebAdminServer::handleReorderTiles() {
 
   TileGridConfig grid{};
   // Abort rather than overwrite the whole folder if the current grid can't be loaded.
-  if (!tileConfig.loadFolderGrid(folder_id, grid)) {
+  bool grid_loaded = true;
+  if (screensaver_grid) {
+    grid = screensaverConfig.tileGrid();
+  } else {
+    grid_loaded = tileConfig.loadFolderGrid(folder_id, grid);
+  }
+  if (!grid_loaded) {
     server.send(500, "application/json", "{\"success\":false,\"error\":\"Folder load failed\"}");
     return;
   }
@@ -1836,16 +1912,26 @@ void WebAdminServer::handleReorderTiles() {
     return;
   }
 
-  if (!applySmartReorder(grid, static_cast<size_t>(from), target_col, target_row)) {
+  const uint8_t first_row = screensaver_grid && GRID_ROWS > 1
+                                ? GRID_ROWS - 2
+                                : 0;
+  if (!applySmartReorder(grid, static_cast<size_t>(from), target_col,
+                         target_row, first_row)) {
     server.send(409, "application/json", "{\"success\":false,\"error\":\"Tile overlaps\"}");
     return;
   }
 
-  bool success = tileConfig.saveFolderGrid(folder_id, grid);
+  bool success = screensaver_grid
+                     ? screensaverConfig.replaceTileGrid(grid)
+                     : tileConfig.saveFolderGrid(folder_id, grid);
   if (success) {
-    tiles_invalidate_folder(folder_id);
-    if (tileConfig.getActiveFolderId() == folder_id) {
-      tiles_request_reload_if_loaded(GridType::TAB0);
+    if (!screensaver_grid) {
+      tiles_invalidate_folder(folder_id);
+      if (tileConfig.getActiveFolderId() == folder_id) {
+        tiles_request_reload_if_loaded(GridType::TAB0);
+      }
+    } else {
+      image_screensaver_tiles_changed();
     }
     server.send(200, "application/json", "{\"success\":true}");
   } else {
@@ -2080,6 +2166,86 @@ void WebAdminServer::handleGetEntityOptions() {
   }
   json += "]}";
   sendChunkedResponse(server, 200, "application/json", json);
+}
+
+void WebAdminServer::handleGetScreensaver() {
+  webAdminMarkActivity();
+  String json = screensaverConfig.toJson(true);
+  if (!json.endsWith("}")) {
+    server.send(500, "application/json", "{\"success\":false}");
+    return;
+  }
+  json.remove(json.length() - 1);
+  json += ",\"success\":true,\"available_wallpapers\":[";
+  bool first = true;
+  if (Device::sdReady()) {
+    fs::File root = Device::sdFS().open("/wallpapers", FILE_READ);
+    if (root) {
+      for (fs::File entry = root.openNextFile(); entry;
+           entry = root.openNextFile()) {
+        if (entry.isDirectory()) {
+          entry.close();
+          continue;
+        }
+        String name = entry.name();
+        entry.close();
+        const int slash = name.lastIndexOf('/');
+        if (slash >= 0) name = name.substring(slash + 1);
+        if (!endsWithIgnoreCase(name, ".jpg") &&
+            !endsWithIgnoreCase(name, ".jpeg")) continue;
+        if (!first) json += ',';
+        first = false;
+        json += '"';
+        appendJsonEscaped(json, name);
+        json += '"';
+      }
+      root.close();
+    }
+  }
+  json += "]}";
+  sendChunkedResponse(server, 200, "application/json", json);
+}
+
+void WebAdminServer::handleSaveScreensaver() {
+  webAdminMarkActivity();
+  const String payload = server.arg("plain");
+  String preview_wallpaper;
+  String error;
+  if (!screensaverConfig.replaceFromJson(payload, error, &preview_wallpaper)) {
+    String json = "{\"success\":false,\"error\":\"";
+    appendJsonEscaped(json, error);
+    json += "\"}";
+    server.send(400, "application/json", json);
+    return;
+  }
+  image_screensaver_config_changed(preview_wallpaper);
+  server.send(200, "application/json", "{\"success\":true}");
+}
+
+void WebAdminServer::handleGetScreensaverWallpaper() {
+  webAdminMarkActivity();
+  if (!Device::sdReady() || !server.hasArg("name")) {
+    server.send(404, "text/plain", "Wallpaper unavailable");
+    return;
+  }
+  String name = server.arg("name");
+  name.trim();
+  if (!name.length() || name.indexOf('/') >= 0 || name.indexOf('\\') >= 0 ||
+      name.indexOf("..") >= 0 ||
+      (!endsWithIgnoreCase(name, ".jpg") &&
+       !endsWithIgnoreCase(name, ".jpeg"))) {
+    server.send(400, "text/plain", "Invalid wallpaper");
+    return;
+  }
+  fs::File file = Device::sdFS().open(String("/wallpapers/") + name, FILE_READ);
+  if (!file || file.isDirectory()) {
+    if (file) file.close();
+    server.send(404, "text/plain", "Wallpaper not found");
+    return;
+  }
+  server.sendHeader("Cache-Control", "no-store");
+  server.streamFile(file, "image/jpeg");
+  file.close();
 }
 
 void WebAdminServer::handleFileManagerList() {

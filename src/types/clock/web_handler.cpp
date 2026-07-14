@@ -37,17 +37,9 @@ void apply_clock_fields_from_request(WebServer& server, Tile& tile) {
                           ? normalizeClockFont(server.arg("key_modifier").toInt(), 20)
                           : static_cast<uint8_t>(20);
 
-  // Screensaver-Bild: Dateiname (basename) in /wallpapers, gespeichert im
-  // generischen scene_alias-Slot (gleiches Muster wie das Animation-Tile).
-  // Pfadanteile werden verworfen, damit kein Traversal in andere SD-Ordner
-  // moeglich ist.
-  String wallpaper = server.hasArg("clock_wallpaper") ? server.arg("clock_wallpaper") : "";
-  wallpaper.trim();
-  if (wallpaper.indexOf('/') >= 0 || wallpaper.indexOf('\\') >= 0 ||
-      wallpaper.indexOf("..") >= 0) {
-    wallpaper = "";
-  }
-  tile.scene_alias = wallpaper;
+  // Alte, Clock-spezifische Wallpaper-Auswahl beim naechsten Speichern
+  // entfernen. Der Screensaver besitzt jetzt eine eigene globale Konfiguration.
+  tile.scene_alias = "";
 
   tile.sensor_value_font = 0;
   tile.sensor_display_mode = 0;

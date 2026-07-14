@@ -126,6 +126,7 @@ struct Strings {
   const char* sleep_label;
   const char* sleep_after;
   const char* sleep_never;
+  const char* screensaver_label;
   const char* touch_label;
   const char* no_imu_hint;
 
@@ -265,9 +266,22 @@ struct Strings {
   const char* system_pair_btn;
   const char* system_pair_status;
 
-  // Clock-Tile: Bild-Screensaver (JPEG aus SD-Ordner /wallpapers)
-  const char* clock_wallpaper_label;
-  const char* clock_wallpaper_hint;
+  // Eigener Screensaver-Editor im Web-Admin
+  const char* screensaver_use_wallpapers;
+  const char* screensaver_shuffle;
+  const char* screensaver_wallpapers_heading;
+  const char* screensaver_duration_seconds;
+  const char* screensaver_zoom;
+  const char* screensaver_focus_x;
+  const char* screensaver_focus_y;
+  const char* screensaver_clock_heading;
+  const char* screensaver_background_opacity;
+  const char* screensaver_hint;
+  const char* screensaver_no_wallpapers;
+  const char* js_screensaver_saved;
+  const char* js_screensaver_save_failed;
+  const char* js_screensaver_load_failed;
+
 };
 
 const Strings& strings(const char* language_code);

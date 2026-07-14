@@ -60,6 +60,10 @@ void appendAdminScripts(String& html) {
   appendJsEntry("tileDoesNotFit", tr.js_tile_does_not_fit);
   appendJsEntry("noLayoutFound", tr.js_no_layout_found);
   appendJsEntry("tilesMovedSaved", tr.js_tiles_moved_saved);
+  appendJsEntry("screensaverSaved", tr.js_screensaver_saved);
+  appendJsEntry("screensaverSaveFailed", tr.js_screensaver_save_failed);
+  appendJsEntry("screensaverLoadFailed", tr.js_screensaver_load_failed);
+  appendJsEntry("screensaverNoWallpapers", tr.screensaver_no_wallpapers);
   appendJsEntry("moveFailed", tr.js_move_failed);
   appendJsEntry("networkErrorMove", tr.js_network_error_move);
   appendJsEntry("screenshotCreating", tr.js_screenshot_creating);
@@ -108,9 +112,13 @@ void appendAdminScripts(String& html) {
     updateTileSettingsMaxHeight();
     if (tabName.startsWith('tab-tiles-')) {
       const tileTab = tabName.substring('tab-tiles-'.length);
-      const rememberedIndex = getRememberedTileIndex(tileTab);
-      selectTile(rememberedIndex === null ? getTopLeftConfiguredTileIndex(tileTab) : rememberedIndex, tileTab);
-      window.requestAnimationFrame(restoreCurrentTileSelectionUi);
+      if (tileTab === 'screensaver') {
+        initScreensaverEditor();
+      } else {
+        const rememberedIndex = getRememberedTileIndex(tileTab);
+        selectTile(rememberedIndex === null ? getTopLeftConfiguredTileIndex(tileTab) : rememberedIndex, tileTab);
+        window.requestAnimationFrame(restoreCurrentTileSelectionUi);
+      }
     }
     if (tabName === 'tab-network') {
       window.setTimeout(() => {
@@ -1221,11 +1229,14 @@ void appendAdminScripts(String& html) {
     return out;
   }
 
-  function normalizeSnapshotLayout(snapshot, index) {
+  function normalizeSnapshotLayout(snapshot, index, tab = currentTileTab) {
     const fallbackCol = (index >= 0) ? ((index % GRID_COLS) + 1) : 1;
-    const fallbackRow = (index >= 0) ? (Math.floor(index / GRID_COLS) + 1) : 1;
+    const firstRow = firstAllowedGridRow(tab);
+    const fallbackRow = (index >= 0)
+      ? (Math.max(firstRow, Math.floor(index / GRID_COLS)) + 1)
+      : (firstRow + 1);
     let col = clampInt(snapshot?.col, 1, GRID_COLS, fallbackCol);
-    let row = clampInt(snapshot?.row, 1, GRID_ROWS, fallbackRow);
+    let row = clampInt(snapshot?.row, firstRow + 1, GRID_ROWS, fallbackRow);
     let spanW = clampInt(snapshot?.span_w, 1, GRID_COLS, 1);
     let spanH = clampInt(snapshot?.span_h, 1, GRID_ROWS, 1);
     const maxSpanW = GRID_COLS - (col - 1);
@@ -1249,6 +1260,9 @@ void appendAdminScripts(String& html) {
       span_w: document.getElementById(prefix + '_tile_span_w')?.value || '1',
       span_h: document.getElementById(prefix + '_tile_span_h')?.value || '1'
     };
+    if (isScreensaverTileTab(tab)) {
+      snapshot.background_opacity = document.getElementById('screensaver_tile_opacity')?.value || '0';
+    }
     Object.assign(snapshot, collectTypeFieldValues(tab));
     return snapshot;
   }
@@ -1266,8 +1280,8 @@ void appendAdminScripts(String& html) {
 
     const prev = tiles[index] || {};
     const tile = Object.assign({}, prev);
-    const layout = normalizeSnapshotLayout(snapshot, index);
-    const numericFields = ['type', 'sensor_decimals', 'sensor_value_font', 'sensor_display_mode', 'sensor_gauge_min', 'sensor_gauge_max', 'switch_style', 'navigate_target', 'popup_open_mode', 'key_code', 'key_modifier'];
+    const layout = normalizeSnapshotLayout(snapshot, index, tab);
+    const numericFields = ['type', 'sensor_decimals', 'sensor_value_font', 'sensor_display_mode', 'sensor_gauge_min', 'sensor_gauge_max', 'switch_style', 'navigate_target', 'popup_open_mode', 'key_code', 'key_modifier', 'background_opacity'];
 
     tile.type = clampInt(snapshot?.type, 0, 255, Number(prev.type) || 0);
     tile.title = snapshot?.title || '';
@@ -1392,6 +1406,12 @@ void appendAdminScripts(String& html) {
   function getTilesData(tab) {
     return tilesData[tab] || [];
   }
+  function isScreensaverTileTab(tab) {
+    return tab === 'screensaver';
+  }
+  function firstAllowedGridRow(tab) {
+    return isScreensaverTileTab(tab) ? Math.max(0, GRID_ROWS - 2) : 0;
+  }
   function restoreCurrentTileSelectionUi() {
     if (currentTileIndex === -1 || !currentTileTab) return;
     document.querySelectorAll('.tile').forEach(t => t.classList.remove('active'));
@@ -1445,10 +1465,14 @@ void appendAdminScripts(String& html) {
     const tabEl = tabTpl.content.firstElementChild;
     if (!buttonEl || !tabEl) return false;
 
-    const networkBtn = Array.from(nav.querySelectorAll('.tab-btn')).find(btn => btn.getAttribute('onclick')?.includes("'tab-network'"));
-    if (networkBtn) nav.insertBefore(buttonEl, networkBtn);
+    const fixedBtn = Array.from(nav.querySelectorAll('.tab-btn')).find(btn =>
+      btn.getAttribute('onclick')?.includes("'tab-tiles-screensaver'")) ||
+      Array.from(nav.querySelectorAll('.tab-btn')).find(btn =>
+        btn.getAttribute('onclick')?.includes("'tab-network'"));
+    if (fixedBtn) nav.insertBefore(buttonEl, fixedBtn);
     else nav.appendChild(buttonEl);
-    networkTab.parentNode.insertBefore(tabEl, networkTab);
+    const screensaverTab = document.getElementById('tab-tiles-screensaver');
+    networkTab.parentNode.insertBefore(tabEl, screensaverTab || networkTab);
 
     initTileTabs();
     enableTileDrag(String(data.tab_id));
@@ -1545,11 +1569,12 @@ void appendAdminScripts(String& html) {
     return v;
   }
 
-  function normalizeTileLayout(tile, index) {
+  function normalizeTileLayout(tile, index, tab = currentTileTab) {
     const fallbackCol = index % GRID_COLS;
-    const fallbackRow = Math.floor(index / GRID_COLS);
+    const firstRow = firstAllowedGridRow(tab);
+    const fallbackRow = Math.max(firstRow, Math.floor(index / GRID_COLS));
     const col = clampInt(tile?.col, 0, GRID_COLS - 1, fallbackCol);
-    const row = clampInt(tile?.row, 0, GRID_ROWS - 1, fallbackRow);
+    const row = clampInt(tile?.row, firstRow, GRID_ROWS - 1, fallbackRow);
     let spanW = clampInt(tile?.span_w, 1, GRID_COLS, 1);
     let spanH = clampInt(tile?.span_h, 1, GRID_ROWS, 1);
     if (spanW > GRID_COLS - col) spanW = GRID_COLS - col;
@@ -1571,7 +1596,7 @@ void appendAdminScripts(String& html) {
     const el = document.getElementById(tab + '-tile-' + index);
     if (!el) return null;
     const col = clampInt(el.dataset.col, 0, GRID_COLS - 1, null);
-    const row = clampInt(el.dataset.row, 0, GRID_ROWS - 1, null);
+    const row = clampInt(el.dataset.row, firstAllowedGridRow(tab), GRID_ROWS - 1, null);
     const spanW = clampInt(el.dataset.spanW, 1, GRID_COLS, null);
     const spanH = clampInt(el.dataset.spanH, 1, GRID_ROWS, null);
     if (col === null || row === null || spanW === null || spanH === null) return null;
@@ -1589,7 +1614,7 @@ void appendAdminScripts(String& html) {
         emptyIndices.push(idx);
         return;
       }
-      const layout = normalizeTileLayout(tile, idx);
+      const layout = normalizeTileLayout(tile, idx, tab);
       const el = document.getElementById(tab + '-tile-' + idx);
       if (el) {
         setTileGridPosition(el, layout.col, layout.row, layout.span_w, layout.span_h);
@@ -1603,7 +1628,7 @@ void appendAdminScripts(String& html) {
     });
 
     const freeCells = [];
-    for (let r = 0; r < GRID_ROWS; r++) {
+    for (let r = firstAllowedGridRow(tab); r < GRID_ROWS; r++) {
       for (let c = 0; c < GRID_COLS; c++) {
         if (!occupied[r][c]) freeCells.push({ col: c, row: r });
       }
@@ -1636,7 +1661,8 @@ void appendAdminScripts(String& html) {
     }
 
     let col = clampInt(colEl.value, 1, GRID_COLS, 1);
-    let row = clampInt(rowEl.value, 1, GRID_ROWS, 1);
+    const firstRow = firstAllowedGridRow(tab);
+    let row = clampInt(rowEl.value, firstRow + 1, GRID_ROWS, firstRow + 1);
     let spanW = clampInt(spanWEl.value, 1, GRID_COLS, 1);
     let spanH = clampInt(spanHEl.value, 1, GRID_ROWS, 1);
 
@@ -1751,6 +1777,9 @@ void appendAdminScripts(String& html) {
       span_w: document.getElementById(prefix + '_tile_span_w')?.value || '1',
       span_h: document.getElementById(prefix + '_tile_span_h')?.value || '1'
     };
+    if (isScreensaverTileTab(tab)) {
+      d.background_opacity = document.getElementById('screensaver_tile_opacity')?.value || '0';
+    }
     Object.assign(d, collectTypeFieldValues(tab));
     d._dirty = true;
     d._rev = (prevDraft && prevDraft._rev) ? (prevDraft._rev + 1) : 1;
@@ -1769,6 +1798,10 @@ void appendAdminScripts(String& html) {
     document.getElementById(prefix + '_tile_title').value = d.title || '';
     document.getElementById(prefix + '_tile_icon').value = d.icon || '';
     setTileColorInputFromSnapshot(tab, d);
+    if (isScreensaverTileTab(tab)) {
+      const opacity = document.getElementById('screensaver_tile_opacity');
+      if (opacity) opacity.value = String(d.background_opacity ?? 0);
+    }
     const colEl = document.getElementById(prefix + '_tile_col');
     if (colEl) colEl.value = d.col || '1';
     const rowEl = document.getElementById(prefix + '_tile_row');
@@ -1808,6 +1841,9 @@ void appendAdminScripts(String& html) {
       span_w: document.getElementById(prefix + '_tile_span_w')?.value || '1',
       span_h: document.getElementById(prefix + '_tile_span_h')?.value || '1'
     };
+    if (isScreensaverTileTab(tab)) {
+      data.background_opacity = document.getElementById('screensaver_tile_opacity')?.value || '0';
+    }
     Object.assign(data, collectTypeFieldValues(tab));
     return data;
   }
@@ -1826,6 +1862,10 @@ void appendAdminScripts(String& html) {
     const iconEl = document.getElementById(prefix + '_tile_icon');
     if (iconEl) iconEl.value = data.icon || '';
     setTileColorInputFromSnapshot(tab, data);
+    if (isScreensaverTileTab(tab)) {
+      const opacity = document.getElementById('screensaver_tile_opacity');
+      if (opacity) opacity.value = String(data.background_opacity ?? 0);
+    }
     const spanWEl = document.getElementById(prefix + '_tile_span_w');
     if (spanWEl) spanWEl.value = data.span_w || '1';
     const spanHEl = document.getElementById(prefix + '_tile_span_h');
@@ -1877,9 +1917,18 @@ void appendAdminScripts(String& html) {
     const settingsId = tab + 'Settings';
     const settingsPanel = document.getElementById(settingsId);
     if (settingsPanel) {
+      if (isScreensaverTileTab(tab)) {
+        screensaverSelected = { kind: 'tile', index };
+        document.getElementById('screensaverBackgroundSettings')?.classList.add('hidden');
+        document.getElementById('screensaverGrid')?.classList.remove('selected-background');
+      }
       const tileSpecific = settingsPanel.querySelector('.tile-specific-settings');
       if (tileSpecific) tileSpecific.classList.remove('hidden');
     }
+    // Die Live-Handler sofort anbinden. Bisher geschah das erst nach dem
+    // asynchronen GET der Kacheldaten; bis dahin reagierten Groesse, Position
+    // und Stil in der Screensaver-Vorschau sichtbar nicht.
+    setupLivePreview(tab);
     loadTileData(index, tab);
   }
 
@@ -1932,7 +1981,9 @@ void appendAdminScripts(String& html) {
     const spanWInput = document.getElementById(prefix + '_tile_span_w');
     const spanHInput = document.getElementById(prefix + '_tile_span_h');
     const typeSelect = document.getElementById(prefix + '_tile_type');
-      const entitySelect = document.getElementById(prefix + '_sensor_entity');
+    const opacityInput = isScreensaverTileTab(tab)
+      ? document.getElementById('screensaver_tile_opacity') : null;
+    const entitySelect = document.getElementById(prefix + '_sensor_entity');
       const unitInput = document.getElementById(prefix + '_sensor_unit');
       const decimalsInput = document.getElementById(prefix + '_sensor_decimals');
       const valueFontSelect = document.getElementById(prefix + '_sensor_value_font');
@@ -1972,13 +2023,14 @@ void appendAdminScripts(String& html) {
     const clockDateFontSelect = document.getElementById(prefix + '_clock_date_font');
     const clockTimeFormatSelect = document.getElementById(prefix + '_clock_time_format');
     const clockDateFormatSelect = document.getElementById(prefix + '_clock_date_format');
-    const clockWallpaperSelect = document.getElementById(prefix + '_clock_wallpaper');
     const counterInput = document.getElementById(prefix + '_counter_value');
     const settingsPanel = document.getElementById(prefix + 'Settings');
 
     bindLive(titleInput, 'input', 'tileTitle', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(iconInput, 'input', 'tileIcon', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(colorInput, 'input', 'tileColor', () => { markTileColorInputExplicit(tab); updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
+    bindLive(opacityInput, 'input', 'tileOpacity', () => { updateTilePreview(tab); updateDraft(tab); });
+    bindLive(opacityInput, 'change', 'tileOpacitySave', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(colInput, 'input', 'tileCol', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(rowInput, 'input', 'tileRow', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(spanWInput, 'input', 'tileSpanW', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
@@ -2051,12 +2103,6 @@ void appendAdminScripts(String& html) {
       bindLive(clockDateFormatSelect, 'change', 'clockDateFormat', onClockDateFormatChanged);
       bindLive(clockDateFormatSelect, 'input', 'clockDateFormat', onClockDateFormatChanged);
     }
-    if (clockWallpaperSelect) {
-      const onClockWallpaperChanged = () => { updateDraft(tab); scheduleAutoSave(tab); };
-      bindLive(clockWallpaperSelect, 'change', 'clockWallpaper', onClockWallpaperChanged);
-      bindLive(clockWallpaperSelect, 'input', 'clockWallpaper', onClockWallpaperChanged);
-    }
-
     if (settingsPanel && settingsPanel.dataset.clockLiveBound !== '1') {
       const delegatedClockRefresh = (e) => {
         const target = e && e.target;
@@ -2081,10 +2127,6 @@ void appendAdminScripts(String& html) {
           updateDraft(tab);
           scheduleAutoSave(tab);
           return;
-        }
-        if (target.id === (prefix + '_clock_wallpaper')) {
-          updateDraft(tab);
-          scheduleAutoSave(tab);
         }
       };
       settingsPanel.addEventListener('change', delegatedClockRefresh);
@@ -2149,7 +2191,14 @@ void appendAdminScripts(String& html) {
       if (colorInput) colorInput.value = defaultBg;
     }
     const tileBg = tileColorInputIsDefault(tab) ? defaultBg : (color || defaultBg);
-    tileElem.style.background = tileBg;
+    if (isScreensaverTileTab(tab)) {
+      const opacity = clampInt(
+        document.getElementById('screensaver_tile_opacity')?.value,
+        0, 255, 0);
+      tileElem.style.background = tileBg + opacity.toString(16).padStart(2, '0');
+    } else {
+      tileElem.style.background = tileBg;
+    }
     tileElem.style.removeProperty('--switch-knob-color');
     tileElem.style.removeProperty('--switch-on-color');
     if (type === '5' && switchStyle === '1') {
@@ -2252,6 +2301,10 @@ void appendAdminScripts(String& html) {
         document.getElementById(prefix + '_tile_icon').value = data.icon_name || '';
         const colorMeta = getTileTypeMeta(data.type || 0);
         setTileColorInputFromStored(tab, data.bg_color, colorMeta.defaultBg || '#2A2A2A');
+        if (isScreensaverTileTab(tab)) {
+          const opacity = document.getElementById('screensaver_tile_opacity');
+          if (opacity) opacity.value = String(data.background_opacity ?? 0);
+        }
         const colEl = document.getElementById(prefix + '_tile_col');
         const rowEl = document.getElementById(prefix + '_tile_row');
         const spanWEl = document.getElementById(prefix + '_tile_span_w');
@@ -2270,7 +2323,7 @@ void appendAdminScripts(String& html) {
             layoutInput.span_w = fallbackLayout.span_w;
             layoutInput.span_h = fallbackLayout.span_h;
           }
-          const layout = normalizeTileLayout(layoutInput, index);
+          const layout = normalizeTileLayout(layoutInput, index, tab);
           colEl.value = String(layout.col + 1);
           rowEl.value = String(layout.row + 1);
           spanWEl.value = String(layout.span_w);
@@ -2393,6 +2446,10 @@ void appendAdminScripts(String& html) {
     document.getElementById(prefix + '_tile_title').value = '';
     document.getElementById(prefix + '_tile_icon').value = '';
     setTileColorInputFromStored(tab, 0, '#2A2A2A');
+    if (isScreensaverTileTab(tab)) {
+      const opacity = document.getElementById('screensaver_tile_opacity');
+      if (opacity) opacity.value = '0';
+    }
     resetAllTypeFields(tab);
     syncGaugeUi(tab);
     updateTileType(tab);
@@ -2441,7 +2498,7 @@ void appendAdminScripts(String& html) {
     const snapshot = getTileSnapshotForSave(tab, tileIndex);
     if (!snapshot) return;
     const formData = new FormData();
-    const layout = normalizeSnapshotLayout(snapshot, tileIndex);
+    const layout = normalizeSnapshotLayout(snapshot, tileIndex, tab);
     const folderId = getFolderIdForTab(tab);
     if (folderId === undefined) {
       showNotification(t('folderNotFound'), false);
@@ -2547,7 +2604,7 @@ void appendAdminScripts(String& html) {
 
   async function exportTilesConfig() {
     try {
-      const tabs = tileTabs.slice();
+      const tabs = tileTabs.filter(tab => !isScreensaverTileTab(tab));
       const tileRequests = tabs.map(tab => {
         const folderId = getFolderIdForTab(tab);
         if (folderId === undefined) return Promise.resolve([]);
@@ -2781,7 +2838,7 @@ void appendAdminScripts(String& html) {
     } else {
       fd.append('bg_color_default', '1');
     }
-    const layout = normalizeTileLayout(tile, index);
+    const layout = normalizeTileLayout(tile, index, tabByFolder[folderId] || '');
     fd.append('col', layout.col);
     fd.append('row', layout.row);
     fd.append('span_w', layout.span_w);
@@ -2855,7 +2912,6 @@ void appendAdminScripts(String& html) {
       fd.append('key_modifier', tile.key_modifier || 20);
       fd.append('clock_time_format', (tile.sensor_gauge_min !== undefined && tile.sensor_gauge_min !== null) ? tile.sensor_gauge_min : 0);
       fd.append('clock_date_format', (tile.sensor_gauge_max !== undefined && tile.sensor_gauge_max !== null) ? tile.sensor_gauge_max : 0);
-      fd.append('clock_wallpaper', tile.clock_wallpaper || tile.scene_alias || '');
     } else if (safeType === 11) {
       fd.append('counter_value', tile.counter_value || tile.scene_alias || '0');
     } else if (safeType === 12) {
@@ -2973,7 +3029,12 @@ void appendAdminScripts(String& html) {
     if (typeValue === '0') el.style.background = 'transparent';
     else {
       const bg = tileBgToHex(tile.bg_color, meta.defaultBg || '#353535');
-      el.style.background = bg;
+      if (isScreensaverTileTab(tab)) {
+        const opacity = clampInt(tile.background_opacity, 0, 255, 0);
+        el.style.background = bg + opacity.toString(16).padStart(2, '0');
+      } else {
+        el.style.background = bg;
+      }
       el.style.removeProperty('--switch-knob-color');
       el.style.removeProperty('--switch-on-color');
       if (typeValue === '5' && tile.switch_style === 1) {
@@ -3086,7 +3147,7 @@ void appendAdminScripts(String& html) {
       });
       if (currentTileIndex !== -1 && currentTileTab) {
         restoreCurrentTileSelectionUi();
-      } else {
+      } else if (!isScreensaverTileTab(currentTileTab)) {
         restoreSelectedTileState();
       }
     })
@@ -3180,7 +3241,8 @@ void appendAdminScripts(String& html) {
     if (!isFinite(col)) col = 0;
     if (!isFinite(row)) row = 0;
     if (col < 0) col = 0;
-    if (row < 0) row = 0;
+    const firstRow = firstAllowedGridRow(tab);
+    if (row < firstRow) row = firstRow;
     if (col >= GRID_COLS) col = GRID_COLS - 1;
     if (row >= GRID_ROWS) row = GRID_ROWS - 1;
     return { col, row };
@@ -3201,7 +3263,7 @@ void appendAdminScripts(String& html) {
   function getTileLayoutFromData(tab, index) {
     const tiles = getTilesData(tab);
     if (!Array.isArray(tiles) || index < 0 || index >= tiles.length) return null;
-    return normalizeTileLayout(tiles[index], index);
+    return normalizeTileLayout(tiles[index], index, tab);
   }
 
   function getDragSourceLayout() {
@@ -3334,6 +3396,7 @@ void appendAdminScripts(String& html) {
   function canPlaceTileLayout(tab, index, candidateLayout) {
     if (!candidateLayout) return false;
     if (candidateLayout.col < 0 || candidateLayout.row < 0) return false;
+    if (candidateLayout.row < firstAllowedGridRow(tab)) return false;
     if (candidateLayout.span_w < 1 || candidateLayout.span_h < 1) return false;
     if ((candidateLayout.col + candidateLayout.span_w) > GRID_COLS) return false;
     if ((candidateLayout.row + candidateLayout.span_h) > GRID_ROWS) return false;
@@ -3356,9 +3419,9 @@ void appendAdminScripts(String& html) {
     return Math.abs(colA - colB) + Math.abs(rowA - rowB);
   }
 
-  function buildPlacementCandidates(spanW, spanH, preferredCol, preferredRow) {
+  function buildPlacementCandidates(tab, spanW, spanH, preferredCol, preferredRow) {
     const candidates = [];
-    for (let row = 0; row < GRID_ROWS; row++) {
+    for (let row = firstAllowedGridRow(tab); row < GRID_ROWS; row++) {
       for (let col = 0; col < GRID_COLS; col++) {
         if ((col + spanW) > GRID_COLS || (row + spanH) > GRID_ROWS) continue;
         let distance = (row * GRID_COLS) + col;
@@ -3387,6 +3450,7 @@ void appendAdminScripts(String& html) {
     const movingTile = tiles[fromIdx];
     const movingBase = baseLayouts[fromIdx] ? cloneLayout(baseLayouts[fromIdx]) : null;
     if (!movingTile || Number(movingTile.type || 0) === 0 || !movingBase) return null;
+    if (targetRow < firstAllowedGridRow(tab)) return null;
     if ((targetCol + movingBase.span_w) > GRID_COLS || (targetRow + movingBase.span_h) > GRID_ROWS) return null;
 
     const workingLayouts = baseLayouts.map(layout => cloneLayout(layout));
@@ -3425,7 +3489,7 @@ void appendAdminScripts(String& html) {
 
       const preferredCol = order === 0 ? movingBase.col : layout.col;
       const preferredRow = order === 0 ? movingBase.row : layout.row;
-      const candidates = buildPlacementCandidates(layout.span_w, layout.span_h, preferredCol, preferredRow);
+      const candidates = buildPlacementCandidates(tab, layout.span_w, layout.span_h, preferredCol, preferredRow);
 
       let placed = false;
       for (const candidate of candidates) {
@@ -3638,7 +3702,7 @@ void appendAdminScripts(String& html) {
     if (!sourceLayout || !placeholder) return;
 
     const targetCol = clampInt(col, 0, GRID_COLS - 1, sourceLayout.col);
-    const targetRow = clampInt(row, 0, GRID_ROWS - 1, sourceLayout.row);
+    const targetRow = clampInt(row, firstAllowedGridRow(tab), GRID_ROWS - 1, sourceLayout.row);
     const fits = (targetCol + sourceLayout.span_w <= GRID_COLS) &&
                  (targetRow + sourceLayout.span_h <= GRID_ROWS);
     const spanW = Math.max(1, Math.min(sourceLayout.span_w, GRID_COLS - targetCol));
@@ -3658,7 +3722,7 @@ void appendAdminScripts(String& html) {
     const sourceLayout = getDragSourceLayout();
     if (!sourceLayout) return;
     const targetCol = clampInt(cell.col, 0, GRID_COLS - 1, sourceLayout.col);
-    const targetRow = clampInt(cell.row, 0, GRID_ROWS - 1, sourceLayout.row);
+    const targetRow = clampInt(cell.row, firstAllowedGridRow(tab), GRID_ROWS - 1, sourceLayout.row);
     updateDragPlaceholder(tab, targetCol, targetRow);
 
     if (targetCol === sourceLayout.col && targetRow === sourceLayout.row) {
@@ -3694,7 +3758,7 @@ void appendAdminScripts(String& html) {
     e.preventDefault();
     e.stopPropagation();
     const targetCol = clampInt(cell.col, 0, GRID_COLS - 1, sourceLayout.col);
-    const targetRow = clampInt(cell.row, 0, GRID_ROWS - 1, sourceLayout.row);
+    const targetRow = clampInt(cell.row, firstAllowedGridRow(tab), GRID_ROWS - 1, sourceLayout.row);
     const fits = (targetCol + sourceLayout.span_w <= GRID_COLS) &&
                  (targetRow + sourceLayout.span_h <= GRID_ROWS);
 
@@ -3939,6 +4003,293 @@ void appendAdminScripts(String& html) {
     return selectedIndex >= 0 ? selectedIndex : 0;
   }
 
+  let screensaverDraft = null;
+  let screensaverLoaded = false;
+  let screensaverLoading = false;
+  let screensaverSelected = { kind: 'background', index: -1 };
+  let screensaverWallpaperIndex = -1;
+  let screensaverSaveTimer = null;
+
+  function ssClamp(value, min, max) {
+    const n = Number(value);
+    return Math.max(min, Math.min(max, Number.isFinite(n) ? n : min));
+  }
+
+  function ssNormalizeLoaded(data) {
+    data.wallpapers = Array.isArray(data.wallpapers) ? data.wallpapers : [];
+    const configured = new Map(data.wallpapers.map(item => [item.file_name, item]));
+    const hadConfiguredWallpapers = data.wallpapers.length > 0;
+    (data.available_wallpapers || []).forEach(name => {
+      if (!configured.has(name)) {
+        data.wallpapers.push({
+          file_name: name, enabled: !hadConfiguredWallpapers,
+          focus_x: 500, focus_y: 500, zoom: 1000, duration_seconds: 15
+        });
+      }
+    });
+    screensaverWallpaperIndex = data.wallpapers.findIndex(w => w.enabled);
+    if (screensaverWallpaperIndex < 0 && data.wallpapers.length) screensaverWallpaperIndex = 0;
+    return data;
+  }
+
+  function initScreensaverEditor() {
+    if (screensaverLoaded || screensaverLoading) {
+      if (screensaverLoaded) renderScreensaverEditor();
+      return;
+    }
+    screensaverLoading = true;
+    fetch('/api/screensaver').then(r => r.json()).then(config => {
+      if (!config || !config.success) throw new Error('screensaver config');
+      screensaverDraft = ssNormalizeLoaded(config);
+      screensaverLoaded = true;
+      bindScreensaverEditor();
+      selectScreensaverBackground();
+      renderScreensaverEditor();
+    }).catch(() => showNotification(t('screensaverLoadFailed'), false))
+      .finally(() => { screensaverLoading = false; });
+  }
+
+  function ssPayload() {
+    const d = screensaverDraft;
+    return {
+      version: 1,
+      use_wallpapers: !!d.use_wallpapers,
+      shuffle: !!d.shuffle,
+      show_time: !!d.show_time,
+      show_date: !!d.show_date,
+      time_format: Number(d.time_format || 0),
+      date_format: Number(d.date_format || 0),
+      time_font_size: Number(d.time_font_size || 48),
+      date_font_size: Number(d.date_font_size || 28),
+      clock_x: Math.round(ssClamp(d.clock_x, 0, 1000)),
+      clock_y: Math.round(ssClamp(d.clock_y, 0, 1000)),
+      preview_wallpaper: ssCurrentWallpaper()?.file_name || '',
+      wallpapers: d.wallpapers.map(w => ({
+        file_name: w.file_name, enabled: !!w.enabled,
+        focus_x: Math.round(ssClamp(w.focus_x, 0, 1000)),
+        focus_y: Math.round(ssClamp(w.focus_y, 0, 1000)),
+        zoom: Math.round(ssClamp(w.zoom, 1000, 3000)),
+        duration_seconds: Math.round(ssClamp(w.duration_seconds, 3, 3600))
+      }))
+    };
+  }
+
+  function scheduleScreensaverSave() {
+    if (!screensaverLoaded) return;
+    window.clearTimeout(screensaverSaveTimer);
+    screensaverSaveTimer = window.setTimeout(saveScreensaverNow, 650);
+  }
+
+  function saveScreensaverNow() {
+    if (!screensaverLoaded) return;
+    fetch('/api/screensaver', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ssPayload())
+    }).then(async response => {
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) throw new Error(result.error || 'save');
+      showNotification(t('screensaverSaved'));
+    }).catch(() => {
+      showNotification(t('screensaverSaveFailed'), false);
+    });
+  }
+
+  function ssCurrentWallpaper() {
+    if (!screensaverDraft || screensaverWallpaperIndex < 0) return null;
+    return screensaverDraft.wallpapers[screensaverWallpaperIndex] || null;
+  }
+
+  function selectScreensaverBackground() {
+    screensaverSelected = { kind: 'background', index: -1 };
+    const bg = document.getElementById('screensaverBackgroundSettings');
+    if (bg) bg.classList.remove('hidden');
+    const settings = document.getElementById('screensaverSettings');
+    settings?.querySelector('.tile-specific-settings')?.classList.add('hidden');
+    document.querySelectorAll('#tab-tiles-screensaver .tile').forEach(tile => {
+      tile.classList.remove('active');
+      delete tile.dataset.selected;
+    });
+    document.getElementById('screensaverGrid')?.classList.add('selected-background');
+    currentTileIndex = -1;
+    currentTileTab = 'screensaver';
+    renderScreensaverEditor();
+  }
+
+  function renderScreensaverWallpapers() {
+    const list = document.getElementById('screensaverWallpaperList');
+    if (!list || !screensaverDraft) return;
+    list.innerHTML = '';
+    screensaverDraft.wallpapers.forEach((wallpaper, index) => {
+      const row = document.createElement('div');
+      row.className = 'screensaver-wallpaper-row' + (index === screensaverWallpaperIndex ? ' active' : '');
+      const enabled = document.createElement('input');
+      enabled.type = 'checkbox'; enabled.checked = !!wallpaper.enabled;
+      enabled.addEventListener('change', () => {
+        wallpaper.enabled = enabled.checked;
+        screensaverWallpaperIndex = index;
+        renderScreensaverEditor(); scheduleScreensaverSave();
+      });
+      const name = document.createElement('div');
+      name.className = 'screensaver-wallpaper-name'; name.textContent = wallpaper.file_name;
+      name.addEventListener('click', () => {
+        screensaverWallpaperIndex = index;
+        renderScreensaverEditor();
+      });
+      const up = document.createElement('button');
+      up.type = 'button'; up.className = 'screensaver-wallpaper-move'; up.textContent = '↑';
+      up.disabled = index === 0;
+      up.addEventListener('click', () => {
+        if (index === 0) return;
+        [screensaverDraft.wallpapers[index - 1], screensaverDraft.wallpapers[index]] =
+          [screensaverDraft.wallpapers[index], screensaverDraft.wallpapers[index - 1]];
+        screensaverWallpaperIndex = index - 1; renderScreensaverEditor(); scheduleScreensaverSave();
+      });
+      const down = document.createElement('button');
+      down.type = 'button'; down.className = 'screensaver-wallpaper-move'; down.textContent = '↓';
+      down.disabled = index === screensaverDraft.wallpapers.length - 1;
+      down.addEventListener('click', () => {
+        if (down.disabled) return;
+        [screensaverDraft.wallpapers[index + 1], screensaverDraft.wallpapers[index]] =
+          [screensaverDraft.wallpapers[index], screensaverDraft.wallpapers[index + 1]];
+        screensaverWallpaperIndex = index + 1; renderScreensaverEditor(); scheduleScreensaverSave();
+      });
+      row.append(enabled, name, up, down); list.appendChild(row);
+    });
+    if (!screensaverDraft.wallpapers.length) {
+      const empty = document.createElement('div');
+      empty.className = 'screensaver-save-state';
+      empty.textContent = t('screensaverNoWallpapers');
+      list.appendChild(empty);
+    }
+  }
+
+  function renderScreensaverEditor() {
+    if (!screensaverDraft) return;
+    const d = screensaverDraft;
+    const preview = document.getElementById('screensaverGrid');
+    const image = document.getElementById('screensaverPreviewImage');
+    const clock = document.getElementById('screensaverClock');
+    if (!preview || !image || !clock) return;
+    preview.classList.toggle('selected-background', screensaverSelected.kind === 'background');
+    const width = preview.getBoundingClientRect().width || 800;
+    const scale = width / Number(d.screen_width || 1280);
+    const wallpaper = ssCurrentWallpaper();
+    if (d.use_wallpapers && wallpaper && wallpaper.file_name) {
+      const wanted = '/api/screensaver/wallpaper?name=' + encodeURIComponent(wallpaper.file_name);
+      if (image.dataset.src !== wanted) { image.src = wanted; image.dataset.src = wanted; }
+      image.hidden = false;
+      image.style.objectPosition = (wallpaper.focus_x / 10) + '% ' + (wallpaper.focus_y / 10) + '%';
+      image.style.transformOrigin = (wallpaper.focus_x / 10) + '% ' + (wallpaper.focus_y / 10) + '%';
+      image.style.transform = 'scale(' + (wallpaper.zoom / 1000) + ')';
+    } else {
+      image.hidden = true;
+    }
+    clock.style.left = (d.clock_x / 10) + '%';
+    clock.style.top = (d.clock_y / 10) + '%';
+    const time = document.getElementById('screensaverClockTime');
+    const date = document.getElementById('screensaverClockDate');
+    time.hidden = !d.show_time; date.hidden = !d.show_date;
+    time.style.fontSize = Math.max(10, Number(d.time_font_size || 48) * scale) + 'px';
+    date.style.fontSize = Math.max(8, Number(d.date_font_size || 28) * scale) + 'px';
+    time.textContent = Number(d.time_format) === 2 ? '9:42 PM' : '21:42';
+    date.textContent = Number(d.date_format) === 2 ? '07/14/2026'
+                     : Number(d.date_format) === 3 ? '2026/07/14' : '14.07.2026';
+    clock.hidden = !d.show_time && !d.show_date;
+    document.getElementById('screensaverUseWallpapers').checked = !!d.use_wallpapers;
+    document.getElementById('screensaverShuffle').checked = !!d.shuffle;
+    document.getElementById('screensaverShowTime').checked = !!d.show_time;
+    document.getElementById('screensaverShowDate').checked = !!d.show_date;
+    document.getElementById('screensaverTimeFont').value = String(d.time_font_size || 48);
+    document.getElementById('screensaverDateFont').value = String(d.date_font_size || 28);
+    document.getElementById('screensaverTimeFormat').value = String(d.time_format || 0);
+    document.getElementById('screensaverDateFormat').value = String(d.date_format || 0);
+    const controls = document.getElementById('screensaverWallpaperControls');
+    controls.hidden = !wallpaper;
+    if (wallpaper) {
+      document.getElementById('screensaverWallpaperDuration').value = wallpaper.duration_seconds;
+      document.getElementById('screensaverWallpaperZoom').value = wallpaper.zoom;
+      document.getElementById('screensaverFocusX').value = wallpaper.focus_x;
+      document.getElementById('screensaverFocusY').value = wallpaper.focus_y;
+    }
+    renderScreensaverWallpapers();
+  }
+
+  function bindScreensaverEditor() {
+    const preview = document.getElementById('screensaverGrid');
+    const clock = document.getElementById('screensaverClock');
+    if (!preview || preview.dataset.bound === '1') return;
+    preview.dataset.bound = '1';
+    preview.addEventListener('click', e => {
+      if (!e.target.closest('.tile') && !e.target.closest('#screensaverClock')) {
+        selectScreensaverBackground();
+      }
+    });
+    let backgroundDrag = null;
+    preview.addEventListener('pointerdown', e => {
+      if (e.target.closest('.tile') || e.target.closest('#screensaverClock')) return;
+      selectScreensaverBackground();
+      const wallpaper = ssCurrentWallpaper();
+      if (!wallpaper) return;
+      backgroundDrag = { id: e.pointerId, x: e.clientX, y: e.clientY,
+                         fx: Number(wallpaper.focus_x), fy: Number(wallpaper.focus_y) };
+      preview.setPointerCapture(e.pointerId);
+    });
+    preview.addEventListener('pointermove', e => {
+      if (!backgroundDrag || backgroundDrag.id !== e.pointerId) return;
+      const wallpaper = ssCurrentWallpaper(); const rect = preview.getBoundingClientRect();
+      wallpaper.focus_x = Math.round(ssClamp(backgroundDrag.fx - (e.clientX - backgroundDrag.x) * 1000 / rect.width, 0, 1000));
+      wallpaper.focus_y = Math.round(ssClamp(backgroundDrag.fy - (e.clientY - backgroundDrag.y) * 1000 / rect.height, 0, 1000));
+      renderScreensaverEditor();
+    });
+    const finishBackgroundDrag = e => {
+      if (!backgroundDrag || backgroundDrag.id !== e.pointerId) return;
+      backgroundDrag = null; scheduleScreensaverSave();
+    };
+    preview.addEventListener('pointerup', finishBackgroundDrag);
+    preview.addEventListener('pointercancel', finishBackgroundDrag);
+    let clockDrag = null;
+    clock.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      clockDrag = { id: e.pointerId }; clock.setPointerCapture(e.pointerId);
+      clock.classList.add('dragging'); selectScreensaverBackground();
+    });
+    clock.addEventListener('pointermove', e => {
+      if (!clockDrag || clockDrag.id !== e.pointerId) return;
+      const rect = preview.getBoundingClientRect();
+      screensaverDraft.clock_x = Math.round(ssClamp((e.clientX - rect.left) * 1000 / rect.width, 0, 1000));
+      screensaverDraft.clock_y = Math.round(ssClamp((e.clientY - rect.top) * 1000 / rect.height, 0, 1000));
+      renderScreensaverEditor();
+    });
+    const finishClockDrag = e => {
+      if (!clockDrag || clockDrag.id !== e.pointerId) return;
+      clockDrag = null; clock.classList.remove('dragging'); scheduleScreensaverSave();
+    };
+    clock.addEventListener('pointerup', finishClockDrag);
+    clock.addEventListener('pointercancel', finishClockDrag);
+
+    const bind = (id, event, fn, save = true) => {
+      const element = document.getElementById(id); if (!element) return;
+      element.addEventListener(event, () => { fn(element); renderScreensaverEditor(); if (save) scheduleScreensaverSave(); });
+    };
+    bind('screensaverUseWallpapers', 'change', el => { screensaverDraft.use_wallpapers = el.checked; });
+    bind('screensaverShuffle', 'change', el => { screensaverDraft.shuffle = el.checked; });
+    bind('screensaverShowTime', 'change', el => { screensaverDraft.show_time = el.checked; });
+    bind('screensaverShowDate', 'change', el => { screensaverDraft.show_date = el.checked; });
+    bind('screensaverTimeFont', 'change', el => { screensaverDraft.time_font_size = Number(el.value); });
+    bind('screensaverDateFont', 'change', el => { screensaverDraft.date_font_size = Number(el.value); });
+    bind('screensaverTimeFormat', 'change', el => { screensaverDraft.time_format = Number(el.value); });
+    bind('screensaverDateFormat', 'change', el => { screensaverDraft.date_format = Number(el.value); });
+    bind('screensaverWallpaperDuration', 'change', el => { const w = ssCurrentWallpaper(); if (w) w.duration_seconds = Number(el.value); });
+    bind('screensaverWallpaperZoom', 'input', el => { const w = ssCurrentWallpaper(); if (w) w.zoom = Number(el.value); }, false);
+    bind('screensaverWallpaperZoom', 'change', el => { const w = ssCurrentWallpaper(); if (w) w.zoom = Number(el.value); });
+    bind('screensaverFocusX', 'input', el => { const w = ssCurrentWallpaper(); if (w) w.focus_x = Number(el.value); }, false);
+    bind('screensaverFocusX', 'change', el => { const w = ssCurrentWallpaper(); if (w) w.focus_x = Number(el.value); });
+    bind('screensaverFocusY', 'input', el => { const w = ssCurrentWallpaper(); if (w) w.focus_y = Number(el.value); }, false);
+    bind('screensaverFocusY', 'change', el => { const w = ssCurrentWallpaper(); if (w) w.focus_y = Number(el.value); });
+
+    window.addEventListener('resize', () => { if (screensaverLoaded) renderScreensaverEditor(); });
+  }
+
   document.addEventListener('DOMContentLoaded', () => {
     toggleStaticWifiFields();
     initTileTabs();
@@ -3969,10 +4320,3 @@ void appendAdminScripts(String& html) {
 
   append_tile_type_scripts(html);
 }
-
-
-
-
-
-
-

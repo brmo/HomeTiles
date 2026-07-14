@@ -1106,10 +1106,14 @@ void show_sensor_popup(const SensorPopupInit& init) {
     clear_chart(g_sensor_popup_ctx, get_history_range_config(g_sensor_popup_ctx->history_range).points);
     lv_obj_clear_flag(g_sensor_popup_ctx->card, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_sensor_popup_ctx->overlay, LV_OBJ_FLAG_CLICKABLE);
+    // Das vorab erzeugte Popup-Overlay kann hinter einem spaeter erstellten
+    // Screensaver liegen. Beim Oeffnen wieder an die Spitze von layer_top.
+    lv_obj_move_foreground(g_sensor_popup_ctx->overlay);
   } else {
     SensorPopupContext* ctx = new SensorPopupContext();
     g_sensor_popup_ctx = ctx;
     build_popup_ui(ctx, init);
+    if (ctx->overlay) lv_obj_move_foreground(ctx->overlay);
   }
 
   g_pending_history.valid = false;

@@ -19,6 +19,7 @@
 #include "src/core/i18n.h"
 #include "src/devices/device.h"
 #include "src/types/clock/clock_format.h"
+#include "src/ui/screensaver_config.h"
 #include <cstring>
 
 namespace {
@@ -158,10 +159,12 @@ static void appendTileTabHTML(
     const std::vector<String>& switchOptions,
     const std::vector<String>& mediaOptions,
     const std::function<String(const String&, uint8_t)>& formatSensorValue,
-    const String& navigateOptionsHtml
+    const String& navigateOptionsHtml,
+    bool screensaver_mode = false
 ) {
   const auto& tr = i18n::strings(configManager.getConfig().language);
-  String tab_id = "folder" + String(folder_id);
+  String tab_id = screensaver_mode ? String("screensaver")
+                                   : String("folder") + String(folder_id);
 
   html += R"html(
       <!-- Tile Folder -->
@@ -177,13 +180,29 @@ static void appendTileTabHTML(
   appendHtmlEscaped(html, folder.name);
   html += R"html(" data-folder-icon=")html";
   appendHtmlEscaped(html, folder.icon_name);
+  if (screensaver_mode) html += R"html(" data-screensaver-grid="1)html";
   html += R"html(">
         <div class="tile-editor">
           <div class="tile-editor-main">
           <div class="tile-grid-scroll">
           <!-- Grid Preview -->
-          <div class="tile-grid">
+          <div class="tile-grid)html";
+  if (screensaver_mode) html += " screensaver-tile-grid";
+  html += R"html(" id=")html";
+  html += tab_id;
+  html += R"html(Grid">
 )html";
+
+  if (screensaver_mode) {
+    html += R"html(            <div class="screensaver-grid-image-frame">
+              <img id="screensaverPreviewImage" class="screensaver-grid-image" alt="" draggable="false">
+            </div>
+            <div id="screensaverClock" class="screensaver-grid-clock">
+              <div id="screensaverClockTime">21:42</div>
+              <div id="screensaverClockDate">14.07.2026</div>
+            </div>
+)html";
+  }
 
   // Generate tiles
   for (size_t i = 0; i < TILES_PER_GRID; ++i) {
@@ -211,8 +230,14 @@ static void appendTileTabHTML(
                               ? tileBgColorRgb(tile)
                               : (type_desc ? type_desc->default_bg_color : 0);
       if (bg_color == 0) bg_color = 0x353535;
-      char colorHex[8];
-      snprintf(colorHex, sizeof(colorHex), "#%06X", (unsigned int)bg_color);
+      char colorHex[10];
+      if (screensaver_mode) {
+        snprintf(colorHex, sizeof(colorHex), "#%06X%02X",
+                 (unsigned int)bg_color,
+                 static_cast<unsigned int>(tile.background_opacity));
+      } else {
+        snprintf(colorHex, sizeof(colorHex), "#%06X", (unsigned int)bg_color);
+      }
       tileStyle = "background:";
       tileStyle += colorHex;
     }
@@ -226,6 +251,10 @@ static void appendTileTabHTML(
     tileStyle += " / span ";
     tileStyle += String(static_cast<unsigned>(span_h));
     tileStyle += ";";
+    if (screensaver_mode && tile.type == TILE_EMPTY &&
+        row < (GRID_ROWS > 1 ? GRID_ROWS - 2 : 0)) {
+      tileStyle += "display:none;";
+    }
 
     html += "<div class=\"";
     html += cssClass;
@@ -338,10 +367,14 @@ static void appendTileTabHTML(
           </div>
           <div class="folder-footer">
             <p class="hint">)html";
-  html += tr.admin_tile_hint;
+  if (screensaver_mode) {
+    html += tr.screensaver_hint;
+  } else {
+    html += tr.admin_tile_hint;
+  }
   html += R"html(</p>
 )html";
-  if (folder_id != 0) {
+  if (!screensaver_mode && folder_id != 0) {
     html += R"html(            <button type="button" class="btn btn-danger btn-delete-folder" onclick="deleteFolder(')html";
     html += tab_id;
     html += R"html(')">)html";
@@ -356,6 +389,76 @@ static void appendTileTabHTML(
           <div class="tile-settings" id=")html";
   html += tab_id;
   html += R"html(Settings">
+)html";
+  if (screensaver_mode) {
+    html += R"html(            <div id="screensaverBackgroundSettings" class="screensaver-background-settings">
+              <div class="tile-settings-head"><h3 style="margin-top:0;">Screensaver</h3></div>
+              <div class="tile-settings-body">
+                <div class="screensaver-fixed-type"><label>)html";
+    html += tr.admin_type;
+    html += R"html(</label><input value="Screensaver" disabled></div>
+                <label class="inline-checkbox"><input id="screensaverUseWallpapers" type="checkbox"> )html";
+    html += tr.screensaver_use_wallpapers;
+    html += R"html(</label>
+                <label class="inline-checkbox"><input id="screensaverShuffle" type="checkbox"> )html";
+    html += tr.screensaver_shuffle;
+    html += R"html(</label>
+                <div class="screensaver-wallpaper-heading">)html";
+    html += tr.screensaver_wallpapers_heading;
+    html += R"html(</div>
+                <div id="screensaverWallpaperList" class="screensaver-wallpaper-list"></div>
+                <div id="screensaverWallpaperControls" class="screensaver-wallpaper-controls">
+                  <label>)html";
+    html += tr.screensaver_duration_seconds;
+    html += R"html(</label><input id="screensaverWallpaperDuration" type="number" min="3" max="3600" value="15">
+                  <label>)html";
+    html += tr.screensaver_zoom;
+    html += R"html(</label><input id="screensaverWallpaperZoom" type="range" min="1000" max="3000" step="25" value="1000">
+                  <div class="screensaver-focus-grid">
+                    <label>)html";
+    html += tr.screensaver_focus_x;
+    html += R"html(<input id="screensaverFocusX" type="range" min="0" max="1000" value="500"></label>
+                    <label>)html";
+    html += tr.screensaver_focus_y;
+    html += R"html(<input id="screensaverFocusY" type="range" min="0" max="1000" value="500"></label>
+                  </div>
+                </div>
+                <div class="screensaver-clock-settings">
+                  <div class="screensaver-wallpaper-heading">)html";
+    html += tr.screensaver_clock_heading;
+    html += R"html(</div>
+                  <div class="clock-toggle-row">
+                    <label class="inline-checkbox"><input id="screensaverShowTime" type="checkbox"> )html";
+    html += tr.show_time;
+    html += R"html(</label>
+                    <label class="inline-checkbox"><input id="screensaverShowDate" type="checkbox"> )html";
+    html += tr.show_date;
+    html += R"html(</label>
+                  </div>
+                  <div class="screensaver-two-fields">
+                    <label>)html";
+    html += tr.time_font_size;
+    html += R"html(<select id="screensaverTimeFont"><option>20</option><option>24</option><option>28</option><option>32</option><option>40</option><option selected>48</option></select></label>
+                    <label>)html";
+    html += tr.date_font_size;
+    html += R"html(<select id="screensaverDateFont"><option>20</option><option>24</option><option selected>28</option><option>32</option><option>40</option><option>48</option></select></label>
+                    <label>)html";
+    html += tr.time_format_label;
+    html += R"html(<select id="screensaverTimeFormat"><option value="0">)html";
+    html += tr.format_auto_localization;
+    html += R"html(</option><option value="1">24 h</option><option value="2">12 h</option></select></label>
+                    <label>)html";
+    html += tr.date_format_label;
+    html += R"html(<select id="screensaverDateFormat"><option value="0">)html";
+    html += tr.format_auto_localization;
+    html += R"html(</option><option value="1">DD.MM.YYYY</option><option value="2">MM/DD/YYYY</option><option value="3">YYYY/MM/DD</option></select></label>
+                  </div>
+                </div>
+              </div>
+            </div>
+)html";
+  }
+  html += R"html(
             <!-- Tile Settings (Visible only when tile selected) -->
             <div class="tile-specific-settings hidden">
             <div class="tile-settings-head">
@@ -372,7 +475,19 @@ static void appendTileTabHTML(
   html += tab_id;
   html += R"html(')">
             )html";
-  append_tile_type_select_options(html);
+  if (screensaver_mode) {
+    html += "<option value=\"0\">";
+    html += tr.tile_type_empty;
+    html += "</option><option value=\"1\">";
+    html += tr.tile_type_sensor;
+    html += "</option><option value=\"2\">";
+    html += tr.tile_type_scene;
+    html += "</option><option value=\"5\">";
+    html += tr.tile_type_switch;
+    html += "</option>";
+  } else {
+    append_tile_type_select_options(html);
+  }
   html += R"html(
             </select>
             <p class="hint hidden" id=")html";
@@ -435,7 +550,9 @@ static void appendTileTabHTML(
   html += R"html(</label>
                 <input type="number" id=")html";
   html += tab_id;
-  html += R"html(_tile_row" min="1" max=")html";
+  html += R"html(_tile_row" min=")html";
+  html += String(screensaver_mode && GRID_ROWS > 1 ? GRID_ROWS - 1 : 1);
+  html += R"html(" max=")html";
   html += String(GRID_ROWS);
   html += R"html(" step="1" value="1">
               </div>
@@ -462,6 +579,15 @@ static void appendTileTabHTML(
             </div>
 
 )html";
+
+            if (screensaver_mode) {
+              html += R"html(
+            <label>)html";
+              html += tr.screensaver_background_opacity;
+              html += R"html(</label>
+            <input type="range" id="screensaver_tile_opacity" min="0" max="255" step="1" value="0">
+)html";
+            }
 
             TileTypeWebContext type_ctx;
             type_ctx.tab_id = &tab_id;
@@ -759,6 +885,10 @@ String WebAdminServer::getAdminPage() {
   }
 
   html += R"html(
+        <button class="tab-btn" onclick="switchTab('tab-tiles-screensaver')">
+          <i class="mdi mdi-monitor" style="font-size:24px;"></i>
+          <span style="font-size:14px;font-weight:600;">Screensaver</span>
+        </button>
         <button class="tab-btn" onclick="switchTab('tab-network')">
           <i class="mdi mdi-cog" style="font-size:24px;"></i>
           <span style="font-size:14px;font-weight:600;">)html";
@@ -774,6 +904,122 @@ String WebAdminServer::getAdminPage() {
     tileConfig.loadFolderGrid(entry.id, grid);
     appendTileTabHTML(html, entry.id, entry, grid, sensorOptions, energyOptions, weatherOptions, sceneOptions, switchOptions, mediaOptions, formatSensorValue, navigateOptionsHtml);
   }
+
+  FolderEntry screensaver_folder{};
+  screensaver_folder.id = TileConfig::kScreensaverGridStorageId;
+  screensaver_folder.parent_id = 0;
+  snprintf(screensaver_folder.name, sizeof(screensaver_folder.name), "%s",
+           "Screensaver");
+  snprintf(screensaver_folder.icon_name, sizeof(screensaver_folder.icon_name),
+           "%s", "monitor");
+  appendTileTabHTML(html, TileConfig::kScreensaverGridStorageId,
+                    screensaver_folder, screensaverConfig.tileGrid(),
+                    sensorOptions, energyOptions, weatherOptions, sceneOptions,
+                    switchOptions, mediaOptions, formatSensorValue,
+                    navigateOptionsHtml, true);
+
+#if 0  // Alte separate Slot-Vorschau; ersetzt durch den normalen Tile-Editor oben.
+  html += R"html(
+      <div id="tab-screensaver" class="tab-content screensaver-tab">
+        <div class="screensaver-editor">
+          <div class="screensaver-editor-main">
+            <div class="screensaver-preview-scroll">
+              <div id="screensaverPreview" class="screensaver-preview selected-background">
+                <img id="screensaverPreviewImage" alt="" draggable="false">
+                <div id="screensaverClock" class="screensaver-clock">
+                  <div id="screensaverClockTime">21:42</div>
+                  <div id="screensaverClockDate">14.07.2026</div>
+                </div>
+                <div id="screensaverSlots" class="screensaver-slots"></div>
+              </div>
+            </div>
+            <div class="screensaver-help">)html";
+  html += is_german
+              ? "Hintergrund oder Uhr anklicken und ziehen. Leere Slots sind nur im Editor sichtbar."
+              : "Click and drag the background or clock. Empty slots are only visible in the editor.";
+  html += R"html(</div>
+          </div>
+
+          <aside class="tile-settings screensaver-settings" id="screensaverSettings">
+            <h2 id="screensaverSettingsTitle">Screensaver</h2>
+            <div id="screensaverBackgroundSettings">
+              <div class="screensaver-fixed-type"><label>Typ</label><input value="Screensaver" disabled></div>
+              <label class="inline-checkbox"><input id="screensaverUseWallpapers" type="checkbox"> )html";
+  html += is_german ? "Bilder verwenden" : "Use wallpapers";
+  html += R"html(</label>
+              <label class="inline-checkbox"><input id="screensaverShuffle" type="checkbox"> )html";
+  html += is_german ? "Zuf&auml;llige Reihenfolge" : "Shuffle";
+  html += R"html(</label>
+              <div class="screensaver-wallpaper-heading">Wallpapers</div>
+              <div id="screensaverWallpaperList" class="screensaver-wallpaper-list"></div>
+              <div id="screensaverWallpaperControls" class="screensaver-wallpaper-controls">
+                <label>)html";
+  html += is_german ? "Anzeigedauer (Sekunden)" : "Duration (seconds)";
+  html += R"html(</label><input id="screensaverWallpaperDuration" type="number" min="3" max="3600" value="15">
+                <label>Zoom</label><input id="screensaverWallpaperZoom" type="range" min="1000" max="3000" step="25" value="1000">
+                <div class="screensaver-focus-grid">
+                  <label>Fokus X<input id="screensaverFocusX" type="range" min="0" max="1000" value="500"></label>
+                  <label>Fokus Y<input id="screensaverFocusY" type="range" min="0" max="1000" value="500"></label>
+                </div>
+              </div>
+              <div class="screensaver-clock-settings">
+                <div class="screensaver-wallpaper-heading">Uhrzeit</div>
+                <div class="clock-toggle-row">
+                  <label class="inline-checkbox"><input id="screensaverShowTime" type="checkbox"> )html";
+  html += is_german ? "Uhrzeit" : "Time";
+  html += R"html(</label>
+                  <label class="inline-checkbox"><input id="screensaverShowDate" type="checkbox"> )html";
+  html += is_german ? "Datum" : "Date";
+  html += R"html(</label>
+                </div>
+                <div class="screensaver-two-fields">
+                  <label>)html";
+  html += is_german ? "Zeit-Schrift" : "Time font";
+  html += R"html(<select id="screensaverTimeFont"><option>20</option><option>24</option><option>28</option><option>32</option><option>40</option><option selected>48</option></select></label>
+                  <label>)html";
+  html += is_german ? "Datum-Schrift" : "Date font";
+  html += R"html(<select id="screensaverDateFont"><option>20</option><option>24</option><option selected>28</option><option>32</option><option>40</option><option>48</option></select></label>
+                  <label>)html";
+  html += is_german ? "Zeitformat" : "Time format";
+  html += R"html(<select id="screensaverTimeFormat"><option value="0">Auto</option><option value="1">24 h</option><option value="2">12 h</option></select></label>
+                  <label>)html";
+  html += is_german ? "Datumsformat" : "Date format";
+  html += R"html(<select id="screensaverDateFormat"><option value="0">Auto</option><option value="1">DD.MM.YYYY</option><option value="2">MM/DD/YYYY</option><option value="3">YYYY/MM/DD</option></select></label>
+                </div>
+              </div>
+            </div>
+
+            <div id="screensaverSlotSettings" hidden>
+              <label>Typ</label>
+              <select id="screensaverSlotType"><option value="0">Empty</option><option value="1">Sensor</option><option value="2">Scene</option><option value="5">Switch</option></select>
+              <label>)html";
+  html += is_german ? "Titel" : "Title";
+  html += R"html(</label><input id="screensaverSlotTitle" type="text">
+              <label>Icon (MDI)</label><input id="screensaverSlotIcon" type="text" placeholder="thermometer, lightbulb">
+              <label>)html";
+  html += is_german ? "Farbe" : "Color";
+  html += R"html(</label><input id="screensaverSlotColor" type="color" value="#353535">
+              <label>)html";
+  html += is_german ? "Hintergrund-Deckkraft" : "Background opacity";
+  html += R"html(</label><input id="screensaverSlotOpacity" type="range" min="0" max="255" value="0">
+              <div id="screensaverSlotEntityWrap"><label id="screensaverSlotEntityLabel">Entity</label><select id="screensaverSlotEntity"><option value=""></option></select></div>
+              <div id="screensaverSensorFields" class="screensaver-two-fields">
+                <label>)html";
+  html += is_german ? "Einheit" : "Unit";
+  html += R"html(<input id="screensaverSlotUnit" type="text"></label>
+                <label>)html";
+  html += is_german ? "Nachkommastellen" : "Decimals";
+  html += R"html(<input id="screensaverSlotDecimals" type="number" min="-1" max="6" value="-1"></label>
+              </div>
+              <label id="screensaverPopupModeLabel">Popup</label><select id="screensaverPopupMode"><option value="0">Long press</option><option value="1">Short press</option></select>
+              <label id="screensaverSwitchStyleLabel">Switch style</label><select id="screensaverSwitchStyle"><option value="0">Icon</option><option value="1">Toggle</option></select>
+            </div>
+            <div id="screensaverSaveState" class="screensaver-save-state"></div>
+          </aside>
+        </div>
+      </div>
+)html";
+#endif
 
   html += R"html(
       <!-- Tab 3: Settings (Network/MQTT Configuration) -->

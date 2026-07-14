@@ -10,7 +10,8 @@ typedef void (*scene_publish_cb_t)(const char* scene_alias);
 enum class GridType : uint8_t {
   TAB0 = 0,
   TAB1 = 1,
-  TAB2 = 2
+  TAB2 = 2,
+  SCREENSAVER = 3
 };
 
 struct SensorTileWidgets {

@@ -745,6 +745,7 @@ static void packTile(const Tile& in, PackedTileV7& out) {
                          getTilePopupOpenMode(in) == TILE_POPUP_OPEN_SHORT_PRESS)
                             ? TILE_POPUP_OPEN_SHORT_PRESS
                             : TILE_POPUP_OPEN_LONG_PRESS;
+  out.reserved[0] = in.background_opacity;
   copyString(in.title, out.title, sizeof(out.title));
   copyString(in.icon_name, out.icon_name, sizeof(out.icon_name));
   copyString(in.sensor_unit, out.sensor_unit, sizeof(out.sensor_unit));
@@ -853,6 +854,7 @@ static void unpackTileV7(const PackedTileV7& in, Tile& out) {
   }
   out.type = type;
   out.bg_color = in.bg_color;
+  out.background_opacity = in.reserved[0];
   out.col = (in.col < GRID_COLS) ? in.col : 0;
   out.row = (in.row < GRID_ROWS) ? in.row : 0;
   uint8_t span_w = (in.span_w < 1) ? 1 : in.span_w;
@@ -2100,6 +2102,10 @@ bool TileConfig::loadFolderGrid(uint16_t folder_id, TileGridConfig& out) {
   return ok;
 }
 
+bool TileConfig::loadScreensaverGrid(TileGridConfig& out) {
+  return loadGrid(kScreensaverGridStorageId, out, false);
+}
+
 bool TileConfig::loadFolderGridEntitiesOnly(uint16_t folder_id, TileEntitySlot* out, size_t count) {
   if (!folderExists(folder_id)) return false;
   if (count < TILES_PER_GRID) return false;
@@ -2265,6 +2271,10 @@ bool TileConfig::saveFolderGrid(uint16_t folder_id, const TileGridConfig& grid) 
     active_grid = grid;
   }
   return ok;
+}
+
+bool TileConfig::saveScreensaverGrid(const TileGridConfig& grid) {
+  return saveGrid(kScreensaverGridStorageId, grid, false);
 }
 
 bool TileConfig::setActiveFolder(uint16_t folder_id) {
@@ -2545,7 +2555,8 @@ bool TileConfig::deleteFolder(uint16_t folder_id) {
   return true;
 }
 
-bool TileConfig::loadGrid(uint16_t folder_id, TileGridConfig& grid) {
+bool TileConfig::loadGrid(uint16_t folder_id, TileGridConfig& grid,
+                          bool ensure_navigation_tile) {
   initGridDefaults(grid);
 
   bool ok = false;
@@ -2590,10 +2601,12 @@ bool TileConfig::loadGrid(uint16_t folder_id, TileGridConfig& grid) {
   }
 
   bool changed = false;
-  if (folder_id == kRootFolderId) {
-    changed = ensureSettingsTile(grid);
-  } else {
-    changed = ensureBackTile(folder_id, grid);
+  if (ensure_navigation_tile) {
+    if (folder_id == kRootFolderId) {
+      changed = ensureSettingsTile(grid);
+    } else {
+      changed = ensureBackTile(folder_id, grid);
+    }
   }
 
   if (!ok) {
@@ -2621,22 +2634,25 @@ bool TileConfig::loadGrid(uint16_t folder_id, TileGridConfig& grid) {
   }
 
   if (needs_migration_save || changed) {
-    saveGrid(folder_id, grid);
+    saveGrid(folder_id, grid, ensure_navigation_tile);
   }
   return true;
 }
 
-bool TileConfig::saveGrid(uint16_t folder_id, const TileGridConfig& grid) {
+bool TileConfig::saveGrid(uint16_t folder_id, const TileGridConfig& grid,
+                          bool ensure_navigation_tile) {
   if (!storageReady()) {
     Serial.println("[TileConfig] WARN: Storage nicht verfuegbar, Grid kann nicht gespeichert werden");
     return false;
   }
 
   TileGridConfig working = grid;
-  if (folder_id == kRootFolderId) {
-    ensureSettingsTile(working);
-  } else {
-    ensureBackTile(folder_id, working);
+  if (ensure_navigation_tile) {
+    if (folder_id == kRootFolderId) {
+      ensureSettingsTile(working);
+    } else {
+      ensureBackTile(folder_id, working);
+    }
   }
 
   Serial.printf("[TileConfig] Speichere Grid %u (storage, %u x %u bytes)\n",

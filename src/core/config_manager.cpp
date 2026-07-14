@@ -146,6 +146,8 @@ ConfigManager::ConfigManager() {
   config.wake_mode_battery = kWakeModeTouch;
   config.auto_sleep_enabled = true;
   config.auto_sleep_seconds = 60;
+  config.auto_screensaver_enabled = false;
+  config.auto_screensaver_seconds = 60;
   config.auto_sleep_battery_enabled = config.auto_sleep_enabled;
   config.auto_sleep_battery_seconds = config.auto_sleep_seconds;
   config.status_time_font_size = 48;
@@ -232,6 +234,9 @@ bool ConfigManager::load() {
     sleep_seconds = sleep_minutes * 60;
   }
   config.auto_sleep_seconds = normalize_sleep_seconds(sleep_seconds);
+  config.auto_screensaver_enabled = prefs.getBool("ss_auto_en", false);
+  config.auto_screensaver_seconds = normalize_sleep_seconds(
+      prefs.getUShort("ss_auto_sec", 60));
   config.auto_sleep_battery_enabled = prefs.isKey("sleep_bat_en")
                                       ? prefs.getBool("sleep_bat_en", config.auto_sleep_enabled)
                                       : config.auto_sleep_enabled;
@@ -326,6 +331,9 @@ bool ConfigManager::save(const DeviceConfig& cfg) {
   prefs.putUChar("wake_bat", normalized.wake_mode_battery);
   prefs.putBool("sleep_en", normalized.auto_sleep_enabled);
   prefs.putUShort("sleep_sec", normalized.auto_sleep_seconds);
+  prefs.putBool("ss_auto_en", normalized.auto_screensaver_enabled);
+  prefs.putUShort("ss_auto_sec",
+                  normalize_sleep_seconds(normalized.auto_screensaver_seconds));
   prefs.putBool("sleep_bat_en", normalized.auto_sleep_battery_enabled);
   prefs.putUShort("sleep_bat_sec", normalized.auto_sleep_battery_seconds);
   prefs.putUChar("status_time_font", (normalized.status_time_font_size == 24) ? 24 : 48);
@@ -438,6 +446,22 @@ bool ConfigManager::saveDisplaySettings(uint8_t brightness,
   apply_device_capability_limits(config);
 
   Serial.println("✓ ConfigManager: Display-Einstellungen gespeichert");
+  return true;
+}
+
+bool ConfigManager::saveScreensaverTimeout(bool enabled, uint16_t seconds) {
+  Preferences prefs;
+  if (!prefs.begin(PREF_NAMESPACE, false)) {
+    Serial.println("ConfigManager: Screensaver-Preferences oeffnen fehlgeschlagen");
+    return false;
+  }
+  const uint16_t normalized_seconds = normalize_sleep_seconds(seconds);
+  prefs.putBool("ss_auto_en", enabled);
+  prefs.putUShort("ss_auto_sec", normalized_seconds);
+  prefs.end();
+
+  config.auto_screensaver_enabled = enabled;
+  config.auto_screensaver_seconds = normalized_seconds;
   return true;
 }
 

@@ -76,7 +76,6 @@ struct ClockTileData {
   uint8_t time_format = clock_tile::TIME_FORMAT_24H;
   uint8_t date_format = clock_tile::DATE_FORMAT_DMY;
   uint8_t flags = 1;
-  String wallpaper;  // Screensaver-Bild in /wallpapers (leer = kein Tap-Ziel)
   lv_obj_t* time_label = nullptr;
   lv_obj_t* date_label = nullptr;
   lv_timer_t* timer = nullptr;
@@ -231,31 +230,17 @@ lv_obj_set_style_bg_grad_dir(card, LV_GRAD_DIR_NONE, LV_PART_MAIN | LV_STATE_PRE
   data->time_format = resolve_clock_time_format(tile);
   data->date_format = resolve_clock_date_format(tile);
   data->flags = flags;
-  data->wallpaper = tile.scene_alias;
   data->time_label = time_lbl;
   data->date_label = date_lbl;
   update_clock_labels(data);
   data->timer = lv_timer_create(clock_timer_cb, 1000, data);
 
-  // Tap oeffnet den Bild-Screensaver, wenn ein Hintergrundbild gewaehlt ist.
-  if (data->wallpaper.length() > 0) {
-    preload_image_screensaver(data->wallpaper);
-    lv_obj_add_event_cb(
-        card,
-        [](lv_event_t* e) {
-          ClockTileData* data = static_cast<ClockTileData*>(lv_event_get_user_data(e));
-          if (!data || !data->wallpaper.length()) return;
-          ImageScreensaverInit init;
-          init.file_name = data->wallpaper;
-          init.time_format = data->time_format;
-          init.date_format = data->date_format;
-          init.show_time = (data->flags & 1) != 0;
-          init.show_date = (data->flags & 2) != 0;
-          show_image_screensaver(init);
-        },
-        LV_EVENT_CLICKED,
-        data);
-  }
+  // Jede Clock-Kachel oeffnet denselben global konfigurierten Screensaver.
+  lv_obj_add_event_cb(
+      card,
+      [](lv_event_t*) { show_image_screensaver(); },
+      LV_EVENT_CLICKED,
+      nullptr);
 
   lv_obj_add_event_cb(
       card,
@@ -274,5 +259,4 @@ lv_obj_set_style_bg_grad_dir(card, LV_GRAD_DIR_NONE, LV_PART_MAIN | LV_STATE_PRE
 
   return card;
 }
-
 

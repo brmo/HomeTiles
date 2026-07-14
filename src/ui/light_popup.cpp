@@ -1602,6 +1602,10 @@ void show_light_popup(const LightPopupInit& init) {
     apply_init_to_context(g_light_popup_ctx, init);
     lv_obj_clear_flag(g_light_popup_ctx->card, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_light_popup_ctx->overlay, LV_OBJ_FLAG_CLICKABLE);
+    // Popups werden beim Boot vorgeladen. Ein spaeter erzeugter Screensaver
+    // liegt deshalb auf lv_layer_top() zunaechst vor diesem alten Overlay.
+    // Beim wirklichen Oeffnen das Popup wieder ganz nach vorn holen.
+    lv_obj_move_foreground(g_light_popup_ctx->overlay);
     return;
   }
 
@@ -1770,6 +1774,7 @@ void show_light_popup(const LightPopupInit& init) {
   }
   lv_obj_add_event_cb(overlay, on_overlay_click, LV_EVENT_CLICKED, ctx);
   lv_obj_add_event_cb(overlay, on_overlay_delete, LV_EVENT_DELETE, ctx);
+  lv_obj_move_foreground(overlay);
 }
 
 void update_light_popup(const LightPopupInit& init) {

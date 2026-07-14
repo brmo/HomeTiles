@@ -173,6 +173,9 @@ static uint32_t ap_mode_click_block_until = 0;
 static lv_obj_t *sleep_slider = nullptr;
 static lv_obj_t *sleep_time_label = nullptr;
 static lv_obj_t *sleep_label = nullptr;
+static lv_obj_t *screensaver_slider = nullptr;
+static lv_obj_t *screensaver_time_label = nullptr;
+static lv_obj_t *screensaver_label = nullptr;
 
 // Power Status Labels (stubs -> no battery display)
 static lv_obj_t *power_status_label = nullptr;
@@ -525,6 +528,26 @@ static void on_sleep_slider(lv_event_t *e) {
         wake_mode_mains,
         wake_mode_battery);
     mqttPublishDeviceSettings();
+    update_settings_tile_summaries();
+  }
+}
+
+static void on_screensaver_slider(lv_event_t *e) {
+  lv_obj_t *slider = (lv_obj_t*)lv_event_get_target(e);
+  const lv_event_code_t code = lv_event_get_code(e);
+  const int32_t index = lv_slider_get_value(slider);
+
+  static char buf[32];
+  format_sleep_popup_value_for_index(buf, sizeof(buf), index);
+  if (screensaver_time_label) lv_label_set_text(screensaver_time_label, buf);
+
+  if (code == LV_EVENT_RELEASED) {
+    const DeviceConfig& cfg = configManager.getConfig();
+    const bool enabled = !sleep_index_is_never(index);
+    const uint16_t seconds = enabled
+                                 ? sleep_seconds_from_index(index)
+                                 : cfg.auto_screensaver_seconds;
+    configManager.saveScreensaverTimeout(enabled, seconds);
     update_settings_tile_summaries();
   }
 }
@@ -941,6 +964,9 @@ static void reset_popup_refs() {
   sleep_slider = nullptr;
   sleep_time_label = nullptr;
   sleep_label = nullptr;
+  screensaver_slider = nullptr;
+  screensaver_time_label = nullptr;
+  screensaver_label = nullptr;
   ap_mode_btn = nullptr;
   ap_mode_btn_label = nullptr;
   wifi_disconnect_btn = nullptr;
@@ -1628,7 +1654,7 @@ static void build_display_popup(lv_obj_t* parent) {
   const DeviceConfig& cfg = configManager.getConfig();
   lv_obj_t* form = create_form_area(parent);
   lv_obj_clear_flag(form, LV_OBJ_FLAG_SCROLLABLE);
-  // Nur drei Reihen: mit festem Abstand von oben und viel Luft dazwischen -
+  // Vier Reihen: mit festem Abstand von oben und ausreichend Luft dazwischen -
   // nicht ganz oben angeklebt (wirkte verloren), aber auch nicht komplett
   // mittig (User-Wunsch).
   lv_obj_set_style_pad_top(form, 48, 0);
@@ -1676,6 +1702,30 @@ static void build_display_popup(lv_obj_t* parent) {
   format_sleep_popup_value_for_index(sleep_buf, sizeof(sleep_buf), sleep_index);
   sleep_time_label =
       create_display_row_label(sleep_row, sleep_buf, 130, LV_TEXT_ALIGN_RIGHT);
+
+  lv_obj_t* screensaver_row = create_display_control_row(form);
+  screensaver_label =
+      create_display_row_label(screensaver_row, tr().screensaver_label, 170);
+
+  screensaver_slider = lv_slider_create(screensaver_row);
+  style_settings_slider(screensaver_slider);
+  lv_obj_set_width(screensaver_slider, 1);
+  lv_obj_set_flex_grow(screensaver_slider, 1);
+  lv_slider_set_range(screensaver_slider, 0, sleep_slider_max_index());
+  const int32_t screensaver_index = cfg.auto_screensaver_enabled
+                                        ? sleep_index_from_seconds(cfg.auto_screensaver_seconds)
+                                        : sleep_slider_max_index();
+  lv_slider_set_value(screensaver_slider, screensaver_index, LV_ANIM_OFF);
+  lv_obj_add_event_cb(screensaver_slider, on_screensaver_slider,
+                      LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_add_event_cb(screensaver_slider, on_screensaver_slider,
+                      LV_EVENT_RELEASED, nullptr);
+
+  static char screensaver_buf[32];
+  format_sleep_popup_value_for_index(screensaver_buf, sizeof(screensaver_buf),
+                                     screensaver_index);
+  screensaver_time_label = create_display_row_label(
+      screensaver_row, screensaver_buf, 130, LV_TEXT_ALIGN_RIGHT);
 
   // Rotation als vollbreiter Button mit Icon + Beschriftung im Button
   // (statt "Rotation"-Label links neben einem Icon-Button)
@@ -2840,6 +2890,9 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   display_rotate_sub_label = nullptr;
   sleep_slider = nullptr;
   sleep_time_label = nullptr;
+  screensaver_slider = nullptr;
+  screensaver_time_label = nullptr;
+  screensaver_label = nullptr;
   ap_mode_btn = nullptr;
   ap_mode_btn_label = nullptr;
   wifi_disconnect_btn = nullptr;
@@ -2939,6 +2992,7 @@ void settings_refresh_language() {
   if (wifi_section_label) lv_label_set_text(wifi_section_label, s.wifi_label);
   if (sleep_section_label) lv_label_set_text(sleep_section_label, s.sleep_label);
   if (sleep_label) lv_label_set_text(sleep_label, s.sleep_label);
+  if (screensaver_label) lv_label_set_text(screensaver_label, s.screensaver_label);
   if (ap_yes_label_obj) lv_label_set_text(ap_yes_label_obj, s.yes);
   if (ap_no_label_obj) lv_label_set_text(ap_no_label_obj, s.no);
 

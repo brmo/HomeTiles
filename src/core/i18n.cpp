@@ -123,6 +123,7 @@ static const Strings kStringsDe = {
     "Sleep:",
     "in",
     "Nie",
+    "Screensaver:",
     "Touch",
     "GT911 / kein IMU",
 
@@ -256,9 +257,20 @@ static const Strings kStringsDe = {
     "Koppeln",
     "Koppeln: MQTT verbindet neu...",
 
-    "Screensaver-Bild",
-    "JPEG-Dateien (ideal 1280x800) in den SD-Ordner /wallpapers legen. "
-    "Tippen auf die Kachel startet den Screensaver."};
+    "Bilder verwenden",
+    "Zufaellige Reihenfolge",
+    "Wallpapers",
+    "Anzeigedauer (Sekunden)",
+    "Zoom",
+    "Fokus X",
+    "Fokus Y",
+    "Uhrzeit",
+    "Hintergrund-Deckkraft",
+    "Hintergrund oder Uhr anklicken. Kacheln in den beiden unteren Reihen lassen sich wie gewohnt verschieben und vergroessern.",
+    "Keine JPEG-Dateien in /wallpapers - schwarzer Hintergrund bleibt aktiv.",
+    "Screensaver gespeichert!",
+    "Screensaver konnte nicht gespeichert werden",
+    "Screensaver konnte nicht geladen werden"};
 
 static const Strings kStringsEn = {
     "en",
@@ -381,6 +393,7 @@ static const Strings kStringsEn = {
     "Sleep:",
     "in",
     "Never",
+    "Screensaver:",
     "Touch",
     "GT911 / no IMU",
 
@@ -514,9 +527,20 @@ static const Strings kStringsEn = {
     "Pairing",
     "Pairing: reconnecting MQTT...",
 
-    "Screensaver image",
-    "Put JPEG files (ideally 1280x800) into the /wallpapers folder on the "
-    "SD card. Tapping the tile starts the screensaver."};
+    "Use wallpapers",
+    "Shuffle",
+    "Wallpapers",
+    "Duration (seconds)",
+    "Zoom",
+    "Focus X",
+    "Focus Y",
+    "Clock",
+    "Background opacity",
+    "Click the background or clock. Tiles in the bottom two rows can be moved and resized as usual.",
+    "No JPEG files in /wallpapers - the black background remains active.",
+    "Screensaver saved!",
+    "Could not save screensaver",
+    "Could not load screensaver"};
 
 const char* normalize_language_code(const char* language_code) {
   if (!language_code || !language_code[0]) return kStringsEn.code;

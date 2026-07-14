@@ -55,6 +55,9 @@ public:
   void handleDeleteFolder();
   void handleGetSensorValues();
   void handleGetEntityOptions();
+  void handleGetScreensaver();
+  void handleSaveScreensaver();
+  void handleGetScreensaverWallpaper();
   void handleGetSdImages();
   void handleGetSdIcons();
   void handleCreateScreenshot();

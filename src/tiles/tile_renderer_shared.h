@@ -9,10 +9,12 @@ static constexpr int32_t GAUGE_ARC_STEPS = 1000;
 extern SensorTileWidgets g_tab0_sensors[];
 extern SensorTileWidgets g_tab1_sensors[];
 extern SensorTileWidgets g_tab2_sensors[];
+extern SensorTileWidgets g_screensaver_sensors[];
 
 extern SwitchTileWidgets g_tab0_switches[];
 extern SwitchTileWidgets g_tab1_switches[];
 extern SwitchTileWidgets g_tab2_switches[];
+extern SwitchTileWidgets g_screensaver_switches[];
 
 extern WeatherTileWidgets g_tab0_weather[];
 extern WeatherTileWidgets g_tab1_weather[];
@@ -25,6 +27,7 @@ extern MediaTileWidgets g_tab2_media[];
 extern SwitchState g_tab0_switch_states[];
 extern SwitchState g_tab1_switch_states[];
 extern SwitchState g_tab2_switch_states[];
+extern SwitchState g_screensaver_switch_states[];
 
 void set_label_style(lv_obj_t* lbl, lv_color_t c, const lv_font_t* f);
 void set_tile_grid_cell(lv_obj_t* obj, uint8_t col, uint8_t row, uint8_t span_w, uint8_t span_h);
@@ -34,6 +37,7 @@ SwitchTileWidgets* tile_renderer_get_switch_widgets(GridType grid_type);
 WeatherTileWidgets* tile_renderer_get_weather_widgets(GridType grid_type);
 MediaTileWidgets* tile_renderer_get_media_widgets(GridType grid_type);
 SwitchState* tile_renderer_get_switch_states(GridType grid_type);
+const Tile* tile_renderer_get_tile_config(GridType grid_type, uint8_t index);
 
 bool is_light_entity_id(const String& entity_id);
 void update_switch_tile_state(GridType grid_type, uint8_t grid_index, const char* payload);

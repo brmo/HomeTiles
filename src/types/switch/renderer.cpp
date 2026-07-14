@@ -53,9 +53,9 @@ static LightPopupInit build_light_popup_init(const SwitchEventData* data) {
   init.is_light = is_light_entity_id(data->entity_id);
 
   // Get icon from tile config (fallback to HA icon when empty)
-  const TileGridConfig& grid = tileConfig.getActiveGrid();
-  if (data->index < TILES_PER_GRID) {
-    const Tile& tile = grid.tiles[data->index];
+  const Tile* tile_ptr = tile_renderer_get_tile_config(data->grid_type, data->index);
+  if (tile_ptr) {
+    const Tile& tile = *tile_ptr;
     init.keep_icon_white = is_switch_widget_tile(tile);
     init.has_tile_ref = true;
     init.tile_grid = static_cast<uint8_t>(data->grid_type);

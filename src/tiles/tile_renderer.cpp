@@ -15,6 +15,7 @@
 #include "src/core/dma2d_arbiter.h"
 #include "src/core/i18n.h"
 #include "src/web/web_admin.h"
+#include "src/ui/screensaver_config.h"
 #include <Arduino.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
@@ -45,10 +46,12 @@
 SensorTileWidgets g_tab0_sensors[TILES_PER_GRID];
 SensorTileWidgets g_tab1_sensors[TILES_PER_GRID];
 SensorTileWidgets g_tab2_sensors[TILES_PER_GRID];
+SensorTileWidgets g_screensaver_sensors[TILES_PER_GRID];
 
 SwitchTileWidgets g_tab0_switches[TILES_PER_GRID];
 SwitchTileWidgets g_tab1_switches[TILES_PER_GRID];
 SwitchTileWidgets g_tab2_switches[TILES_PER_GRID];
+SwitchTileWidgets g_screensaver_switches[TILES_PER_GRID];
 
 WeatherTileWidgets g_tab0_weather[TILES_PER_GRID];
 WeatherTileWidgets g_tab1_weather[TILES_PER_GRID];
@@ -61,14 +64,17 @@ MediaTileWidgets g_tab2_media[TILES_PER_GRID];
 SwitchState g_tab0_switch_states[TILES_PER_GRID];
 SwitchState g_tab1_switch_states[TILES_PER_GRID];
 SwitchState g_tab2_switch_states[TILES_PER_GRID];
+SwitchState g_screensaver_switch_states[TILES_PER_GRID];
 
 SensorTileWidgets* tile_renderer_get_sensor_widgets(GridType grid_type) {
+  if (grid_type == GridType::SCREENSAVER) return g_screensaver_sensors;
   if (grid_type == GridType::TAB1) return g_tab1_sensors;
   if (grid_type == GridType::TAB2) return g_tab2_sensors;
   return g_tab0_sensors;
 }
 
 SwitchTileWidgets* tile_renderer_get_switch_widgets(GridType grid_type) {
+  if (grid_type == GridType::SCREENSAVER) return g_screensaver_switches;
   if (grid_type == GridType::TAB1) return g_tab1_switches;
   if (grid_type == GridType::TAB2) return g_tab2_switches;
   return g_tab0_switches;
@@ -101,9 +107,18 @@ void tile_renderer_forget_media_widgets(const MediaCoverRef* ref) {
 }
 
 SwitchState* tile_renderer_get_switch_states(GridType grid_type) {
+  if (grid_type == GridType::SCREENSAVER) return g_screensaver_switch_states;
   if (grid_type == GridType::TAB1) return g_tab1_switch_states;
   if (grid_type == GridType::TAB2) return g_tab2_switch_states;
   return g_tab0_switch_states;
+}
+
+const Tile* tile_renderer_get_tile_config(GridType grid_type, uint8_t index) {
+  if (index >= TILES_PER_GRID) return nullptr;
+  if (grid_type == GridType::SCREENSAVER) {
+    return screensaverConfig.tile(index);
+  }
+  return &tileConfig.getActiveGrid().tiles[index];
 }
 
 
@@ -111,7 +126,8 @@ bool is_light_entity_id(const String& entity_id);
 
 static void clear_sensor_widgets(GridType grid_type) {
   SensorTileWidgets* target = g_tab0_sensors;
-  if (grid_type == GridType::TAB1) target = g_tab1_sensors;
+  if (grid_type == GridType::SCREENSAVER) target = g_screensaver_sensors;
+  else if (grid_type == GridType::TAB1) target = g_tab1_sensors;
   else if (grid_type == GridType::TAB2) target = g_tab2_sensors;
   for (size_t i = 0; i < TILES_PER_GRID; ++i) {
     target[i].value_label = nullptr;
@@ -127,7 +143,8 @@ static void clear_sensor_widgets(GridType grid_type) {
 void reset_sensor_widget(GridType grid_type, uint8_t grid_index) {
   if (grid_index >= TILES_PER_GRID) return;
   SensorTileWidgets* target = g_tab0_sensors;
-  if (grid_type == GridType::TAB1) target = g_tab1_sensors;
+  if (grid_type == GridType::SCREENSAVER) target = g_screensaver_sensors;
+  else if (grid_type == GridType::TAB1) target = g_tab1_sensors;
   else if (grid_type == GridType::TAB2) target = g_tab2_sensors;
   target[grid_index] = {};
 }
@@ -139,7 +156,10 @@ void reset_sensor_widgets(GridType grid_type) {
 static void clear_switch_widgets(GridType grid_type) {
   SwitchTileWidgets* target = g_tab0_switches;
   SwitchState* state_target = g_tab0_switch_states;
-  if (grid_type == GridType::TAB1) {
+  if (grid_type == GridType::SCREENSAVER) {
+    target = g_screensaver_switches;
+    state_target = g_screensaver_switch_states;
+  } else if (grid_type == GridType::TAB1) {
     target = g_tab1_switches;
     state_target = g_tab1_switch_states;
   } else if (grid_type == GridType::TAB2) {
@@ -158,7 +178,10 @@ void reset_switch_widget(GridType grid_type, uint8_t grid_index) {
   if (grid_index >= TILES_PER_GRID) return;
   SwitchTileWidgets* target = g_tab0_switches;
   SwitchState* state_target = g_tab0_switch_states;
-  if (grid_type == GridType::TAB1) {
+  if (grid_type == GridType::SCREENSAVER) {
+    target = g_screensaver_switches;
+    state_target = g_screensaver_switch_states;
+  } else if (grid_type == GridType::TAB1) {
     target = g_tab1_switches;
     state_target = g_tab1_switch_states;
   } else if (grid_type == GridType::TAB2) {
@@ -263,9 +286,8 @@ static uint32_t g_queue_overflow_count = 0;
 
 static uint8_t get_sensor_decimals(GridType grid_type, uint8_t grid_index) {
   if (grid_index >= TILES_PER_GRID) return 0xFF;
-  (void)grid_type;
-  const TileGridConfig& grid = tileConfig.getActiveGrid();
-  return grid.tiles[grid_index].sensor_decimals;
+  const Tile* tile = tile_renderer_get_tile_config(grid_type, grid_index);
+  return tile ? tile->sensor_decimals : 0xFF;
 }
 
 static uint32_t fnv1a_hash(const char* data) {
@@ -1380,7 +1402,10 @@ void update_switch_tile_state(GridType grid_type, uint8_t grid_index, const char
   if (grid_index >= TILES_PER_GRID || !payload) return;
   SwitchTileWidgets* target = g_tab0_switches;
   SwitchState* state_target = g_tab0_switch_states;
-  if (grid_type == GridType::TAB1) {
+  if (grid_type == GridType::SCREENSAVER) {
+    target = g_screensaver_switches;
+    state_target = g_screensaver_switch_states;
+  } else if (grid_type == GridType::TAB1) {
     target = g_tab1_switches;
     state_target = g_tab1_switch_states;
   } else if (grid_type == GridType::TAB2) {
@@ -1421,9 +1446,9 @@ void update_switch_tile_state(GridType grid_type, uint8_t grid_index, const char
     state.color = prev.color;
   }
 
-  (void)grid_type;
-  const TileGridConfig& grid = tileConfig.getActiveGrid();
-  const Tile& tile = grid.tiles[grid_index];
+  const Tile* tile_ptr = tile_renderer_get_tile_config(grid_type, grid_index);
+  if (!tile_ptr) return;
+  const Tile& tile = *tile_ptr;
   const String& entity_id = tile.sensor_entity;
   const bool is_light_entity = is_light_entity_id(entity_id);
   const bool use_switch_widget = is_switch_widget_style(tile);
@@ -3939,8 +3964,7 @@ void update_sensor_tile_value(GridType grid_type, uint8_t grid_index, const char
     return;
   }
 
-  SensorTileWidgets* target = (grid_type == GridType::TAB1) ? g_tab1_sensors : g_tab0_sensors;
-  if (grid_type == GridType::TAB2) target = g_tab2_sensors;
+  SensorTileWidgets* target = tile_renderer_get_sensor_widgets(grid_type);
   lv_obj_t* value_label = target[grid_index].value_label;
   if (!value_label) {
     return;
