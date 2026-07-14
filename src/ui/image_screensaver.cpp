@@ -10,7 +10,6 @@
 #include <soc/soc_caps.h>
 #endif
 #include <string.h>
-#include <time.h>
 
 // lvgl.h exportiert lv_image_cache_drop() in 9.5 nicht mehr, die Deklaration
 // liegt nur noch im Instanz-Header (siehe tile_renderer.cpp).
@@ -19,11 +18,11 @@
 #include "src/core/dma2d_arbiter.h"
 #include "src/core/config_manager.h"
 #include "src/devices/device.h"
-#include "src/fonts/ui_fonts.h"
 #include "src/network/ha_bridge_config.h"
 #include "src/tiles/tile_renderer.h"
 #include "src/tiles/tile_renderer_shared.h"
 #include "src/types/clock/clock_format.h"
+#include "src/types/clock/renderer.h"
 #include "src/ui/screensaver_config.h"
 
 namespace {
@@ -47,11 +46,7 @@ struct ScreensaverState {
   lv_obj_t* image = nullptr;
   lv_obj_t* clock_box = nullptr;
   lv_obj_t* slot_grid = nullptr;
-  lv_obj_t* time_label = nullptr;
-  lv_obj_t* date_label = nullptr;
   lv_timer_t* timer = nullptr;
-  uint8_t time_format = clock_tile::TIME_FORMAT_24H;
-  uint8_t date_format = clock_tile::DATE_FORMAT_DMY;
   int active_wallpaper = -1;
   String active_wallpaper_name;
   uint32_t next_wallpaper_ms = 0;
@@ -127,6 +122,14 @@ void free_screensaver_dsc(lv_image_dsc_t*& dsc) {
   }
   free(dsc);
   dsc = nullptr;
+}
+
+void set_image_src_without_invalidation(lv_obj_t* image, const void* src) {
+  if (!image) return;
+  lv_display_t* display = lv_obj_get_display(image);
+  if (display) lv_display_enable_invalidation(display, false);
+  lv_image_set_src(image, src);
+  if (display) lv_display_enable_invalidation(display, true);
 }
 
 bool is_jpeg(const uint8_t* data, size_t len) {
@@ -569,7 +572,9 @@ lv_image_dsc_t* get_or_decode_cached(const ScreensaverWallpaperConfig& wallpaper
   // Erst jetzt, unmittelbar vor dem Cache-Tausch, die alte Quelle vom
   // sichtbaren LVGL-Objekt loesen. So bleibt das vorherige Dia waehrend des
   // Decodes stehen, zeigt aber niemals auf bereits freigegebenen Speicher.
-  if (visible_image && g_cache_dsc) lv_image_set_src(visible_image, nullptr);
+  if (visible_image && g_cache_dsc) {
+    set_image_src_without_invalidation(visible_image, nullptr);
+  }
   // Alten Slot erst nach erfolgreichem Decode ersetzen; Aufrufer stellen
   // sicher, dass kein Overlay den alten Puffer mehr anzeigt.
   free_screensaver_dsc(g_cache_dsc);
@@ -658,53 +663,6 @@ int next_enabled_wallpaper(int current) {
   return first_enabled_wallpaper();
 }
 
-const lv_font_t* screensaver_font(uint8_t size) {
-  switch (size) {
-    case 20: return &ui_font_20;
-    case 24: return &ui_font_24;
-    case 28: return &ui_font_28;
-    case 32: return &ui_font_32;
-    case 40: return &ui_font_40;
-    default: return &ui_font_48;
-  }
-}
-
-void update_global_labels(ScreensaverState* st) {
-  if (!st) return;
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo, 0)) return;
-  if (st->time_label) {
-    char buf[16];
-    if (st->time_format == clock_tile::TIME_FORMAT_12H) {
-      int hour12 = timeinfo.tm_hour % 12;
-      if (hour12 == 0) hour12 = 12;
-      snprintf(buf, sizeof(buf), "%d:%02d %s", hour12, timeinfo.tm_min,
-               timeinfo.tm_hour < 12 ? "AM" : "PM");
-    } else {
-      snprintf(buf, sizeof(buf), "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
-    }
-    lv_label_set_text(st->time_label, buf);
-  }
-  if (st->date_label) {
-    char buf[16];
-    switch (st->date_format) {
-      case clock_tile::DATE_FORMAT_MDY:
-        snprintf(buf, sizeof(buf), "%02d/%02d/%04d", timeinfo.tm_mon + 1,
-                 timeinfo.tm_mday, timeinfo.tm_year + 1900);
-        break;
-      case clock_tile::DATE_FORMAT_YMD:
-        snprintf(buf, sizeof(buf), "%04d/%02d/%02d", timeinfo.tm_year + 1900,
-                 timeinfo.tm_mon + 1, timeinfo.tm_mday);
-        break;
-      default:
-        snprintf(buf, sizeof(buf), "%02d.%02d.%04d", timeinfo.tm_mday,
-                 timeinfo.tm_mon + 1, timeinfo.tm_year + 1900);
-        break;
-    }
-    lv_label_set_text(st->date_label, buf);
-  }
-}
-
 void rebuild_global_clock(ScreensaverState* st) {
   if (!st || !st->overlay) return;
 
@@ -712,41 +670,27 @@ void rebuild_global_clock(ScreensaverState* st) {
   // des LVGL-Timers ist hier sicher und laesst das globale Overlay samt
   // Click-/Popup-Lebenszeit unangetastet.
   if (st->clock_box) {
-    st->time_label = nullptr;
-    st->date_label = nullptr;
     lv_obj_delete(st->clock_box);
     st->clock_box = nullptr;
   }
 
   const ScreensaverConfigData& config = screensaverConfig.get();
-  st->time_format = clock_tile::resolve_time_format(
+  if (!config.show_time && !config.show_date) return;
+
+  ClockWidgetConfig widget_config;
+  widget_config.show_time = config.show_time;
+  widget_config.show_date = config.show_date;
+  widget_config.fill_parent = false;
+  widget_config.time_font_size = config.time_font_size;
+  widget_config.date_font_size = config.date_font_size;
+  widget_config.time_format = clock_tile::resolve_time_format(
       config.time_format, configManager.getConfig().global_time_format,
       configManager.getConfig().language);
-  st->date_format = clock_tile::resolve_date_format(
+  widget_config.date_format = clock_tile::resolve_date_format(
       config.date_format, configManager.getConfig().global_date_format,
       configManager.getConfig().language);
-
-  if (!config.show_time && !config.show_date) return;
-  st->clock_box = lv_obj_create(st->overlay);
-  lv_obj_remove_style_all(st->clock_box);
-  lv_obj_set_size(st->clock_box, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-  lv_obj_set_flex_flow(st->clock_box, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(st->clock_box, LV_FLEX_ALIGN_CENTER,
-                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_all(st->clock_box, 0, 0);
-  lv_obj_set_style_pad_gap(st->clock_box, 4, 0);
-  lv_obj_remove_flag(st->clock_box, LV_OBJ_FLAG_CLICKABLE);
-  if (config.show_time) {
-    st->time_label = lv_label_create(st->clock_box);
-    set_label_style(st->time_label, lv_color_white(),
-                    screensaver_font(config.time_font_size));
-  }
-  if (config.show_date) {
-    st->date_label = lv_label_create(st->clock_box);
-    set_label_style(st->date_label, lv_color_white(),
-                    screensaver_font(config.date_font_size));
-  }
-  update_global_labels(st);
+  st->clock_box = create_clock_widget(st->overlay, widget_config);
+  if (!st->clock_box) return;
   lv_obj_update_layout(st->clock_box);
   const int x = (static_cast<int>(config.clock_x) * Device::kScreenWidth) / 1000;
   const int y = (static_cast<int>(config.clock_y) * Device::kScreenHeight) / 1000;
@@ -782,7 +726,10 @@ bool apply_wallpaper(ScreensaverState* st, int index, bool allow_fallback,
   lv_image_dsc_t* dsc = get_or_decode_cached(
       wallpaper, Device::kScreenWidth, Device::kScreenHeight, st->image);
   if (!dsc) return false;
-  lv_image_set_src(st->image, dsc);
+  // Die Quelle intern sofort umstellen, aber noch keinen bildschirmgrossen
+  // LVGL-Redraw ausloesen. Auf den gedrehten P4-Geraeten uebernimmt PPA die
+  // Wallpaper-Pixel; LVGL zeichnet danach nur die darueberliegenden Elemente.
+  set_image_src_without_invalidation(st->image, dsc);
   lv_obj_remove_flag(st->image, LV_OBJ_FLAG_HIDDEN);
   st->active_wallpaper = index;
   st->active_wallpaper_name = wallpaper.file_name;
@@ -803,12 +750,25 @@ bool apply_wallpaper(ScreensaverState* st, int index, bool allow_fallback,
                 cache_hit ? "cache" : "decode",
                 static_cast<unsigned>(millis() - started));
   // Der Hardwarepfad schreibt das Vollbild ausserhalb von LVGL direkt auf
-  // das Panel. Die darueberliegenden LVGL-Objekte muessen danach erneut als
-  // dirty gelten, sonst koennen Uhr/Kacheln bis zum naechsten zufaelligen
-  // Repaint verschwinden.
+  // das Panel. Uhr und Kacheln deshalb noch in demselben Aufruf gezielt neu
+  // zeichnen. Wichtig: nicht den bildschirmgrossen transparenten Grid-
+  // Container invalidieren, denn das wuerde wieder das ganze Bild ueber den
+  // normalen LVGL-Pfad schicken.
   if (preview_ok) {
     if (st->clock_box) lv_obj_invalidate(st->clock_box);
-    if (st->slot_grid) lv_obj_invalidate(st->slot_grid);
+    if (st->slot_grid) {
+      const uint32_t child_count = lv_obj_get_child_count(st->slot_grid);
+      for (uint32_t i = 0; i < child_count; ++i) {
+        lv_obj_t* child = lv_obj_get_child(st->slot_grid, static_cast<int32_t>(i));
+        if (child) lv_obj_invalidate(child);
+      }
+    }
+    lv_display_t* display = lv_obj_get_display(st->overlay);
+    if (display) lv_refr_now(display);
+  } else {
+    // B4 bzw. jeder sichere PPA-Fallback: dort muss LVGL das neue Bild wie
+    // bisher selbst zeichnen.
+    lv_obj_invalidate(st->image);
   }
   return true;
 }
@@ -912,6 +872,25 @@ int find_config_wallpaper(const String& name, bool enabled_only) {
   return -1;
 }
 
+bool has_visible_overlay_above_screensaver(const ScreensaverState* st) {
+  if (!st || !st->overlay) return false;
+  lv_obj_t* top = lv_layer_top();
+  const uint32_t count = lv_obj_get_child_count(top);
+  bool after_screensaver = false;
+  for (uint32_t i = 0; i < count; ++i) {
+    lv_obj_t* child = lv_obj_get_child(top, static_cast<int32_t>(i));
+    if (child == st->overlay) {
+      after_screensaver = true;
+      continue;
+    }
+    if (after_screensaver && child &&
+        !lv_obj_has_flag(child, LV_OBJ_FLAG_HIDDEN)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void clear_live_wallpaper(ScreensaverState* st) {
   if (!st || !st->image) return;
   lv_image_set_src(st->image, nullptr);
@@ -990,7 +969,6 @@ void global_screensaver_timer_cb(lv_timer_t* timer) {
     refresh_slot_values(st);
     Serial.println("[Screensaver] Kacheln live aktualisiert");
   }
-  update_global_labels(st);
   const uint32_t now = millis();
   if (static_cast<int32_t>(now - st->next_slot_refresh_ms) >= 0) {
     refresh_slot_values(st);
@@ -999,9 +977,19 @@ void global_screensaver_timer_cb(lv_timer_t* timer) {
   const auto& config = screensaverConfig.get();
   if (config.use_wallpapers && st->active_wallpaper >= 0 &&
       static_cast<int32_t>(now - st->next_wallpaper_ms) >= 0) {
-    const int next = next_enabled_wallpaper(st->active_wallpaper);
-    if (next >= 0 && next != st->active_wallpaper) apply_wallpaper(st, next, false);
-    else st->next_wallpaper_ms = now + 1000U;
+    // Ein Popup liegt ebenfalls auf lv_layer_top. Ein direkter PPA-
+    // Vollbildwechsel wuerde es fuer einen Frame uebermalen; waehrend eines
+    // offenen Popups die Diashow deshalb einfach kurz anhalten.
+    if (has_visible_overlay_above_screensaver(st)) {
+      st->next_wallpaper_ms = now + 500U;
+    } else {
+      const int next = next_enabled_wallpaper(st->active_wallpaper);
+      if (next >= 0 && next != st->active_wallpaper) {
+        apply_wallpaper(st, next, false);
+      } else {
+        st->next_wallpaper_ms = now + 1000U;
+      }
+    }
   }
 }
 

@@ -84,6 +84,11 @@ void appendPreviewScaleVars(String& html) {
   emit("fs32", 32);
   emit("fs40", 40);
   emit("fs48", 48);
+  emit("fs56", 56);
+  emit("fs64", 64);
+  emit("fs72", 72);
+  emit("fs80", 80);
+  emit("fs96", 96);
   emit("icon-size", 48);      // FONT_MDI_ICONS = mdi_icons_48
   emit("tile-pad-v", 24);     // Kachel pad_ver auf dem Display
   emit("tile-pad-h", 20);     // Kachel pad_hor auf dem Display
@@ -560,8 +565,13 @@ void appendAdminStyles(String& html) {
       z-index:0;
       overflow:hidden;
       border-radius:var(--screensaver-image-radius);
-      pointer-events:none;
+      pointer-events:auto;
+      cursor:pointer;
       user-select:none;
+    }
+    .screensaver-grid-image-frame:hover {
+      box-shadow:0 0 0 3px rgba(38,166,154,0.62),
+                 0 0 12px rgba(38,166,154,0.28);
     }
     .screensaver-tile-grid.selected-background .screensaver-grid-image-frame {
       box-shadow:0 0 0 3px #26a69a, 0 0 12px rgba(38,166,154,0.55);
@@ -587,7 +597,47 @@ void appendAdminStyles(String& html) {
       text-shadow:0 2px 8px rgba(0,0,0,.8);
       white-space:nowrap;
     }
+    .screensaver-grid-clock:hover {
+      outline:3px dashed rgba(38,166,154,0.65);
+      outline-offset:6px;
+      border-radius:8px;
+    }
+    .screensaver-grid-clock.selected-clock {
+      outline:3px solid #26a69a;
+      outline-offset:6px;
+      border-radius:8px;
+    }
+    .screensaver-grid-clock.clock-disabled::before {
+      content:'--:--';
+      display:block;
+      padding:5px 9px;
+      color:rgba(255,255,255,0.55);
+      font-size:12px;
+      text-shadow:none;
+    }
     .screensaver-grid-clock.dragging { cursor:grabbing; }
+    #screensaverClockDate { color:#d0d0d0; }
+    .screensaver-clock-resize-handle {
+      position:absolute;
+      right:-12px;
+      bottom:-12px;
+      width:16px;
+      height:16px;
+      display:block;
+      box-sizing:border-box;
+      border:2px solid rgba(255,255,255,0.9);
+      border-radius:5px;
+      background:#26a69a;
+      box-shadow:0 2px 8px rgba(0,0,0,0.55);
+      cursor:nwse-resize;
+      opacity:0;
+      pointer-events:none;
+    }
+    .screensaver-grid-clock:hover .screensaver-clock-resize-handle,
+    .screensaver-grid-clock.selected-clock .screensaver-clock-resize-handle {
+      opacity:1;
+      pointer-events:auto;
+    }
     .screensaver-tile-grid > .tile,
     .screensaver-tile-grid > .tile-drop-placeholder,
     .screensaver-tile-grid > .tile-resize-placeholder {

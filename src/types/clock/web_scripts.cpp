@@ -63,6 +63,11 @@ void append_clock_scripts(String& html) {
       case 32:
       case 40:
       case 48:
+      case 56:
+      case 64:
+      case 72:
+      case 80:
+      case 96:
         return num;
       default:
         return fallback;

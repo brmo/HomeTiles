@@ -24,6 +24,11 @@ void apply_clock_fields_from_request(WebServer& server, Tile& tile) {
       case 32:
       case 40:
       case 48:
+      case 56:
+      case 64:
+      case 72:
+      case 80:
+      case 96:
         return static_cast<uint8_t>(raw);
       default:
         return fallback;

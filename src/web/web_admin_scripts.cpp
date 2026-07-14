@@ -174,6 +174,12 @@ void appendAdminScripts(String& html) {
         el.textContent = getClockPreviewDate(0);
       }
     });
+    if (screensaverDraft) {
+      const time = document.getElementById('screensaverClockTime');
+      const date = document.getElementById('screensaverClockDate');
+      if (time) time.textContent = getClockPreviewTime(screensaverDraft.time_format);
+      if (date) date.textContent = getClockPreviewDate(screensaverDraft.date_format);
+    }
   }
 
   function toggleStaticWifiFields() {
@@ -1920,7 +1926,9 @@ void appendAdminScripts(String& html) {
       if (isScreensaverTileTab(tab)) {
         screensaverSelected = { kind: 'tile', index };
         document.getElementById('screensaverBackgroundSettings')?.classList.add('hidden');
+        document.getElementById('screensaverClockSettings')?.classList.add('hidden');
         document.getElementById('screensaverGrid')?.classList.remove('selected-background');
+        document.getElementById('screensaverClock')?.classList.remove('selected-clock');
       }
       const tileSpecific = settingsPanel.querySelector('.tile-specific-settings');
       if (tileSpecific) tileSpecific.classList.remove('hidden');
@@ -4009,10 +4017,18 @@ void appendAdminScripts(String& html) {
   let screensaverSelected = { kind: 'background', index: -1 };
   let screensaverWallpaperIndex = -1;
   let screensaverSaveTimer = null;
+  const screensaverClockFontSizes = [20, 24, 28, 32, 40, 48, 56, 64, 72, 80, 96];
 
   function ssClamp(value, min, max) {
     const n = Number(value);
     return Math.max(min, Math.min(max, Number.isFinite(n) ? n : min));
+  }
+
+  function ssNearestClockFont(value) {
+    const wanted = Number(value) || 20;
+    return screensaverClockFontSizes.reduce((best, size) =>
+      Math.abs(size - wanted) < Math.abs(best - wanted) ? size : best,
+      screensaverClockFontSizes[0]);
   }
 
   function ssNormalizeLoaded(data) {
@@ -4103,6 +4119,8 @@ void appendAdminScripts(String& html) {
     screensaverSelected = { kind: 'background', index: -1 };
     const bg = document.getElementById('screensaverBackgroundSettings');
     if (bg) bg.classList.remove('hidden');
+    document.getElementById('screensaverClockSettings')?.classList.add('hidden');
+    document.getElementById('screensaverClock')?.classList.remove('selected-clock');
     const settings = document.getElementById('screensaverSettings');
     settings?.querySelector('.tile-specific-settings')?.classList.add('hidden');
     document.querySelectorAll('#tab-tiles-screensaver .tile').forEach(tile => {
@@ -4110,6 +4128,22 @@ void appendAdminScripts(String& html) {
       delete tile.dataset.selected;
     });
     document.getElementById('screensaverGrid')?.classList.add('selected-background');
+    currentTileIndex = -1;
+    currentTileTab = 'screensaver';
+    renderScreensaverEditor();
+  }
+
+  function selectScreensaverClock() {
+    screensaverSelected = { kind: 'clock', index: -1 };
+    document.getElementById('screensaverBackgroundSettings')?.classList.add('hidden');
+    document.getElementById('screensaverClockSettings')?.classList.remove('hidden');
+    document.getElementById('screensaverGrid')?.classList.remove('selected-background');
+    const settings = document.getElementById('screensaverSettings');
+    settings?.querySelector('.tile-specific-settings')?.classList.add('hidden');
+    document.querySelectorAll('#tab-tiles-screensaver .tile').forEach(tile => {
+      tile.classList.remove('active');
+      delete tile.dataset.selected;
+    });
     currentTileIndex = -1;
     currentTileTab = 'screensaver';
     renderScreensaverEditor();
@@ -4171,6 +4205,7 @@ void appendAdminScripts(String& html) {
     const clock = document.getElementById('screensaverClock');
     if (!preview || !image || !clock) return;
     preview.classList.toggle('selected-background', screensaverSelected.kind === 'background');
+    clock.classList.toggle('selected-clock', screensaverSelected.kind === 'clock');
     const width = preview.getBoundingClientRect().width || 800;
     const scale = width / Number(d.screen_width || 1280);
     const wallpaper = ssCurrentWallpaper();
@@ -4191,10 +4226,10 @@ void appendAdminScripts(String& html) {
     time.hidden = !d.show_time; date.hidden = !d.show_date;
     time.style.fontSize = Math.max(10, Number(d.time_font_size || 48) * scale) + 'px';
     date.style.fontSize = Math.max(8, Number(d.date_font_size || 28) * scale) + 'px';
-    time.textContent = Number(d.time_format) === 2 ? '9:42 PM' : '21:42';
-    date.textContent = Number(d.date_format) === 2 ? '07/14/2026'
-                     : Number(d.date_format) === 3 ? '2026/07/14' : '14.07.2026';
-    clock.hidden = !d.show_time && !d.show_date;
+    time.textContent = getClockPreviewTime(d.time_format);
+    date.textContent = getClockPreviewDate(d.date_format);
+    clock.hidden = false;
+    clock.classList.toggle('clock-disabled', !d.show_time && !d.show_date);
     document.getElementById('screensaverUseWallpapers').checked = !!d.use_wallpapers;
     document.getElementById('screensaverShuffle').checked = !!d.shuffle;
     document.getElementById('screensaverShowTime').checked = !!d.show_time;
@@ -4217,6 +4252,7 @@ void appendAdminScripts(String& html) {
   function bindScreensaverEditor() {
     const preview = document.getElementById('screensaverGrid');
     const clock = document.getElementById('screensaverClock');
+    const clockResize = clock?.querySelector('.screensaver-clock-resize-handle');
     if (!preview || preview.dataset.bound === '1') return;
     preview.dataset.bound = '1';
     preview.addEventListener('click', e => {
@@ -4249,15 +4285,24 @@ void appendAdminScripts(String& html) {
     preview.addEventListener('pointercancel', finishBackgroundDrag);
     let clockDrag = null;
     clock.addEventListener('pointerdown', e => {
+      if (e.target.closest('.screensaver-clock-resize-handle')) return;
       e.stopPropagation();
-      clockDrag = { id: e.pointerId }; clock.setPointerCapture(e.pointerId);
-      clock.classList.add('dragging'); selectScreensaverBackground();
+      const clockRect = clock.getBoundingClientRect();
+      clockDrag = {
+        id: e.pointerId,
+        offsetX: e.clientX - (clockRect.left + clockRect.width / 2),
+        offsetY: e.clientY - (clockRect.top + clockRect.height / 2)
+      };
+      clock.setPointerCapture(e.pointerId);
+      clock.classList.add('dragging'); selectScreensaverClock();
     });
     clock.addEventListener('pointermove', e => {
       if (!clockDrag || clockDrag.id !== e.pointerId) return;
       const rect = preview.getBoundingClientRect();
-      screensaverDraft.clock_x = Math.round(ssClamp((e.clientX - rect.left) * 1000 / rect.width, 0, 1000));
-      screensaverDraft.clock_y = Math.round(ssClamp((e.clientY - rect.top) * 1000 / rect.height, 0, 1000));
+      const centerX = e.clientX - clockDrag.offsetX;
+      const centerY = e.clientY - clockDrag.offsetY;
+      screensaverDraft.clock_x = Math.round(ssClamp((centerX - rect.left) * 1000 / rect.width, 0, 1000));
+      screensaverDraft.clock_y = Math.round(ssClamp((centerY - rect.top) * 1000 / rect.height, 0, 1000));
       renderScreensaverEditor();
     });
     const finishClockDrag = e => {
@@ -4266,6 +4311,50 @@ void appendAdminScripts(String& html) {
     };
     clock.addEventListener('pointerup', finishClockDrag);
     clock.addEventListener('pointercancel', finishClockDrag);
+    clock.addEventListener('click', e => {
+      e.stopPropagation();
+      selectScreensaverClock();
+    });
+
+    let clockResizeDrag = null;
+    if (clockResize) {
+      clockResize.addEventListener('pointerdown', e => {
+        e.preventDefault();
+        e.stopPropagation();
+        selectScreensaverClock();
+        const rect = clock.getBoundingClientRect();
+        clockResizeDrag = {
+          id: e.pointerId,
+          x: e.clientX,
+          y: e.clientY,
+          width: Math.max(1, rect.width),
+          height: Math.max(1, rect.height),
+          timeFont: Number(screensaverDraft.time_font_size || 48),
+          dateFont: Number(screensaverDraft.date_font_size || 28)
+        };
+        clockResize.setPointerCapture(e.pointerId);
+      });
+      clockResize.addEventListener('pointermove', e => {
+        if (!clockResizeDrag || clockResizeDrag.id !== e.pointerId) return;
+        const widthFactor = (clockResizeDrag.width + e.clientX - clockResizeDrag.x) /
+                            clockResizeDrag.width;
+        const heightFactor = (clockResizeDrag.height + e.clientY - clockResizeDrag.y) /
+                             clockResizeDrag.height;
+        const factor = ssClamp(Math.max(widthFactor, heightFactor), 0.35, 3.0);
+        screensaverDraft.time_font_size = ssNearestClockFont(
+          clockResizeDrag.timeFont * factor);
+        screensaverDraft.date_font_size = ssNearestClockFont(
+          clockResizeDrag.dateFont * factor);
+        renderScreensaverEditor();
+      });
+      const finishClockResize = e => {
+        if (!clockResizeDrag || clockResizeDrag.id !== e.pointerId) return;
+        clockResizeDrag = null;
+        scheduleScreensaverSave();
+      };
+      clockResize.addEventListener('pointerup', finishClockResize);
+      clockResize.addEventListener('pointercancel', finishClockResize);
+    }
 
     const bind = (id, event, fn, save = true) => {
       const element = document.getElementById(id); if (!element) return;

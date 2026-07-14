@@ -198,8 +198,9 @@ static void appendTileTabHTML(
               <img id="screensaverPreviewImage" class="screensaver-grid-image" alt="" draggable="false">
             </div>
             <div id="screensaverClock" class="screensaver-grid-clock">
-              <div id="screensaverClockTime">21:42</div>
-              <div id="screensaverClockDate">14.07.2026</div>
+              <div id="screensaverClockTime">--:--</div>
+              <div id="screensaverClockDate">--.--.----</div>
+              <span class="screensaver-clock-resize-handle" title="Resize"></span>
             </div>
 )html";
   }
@@ -423,10 +424,18 @@ static void appendTileTabHTML(
     html += R"html(<input id="screensaverFocusY" type="range" min="0" max="1000" value="500"></label>
                   </div>
                 </div>
-                <div class="screensaver-clock-settings">
-                  <div class="screensaver-wallpaper-heading">)html";
+              </div>
+            </div>
+            <div id="screensaverClockSettings" class="screensaver-background-settings screensaver-clock-settings hidden">
+              <div class="tile-settings-head"><h3 style="margin-top:0;">)html";
     html += tr.screensaver_clock_heading;
-    html += R"html(</div>
+    html += R"html(</h3></div>
+              <div class="tile-settings-body">
+                <div class="screensaver-fixed-type"><label>)html";
+    html += tr.admin_type;
+    html += R"html(</label><input value=")html";
+    html += tr.tile_type_clock;
+    html += R"html(" disabled></div>
                   <div class="clock-toggle-row">
                     <label class="inline-checkbox"><input id="screensaverShowTime" type="checkbox"> )html";
     html += tr.show_time;
@@ -438,10 +447,10 @@ static void appendTileTabHTML(
                   <div class="screensaver-two-fields">
                     <label>)html";
     html += tr.time_font_size;
-    html += R"html(<select id="screensaverTimeFont"><option>20</option><option>24</option><option>28</option><option>32</option><option>40</option><option selected>48</option></select></label>
+    html += R"html(<select id="screensaverTimeFont"><option>20</option><option>24</option><option>28</option><option>32</option><option>40</option><option selected>48</option><option>56</option><option>64</option><option>72</option><option>80</option><option>96</option></select></label>
                     <label>)html";
     html += tr.date_font_size;
-    html += R"html(<select id="screensaverDateFont"><option>20</option><option>24</option><option selected>28</option><option>32</option><option>40</option><option>48</option></select></label>
+    html += R"html(<select id="screensaverDateFont"><option>20</option><option>24</option><option selected>28</option><option>32</option><option>40</option><option>48</option><option>56</option><option>64</option><option>72</option><option>80</option><option>96</option></select></label>
                     <label>)html";
     html += tr.time_format_label;
     html += R"html(<select id="screensaverTimeFormat"><option value="0">)html";
@@ -453,7 +462,6 @@ static void appendTileTabHTML(
     html += tr.format_auto_localization;
     html += R"html(</option><option value="1">DD.MM.YYYY</option><option value="2">MM/DD/YYYY</option><option value="3">YYYY/MM/DD</option></select></label>
                   </div>
-                </div>
               </div>
             </div>
 )html";
@@ -927,8 +935,8 @@ String WebAdminServer::getAdminPage() {
               <div id="screensaverPreview" class="screensaver-preview selected-background">
                 <img id="screensaverPreviewImage" alt="" draggable="false">
                 <div id="screensaverClock" class="screensaver-clock">
-                  <div id="screensaverClockTime">21:42</div>
-                  <div id="screensaverClockDate">14.07.2026</div>
+                  <div id="screensaverClockTime">--:--</div>
+                  <div id="screensaverClockDate">--.--.----</div>
                 </div>
                 <div id="screensaverSlots" class="screensaver-slots"></div>
               </div>

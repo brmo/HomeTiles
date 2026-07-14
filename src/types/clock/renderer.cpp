@@ -8,6 +8,7 @@
 #include "src/fonts/ui_fonts.h"
 #include "src/ui/image_screensaver.h"
 #include <Arduino.h>
+#include <new>
 #include <time.h>
 
 static uint8_t normalize_clock_font_size(uint8_t raw, uint8_t fallback) {
@@ -18,6 +19,11 @@ static uint8_t normalize_clock_font_size(uint8_t raw, uint8_t fallback) {
     case 32:
     case 40:
     case 48:
+    case 56:
+    case 64:
+    case 72:
+    case 80:
+    case 96:
       return raw;
     default:
       return fallback;
@@ -34,8 +40,8 @@ static uint8_t resolve_clock_date_format(const Tile& tile) {
   return clock_tile::resolve_date_format(tile.sensor_gauge_max, cfg.global_date_format, cfg.language);
 }
 
-static const lv_font_t* get_clock_time_font(const Tile& tile) {
-  switch (normalize_clock_font_size(tile.key_code, 40)) {
+static const lv_font_t* get_clock_font(uint8_t raw, uint8_t fallback) {
+  switch (normalize_clock_font_size(raw, fallback)) {
     case 20:
       return &ui_font_20;
     case 24:
@@ -48,27 +54,18 @@ static const lv_font_t* get_clock_time_font(const Tile& tile) {
       return &ui_font_40;
     case 48:
       return &ui_font_48;
+    case 56:
+      return &clock_font_56;
+    case 64:
+      return &clock_font_64;
+    case 72:
+      return &clock_font_72;
+    case 80:
+      return &clock_font_80;
+    case 96:
+      return &clock_font_96;
     default:
       return &ui_font_40;
-  }
-}
-
-static const lv_font_t* get_clock_date_font(const Tile& tile) {
-  switch (normalize_clock_font_size(tile.key_modifier, 20)) {
-    case 20:
-      return &ui_font_20;
-    case 24:
-      return &ui_font_24;
-    case 28:
-      return &ui_font_28;
-    case 32:
-      return &ui_font_32;
-    case 40:
-      return &ui_font_40;
-    case 48:
-      return &ui_font_48;
-    default:
-      return &ui_font_20;
   }
 }
 
@@ -137,6 +134,78 @@ static void clock_timer_cb(lv_timer_t* timer) {
   update_clock_labels(data);
 }
 
+lv_obj_t* create_clock_widget(lv_obj_t* parent,
+                              const ClockWidgetConfig& config) {
+  if (!parent || (!config.show_time && !config.show_date)) return nullptr;
+
+  lv_obj_t* stack = lv_obj_create(parent);
+  if (!stack) return nullptr;
+  lv_obj_remove_style_all(stack);
+  if (config.fill_parent) {
+    lv_obj_set_size(stack, LV_PCT(100), LV_PCT(100));
+  } else {
+    lv_obj_set_size(stack, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  }
+  lv_obj_set_flex_flow(stack, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(stack, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_all(stack, 0, 0);
+  lv_obj_set_style_pad_gap(stack, 6, 0);
+  lv_obj_set_style_bg_opa(stack, LV_OPA_TRANSP, 0);
+  lv_obj_remove_flag(stack, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_remove_flag(stack, LV_OBJ_FLAG_CLICKABLE);
+
+  lv_obj_t* time_label = nullptr;
+  if (config.show_time) {
+    time_label = lv_label_create(stack);
+    if (time_label) {
+      set_label_style(time_label, lv_color_white(),
+                      get_clock_font(config.time_font_size, 40));
+      if (config.fill_parent) lv_obj_set_width(time_label, LV_PCT(100));
+      lv_obj_set_style_text_align(time_label, LV_TEXT_ALIGN_CENTER, 0);
+      lv_label_set_text(time_label, "");
+    }
+  }
+
+  lv_obj_t* date_label = nullptr;
+  if (config.show_date) {
+    date_label = lv_label_create(stack);
+    if (date_label) {
+      set_label_style(date_label, lv_color_hex(0xD0D0D0),
+                      get_clock_font(config.date_font_size, 20));
+      if (config.fill_parent) lv_obj_set_width(date_label, LV_PCT(100));
+      lv_obj_set_style_text_align(date_label, LV_TEXT_ALIGN_CENTER, 0);
+      lv_label_set_text(date_label, "");
+    }
+  }
+
+  ClockTileData* data = new (std::nothrow) ClockTileData{};
+  if (!data) {
+    lv_obj_delete(stack);
+    return nullptr;
+  }
+  data->time_format = config.time_format;
+  data->date_format = config.date_format;
+  data->flags = (config.show_time ? 1 : 0) | (config.show_date ? 2 : 0);
+  data->time_label = time_label;
+  data->date_label = date_label;
+  update_clock_labels(data);
+  data->timer = lv_timer_create(clock_timer_cb, 1000, data);
+
+  lv_obj_add_event_cb(
+      stack,
+      [](lv_event_t* e) {
+        ClockTileData* data =
+            static_cast<ClockTileData*>(lv_event_get_user_data(e));
+        if (!data) return;
+        if (data->timer) lv_timer_delete(data->timer);
+        delete data;
+      },
+      LV_EVENT_DELETE,
+      data);
+  return stack;
+}
+
 lv_obj_t* render_clock_tile(lv_obj_t* parent, int col, int row, const Tile& tile, uint8_t index) {
   (void)index;
   lv_obj_t* card = lv_button_create(parent);
@@ -191,49 +260,16 @@ lv_obj_set_style_bg_grad_dir(card, LV_GRAD_DIR_NONE, LV_PART_MAIN | LV_STATE_PRE
   const bool show_date = (flags & 2) != 0;
   const bool has_header = tile.title.length() > 0 || has_icon;
 
-  lv_obj_t* stack = lv_obj_create(card);
-  lv_obj_remove_style_all(stack);
-  lv_obj_set_size(stack, LV_PCT(100), LV_PCT(100));
-  lv_obj_set_flex_flow(stack, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(stack, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_gap(stack, 6, 0);
-  lv_obj_set_style_bg_opa(stack, LV_OPA_TRANSP, 0);
-  lv_obj_remove_flag(stack, LV_OBJ_FLAG_SCROLLABLE);
-  // Der Stack fuellt die ganze Kachel und wuerde als klickbares lv_obj jeden
-  // Tap schlucken, bevor er den Button erreicht — durchreichen an die Karte.
-  lv_obj_remove_flag(stack, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_align(stack, LV_ALIGN_CENTER, 0, has_header ? 18 : 0);
-
-  lv_obj_t* time_lbl = nullptr;
-  if (show_time) {
-    time_lbl = lv_label_create(stack);
-    if (time_lbl) {
-      set_label_style(time_lbl, lv_color_white(), get_clock_time_font(tile));
-      lv_obj_set_width(time_lbl, LV_PCT(100));
-      lv_obj_set_style_text_align(time_lbl, LV_TEXT_ALIGN_CENTER, 0);
-      lv_label_set_text(time_lbl, "");
-    }
-  }
-
-  lv_obj_t* date_lbl = nullptr;
-  if (show_date) {
-    date_lbl = lv_label_create(stack);
-    if (date_lbl) {
-      set_label_style(date_lbl, lv_color_hex(0xD0D0D0), get_clock_date_font(tile));
-      lv_obj_set_width(date_lbl, LV_PCT(100));
-      lv_obj_set_style_text_align(date_lbl, LV_TEXT_ALIGN_CENTER, 0);
-      lv_label_set_text(date_lbl, "");
-    }
-  }
-
-  ClockTileData* data = new ClockTileData{};
-  data->time_format = resolve_clock_time_format(tile);
-  data->date_format = resolve_clock_date_format(tile);
-  data->flags = flags;
-  data->time_label = time_lbl;
-  data->date_label = date_lbl;
-  update_clock_labels(data);
-  data->timer = lv_timer_create(clock_timer_cb, 1000, data);
+  ClockWidgetConfig widget_config;
+  widget_config.show_time = show_time;
+  widget_config.show_date = show_date;
+  widget_config.fill_parent = true;
+  widget_config.time_font_size = normalize_clock_font_size(tile.key_code, 40);
+  widget_config.date_font_size = normalize_clock_font_size(tile.key_modifier, 20);
+  widget_config.time_format = resolve_clock_time_format(tile);
+  widget_config.date_format = resolve_clock_date_format(tile);
+  lv_obj_t* stack = create_clock_widget(card, widget_config);
+  if (stack) lv_obj_align(stack, LV_ALIGN_CENTER, 0, has_header ? 18 : 0);
 
   // Jede Clock-Kachel oeffnet denselben global konfigurierten Screensaver.
   lv_obj_add_event_cb(
@@ -242,21 +278,5 @@ lv_obj_set_style_bg_grad_dir(card, LV_GRAD_DIR_NONE, LV_PART_MAIN | LV_STATE_PRE
       LV_EVENT_CLICKED,
       nullptr);
 
-  lv_obj_add_event_cb(
-      card,
-      [](lv_event_t* e) {
-        if (lv_event_get_code(e) != LV_EVENT_DELETE) return;
-        ClockTileData* data = static_cast<ClockTileData*>(lv_event_get_user_data(e));
-        if (!data) return;
-        if (data->timer) {
-          lv_timer_delete(data->timer);
-          data->timer = nullptr;
-        }
-        delete data;
-      },
-      LV_EVENT_DELETE,
-      data);
-
   return card;
 }
-
