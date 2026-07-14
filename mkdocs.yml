@@ -1,5 +1,5 @@
 site_name: HomeTiles
-site_description: Tile-based ESP32-P4 firmware for Home Assistant dashboards
+site_description: Open-source ESP32-P4 touch dashboard firmware for Home Assistant with a configurable tile UI and built-in web admin
 site_url: https://galusperes.github.io/HomeTiles/
 repo_url: https://github.com/GalusPeres/HomeTiles
 repo_name: GalusPeres/HomeTiles

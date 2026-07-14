@@ -1,3 +1,8 @@
+---
+title: ESP32-P4 Touch Dashboard for Home Assistant
+description: Open-source firmware for configurable Home Assistant touch dashboards on ESP32-P4 displays, with a built-in web admin and MQTT integration.
+---
+
 # HomeTiles
 
 Tile-based firmware that turns ESP32-P4 touch displays into Home Assistant control
