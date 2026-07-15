@@ -18,10 +18,6 @@ Images should be at least as large as the target display. For the 8-inch model,
 1280×800 or larger is recommended. The firmware preserves the source aspect ratio
 and crops it to the display; **Zoom**, **Focus X**, and **Focus Y** control that crop.
 
-!!! note "Upgrading from an older development build"
-    `/images` is the new standard folder. The former `/wallpapers` folder is still
-    read as a fallback, so existing cards and saved configurations keep working.
-
 Without a card or usable JPEG, the screensaver still works with a black background
 and the configured clock and tiles.
 
