@@ -726,6 +726,7 @@ static void packTile(const Tile& in, PackedTileV7& out) {
   out.row = (in.row < GRID_ROWS) ? in.row : 0;
   uint8_t span_w = (in.span_w < 1) ? 1 : ((in.span_w > GRID_COLS) ? GRID_COLS : in.span_w);
   uint8_t span_h = (in.span_h < 1) ? 1 : ((in.span_h > GRID_ROWS) ? GRID_ROWS : in.span_h);
+  clamp_media_tile_layout(in.type, out.col, out.row, span_w, span_h);
   if (span_w > GRID_COLS - out.col) span_w = GRID_COLS - out.col;
   if (span_h > GRID_ROWS - out.row) span_h = GRID_ROWS - out.row;
   out.span_w = span_w;
@@ -859,6 +860,7 @@ static void unpackTileV7(const PackedTileV7& in, Tile& out) {
   out.row = (in.row < GRID_ROWS) ? in.row : 0;
   uint8_t span_w = (in.span_w < 1) ? 1 : in.span_w;
   uint8_t span_h = (in.span_h < 1) ? 1 : in.span_h;
+  clamp_media_tile_layout(out.type, out.col, out.row, span_w, span_h);
   if (span_w > GRID_COLS - out.col) span_w = GRID_COLS - out.col;
   if (span_h > GRID_ROWS - out.row) span_h = GRID_ROWS - out.row;
   out.span_w = span_w;
@@ -969,6 +971,7 @@ static void unpackTileV6(const PackedTileV6& in, Tile& out) {
   out.row = (in.row < GRID_ROWS) ? in.row : 0;
   uint8_t span_w = (in.span_w < 1) ? 1 : in.span_w;
   uint8_t span_h = (in.span_h < 1) ? 1 : in.span_h;
+  clamp_media_tile_layout(out.type, out.col, out.row, span_w, span_h);
   if (span_w > GRID_COLS - out.col) span_w = GRID_COLS - out.col;
   if (span_h > GRID_ROWS - out.row) span_h = GRID_ROWS - out.row;
   out.span_w = span_w;
@@ -1318,7 +1321,7 @@ static bool get_tile_layout_clamped(const Tile& tile, uint8_t& col, uint8_t& row
   row = tile.row;
   span_w = tile.span_w < 1 ? 1 : tile.span_w;
   span_h = tile.span_h < 1 ? 1 : tile.span_h;
-  clamp_media_tile_span(tile.type, span_w, span_h);
+  clamp_media_tile_layout(tile.type, col, row, span_w, span_h);
   if (span_w > GRID_COLS - col) span_w = GRID_COLS - col;
   if (span_h > GRID_ROWS - row) span_h = GRID_ROWS - row;
   return true;

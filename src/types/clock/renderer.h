@@ -5,7 +5,15 @@
 struct ClockWidgetConfig {
   bool show_time = true;
   bool show_date = false;
+  // Wochentag als Praefix der Datumszeile ("Dienstag, 15.07.2026"); ohne
+  // Datum steht der Wochentag allein in der Zeile.
+  bool show_weekday = false;
+  bool weekday_german = false;
   bool fill_parent = false;
+  // LVGL kennt keinen Glyphen-Schatten: hinter jede Zeile werden mehrere
+  // leicht versetzte dunkle Duplikat-Labels gelegt (Fake-Blur). Wird nur vom
+  // Screensaver genutzt.
+  bool text_shadow = false;
   uint8_t time_font_size = 40;
   uint8_t date_font_size = 20;
   uint8_t time_format = 0;

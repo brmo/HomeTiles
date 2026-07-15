@@ -22,7 +22,7 @@ uint16_t clamp_u16(int value, int low, int high) {
   return static_cast<uint16_t>(value);
 }
 
-uint8_t normalize_font(int value, uint8_t fallback) {
+uint8_t normalize_font(int value, uint8_t fallback, uint8_t maximum = 96) {
   switch (value) {
     case 20:
     case 24:
@@ -35,7 +35,7 @@ uint8_t normalize_font(int value, uint8_t fallback) {
     case 72:
     case 80:
     case 96:
-      return static_cast<uint8_t>(value);
+      return static_cast<uint8_t>(value > maximum ? maximum : value);
     default:
       return fallback;
   }
@@ -46,6 +46,7 @@ TileType normalize_screensaver_type(int raw) {
     case TILE_SENSOR:
     case TILE_SCENE:
     case TILE_SWITCH:
+    case TILE_MEDIA:
       return static_cast<TileType>(raw);
     default:
       return TILE_EMPTY;
@@ -156,7 +157,7 @@ void ScreensaverConfigStore::normalize() {
   data_.time_format = clock_tile::normalize_time_format(data_.time_format);
   data_.date_format = clock_tile::normalize_date_format(data_.date_format);
   data_.time_font_size = normalize_font(data_.time_font_size, 48);
-  data_.date_font_size = normalize_font(data_.date_font_size, 28);
+  data_.date_font_size = normalize_font(data_.date_font_size, 28, 72);
   data_.clock_x = clamp_u16(data_.clock_x, 0, 1000);
   data_.clock_y = clamp_u16(data_.clock_y, 0, 1000);
 
@@ -191,6 +192,9 @@ void ScreensaverConfigStore::normalizeTileGrid(TileGridConfig& grid) {
     if (tile.row >= GRID_ROWS) tile.row = GRID_ROWS - 1;
     if (tile.span_w < 1) tile.span_w = 1;
     if (tile.span_h < 1) tile.span_h = 1;
+    clamp_media_tile_layout(tile.type, tile.col, tile.row,
+                            tile.span_w, tile.span_h);
+    if (tile.row < first_row) tile.row = first_row;
     if (tile.span_w > GRID_COLS - tile.col) tile.span_w = GRID_COLS - tile.col;
     if (tile.span_h > GRID_ROWS - tile.row) tile.span_h = GRID_ROWS - tile.row;
   }
@@ -213,8 +217,11 @@ bool ScreensaverConfigStore::loadPath(const char* path) {
   ScreensaverConfigData loaded;
   loaded.use_wallpapers = doc["use_wallpapers"] | true;
   loaded.shuffle = doc["shuffle"] | false;
+  loaded.tile_shadow = doc["tile_shadow"] | false;
   loaded.show_time = doc["show_time"] | true;
   loaded.show_date = doc["show_date"] | true;
+  loaded.show_weekday = doc["show_weekday"] | false;
+  loaded.clock_shadow = doc["clock_shadow"] | true;
   loaded.time_format = doc["time_format"] | 0;
   loaded.date_format = doc["date_format"] | 0;
   loaded.time_font_size = doc["time_font_size"] | 48;
@@ -305,8 +312,11 @@ String ScreensaverConfigStore::toJson(bool include_device_meta) const {
   doc["version"] = kConfigVersion;
   doc["use_wallpapers"] = data_.use_wallpapers;
   doc["shuffle"] = data_.shuffle;
+  doc["tile_shadow"] = data_.tile_shadow;
   doc["show_time"] = data_.show_time;
   doc["show_date"] = data_.show_date;
+  doc["show_weekday"] = data_.show_weekday;
+  doc["clock_shadow"] = data_.clock_shadow;
   doc["time_format"] = data_.time_format;
   doc["date_format"] = data_.date_format;
   doc["time_font_size"] = data_.time_font_size;

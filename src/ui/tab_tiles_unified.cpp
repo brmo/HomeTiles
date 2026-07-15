@@ -350,6 +350,7 @@ static bool get_tile_layout(const Tile& tile, uint8_t& col, uint8_t& row, uint8_
   row = tile.row;
   span_w = tile.span_w < 1 ? 1 : tile.span_w;
   span_h = tile.span_h < 1 ? 1 : tile.span_h;
+  clamp_media_tile_layout(tile.type, col, row, span_w, span_h);
   if (span_w > GRID_COLS - col) span_w = GRID_COLS - col;
   if (span_h > GRID_ROWS - row) span_h = GRID_ROWS - row;
   return true;

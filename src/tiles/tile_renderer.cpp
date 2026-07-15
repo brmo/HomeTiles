@@ -60,6 +60,7 @@ WeatherTileWidgets g_tab2_weather[TILES_PER_GRID];
 MediaTileWidgets g_tab0_media[TILES_PER_GRID];
 MediaTileWidgets g_tab1_media[TILES_PER_GRID];
 MediaTileWidgets g_tab2_media[TILES_PER_GRID];
+MediaTileWidgets g_screensaver_media[TILES_PER_GRID];
 
 SwitchState g_tab0_switch_states[TILES_PER_GRID];
 SwitchState g_tab1_switch_states[TILES_PER_GRID];
@@ -87,6 +88,7 @@ WeatherTileWidgets* tile_renderer_get_weather_widgets(GridType grid_type) {
 }
 
 MediaTileWidgets* tile_renderer_get_media_widgets(GridType grid_type) {
+  if (grid_type == GridType::SCREENSAVER) return g_screensaver_media;
   if (grid_type == GridType::TAB1) return g_tab1_media;
   if (grid_type == GridType::TAB2) return g_tab2_media;
   return g_tab0_media;
@@ -94,7 +96,8 @@ MediaTileWidgets* tile_renderer_get_media_widgets(GridType grid_type) {
 
 void tile_renderer_forget_media_widgets(const MediaCoverRef* ref) {
   if (!ref) return;
-  MediaTileWidgets* const grids[] = {g_tab0_media, g_tab1_media, g_tab2_media};
+  MediaTileWidgets* const grids[] = {
+      g_tab0_media, g_tab1_media, g_tab2_media, g_screensaver_media};
   for (MediaTileWidgets* grid : grids) {
     for (uint8_t i = 0; i < TILES_PER_GRID; ++i) {
       if (grid[i].cover_ref == ref) {
@@ -231,9 +234,7 @@ void tile_renderer_invalidate_weather_payload(GridType grid_type) {
 }
 
 static void clear_media_widgets(GridType grid_type) {
-  MediaTileWidgets* target = g_tab0_media;
-  if (grid_type == GridType::TAB1) target = g_tab1_media;
-  else if (grid_type == GridType::TAB2) target = g_tab2_media;
+  MediaTileWidgets* target = tile_renderer_get_media_widgets(grid_type);
   for (size_t i = 0; i < TILES_PER_GRID; ++i) {
     target[i] = {};
   }
@@ -241,9 +242,7 @@ static void clear_media_widgets(GridType grid_type) {
 
 void reset_media_widget(GridType grid_type, uint8_t grid_index) {
   if (grid_index >= TILES_PER_GRID) return;
-  MediaTileWidgets* target = g_tab0_media;
-  if (grid_type == GridType::TAB1) target = g_tab1_media;
-  else if (grid_type == GridType::TAB2) target = g_tab2_media;
+  MediaTileWidgets* target = tile_renderer_get_media_widgets(grid_type);
   target[grid_index] = {};
 }
 
@@ -2066,23 +2065,23 @@ static String media_popup_icon_for_tile(const Tile& tile) {
 }
 
 static String media_entity_for_grid_index(GridType grid_type, uint8_t grid_index) {
-  (void)grid_type;
   if (grid_index >= TILES_PER_GRID) return "";
-  const TileGridConfig& grid = tileConfig.getActiveGrid();
-  const Tile& tile = grid.tiles[grid_index];
-  if (tile.type != TILE_MEDIA) return "";
-  return tile.sensor_entity;
+  const Tile* tile = tile_renderer_get_tile_config(grid_type, grid_index);
+  if (!tile || tile->type != TILE_MEDIA) return "";
+  return tile->sensor_entity;
 }
 
 static void update_media_popup_from_widgets(GridType grid_type,
                                             uint8_t grid_index,
                                             MediaTileWidgets& widgets,
                                             const String& state_override = String()) {
-  (void)grid_type;
+  // Im Screensaver werden Media-Kacheln bewusst ohne Popup verwendet.
+  if (grid_type == GridType::SCREENSAVER) return;
   if (grid_index >= TILES_PER_GRID) return;
-  const TileGridConfig& grid = tileConfig.getActiveGrid();
-  const Tile& tile = grid.tiles[grid_index];
-  if (tile.type != TILE_MEDIA || !tile.sensor_entity.length()) return;
+  const Tile* tile_ptr = tile_renderer_get_tile_config(grid_type, grid_index);
+  if (!tile_ptr || tile_ptr->type != TILE_MEDIA ||
+      !tile_ptr->sensor_entity.length()) return;
+  const Tile& tile = *tile_ptr;
 
   MediaPopupInit init;
   init.entity_id = tile.sensor_entity;
@@ -2598,7 +2597,8 @@ static lv_image_dsc_t* clone_media_cover_dsc(const lv_image_dsc_t* source) {
 static const MediaCoverRef* find_decoded_media_cover_sibling(const MediaCoverRef* self,
                                                              uint32_t hash) {
   if (!hash) return nullptr;
-  MediaTileWidgets* const grids[] = {g_tab0_media, g_tab1_media, g_tab2_media};
+  MediaTileWidgets* const grids[] = {
+      g_tab0_media, g_tab1_media, g_tab2_media, g_screensaver_media};
   for (MediaTileWidgets* grid : grids) {
     for (uint8_t i = 0; i < TILES_PER_GRID; ++i) {
       const MediaCoverRef* ref = grid[i].cover_ref;
@@ -3392,13 +3392,13 @@ static void process_pending_media_cover_retries() {
   retry_failed_media_covers_for_grid(GridType::TAB0, g_tab0_media);
   retry_failed_media_covers_for_grid(GridType::TAB1, g_tab1_media);
   retry_failed_media_covers_for_grid(GridType::TAB2, g_tab2_media);
+  retry_failed_media_covers_for_grid(GridType::SCREENSAVER,
+                                     g_screensaver_media);
 }
 
 void update_media_tile_state(GridType grid_type, uint8_t grid_index, const char* payload) {
   if (grid_index >= TILES_PER_GRID || !payload) return;
-  MediaTileWidgets* target = g_tab0_media;
-  if (grid_type == GridType::TAB1) target = g_tab1_media;
-  else if (grid_type == GridType::TAB2) target = g_tab2_media;
+  MediaTileWidgets* target = tile_renderer_get_media_widgets(grid_type);
 
   MediaTileWidgets& widgets = target[grid_index];
   if (!widgets.icon_label && !widgets.media_title_label &&
@@ -3842,7 +3842,7 @@ static bool get_tile_layout(const Tile& tile, uint8_t& col, uint8_t& row, uint8_
   row = tile.row;
   span_w = tile.span_w < 1 ? 1 : tile.span_w;
   span_h = tile.span_h < 1 ? 1 : tile.span_h;
-  clamp_media_tile_span(tile.type, span_w, span_h);
+  clamp_media_tile_layout(tile.type, col, row, span_w, span_h);
   if (span_w > GRID_COLS - col) span_w = GRID_COLS - col;
   if (span_h > GRID_ROWS - row) span_h = GRID_ROWS - row;
   return true;

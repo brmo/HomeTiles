@@ -23,6 +23,7 @@ extern WeatherTileWidgets g_tab2_weather[];
 extern MediaTileWidgets g_tab0_media[];
 extern MediaTileWidgets g_tab1_media[];
 extern MediaTileWidgets g_tab2_media[];
+extern MediaTileWidgets g_screensaver_media[];
 
 extern SwitchState g_tab0_switch_states[];
 extern SwitchState g_tab1_switch_states[];

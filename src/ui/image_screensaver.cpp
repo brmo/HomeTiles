@@ -17,6 +17,7 @@
 
 #include "src/core/dma2d_arbiter.h"
 #include "src/core/config_manager.h"
+#include "src/core/display_manager.h"
 #include "src/devices/device.h"
 #include "src/network/ha_bridge_config.h"
 #include "src/tiles/tile_renderer.h"
@@ -24,6 +25,7 @@
 #include "src/types/clock/clock_format.h"
 #include "src/types/clock/renderer.h"
 #include "src/ui/screensaver_config.h"
+#include "src/ui/tab_tiles_unified.h"
 
 namespace {
 
@@ -40,6 +42,10 @@ constexpr uint32_t kMaxDecodePixels = 2048U * 2048U;
 constexpr size_t kPsramReserveBytes = 4U * 1024U * 1024U;
 constexpr size_t kPpaBufferAlignment = 64;
 constexpr uint16_t kImageRadius = 26;
+// Nach einer Bedienung erst den sichtbaren Tile-/MQTT-Zustand zur Ruhe kommen
+// lassen. Sonst kann ein gleichzeitig faelliger Decode/Composite-Durchlauf den
+// Loop blockieren, bevor LVGL die Switch-Aenderung auf das Panel geflusht hat.
+constexpr uint32_t kInteractionSettleBeforeSlideMs = 1500;
 
 struct ScreensaverState {
   lv_obj_t* overlay = nullptr;
@@ -191,8 +197,8 @@ bool present_composited_screensaver_frame(ScreensaverState* st) {
   if (!top_layer) return false;
 
   const uint32_t snapshot_started = millis();
-  // Der komplette Top-Layer ist absichtlich die Quelle. So bleibt auch ein
-  // Popup sichtbar und die Diashow muss waehrenddessen nicht angehalten werden.
+  // Der komplette Top-Layer ist absichtlich die Quelle. So bleiben Uhr und
+  // Kacheln beim Diawechsel sichtbar und werden gemeinsam praesentiert.
   if (lv_snapshot_take_to_draw_buf(top_layer, LV_COLOR_FORMAT_RGB565,
                                    &st->composite_draw_buf) != LV_RESULT_OK) {
     Serial.println("[Screensaver] Composite-Snapshot fehlgeschlagen");
@@ -678,6 +684,16 @@ bool is_wallpaper_file(const String& file_name) {
   return lower.endsWith(".jpg") || lower.endsWith(".jpeg");
 }
 
+// is_wallpaper_file prueft nur das Namensmuster, nicht ob die Datei noch auf
+// der SD-Karte liegt. Ohne diesen Check wuerde apply_wallpaper() bei einem
+// zwischenzeitlich geloeschten, aber weiterhin in der Config gelisteten Bild
+// die Fallback-Suche ueberspringen (from_config waere trotzdem true) und
+// direkt scheitern, obwohl andere gueltige Bilder auf der Karte liegen.
+bool sd_wallpaper_file_exists(const String& file_name) {
+  if (!is_wallpaper_file(file_name) || !Device::sdReady()) return false;
+  return Device::sdFS().exists(String(kWallpaperDir) + "/" + file_name);
+}
+
 bool find_first_sd_wallpaper(ScreensaverWallpaperConfig& out) {
   if (!Device::sdReady()) return false;
   fs::File dir = Device::sdFS().open(kWallpaperDir, FILE_READ);
@@ -754,12 +770,16 @@ void rebuild_global_clock(ScreensaverState* st) {
   }
 
   const ScreensaverConfigData& config = screensaverConfig.get();
-  if (!config.show_time && !config.show_date) return;
+  if (!config.show_time && !config.show_date && !config.show_weekday) return;
 
   ClockWidgetConfig widget_config;
   widget_config.show_time = config.show_time;
   widget_config.show_date = config.show_date;
+  widget_config.show_weekday = config.show_weekday;
+  widget_config.weekday_german = clock_tile::language_prefers_german_locale(
+      configManager.getConfig().language);
   widget_config.fill_parent = false;
+  widget_config.text_shadow = config.clock_shadow;
   widget_config.time_font_size = config.time_font_size;
   widget_config.date_font_size = config.date_font_size;
   widget_config.time_format = clock_tile::resolve_time_format(
@@ -787,7 +807,7 @@ bool apply_wallpaper(ScreensaverState* st, int index, bool allow_fallback,
       static_cast<size_t>(index) < config.wallpapers.size()) {
     wallpaper = config.wallpapers[static_cast<size_t>(index)];
     from_config = (wallpaper.enabled || allow_disabled) &&
-                  is_wallpaper_file(wallpaper.file_name);
+                  sd_wallpaper_file_exists(wallpaper.file_name);
   }
   if (!from_config && allow_fallback && config.use_wallpapers) {
     if (!find_first_sd_wallpaper(wallpaper)) return false;
@@ -843,7 +863,10 @@ void refresh_slot_values(ScreensaverState* st) {
   for (size_t i = 0; i < TILES_PER_GRID; ++i) {
     const Tile& tile = grid.tiles[i];
     if (!tile.sensor_entity.length()) continue;
-    String payload = haBridgeConfig.findSensorInitialValue(tile.sensor_entity);
+    String payload;
+    if (!tiles_get_cached_entity_payload(tile.sensor_entity.c_str(), payload)) {
+      payload = haBridgeConfig.findSensorInitialValue(tile.sensor_entity);
+    }
     if (!payload.length()) continue;
     if (payload == st->slot_payloads[i]) continue;
     st->slot_payloads[i] = payload;
@@ -855,10 +878,39 @@ void refresh_slot_values(ScreensaverState* st) {
     } else if (tile.type == TILE_SWITCH) {
       queue_switch_tile_update(GridType::SCREENSAVER, static_cast<uint8_t>(i),
                                payload.c_str());
+    } else if (tile.type == TILE_MEDIA) {
+      queue_media_tile_update(GridType::SCREENSAVER, static_cast<uint8_t>(i),
+                              payload.c_str());
     }
   }
   process_sensor_update_queue();
   process_switch_update_queue();
+  process_media_update_queue();
+}
+
+// Globale Schattenoption fuer alle Screensaver-Kacheln. Laeuft ueber die
+// bestehenden Karten, damit ein Live-Save keinen Grid-Neubau braucht. Voll
+// transparente Kacheln bleiben ohne Schatten - dort wuerde nur ein leerer
+// Rahmen um unsichtbare Flaeche schweben.
+void apply_slot_tile_shadows(ScreensaverState* st) {
+  if (!st || !st->slot_grid) return;
+  const bool enabled = screensaverConfig.get().tile_shadow;
+  const uint32_t count = lv_obj_get_child_count(st->slot_grid);
+  for (uint32_t i = 0; i < count; ++i) {
+    lv_obj_t* card = lv_obj_get_child(st->slot_grid, i);
+    if (!card) continue;
+    const bool visible_bg =
+        lv_obj_get_style_bg_opa(card, LV_PART_MAIN) != LV_OPA_TRANSP;
+    if (enabled && visible_bg) {
+      lv_obj_set_style_shadow_width(card, 32, 0);
+      lv_obj_set_style_shadow_color(card, lv_color_hex(0x000000), 0);
+      lv_obj_set_style_shadow_opa(card, LV_OPA_60, 0);
+      lv_obj_set_style_shadow_spread(card, 3, 0);
+    } else {
+      lv_obj_set_style_shadow_width(card, 0, 0);
+      lv_obj_set_style_shadow_opa(card, LV_OPA_TRANSP, 0);
+    }
+  }
 }
 
 void rebuild_slot_grid(ScreensaverState* st) {
@@ -866,6 +918,7 @@ void rebuild_slot_grid(ScreensaverState* st) {
 
   reset_sensor_widgets(GridType::SCREENSAVER);
   reset_switch_widgets(GridType::SCREENSAVER);
+  reset_media_widgets(GridType::SCREENSAVER);
   if (st->slot_grid) {
     // Den bildschirmgrossen transparenten Container stehen lassen. Sein
     // Loeschen wuerde die komplette darunterliegende Bildflaeche invalidieren
@@ -920,6 +973,8 @@ void rebuild_slot_grid(ScreensaverState* st) {
     lv_obj_remove_flag(tile_obj, LV_OBJ_FLAG_EVENT_BUBBLE);
   }
 
+  apply_slot_tile_shadows(st);
+
   // Entspricht der Web-Vorschau: Tiles z=2, frei platzierbare Uhr z=3.
   if (st->clock_box) lv_obj_move_foreground(st->clock_box);
 }
@@ -953,6 +1008,7 @@ void refresh_live_background_and_clock(ScreensaverState* st,
                                        const String& preview_wallpaper) {
   if (!st) return;
   rebuild_global_clock(st);
+  apply_slot_tile_shadows(st);
 
   const ScreensaverConfigData& config = screensaverConfig.get();
   if (!config.use_wallpapers) {
@@ -1022,9 +1078,22 @@ void global_screensaver_timer_cb(lv_timer_t* timer) {
   const auto& config = screensaverConfig.get();
   if (config.use_wallpapers && st->active_wallpaper >= 0 &&
       static_cast<int32_t>(now - st->next_wallpaper_ms) >= 0) {
+    const uint32_t since_activity =
+        static_cast<uint32_t>(now - displayManager.getLastActivityTime());
+    if (since_activity < kInteractionSettleBeforeSlideMs) {
+      st->next_wallpaper_ms =
+          now + (kInteractionSettleBeforeSlideMs - since_activity);
+      return;
+    }
     const int next = next_enabled_wallpaper(st->active_wallpaper);
     if (next >= 0 && next != st->active_wallpaper) {
-      apply_wallpaper(st, next, false);
+      if (!apply_wallpaper(st, next, false)) {
+        // Geloeschte/defekte Datei: Rotationszeiger trotzdem weiterdrehen
+        // und gedrosselt das uebernaechste Bild versuchen. Das sichtbare
+        // Bild bleibt solange stehen.
+        st->active_wallpaper = next;
+        st->next_wallpaper_ms = now + 3000U;
+      }
     } else {
       st->next_wallpaper_ms = now + 1000U;
     }
@@ -1048,6 +1117,7 @@ void on_global_overlay_delete(lv_event_t* e) {
   if (g_state == st) {
     reset_sensor_widgets(GridType::SCREENSAVER);
     reset_switch_widgets(GridType::SCREENSAVER);
+    reset_media_widgets(GridType::SCREENSAVER);
     g_state = nullptr;
   }
   if (st->timer) lv_timer_delete(st->timer);
@@ -1116,9 +1186,12 @@ void show_image_screensaver() {
   g_live_config_refresh_requested = false;
   g_live_grid_refresh_requested = false;
   g_live_preview_wallpaper = String();
+  // Vor dem ersten PPA-Gesamtframe die schon bekannten Entity-Werte in die
+  // frisch erzeugten Widgets einsetzen. Sonst wird der erste sichtbare Frame
+  // mit "--" zusammengesetzt und erst spaeter korrigiert.
+  refresh_slot_values(st);
   const int wallpaper = first_enabled_wallpaper();
   apply_wallpaper(st, wallpaper, true);
-  refresh_slot_values(st);
   st->next_slot_refresh_ms = millis() + 1000U;
   st->timer = lv_timer_create(global_screensaver_timer_cb, 1000, st);
 }
@@ -1132,6 +1205,7 @@ void hide_image_screensaver() {
   g_live_preview_wallpaper = String();
   reset_sensor_widgets(GridType::SCREENSAVER);
   reset_switch_widgets(GridType::SCREENSAVER);
+  reset_media_widgets(GridType::SCREENSAVER);
   if (st->timer) {
     lv_timer_delete(st->timer);
     st->timer = nullptr;

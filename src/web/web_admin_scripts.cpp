@@ -178,7 +178,7 @@ void appendAdminScripts(String& html) {
       const time = document.getElementById('screensaverClockTime');
       const date = document.getElementById('screensaverClockDate');
       if (time) time.textContent = getClockPreviewTime(screensaverDraft.time_format);
-      if (date) date.textContent = getClockPreviewDate(screensaverDraft.date_format);
+      if (date) date.textContent = getScreensaverClockPreviewDate(screensaverDraft);
     }
   }
 
@@ -1048,6 +1048,9 @@ void appendAdminScripts(String& html) {
 )html";
   html += "  const GRID_COLS = " + String(GRID_COLS) + ";\n";
   html += "  const GRID_ROWS = " + String(GRID_ROWS) + ";\n";
+  html += "  const MEDIA_TILE_TYPE = " + String(static_cast<unsigned>(TILE_MEDIA)) + ";\n";
+  html += "  const MEDIA_TILE_MIN_SPAN = " + String(MEDIA_TILE_MIN_SPAN) + ";\n";
+  html += "  const MEDIA_TILE_MAX_SPAN = " + String(MEDIA_TILE_MAX_SPAN) + ";\n";
   html += R"html(
   const tileTabs = [];
   const folderByTab = {};
@@ -1245,11 +1248,10 @@ void appendAdminScripts(String& html) {
     let row = clampInt(snapshot?.row, firstRow + 1, GRID_ROWS, fallbackRow);
     let spanW = clampInt(snapshot?.span_w, 1, GRID_COLS, 1);
     let spanH = clampInt(snapshot?.span_h, 1, GRID_ROWS, 1);
-    const maxSpanW = GRID_COLS - (col - 1);
-    const maxSpanH = GRID_ROWS - (row - 1);
-    if (spanW > maxSpanW) spanW = maxSpanW;
-    if (spanH > maxSpanH) spanH = maxSpanH;
-    return { col: col - 1, row: row - 1, span_w: spanW, span_h: spanH };
+    return constrainLayoutToTab(
+      normalizeLayoutForTileType(snapshot?.type, col - 1, row - 1,
+                                 spanW, spanH),
+      tab);
   }
 
   function buildTileSnapshotFromInputs(tab) {
@@ -1575,6 +1577,34 @@ void appendAdminScripts(String& html) {
     return v;
   }
 
+  function normalizeLayoutForTileType(typeValue, col, row, spanW, spanH) {
+    let safeCol = clampInt(col, 0, GRID_COLS - 1, 0);
+    let safeRow = clampInt(row, 0, GRID_ROWS - 1, 0);
+    let safeW = clampInt(spanW, 1, GRID_COLS, 1);
+    let safeH = clampInt(spanH, 1, GRID_ROWS, 1);
+    if (Number(typeValue) === MEDIA_TILE_TYPE) {
+      const minW = Math.min(MEDIA_TILE_MIN_SPAN, GRID_COLS);
+      const minH = Math.min(MEDIA_TILE_MIN_SPAN, GRID_ROWS);
+      safeW = clampInt(safeW, minW, Math.min(MEDIA_TILE_MAX_SPAN, GRID_COLS), minW);
+      safeH = clampInt(safeH, minH, Math.min(MEDIA_TILE_MAX_SPAN, GRID_ROWS), minH);
+      safeCol = Math.min(safeCol, GRID_COLS - safeW);
+      safeRow = Math.min(safeRow, GRID_ROWS - safeH);
+    } else {
+      safeW = Math.min(safeW, GRID_COLS - safeCol);
+      safeH = Math.min(safeH, GRID_ROWS - safeRow);
+    }
+    return { col: safeCol, row: safeRow, span_w: safeW, span_h: safeH };
+  }
+
+  function constrainLayoutToTab(layout, tab) {
+    const firstRow = firstAllowedGridRow(tab);
+    if (layout.row < firstRow) layout.row = firstRow;
+    if (layout.span_h > GRID_ROWS - layout.row) {
+      layout.span_h = GRID_ROWS - layout.row;
+    }
+    return layout;
+  }
+
   function normalizeTileLayout(tile, index, tab = currentTileTab) {
     const fallbackCol = index % GRID_COLS;
     const firstRow = firstAllowedGridRow(tab);
@@ -1583,9 +1613,8 @@ void appendAdminScripts(String& html) {
     const row = clampInt(tile?.row, firstRow, GRID_ROWS - 1, fallbackRow);
     let spanW = clampInt(tile?.span_w, 1, GRID_COLS, 1);
     let spanH = clampInt(tile?.span_h, 1, GRID_ROWS, 1);
-    if (spanW > GRID_COLS - col) spanW = GRID_COLS - col;
-    if (spanH > GRID_ROWS - row) spanH = GRID_ROWS - row;
-    return { col, row, span_w: spanW, span_h: spanH };
+    return constrainLayoutToTab(
+      normalizeLayoutForTileType(tile?.type, col, row, spanW, spanH), tab);
   }
 
   function setTileGridPosition(el, col, row, spanW, spanH) {
@@ -1672,10 +1701,14 @@ void appendAdminScripts(String& html) {
     let spanW = clampInt(spanWEl.value, 1, GRID_COLS, 1);
     let spanH = clampInt(spanHEl.value, 1, GRID_ROWS, 1);
 
-    const maxSpanW = GRID_COLS - (col - 1);
-    const maxSpanH = GRID_ROWS - (row - 1);
-    if (spanW > maxSpanW) spanW = maxSpanW;
-    if (spanH > maxSpanH) spanH = maxSpanH;
+    const typeValue = document.getElementById(prefix + '_tile_type')?.value || '0';
+    const layout = constrainLayoutToTab(
+      normalizeLayoutForTileType(typeValue, col - 1, row - 1, spanW, spanH),
+      tab);
+    col = layout.col + 1;
+    row = layout.row + 1;
+    spanW = layout.span_w;
+    spanH = layout.span_h;
 
     colEl.value = String(col);
     rowEl.value = String(row);
@@ -2043,7 +2076,13 @@ void appendAdminScripts(String& html) {
     bindLive(rowInput, 'input', 'tileRow', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(spanWInput, 'input', 'tileSpanW', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(spanHInput, 'input', 'tileSpanH', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
-    bindLive(typeSelect, 'change', 'tileType', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
+    bindLive(typeSelect, 'change', 'tileType', () => {
+      normalizeLayoutInputs(tab);
+      updateLayoutFromInputs(tab);
+      updateTilePreview(tab);
+      updateDraft(tab);
+      scheduleAutoSave(tab);
+    });
     bindLive(entitySelect, 'change', 'sensorEntity', () => { maybeFillTitleFromSensor(tab); updateTilePreview(tab); updateSensorValuePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(weatherSelect, 'change', 'weatherEntity', () => { maybeFillTitleFromWeather(tab); updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(weatherPopupModeSelect, 'change', 'weatherPopupMode', () => { updateDraft(tab); scheduleAutoSave(tab); });
@@ -2250,7 +2289,8 @@ void appendAdminScripts(String& html) {
     if (previewKind === 'clock') {
       const flags = getClockFlagsFromInputs(prefix);
       const clockTimeFont = document.getElementById(prefix + '_clock_time_font')?.value || '40';
-      const clockDateFont = document.getElementById(prefix + '_clock_date_font')?.value || '20';
+      const clockDateFont = Math.min(72,
+        Number(document.getElementById(prefix + '_clock_date_font')?.value || 20));
       const clockTimeFormat = document.getElementById(prefix + '_clock_time_format')?.value || '0';
       const clockDateFormat = document.getElementById(prefix + '_clock_date_format')?.value || '0';
       if (flags & 1) html += '<div class="tile-clock-time" ' + getClockPreviewTextStyle(clockTimeFont, 40, '#fff') + '>' + getClockPreviewTime(clockTimeFormat) + '</div>';
@@ -2392,6 +2432,20 @@ void appendAdminScripts(String& html) {
     const prefix = tab;
     const typeEl = document.getElementById(prefix + '_tile_type');
     let typeValue = typeEl ? typeEl.value : '0';
+    const mediaType = Number(typeValue) === MEDIA_TILE_TYPE;
+    const spanWEl = document.getElementById(prefix + '_tile_span_w');
+    const spanHEl = document.getElementById(prefix + '_tile_span_h');
+    if (spanWEl) {
+      spanWEl.min = String(mediaType ? Math.min(MEDIA_TILE_MIN_SPAN, GRID_COLS) : 1);
+      spanWEl.max = String(mediaType ? Math.min(MEDIA_TILE_MAX_SPAN, GRID_COLS) : GRID_COLS);
+    }
+    if (spanHEl) {
+      const availableRows = GRID_ROWS - firstAllowedGridRow(tab);
+      spanHEl.min = String(mediaType ? Math.min(MEDIA_TILE_MIN_SPAN, availableRows) : 1);
+      spanHEl.max = String(mediaType
+        ? Math.min(MEDIA_TILE_MAX_SPAN, availableRows)
+        : GRID_ROWS);
+    }
     document.querySelectorAll('#' + prefix + 'Settings .type-fields').forEach(f => f.classList.remove('show'));
     const meta = getTileTypeMeta(typeValue);
     if (meta.fields) {
@@ -3086,7 +3140,7 @@ void appendAdminScripts(String& html) {
       if (previewKind === 'clock') {
         const flags = normalizeClockFlags(tile.sensor_decimals);
         const clockTimeFont = tile.key_code || 40;
-        const clockDateFont = tile.key_modifier || 20;
+        const clockDateFont = Math.min(72, Number(tile.key_modifier || 20));
         const clockTimeFormat = (tile.sensor_gauge_min !== undefined) ? tile.sensor_gauge_min : 0;
         const clockDateFormat = (tile.sensor_gauge_max !== undefined) ? tile.sensor_gauge_max : 0;
         if (flags & 1) html += '<div class="tile-clock-time" ' + getClockPreviewTextStyle(clockTimeFont, 40, '#fff') + '>' + getClockPreviewTime(clockTimeFormat) + '</div>';
@@ -3594,11 +3648,24 @@ void appendAdminScripts(String& html) {
 
     let spanW = layout.span_w;
     let spanH = layout.span_h;
+    const tiles = getTilesData(tab);
+    const tile = Array.isArray(tiles) && currentTileIndex >= 0
+      ? tiles[currentTileIndex] : null;
+    const typeValue = document.getElementById(tab + '_tile_type')?.value ?? tile?.type ?? 0;
+    const isMedia = Number(typeValue) === MEDIA_TILE_TYPE;
+    const minW = isMedia ? Math.min(MEDIA_TILE_MIN_SPAN, GRID_COLS) : 1;
+    const minH = isMedia ? Math.min(MEDIA_TILE_MIN_SPAN, GRID_ROWS) : 1;
+    const maxW = isMedia
+      ? Math.min(MEDIA_TILE_MAX_SPAN, GRID_COLS - layout.col)
+      : GRID_COLS - layout.col;
+    const maxH = isMedia
+      ? Math.min(MEDIA_TILE_MAX_SPAN, GRID_ROWS - layout.row)
+      : GRID_ROWS - layout.row;
     if (String(direction || '').includes('e')) {
-      spanW = clampInt(rawCell.col - layout.col + 1, 1, GRID_COLS - layout.col, layout.span_w);
+      spanW = clampInt(rawCell.col - layout.col + 1, minW, maxW, layout.span_w);
     }
     if (String(direction || '').includes('s')) {
-      spanH = clampInt(rawCell.row - layout.row + 1, 1, GRID_ROWS - layout.row, layout.span_h);
+      spanH = clampInt(rawCell.row - layout.row + 1, minH, maxH, layout.span_h);
     }
 
     return {
@@ -4017,21 +4084,37 @@ void appendAdminScripts(String& html) {
   let screensaverSelected = { kind: 'background', index: -1 };
   let screensaverWallpaperIndex = -1;
   let screensaverSaveTimer = null;
-  const screensaverClockFontSizes = [20, 24, 28, 32, 40, 48, 56, 64, 72, 80, 96];
+  const screensaverTimeFontSizes = [20, 24, 28, 32, 40, 48, 56, 64, 72, 80, 96];
+  const screensaverDateFontSizes = [20, 24, 28, 32, 40, 48, 56, 64, 72];
 
   function ssClamp(value, min, max) {
     const n = Number(value);
     return Math.max(min, Math.min(max, Number.isFinite(n) ? n : min));
   }
 
-  function ssNearestClockFont(value) {
+  function ssNearestClockFont(value, dateLine = false) {
     const wanted = Number(value) || 20;
-    return screensaverClockFontSizes.reduce((best, size) =>
+    const sizes = dateLine ? screensaverDateFontSizes : screensaverTimeFontSizes;
+    return sizes.reduce((best, size) =>
       Math.abs(size - wanted) < Math.abs(best - wanted) ? size : best,
-      screensaverClockFontSizes[0]);
+      sizes[0]);
+  }
+
+  function getScreensaverClockPreviewDate(d) {
+    if (!d) return '';
+    const weekdayNames = getClockPreviewLanguage().toLowerCase().startsWith('de')
+      ? ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag']
+      : ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    let text = d.show_date ? getClockPreviewDate(d.date_format) : '';
+    if (d.show_weekday) {
+      text = weekdayNames[new Date().getDay()] + (text ? ', ' + text : '');
+    }
+    return text;
   }
 
   function ssNormalizeLoaded(data) {
+    data.time_font_size = ssNearestClockFont(data.time_font_size || 48, false);
+    data.date_font_size = ssNearestClockFont(data.date_font_size || 28, true);
     data.wallpapers = Array.isArray(data.wallpapers) ? data.wallpapers : [];
     const configured = new Map(data.wallpapers.map(item => [item.file_name, item]));
     const hadConfiguredWallpapers = data.wallpapers.length > 0;
@@ -4071,12 +4154,15 @@ void appendAdminScripts(String& html) {
       version: 1,
       use_wallpapers: !!d.use_wallpapers,
       shuffle: !!d.shuffle,
+      tile_shadow: !!d.tile_shadow,
       show_time: !!d.show_time,
       show_date: !!d.show_date,
+      show_weekday: !!d.show_weekday,
+      clock_shadow: !!d.clock_shadow,
       time_format: Number(d.time_format || 0),
       date_format: Number(d.date_format || 0),
-      time_font_size: Number(d.time_font_size || 48),
-      date_font_size: Number(d.date_font_size || 28),
+      time_font_size: ssNearestClockFont(d.time_font_size || 48, false),
+      date_font_size: ssNearestClockFont(d.date_font_size || 28, true),
       clock_x: Math.round(ssClamp(d.clock_x, 0, 1000)),
       clock_y: Math.round(ssClamp(d.clock_y, 0, 1000)),
       preview_wallpaper: ssCurrentWallpaper()?.file_name || '',
@@ -4169,8 +4255,13 @@ void appendAdminScripts(String& html) {
         screensaverWallpaperIndex = index;
         renderScreensaverEditor();
       });
+      // Gleiche Chevron-Grafik wie der Pfeil der Select-Felder.
+      const chevronSvg = dir =>
+        '<svg width="12" height="8" viewBox="0 0 12 8" aria-hidden="true"><path d="' +
+        (dir < 0 ? 'M1 6.5l5-5 5 5' : 'M1 1.5l5 5 5-5') +
+        '" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
       const up = document.createElement('button');
-      up.type = 'button'; up.className = 'screensaver-wallpaper-move'; up.textContent = '↑';
+      up.type = 'button'; up.className = 'screensaver-wallpaper-move'; up.innerHTML = chevronSvg(-1);
       up.disabled = index === 0;
       up.addEventListener('click', () => {
         if (index === 0) return;
@@ -4179,7 +4270,7 @@ void appendAdminScripts(String& html) {
         screensaverWallpaperIndex = index - 1; renderScreensaverEditor(); scheduleScreensaverSave();
       });
       const down = document.createElement('button');
-      down.type = 'button'; down.className = 'screensaver-wallpaper-move'; down.textContent = '↓';
+      down.type = 'button'; down.className = 'screensaver-wallpaper-move'; down.innerHTML = chevronSvg(1);
       down.disabled = index === screensaverDraft.wallpapers.length - 1;
       down.addEventListener('click', () => {
         if (down.disabled) return;
@@ -4223,17 +4314,23 @@ void appendAdminScripts(String& html) {
     clock.style.top = (d.clock_y / 10) + '%';
     const time = document.getElementById('screensaverClockTime');
     const date = document.getElementById('screensaverClockDate');
-    time.hidden = !d.show_time; date.hidden = !d.show_date;
+    time.hidden = !d.show_time;
+    date.hidden = !d.show_date && !d.show_weekday;
     time.style.fontSize = Math.max(10, Number(d.time_font_size || 48) * scale) + 'px';
     date.style.fontSize = Math.max(8, Number(d.date_font_size || 28) * scale) + 'px';
     time.textContent = getClockPreviewTime(d.time_format);
-    date.textContent = getClockPreviewDate(d.date_format);
+    date.textContent = getScreensaverClockPreviewDate(d);
     clock.hidden = false;
-    clock.classList.toggle('clock-disabled', !d.show_time && !d.show_date);
+    clock.classList.toggle('clock-disabled', !d.show_time && !d.show_date && !d.show_weekday);
+    clock.classList.toggle('clock-shadowed', !!d.clock_shadow);
+    preview.classList.toggle('tiles-shadowed', !!d.tile_shadow);
     document.getElementById('screensaverUseWallpapers').checked = !!d.use_wallpapers;
     document.getElementById('screensaverShuffle').checked = !!d.shuffle;
+    document.getElementById('screensaverTileShadow').checked = !!d.tile_shadow;
     document.getElementById('screensaverShowTime').checked = !!d.show_time;
     document.getElementById('screensaverShowDate').checked = !!d.show_date;
+    document.getElementById('screensaverShowWeekday').checked = !!d.show_weekday;
+    document.getElementById('screensaverClockShadow').checked = !!d.clock_shadow;
     document.getElementById('screensaverTimeFont').value = String(d.time_font_size || 48);
     document.getElementById('screensaverDateFont').value = String(d.date_font_size || 28);
     document.getElementById('screensaverTimeFormat').value = String(d.time_format || 0);
@@ -4342,9 +4439,9 @@ void appendAdminScripts(String& html) {
                              clockResizeDrag.height;
         const factor = ssClamp(Math.max(widthFactor, heightFactor), 0.35, 3.0);
         screensaverDraft.time_font_size = ssNearestClockFont(
-          clockResizeDrag.timeFont * factor);
+          clockResizeDrag.timeFont * factor, false);
         screensaverDraft.date_font_size = ssNearestClockFont(
-          clockResizeDrag.dateFont * factor);
+          clockResizeDrag.dateFont * factor, true);
         renderScreensaverEditor();
       });
       const finishClockResize = e => {
@@ -4362,10 +4459,17 @@ void appendAdminScripts(String& html) {
     };
     bind('screensaverUseWallpapers', 'change', el => { screensaverDraft.use_wallpapers = el.checked; });
     bind('screensaverShuffle', 'change', el => { screensaverDraft.shuffle = el.checked; });
+    bind('screensaverTileShadow', 'change', el => { screensaverDraft.tile_shadow = el.checked; });
     bind('screensaverShowTime', 'change', el => { screensaverDraft.show_time = el.checked; });
     bind('screensaverShowDate', 'change', el => { screensaverDraft.show_date = el.checked; });
-    bind('screensaverTimeFont', 'change', el => { screensaverDraft.time_font_size = Number(el.value); });
-    bind('screensaverDateFont', 'change', el => { screensaverDraft.date_font_size = Number(el.value); });
+    bind('screensaverShowWeekday', 'change', el => { screensaverDraft.show_weekday = el.checked; });
+    bind('screensaverClockShadow', 'change', el => { screensaverDraft.clock_shadow = el.checked; });
+    bind('screensaverTimeFont', 'change', el => {
+      screensaverDraft.time_font_size = ssNearestClockFont(el.value, false);
+    });
+    bind('screensaverDateFont', 'change', el => {
+      screensaverDraft.date_font_size = ssNearestClockFont(el.value, true);
+    });
     bind('screensaverTimeFormat', 'change', el => { screensaverDraft.time_format = Number(el.value); });
     bind('screensaverDateFormat', 'change', el => { screensaverDraft.date_format = Number(el.value); });
     bind('screensaverWallpaperDuration', 'change', el => { const w = ssCurrentWallpaper(); if (w) w.duration_seconds = Number(el.value); });

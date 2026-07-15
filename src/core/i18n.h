@@ -275,6 +275,9 @@ struct Strings {
   const char* screensaver_focus_x;
   const char* screensaver_focus_y;
   const char* screensaver_clock_heading;
+  const char* screensaver_show_weekday;
+  const char* screensaver_clock_shadow;
+  const char* screensaver_tile_shadow;
   const char* screensaver_background_opacity;
   const char* screensaver_hint;
   const char* screensaver_no_wallpapers;

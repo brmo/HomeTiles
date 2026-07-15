@@ -16,7 +16,7 @@ void apply_clock_fields_from_request(WebServer& server, Tile& tile) {
   if (flags == 0) flags = 1;
   tile.sensor_decimals = flags;
 
-  auto normalizeClockFont = [](int raw, uint8_t fallback) {
+  auto normalizeClockFont = [](int raw, uint8_t fallback, uint8_t maximum) {
     switch (raw) {
       case 20:
       case 24:
@@ -29,17 +29,19 @@ void apply_clock_fields_from_request(WebServer& server, Tile& tile) {
       case 72:
       case 80:
       case 96:
-        return static_cast<uint8_t>(raw);
+        return static_cast<uint8_t>(raw > maximum ? maximum : raw);
       default:
         return fallback;
     }
   };
 
   tile.key_code = server.hasArg("key_code")
-                      ? normalizeClockFont(server.arg("key_code").toInt(), 40)
+                      ? normalizeClockFont(server.arg("key_code").toInt(), 40,
+                                           96)
                       : static_cast<uint8_t>(40);
   tile.key_modifier = server.hasArg("key_modifier")
-                          ? normalizeClockFont(server.arg("key_modifier").toInt(), 20)
+                          ? normalizeClockFont(
+                                server.arg("key_modifier").toInt(), 20, 72)
                           : static_cast<uint8_t>(20);
 
   // Alte, Clock-spezifische Wallpaper-Auswahl beim naechsten Speichern

@@ -216,6 +216,10 @@ static void appendTileTabHTML(
     uint8_t row = (tile.row < GRID_ROWS) ? tile.row : 0;
     uint8_t span_w = (tile.span_w < 1) ? 1 : tile.span_w;
     uint8_t span_h = (tile.span_h < 1) ? 1 : tile.span_h;
+    clamp_media_tile_layout(tile.type, col, row, span_w, span_h);
+    if (screensaver_mode && GRID_ROWS > 1 && row < GRID_ROWS - 2) {
+      row = GRID_ROWS - 2;
+    }
     if (span_w > GRID_COLS - col) span_w = GRID_COLS - col;
     if (span_h > GRID_ROWS - row) span_h = GRID_ROWS - row;
 
@@ -404,6 +408,9 @@ static void appendTileTabHTML(
                 <label class="inline-checkbox"><input id="screensaverShuffle" type="checkbox"> )html";
     html += tr.screensaver_shuffle;
     html += R"html(</label>
+                <label class="inline-checkbox"><input id="screensaverTileShadow" type="checkbox"> )html";
+    html += tr.screensaver_tile_shadow;
+    html += R"html(</label>
                 <div class="screensaver-wallpaper-heading">)html";
     html += tr.screensaver_wallpapers_heading;
     html += R"html(</div>
@@ -443,6 +450,12 @@ static void appendTileTabHTML(
                     <label class="inline-checkbox"><input id="screensaverShowDate" type="checkbox"> )html";
     html += tr.show_date;
     html += R"html(</label>
+                    <label class="inline-checkbox"><input id="screensaverShowWeekday" type="checkbox"> )html";
+    html += tr.screensaver_show_weekday;
+    html += R"html(</label>
+                    <label class="inline-checkbox"><input id="screensaverClockShadow" type="checkbox"> )html";
+    html += tr.screensaver_clock_shadow;
+    html += R"html(</label>
                   </div>
                   <div class="screensaver-two-fields">
                     <label>)html";
@@ -450,7 +463,7 @@ static void appendTileTabHTML(
     html += R"html(<select id="screensaverTimeFont"><option>20</option><option>24</option><option>28</option><option>32</option><option>40</option><option selected>48</option><option>56</option><option>64</option><option>72</option><option>80</option><option>96</option></select></label>
                     <label>)html";
     html += tr.date_font_size;
-    html += R"html(<select id="screensaverDateFont"><option>20</option><option>24</option><option selected>28</option><option>32</option><option>40</option><option>48</option><option>56</option><option>64</option><option>72</option><option>80</option><option>96</option></select></label>
+    html += R"html(<select id="screensaverDateFont"><option>20</option><option>24</option><option selected>28</option><option>32</option><option>40</option><option>48</option><option>56</option><option>64</option><option>72</option></select></label>
                     <label>)html";
     html += tr.time_format_label;
     html += R"html(<select id="screensaverTimeFormat"><option value="0">)html";
@@ -492,6 +505,8 @@ static void appendTileTabHTML(
     html += tr.tile_type_scene;
     html += "</option><option value=\"5\">";
     html += tr.tile_type_switch;
+    html += "</option><option value=\"15\">";
+    html += tr.tile_type_media;
     html += "</option>";
   } else {
     append_tile_type_select_options(html);

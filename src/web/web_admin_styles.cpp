@@ -569,9 +569,10 @@ void appendAdminStyles(String& html) {
       cursor:pointer;
       user-select:none;
     }
-    .screensaver-grid-image-frame:hover {
-      box-shadow:0 0 0 3px rgba(38,166,154,0.62),
-                 0 0 12px rgba(38,166,154,0.28);
+    /* Hover gestrichelt, Auswahl solide - gleiche Sprache wie .tile. */
+    .screensaver-tile-grid:not(.selected-background) .screensaver-grid-image-frame:hover {
+      outline:3px dashed rgba(38,166,154,0.6);
+      outline-offset:-3px;
     }
     .screensaver-tile-grid.selected-background .screensaver-grid-image-frame {
       box-shadow:0 0 0 3px #26a69a, 0 0 12px rgba(38,166,154,0.55);
@@ -594,9 +595,11 @@ void appendAdminStyles(String& html) {
       transform:translate(-50%,-50%);
       cursor:grab;
       touch-action:none;
-      text-shadow:0 2px 8px rgba(0,0,0,.8);
       white-space:nowrap;
     }
+    /* Fester, weicher Schatten fuer beide Zeilen; auf dem halb skalierten
+       Editor entspricht das etwa den 4px/6px-Kopien auf dem Display. */
+    .screensaver-grid-clock.clock-shadowed { text-shadow:2px 2px 4px rgba(0,0,0,0.42); }
     .screensaver-grid-clock:hover {
       outline:3px dashed rgba(38,166,154,0.65);
       outline-offset:6px;
@@ -617,24 +620,31 @@ void appendAdminStyles(String& html) {
     }
     .screensaver-grid-clock.dragging { cursor:grabbing; }
     #screensaverClockDate { color:#fff; }
+    /* Formsprache der Tile-Resize-Handles, aber kontrastreicher: der Griff
+       liegt auf beliebig hellen Fotos statt auf dunklem Grid-Hintergrund. */
     .screensaver-clock-resize-handle {
       position:absolute;
       right:-12px;
       bottom:-12px;
-      width:16px;
-      height:16px;
+      width:14px;
+      height:14px;
       display:block;
       box-sizing:border-box;
-      border:2px solid rgba(255,255,255,0.9);
-      border-radius:5px;
-      background:#26a69a;
-      box-shadow:0 2px 8px rgba(0,0,0,0.55);
+      border:1px solid rgba(255,255,255,0.65);
+      border-radius:6px;
+      background:rgba(255,255,255,0.3);
+      box-shadow:0 1px 4px rgba(0,0,0,0.5);
       cursor:nwse-resize;
       opacity:0;
       pointer-events:none;
+      transition:opacity 0.15s ease;
     }
-    .screensaver-grid-clock:hover .screensaver-clock-resize-handle,
     .screensaver-grid-clock.selected-clock .screensaver-clock-resize-handle {
+      opacity:0.75;
+      pointer-events:auto;
+    }
+    .screensaver-grid-clock.selected-clock:hover .screensaver-clock-resize-handle,
+    .screensaver-grid-clock:hover .screensaver-clock-resize-handle {
       opacity:1;
       pointer-events:auto;
     }
@@ -642,6 +652,11 @@ void appendAdminStyles(String& html) {
     .screensaver-tile-grid > .tile-drop-placeholder,
     .screensaver-tile-grid > .tile-resize-placeholder {
       z-index:2;
+    }
+    /* Vorschau des optionalen Kachel-Schattens auf dem Geraet. drop-shadow
+       statt box-shadow, damit Auswahl-/Hover-Shadows unangetastet bleiben. */
+    .screensaver-tile-grid.tiles-shadowed > .tile:not(.empty) {
+      filter:drop-shadow(0 2px 8px rgba(0,0,0,0.65));
     }
 
     /* Display-aehnliche Kacheln (50% Skalierung) */
@@ -938,16 +953,37 @@ void appendAdminStyles(String& html) {
     .screensaver-fixed-type { display:grid; grid-template-columns:1fr 1.35fr; gap:10px; align-items:center; margin-bottom:10px; }
     .screensaver-fixed-type label { margin:0; }
     .screensaver-fixed-type input { margin:0; }
-    .screensaver-wallpaper-heading { color:var(--text-2); font-weight:800; font-size:12px; letter-spacing:.08em; text-transform:uppercase; margin:18px 0 8px; }
+    .screensaver-wallpaper-heading { color:var(--text-3); font-weight:700; font-size:12px; letter-spacing:.1em; text-transform:uppercase; margin:18px 0 8px; }
     .screensaver-wallpaper-list { display:flex; flex-direction:column; gap:7px; max-height:190px; overflow:auto; }
-    .screensaver-wallpaper-row { display:grid; grid-template-columns:auto 1fr auto auto; align-items:center; gap:7px; padding:7px; border:1px solid var(--line); border-radius:10px; background:var(--well); }
+    .screensaver-wallpaper-row { display:grid; grid-template-columns:auto 1fr auto auto; align-items:center; gap:8px; padding:7px 9px; border:1px solid var(--line); border-radius:10px; background:var(--well); }
     .screensaver-wallpaper-row.active { border-color:#26b5aa; }
-    .screensaver-wallpaper-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
-    .screensaver-wallpaper-move { width:30px; height:30px; padding:0; margin:0; border-radius:8px; }
+    .screensaver-wallpaper-row input[type="checkbox"] { width:16px; height:16px; padding:0; margin:0; }
+    .screensaver-wallpaper-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; font-size:13px; color:var(--text); }
+    /* Ghost-Button wie .tile-color-reset-btn, damit die Reihenfolge-Buttons
+       nicht als native Browser-Buttons mit fremder Schrift auffallen. */
+    .screensaver-wallpaper-move {
+      width:28px;
+      height:28px;
+      padding:0;
+      margin:0;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      border:1px solid var(--line-strong);
+      border-radius:8px;
+      background:var(--well);
+      color:var(--text-2);
+      font-family:inherit;
+      cursor:pointer;
+      transition:border-color 0.15s, color 0.15s;
+    }
+    .screensaver-wallpaper-move:hover:not(:disabled) { border-color:#4a4a4a; color:var(--text); }
+    .screensaver-wallpaper-move:disabled { opacity:0.35; cursor:default; }
+    .screensaver-wallpaper-move svg { display:block; }
     .screensaver-wallpaper-controls { margin-top:12px; }
     .screensaver-focus-grid, .screensaver-two-fields { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
     .screensaver-two-fields label { margin:0; }
-    .screensaver-two-fields input, .screensaver-two-fields select { margin-top:5px; }
+    .screensaver-two-fields input, .screensaver-two-fields select { margin-top:5px; margin-bottom:0; }
     .screensaver-save-state { min-height:20px; margin-top:12px; color:var(--text-2); font-size:12px; }
 
     /* Schmales Fenster: Settings-Panel rueckt unter die Grid-Vorschau,

@@ -3,6 +3,7 @@
 #include "src/network/network_manager.h"
 #include "src/network/ha_bridge_config.h"
 #include "src/ui/tab_tiles_unified.h"
+#include "src/ui/screensaver_config.h"
 #include "src/ui/sensor_popup.h"
 #include "src/ui/tab_settings.h"
 #include "src/types/energy/energy_data.h"
@@ -1150,6 +1151,23 @@ static void rebuildDynamicRoutes(std::vector<DynamicSensorRoute>& routes) {
     lvglServiceDuringBlockingWork();
   }
 
+  // Das Screensaver-Grid liegt absichtlich ausserhalb der Ordnerstruktur.
+  // Seine Entitys muessen deshalb separat in dieselben MQTT-Routen eingehen.
+  const TileGridConfig& screensaver_grid = screensaverConfig.tileGrid();
+  for (size_t i = 0; i < TILES_PER_GRID; ++i) {
+    const Tile& tile = screensaver_grid.tiles[i];
+    if ((tile.type != TILE_SENSOR && tile.type != TILE_SWITCH &&
+         tile.type != TILE_MEDIA) ||
+        !tile.sensor_entity.length()) {
+      continue;
+    }
+    add_route(tile.sensor_entity, -1);
+    if (tile.type == TILE_MEDIA) {
+      has_media_tiles = true;
+      add_route(tile.sensor_entity, -1, "state_fast");
+    }
+  }
+
   // Media-States mit eingebettetem Cover (~19 KB) brauchen einen groesseren
   // Empfangspuffer als die 16-KB-Basis; der Worker gleicht die Groesse an.
   networkManager.setMqttMediaBufferNeeded(has_media_tiles);
@@ -1160,6 +1178,11 @@ static void rebuildDynamicRoutes(std::vector<DynamicSensorRoute>& routes) {
 // passenden Groesse angelegt -- das retained Cover direkt nach dem ersten
 // Subscribe ginge sonst verloren (Grow waere erst nach dem Sturmfenster dran).
 bool mqttAnyMediaTileConfigured() {
+  const TileGridConfig& screensaver_grid = screensaverConfig.tileGrid();
+  for (size_t i = 0; i < TILES_PER_GRID; ++i) {
+    const Tile& tile = screensaver_grid.tiles[i];
+    if (tile.type == TILE_MEDIA && tile.sensor_entity.length()) return true;
+  }
   const std::vector<FolderEntry>& folders = tileConfig.getFolders();
   FolderEntitySlotView slots[TILES_PER_GRID];
   for (const auto& folder : folders) {
@@ -1421,9 +1444,11 @@ static void processMqttMessage(char* topic, uint8_t* payload, unsigned int lengt
         networkManager.publishBridgeConfig();
         Serial.printf("[Bridge] publishBridgeConfig: %u ms\n", (unsigned)(millis() - t_pub0));
         yield();  // Nach Publish
-        uint32_t t_slots0 = millis();
-        mqttReloadDynamicSlots();
-        Serial.printf("[Bridge] mqttReloadDynamicSlots: %u ms\n", (unsigned)(millis() - t_slots0));
+        // Nicht im selben RX-Sturm sofort alle Topics ab- und wieder
+        // anmelden. Der vorhandene Deferred-Service wartet auf ein ruhiges
+        // Fenster und fasst mehrere kurz aufeinanderfolgende Reloads zusammen.
+        mqttRequestDynamicSlotsReload();
+        Serial.println("[Bridge] mqttReloadDynamicSlots nach Ruhefenster eingeplant");
       }
       if (icons_changed) {
         tiles_request_icon_refresh();

@@ -940,9 +940,12 @@ static bool buildTileRect(uint8_t col, uint8_t row, uint8_t span_w, uint8_t span
 }
 
 static bool getTileRect(const Tile& tile, TileRect& out) {
+  uint8_t col = tile.col;
+  uint8_t row = tile.row;
   uint8_t span_w = tile.span_w < 1 ? 1 : tile.span_w;
   uint8_t span_h = tile.span_h < 1 ? 1 : tile.span_h;
-  return buildTileRect(tile.col, tile.row, span_w, span_h, out);
+  clamp_media_tile_layout(tile.type, col, row, span_w, span_h);
+  return buildTileRect(col, row, span_w, span_h, out);
 }
 
 static bool rectsOverlap(const TileRect& a, const TileRect& b) {
@@ -1617,7 +1620,7 @@ void WebAdminServer::handleSaveTiles() {
   int type = server.arg("type").toInt();
 
   if (screensaver_grid && type != TILE_EMPTY && type != TILE_SENSOR &&
-      type != TILE_SCENE && type != TILE_SWITCH) {
+      type != TILE_SCENE && type != TILE_SWITCH && type != TILE_MEDIA) {
     server.send(400, "application/json",
                 "{\"success\":false,\"error\":\"Tile type not supported in screensaver\"}");
     return;
@@ -1757,7 +1760,11 @@ void WebAdminServer::handleSaveTiles() {
     row = GRID_ROWS - 2;
   }
 
-  clamp_media_tile_span(static_cast<TileType>(type), span_w, span_h);
+  clamp_media_tile_layout(static_cast<TileType>(type), col, row,
+                          span_w, span_h);
+  if (screensaver_grid && GRID_ROWS > 1 && row < GRID_ROWS - 2) {
+    row = GRID_ROWS - 2;
+  }
   if (span_w > GRID_COLS - col) span_w = GRID_COLS - col;
   if (span_h > GRID_ROWS - row) span_h = GRID_ROWS - row;
 
@@ -1823,18 +1830,16 @@ void WebAdminServer::handleSaveTiles() {
   if (success) {
     Serial.printf("[WebAdmin] Tile folder %u[%d] gespeichert - Type: %d\n", static_cast<unsigned>(folder_id), index, type);
 
-    if (!screensaver_grid) {
-      const bool routes_changed =
-          deleting_folder || tileChangeAffectsDynamicMqttRoutes(previous_tile, tile);
-      if (routes_changed) {
-        // Mehrere schnelle Tile-Edits duerfen nur einen teuren Route-Rebuild
-        // ausloesen. Der Loop fuehrt ihn nach laengerer Admin-Ruhe aus, damit
-        // kein Subscribe-Burst parallel zum naechsten Grid-Save laeuft.
-        mqttRequestDynamicSlotsReload(5000);
-        Serial.println("[WebAdmin] MQTT Routes fuer spaeteren Rebuild markiert");
-      } else {
-        Serial.println("[WebAdmin] MQTT Routes unveraendert (kein Rebuild fuer Style/Layout)");
-      }
+    const bool routes_changed =
+        deleting_folder || tileChangeAffectsDynamicMqttRoutes(previous_tile, tile);
+    if (routes_changed) {
+      // Mehrere schnelle Tile-Edits duerfen nur einen teuren Route-Rebuild
+      // ausloesen. Das gilt auch fuer das getrennte Screensaver-Grid, dessen
+      // Media-Entity sonst weder state noch state_fast abonnieren wuerde.
+      mqttRequestDynamicSlotsReload(5000);
+      Serial.println("[WebAdmin] MQTT Routes fuer spaeteren Rebuild markiert");
+    } else if (!screensaver_grid) {
+      Serial.println("[WebAdmin] MQTT Routes unveraendert (kein Rebuild fuer Style/Layout)");
     }
 
     if (!screensaver_grid) {

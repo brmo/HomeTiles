@@ -135,7 +135,9 @@ void append_clock_scripts(String& html) {
     }
     const dateFontEl = document.getElementById(tab + '_clock_date_font');
     if (dateFontEl) {
-      const dateFont = (data && data.key_modifier !== undefined) ? Number(data.key_modifier) : 20;
+      const storedDateFont = (data && data.key_modifier !== undefined)
+        ? Number(data.key_modifier) : 20;
+      const dateFont = Math.min(72, storedDateFont || 20);
       dateFontEl.value = String(dateFont);
     }
     const timeFormatEl = document.getElementById(tab + '_clock_time_format');
@@ -173,7 +175,8 @@ void append_clock_scripts(String& html) {
 
     const flags = getClockFlagsFromInputs(prefix);
     const timeFont = document.getElementById(prefix + '_clock_time_font')?.value || '40';
-    const dateFont = document.getElementById(prefix + '_clock_date_font')?.value || '20';
+    const dateFont = Math.min(72,
+      Number(document.getElementById(prefix + '_clock_date_font')?.value || 20));
     const timeFormat = document.getElementById(prefix + '_clock_time_format')?.value || '0';
     const dateFormat = document.getElementById(prefix + '_clock_date_format')?.value || '0';
     const timeEl = tileElem.querySelector('.tile-clock-time');

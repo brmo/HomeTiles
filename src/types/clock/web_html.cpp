@@ -61,8 +61,6 @@ void append_clock_fields_html(String& html, const String& tab_id) {
                 <option value="56">56</option>
                 <option value="64">64</option>
                 <option value="72">72</option>
-                <option value="80">80</option>
-                <option value="96">96</option>
               </select>
               <label>)html";
   html += tr.time_format_label;

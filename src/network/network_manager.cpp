@@ -26,8 +26,17 @@ static constexpr uint16_t kMqttBufferMedia = 24 * 1024;
 static constexpr uint16_t kMqttBufferLarge = 32 * 1024;
 static constexpr uint32_t kMqttPostConnectQuietMs = 3000;
 static constexpr uint8_t kMqttOutboundDrainNormal = 12;
-static constexpr uint8_t kMqttOutboundDrainStorm = 2;
+static constexpr uint8_t kMqttOutboundDrainStorm = 1;
 static constexpr size_t kMqttMinDmaLargestBeforeTx = 8 * 1024;
+// Der esp-hosted-RX-Pfad fordert pro Frame rund 4,5 KB zusammenhaengenden
+// internen DMA-Speicher an und assertet bei nullptr. Vor Subscribe/Unsubscribe
+// mehr Luft als vor einem normalen Publish lassen, weil mehrere retained
+// Frames als direkte Antwort unterwegs sein koennen.
+static constexpr size_t kMqttMinDmaLargestBeforeControl = 24 * 1024;
+// Subscribe/Unsubscribe kann sofort ein retained Paket ausloesen. Auf dem P4
+// bekommt der SDIO-RX-Task zwischen diesen Kontrollpaketen Zeit, das Paket bis
+// in die MQTT-Inbound-Queue weiterzureichen und seinen DMA-Puffer freizugeben.
+static constexpr uint32_t kMqttSdioControlQuietMs = 50;
 
 // Waehrend dieses Fensters direkt nach dem Connect bleibt der MQTT-Empfangs-
 // puffer klein (16 KB). Der PubSubClient-Puffer liegt im internen RAM; ihn
@@ -61,6 +70,7 @@ static constexpr size_t kMqttOutboundQueueDepth = 128;
 static QueueHandle_t g_mqtt_outbound_queue = nullptr;
 static uint32_t g_mqtt_outbound_dropped = 0;
 static uint32_t g_mqtt_last_tx_guard_log_ms = 0;
+static uint32_t g_mqtt_sdio_control_quiet_until = 0;
 
 static MqttOutboundCmd* mqttAllocOutbound(MqttCmdKind kind,
                                           const char* topic,
@@ -520,11 +530,23 @@ void Tab5NetworkManager::serviceMqttWorker() {
 
 void Tab5NetworkManager::drainOutboundQueue(uint8_t max_commands) {
   if (!g_mqtt_outbound_queue || max_commands == 0) return;
+  MqttOutboundCmd* next_cmd = nullptr;
+  if (xQueuePeek(g_mqtt_outbound_queue, &next_cmd, 0) != pdTRUE) return;
 #if defined(CONFIG_IDF_TARGET_ESP32P4)
+  const uint32_t now_ms = millis();
+  if (g_mqtt_sdio_control_quiet_until != 0 &&
+      static_cast<int32_t>(now_ms - g_mqtt_sdio_control_quiet_until) < 0) {
+    return;
+  }
+  g_mqtt_sdio_control_quiet_until = 0;
   const size_t dma_largest =
       heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
-  if (dma_largest < kMqttMinDmaLargestBeforeTx) {
-    const uint32_t now_ms = millis();
+  const bool next_is_sdio_control =
+      next_cmd && next_cmd->kind != MqttCmdKind::PUBLISH;
+  const size_t min_dma_largest = next_is_sdio_control
+                                     ? kMqttMinDmaLargestBeforeControl
+                                     : kMqttMinDmaLargestBeforeTx;
+  if (dma_largest < min_dma_largest) {
     if ((uint32_t)(now_ms - g_mqtt_last_tx_guard_log_ms) >= 2000) {
       g_mqtt_last_tx_guard_log_ms = now_ms;
       Serial.printf("[MQTT] TX verschoben: DMA largest nur %u KB\n",
@@ -537,6 +559,7 @@ void Tab5NetworkManager::drainOutboundQueue(uint8_t max_commands) {
   uint32_t drained = 0;
   while (drained < max_commands &&
          xQueueReceive(g_mqtt_outbound_queue, &cmd, 0) == pdTRUE) {
+    bool spaced_sdio_control = false;
     if (cmd) {
       bool ok = false;
       const char* verb = "?";
@@ -548,10 +571,12 @@ void Tab5NetworkManager::drainOutboundQueue(uint8_t max_commands) {
         case MqttCmdKind::SUBSCRIBE:
           verb = "subscribe";
           ok = mqtt_client.subscribe(cmd->topic);
+          spaced_sdio_control = true;
           break;
         case MqttCmdKind::UNSUBSCRIBE:
           verb = "unsubscribe";
           ok = mqtt_client.unsubscribe(cmd->topic);
+          spaced_sdio_control = true;
           break;
       }
       if (!ok) {
@@ -559,6 +584,11 @@ void Tab5NetworkManager::drainOutboundQueue(uint8_t max_commands) {
       }
       heap_caps_free(cmd);
     }
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+    if (spaced_sdio_control) {
+      g_mqtt_sdio_control_quiet_until = millis() + kMqttSdioControlQuietMs;
+    }
+#endif
     // subscribe()/unsubscribe() warten laut PubSubClient-Quelle nicht auf ein
     // Ack (Fire-and-Forget-Write) -- trotzdem soll ein grosser Drain-Burst
     // den Idle-Task (Watchdog-Futter) nie aushungern: alle 8 Kommandos ein
@@ -566,6 +596,7 @@ void Tab5NetworkManager::drainOutboundQueue(uint8_t max_commands) {
     if ((++drained & 0x07) == 0) {
       vTaskDelay(1);
     }
+    if (spaced_sdio_control) break;
   }
 }
 

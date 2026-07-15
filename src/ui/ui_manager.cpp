@@ -13,8 +13,6 @@
 #include "src/tiles/tile_config.h"
 #include "src/network/mqtt_handlers.h"
 #include "src/fonts/ui_fonts.h"
-#include "src/fonts/font_roboto_mono_digits_48.h"
-#include "src/fonts/font_roboto_mono_digits_24.h"
 #include <WiFi.h>
 
 #include <time.h>
@@ -24,12 +22,12 @@
 
 static const lv_font_t* get_status_time_font() {
   const DeviceConfig& cfg = configManager.getConfig();
-  return (cfg.status_time_font_size == 24) ? &font_roboto_mono_digits_24 : &font_roboto_mono_digits_48;
+  return (cfg.status_time_font_size == 24) ? &ui_font_24 : &ui_font_48;
 }
 
 static const lv_font_t* get_status_date_font() {
   const DeviceConfig& cfg = configManager.getConfig();
-  return (cfg.status_date_font_size == 20) ? &ui_font_20 : &font_roboto_mono_digits_24;
+  return (cfg.status_date_font_size == 20) ? &ui_font_20 : &ui_font_24;
 }
 
 

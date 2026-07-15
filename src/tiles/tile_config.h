@@ -41,12 +41,35 @@ enum TileType : uint8_t {
 // kPpaMinRotateWidth in the Waveshare 8" driver) -> the whole UI drops onto the slow
 // CPU rotate until a power cycle. Capping a media tile to a small square keeps its
 // title band well under that limit (3 cells ~= 540 px on the 8" 7-col grid).
+static constexpr uint8_t MEDIA_TILE_MIN_SPAN = 2;
 static constexpr uint8_t MEDIA_TILE_MAX_SPAN = 3;
 
 static inline void clamp_media_tile_span(TileType type, uint8_t& span_w, uint8_t& span_h) {
   if (type != TILE_MEDIA) return;
+  const uint8_t min_w = GRID_COLS >= MEDIA_TILE_MIN_SPAN
+                            ? MEDIA_TILE_MIN_SPAN
+                            : GRID_COLS;
+  const uint8_t min_h = GRID_ROWS >= MEDIA_TILE_MIN_SPAN
+                            ? MEDIA_TILE_MIN_SPAN
+                            : GRID_ROWS;
+  if (span_w < min_w) span_w = min_w;
+  if (span_h < min_h) span_h = min_h;
   if (span_w > MEDIA_TILE_MAX_SPAN) span_w = MEDIA_TILE_MAX_SPAN;
   if (span_h > MEDIA_TILE_MAX_SPAN) span_h = MEDIA_TILE_MAX_SPAN;
+}
+
+// Ein Media-Tile darf am rechten/unteren Rand nicht wieder unter sein
+// 2x2-Minimum gekuerzt werden. In diesem Fall die Position nach innen
+// verschieben; fuer andere Tile-Typen bleibt das bisherige Layout unveraendert.
+static inline void clamp_media_tile_layout(TileType type,
+                                           uint8_t& col, uint8_t& row,
+                                           uint8_t& span_w, uint8_t& span_h) {
+  clamp_media_tile_span(type, span_w, span_h);
+  if (type != TILE_MEDIA) return;
+  if (span_w > GRID_COLS) span_w = GRID_COLS;
+  if (span_h > GRID_ROWS) span_h = GRID_ROWS;
+  if (col > GRID_COLS - span_w) col = GRID_COLS - span_w;
+  if (row > GRID_ROWS - span_h) row = GRID_ROWS - span_h;
 }
 
 enum TilePopupOpenMode : uint8_t {

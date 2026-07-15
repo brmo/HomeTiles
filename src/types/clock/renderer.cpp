@@ -30,6 +30,12 @@ static uint8_t normalize_clock_font_size(uint8_t raw, uint8_t fallback) {
   }
 }
 
+static uint8_t normalize_clock_date_font_size(uint8_t raw,
+                                              uint8_t fallback) {
+  const uint8_t normalized = normalize_clock_font_size(raw, fallback);
+  return normalized > 72 ? 72 : normalized;
+}
+
 static uint8_t resolve_clock_time_format(const Tile& tile) {
   const DeviceConfig& cfg = configManager.getConfig();
   return clock_tile::resolve_time_format(tile.sensor_gauge_min, cfg.global_time_format, cfg.language);
@@ -40,41 +46,44 @@ static uint8_t resolve_clock_date_format(const Tile& tile) {
   return clock_tile::resolve_date_format(tile.sensor_gauge_max, cfg.global_date_format, cfg.language);
 }
 
-static const lv_font_t* get_clock_font(uint8_t raw, uint8_t fallback) {
-  switch (normalize_clock_font_size(raw, fallback)) {
-    case 20:
-      return &ui_font_20;
-    case 24:
-      return &ui_font_24;
-    case 28:
-      return &ui_font_28;
-    case 32:
-      return &ui_font_32;
-    case 40:
-      return &ui_font_40;
-    case 48:
-      return &ui_font_48;
-    case 56:
-      return &clock_font_56;
-    case 64:
-      return &clock_font_64;
-    case 72:
-      return &clock_font_72;
-    case 80:
-      return &clock_font_80;
-    case 96:
-      return &clock_font_96;
-    default:
-      return &ui_font_40;
+// LVGL kennt keinen weichen Glyphen-Schatten. Neun schwache, fest versetzte
+// Kopien ergeben einen ruhigen Fake-Blur. Die Abstaende bleiben bei jeder
+// Schriftgroesse gleich, damit Zeit und Datum denselben Schatten haben.
+static constexpr uint8_t kClockShadowCopies = 9;
+
+struct ClockShadowSet {
+  lv_obj_t* line = nullptr;
+  const lv_font_t* font = nullptr;
+  lv_obj_t* labels[kClockShadowCopies] = {};
+
+  void set_text(const char* text) {
+    for (lv_obj_t* label : labels) {
+      if (label) lv_label_set_text(label, text);
+    }
+    if (!line || !font) return;
+
+    // Die Schattenkopien liegen ausserhalb dieser expliziten Textbox. Damit
+    // vergroessern sie nicht die Flex-Zeile und schieben das Datum nicht nach
+    // unten. OVERFLOW_VISIBLE sorgt trotzdem fuer die vollstaendige Ausgabe.
+    lv_point_t text_size{};
+    lv_text_get_size(&text_size, text ? text : "", font, 0, 0,
+                     LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    lv_obj_set_size(line, text_size.x > 0 ? text_size.x : 1,
+                    text_size.y > 0 ? text_size.y : font->line_height);
   }
-}
+};
 
 struct ClockTileData {
   uint8_t time_format = clock_tile::TIME_FORMAT_24H;
   uint8_t date_format = clock_tile::DATE_FORMAT_DMY;
   uint8_t flags = 1;
+  bool show_date_text = true;
+  bool show_weekday = false;
+  bool weekday_german = false;
   lv_obj_t* time_label = nullptr;
   lv_obj_t* date_label = nullptr;
+  ClockShadowSet time_shadows;
+  ClockShadowSet date_shadows;
   lv_timer_t* timer = nullptr;
 };
 
@@ -100,30 +109,45 @@ static void update_clock_labels(ClockTileData* data) {
         snprintf(buf, sizeof(buf), "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
       }
       lv_label_set_text(data->time_label, buf);
+      data->time_shadows.set_text(buf);
     }
     if (data->date_label) {
-      char buf[16];
-      switch (data->date_format) {
-        case clock_tile::DATE_FORMAT_MDY:
-          snprintf(buf, sizeof(buf), "%02d/%02d/%04d",
-                   timeinfo.tm_mon + 1,
-                   timeinfo.tm_mday,
-                   timeinfo.tm_year + 1900);
-          break;
-        case clock_tile::DATE_FORMAT_YMD:
-          snprintf(buf, sizeof(buf), "%04d/%02d/%02d",
-                   timeinfo.tm_year + 1900,
-                   timeinfo.tm_mon + 1,
-                   timeinfo.tm_mday);
-          break;
-        default:
-          snprintf(buf, sizeof(buf), "%02d.%02d.%04d",
-                   timeinfo.tm_mday,
-                   timeinfo.tm_mon + 1,
-                   timeinfo.tm_year + 1900);
-          break;
+      char date_buf[16] = "";
+      if (data->show_date_text) {
+        switch (data->date_format) {
+          case clock_tile::DATE_FORMAT_MDY:
+            snprintf(date_buf, sizeof(date_buf), "%02d/%02d/%04d",
+                     timeinfo.tm_mon + 1,
+                     timeinfo.tm_mday,
+                     timeinfo.tm_year + 1900);
+            break;
+          case clock_tile::DATE_FORMAT_YMD:
+            snprintf(date_buf, sizeof(date_buf), "%04d/%02d/%02d",
+                     timeinfo.tm_year + 1900,
+                     timeinfo.tm_mon + 1,
+                     timeinfo.tm_mday);
+            break;
+          default:
+            snprintf(date_buf, sizeof(date_buf), "%02d.%02d.%04d",
+                     timeinfo.tm_mday,
+                     timeinfo.tm_mon + 1,
+                     timeinfo.tm_year + 1900);
+            break;
+        }
+      }
+      const char* weekday =
+          data->show_weekday
+              ? clock_tile::weekday_name(timeinfo.tm_wday,
+                                         data->weekday_german ? "de" : "en")
+              : "";
+      char buf[40];
+      if (weekday[0] && date_buf[0]) {
+        snprintf(buf, sizeof(buf), "%s, %s", weekday, date_buf);
+      } else {
+        snprintf(buf, sizeof(buf), "%s", weekday[0] ? weekday : date_buf);
       }
       lv_label_set_text(data->date_label, buf);
+      data->date_shadows.set_text(buf);
     }
   }
 }
@@ -134,9 +158,80 @@ static void clock_timer_cb(lv_timer_t* timer) {
   update_clock_labels(data);
 }
 
+// Erzeugt eine Uhrzeile. Mit text_shadow liegen mehrere leicht versetzte
+// dunkle Duplikat-Labels hinter dem eigentlichen Text. Alles steckt in einem
+// layoutneutralen Container, den der Flex-Stack wie ein Label zentriert.
+static lv_obj_t* create_clock_line(lv_obj_t* stack,
+                                   const ClockWidgetConfig& config,
+                                   uint8_t raw_font_size, uint8_t fallback,
+                                   bool date_line,
+                                   ClockShadowSet* shadow_out) {
+  const uint8_t font_size = date_line
+                                ? normalize_clock_date_font_size(raw_font_size,
+                                                                 fallback)
+                                : normalize_clock_font_size(raw_font_size,
+                                                            fallback);
+  const lv_font_t* font = ui_font_for_size(font_size);
+  if (!config.text_shadow) {
+    lv_obj_t* label = lv_label_create(stack);
+    if (!label) return nullptr;
+    set_label_style(label, lv_color_white(), font);
+    if (config.fill_parent) lv_obj_set_width(label, LV_PCT(100));
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_text(label, "");
+    return label;
+  }
+
+  lv_obj_t* line = lv_obj_create(stack);
+  if (!line) return nullptr;
+  lv_obj_remove_style_all(line);
+  lv_obj_set_size(line, 1, font->line_height);
+  lv_obj_remove_flag(line, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_remove_flag(line, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_flag(line, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+
+  const struct {
+    int16_t x;
+    int16_t y;
+    lv_opa_t opa;
+  } copies[kClockShadowCopies] = {
+      {4, 4, static_cast<lv_opa_t>(34)},
+      {2, 4, static_cast<lv_opa_t>(14)},
+      {6, 4, static_cast<lv_opa_t>(14)},
+      {4, 2, static_cast<lv_opa_t>(14)},
+      {4, 6, static_cast<lv_opa_t>(14)},
+      {2, 2, static_cast<lv_opa_t>(8)},
+      {6, 2, static_cast<lv_opa_t>(8)},
+      {2, 6, static_cast<lv_opa_t>(8)},
+      {6, 6, static_cast<lv_opa_t>(8)},
+  };
+  for (uint8_t i = 0; i < kClockShadowCopies; ++i) {
+    lv_obj_t* shadow = lv_label_create(line);
+    if (!shadow) break;
+    set_label_style(shadow, lv_color_black(), font);
+    lv_obj_set_style_text_opa(shadow, copies[i].opa, 0);
+    lv_obj_set_pos(shadow, copies[i].x, copies[i].y);
+    lv_label_set_text(shadow, "");
+    if (shadow_out) shadow_out->labels[i] = shadow;
+  }
+  if (shadow_out) {
+    shadow_out->line = line;
+    shadow_out->font = font;
+  }
+  lv_obj_t* label = lv_label_create(line);
+  if (!label) return nullptr;  // line wird mit dem Stack aufgeraeumt
+  set_label_style(label, lv_color_white(), font);
+  lv_obj_set_pos(label, 0, 0);
+  lv_label_set_text(label, "");
+  return label;
+}
+
 lv_obj_t* create_clock_widget(lv_obj_t* parent,
                               const ClockWidgetConfig& config) {
-  if (!parent || (!config.show_time && !config.show_date)) return nullptr;
+  if (!parent ||
+      (!config.show_time && !config.show_date && !config.show_weekday)) {
+    return nullptr;
+  }
 
   lv_obj_t* stack = lv_obj_create(parent);
   if (!stack) return nullptr;
@@ -154,29 +249,23 @@ lv_obj_t* create_clock_widget(lv_obj_t* parent,
   lv_obj_set_style_bg_opa(stack, LV_OPA_TRANSP, 0);
   lv_obj_remove_flag(stack, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_remove_flag(stack, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_flag(stack, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
 
   lv_obj_t* time_label = nullptr;
+  ClockShadowSet time_shadows;
   if (config.show_time) {
-    time_label = lv_label_create(stack);
-    if (time_label) {
-      set_label_style(time_label, lv_color_white(),
-                      get_clock_font(config.time_font_size, 40));
-      if (config.fill_parent) lv_obj_set_width(time_label, LV_PCT(100));
-      lv_obj_set_style_text_align(time_label, LV_TEXT_ALIGN_CENTER, 0);
-      lv_label_set_text(time_label, "");
-    }
+    time_label =
+        create_clock_line(stack, config, config.time_font_size, 40, false,
+                          &time_shadows);
   }
 
+  // Die Datumszeile traegt auch einen alleinstehenden Wochentag.
   lv_obj_t* date_label = nullptr;
-  if (config.show_date) {
-    date_label = lv_label_create(stack);
-    if (date_label) {
-      set_label_style(date_label, lv_color_white(),
-                      get_clock_font(config.date_font_size, 20));
-      if (config.fill_parent) lv_obj_set_width(date_label, LV_PCT(100));
-      lv_obj_set_style_text_align(date_label, LV_TEXT_ALIGN_CENTER, 0);
-      lv_label_set_text(date_label, "");
-    }
+  ClockShadowSet date_shadows;
+  if (config.show_date || config.show_weekday) {
+    date_label =
+        create_clock_line(stack, config, config.date_font_size, 20, true,
+                          &date_shadows);
   }
 
   ClockTileData* data = new (std::nothrow) ClockTileData{};
@@ -187,8 +276,13 @@ lv_obj_t* create_clock_widget(lv_obj_t* parent,
   data->time_format = config.time_format;
   data->date_format = config.date_format;
   data->flags = (config.show_time ? 1 : 0) | (config.show_date ? 2 : 0);
+  data->show_date_text = config.show_date;
+  data->show_weekday = config.show_weekday;
+  data->weekday_german = config.weekday_german;
   data->time_label = time_label;
   data->date_label = date_label;
+  data->time_shadows = time_shadows;
+  data->date_shadows = date_shadows;
   update_clock_labels(data);
   data->timer = lv_timer_create(clock_timer_cb, 1000, data);
 
@@ -265,7 +359,8 @@ lv_obj_set_style_bg_grad_dir(card, LV_GRAD_DIR_NONE, LV_PART_MAIN | LV_STATE_PRE
   widget_config.show_date = show_date;
   widget_config.fill_parent = true;
   widget_config.time_font_size = normalize_clock_font_size(tile.key_code, 40);
-  widget_config.date_font_size = normalize_clock_font_size(tile.key_modifier, 20);
+  widget_config.date_font_size =
+      normalize_clock_date_font_size(tile.key_modifier, 20);
   widget_config.time_format = resolve_clock_time_format(tile);
   widget_config.date_format = resolve_clock_date_format(tile);
   lv_obj_t* stack = create_clock_widget(card, widget_config);

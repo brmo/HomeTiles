@@ -67,4 +67,18 @@ inline uint8_t resolve_date_format(int preferred_raw, int global_raw, const char
   return default_date_format_for_language(language_code);
 }
 
+// Wochentagsname zu tm_wday (0 = Sonntag). Die Geraete-Locale ist immer "C",
+// strftime %A waere daher immer englisch - deshalb eigene Tabellen.
+inline const char* weekday_name(int tm_wday, const char* language_code) {
+  static const char* const kWeekdaysDe[7] = {
+      "Sonntag", "Montag", "Dienstag", "Mittwoch",
+      "Donnerstag", "Freitag", "Samstag"};
+  static const char* const kWeekdaysEn[7] = {
+      "Sunday", "Monday", "Tuesday", "Wednesday",
+      "Thursday", "Friday", "Saturday"};
+  if (tm_wday < 0 || tm_wday > 6) return "";
+  return language_prefers_german_locale(language_code) ? kWeekdaysDe[tm_wday]
+                                                       : kWeekdaysEn[tm_wday];
+}
+
 }  // namespace clock_tile

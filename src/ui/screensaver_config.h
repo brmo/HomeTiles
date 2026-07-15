@@ -22,8 +22,11 @@ struct ScreensaverWallpaperConfig {
 struct ScreensaverConfigData {
   bool use_wallpapers = true;
   bool shuffle = false;
+  bool tile_shadow = false;
   bool show_time = true;
   bool show_date = true;
+  bool show_weekday = false;
+  bool clock_shadow = true;
   uint8_t time_format = 0;
   uint8_t date_format = 0;
   uint8_t time_font_size = 48;
