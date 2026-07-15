@@ -32,5 +32,6 @@ struct LightPopupInit {
 
 void show_light_popup(const LightPopupInit& init);
 void update_light_popup(const LightPopupInit& init);
+lv_color_t light_color_from_temperature_kelvin(uint16_t kelvin);
 void preload_light_popup();
 void hide_light_popup();

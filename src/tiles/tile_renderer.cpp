@@ -998,8 +998,7 @@ static bool is_color_mode(const String& mode) {
          mode == "rgb" ||
          mode == "xy" ||
          mode == "rgbw" ||
-         mode == "rgbww" ||
-         mode == "color_temp";
+         mode == "rgbww";
 }
 
 static bool is_switch_widget_style(const Tile& tile) {
@@ -1082,7 +1081,7 @@ static SwitchState parse_switch_payload(const char* payload) {
     if (kelvin > 9000) kelvin = 9000;
     out.has_color_temp = true;
     out.color_temp_kelvin = static_cast<uint16_t>(kelvin);
-    out.supports_temperature = true;
+    if (!out.supported_modes_known) out.supports_temperature = true;
   };
 
   auto set_color_temp_range = [&out](float raw_min_kelvin, float raw_max_kelvin) {
@@ -1099,7 +1098,7 @@ static SwitchState parse_switch_payload(const char* payload) {
     }
     out.min_color_temp_kelvin = static_cast<uint16_t>(min_kelvin);
     out.max_color_temp_kelvin = static_cast<uint16_t>(max_kelvin);
-    out.supports_temperature = true;
+    if (!out.supported_modes_known) out.supports_temperature = true;
   };
 
   auto try_extract_color_temp = [&set_color_temp_kelvin](const String& source) {
@@ -1168,34 +1167,44 @@ static SwitchState parse_switch_payload(const char* payload) {
                        list_contains_mode(supported_modes, "rgb") ||
                        list_contains_mode(supported_modes, "xy") ||
                        list_contains_mode(supported_modes, "rgbw") ||
-                       list_contains_mode(supported_modes, "rgbww") ||
-                       list_contains_mode(supported_modes, "color_temp");
+                       list_contains_mode(supported_modes, "rgbww");
       bool has_temperature = list_contains_mode(supported_modes, "color_temp");
       bool has_onoff = list_contains_mode(supported_modes, "onoff");
-      out.supports_brightness = has_brightness;
+      // In Home Assistant, every color and color-temperature mode is also
+      // dimmable. The explicit capability list is authoritative; converted
+      // state attributes such as rgb_color/hs_color are only current values.
+      out.supports_brightness = has_brightness || has_color || has_temperature;
       out.supports_color = has_color;
       out.supports_temperature = has_temperature;
-      out.supported_onoff_only = has_onoff && !has_brightness && !has_color;
+      out.supported_onoff_only =
+          has_onoff && !has_brightness && !has_color && !has_temperature;
     }
 
     String color_mode;
     if (extract_json_string_field(text, "color_mode", color_mode)) {
       String mode = color_mode;
       mode.toLowerCase();
-      if (mode == "brightness") {
-        out.supports_brightness = true;
-        out.supported_onoff_only = false;
-      }
-      if (mode == "color_temp") {
-        out.supports_temperature = true;
-      }
-      if (is_color_mode(mode)) {
-        out.supports_color = true;
-        out.supported_onoff_only = false;
-      }
-      if (mode == "onoff" && !out.supported_modes_known) {
-        out.supported_modes_known = true;
-        out.supported_onoff_only = true;
+      // color_mode describes the currently active mode, not the complete
+      // feature set. Use it only as a legacy fallback when HA did not provide
+      // supported_color_modes.
+      if (!out.supported_modes_known) {
+        if (mode == "brightness") {
+          out.supports_brightness = true;
+          out.supported_onoff_only = false;
+        }
+        if (mode == "color_temp") {
+          out.supports_temperature = true;
+          out.supports_brightness = true;
+          out.supported_onoff_only = false;
+        }
+        if (is_color_mode(mode)) {
+          out.supports_color = true;
+          out.supports_brightness = true;
+          out.supported_onoff_only = false;
+        }
+        if (mode == "onoff") {
+          out.supported_onoff_only = true;
+        }
       }
     }
 
@@ -1261,33 +1270,37 @@ static SwitchState parse_switch_payload(const char* payload) {
                          list_contains_mode(supported_modes, "rgb") ||
                          list_contains_mode(supported_modes, "xy") ||
                          list_contains_mode(supported_modes, "rgbw") ||
-                         list_contains_mode(supported_modes, "rgbww") ||
-                         list_contains_mode(supported_modes, "color_temp");
+                         list_contains_mode(supported_modes, "rgbww");
         bool has_temperature = list_contains_mode(supported_modes, "color_temp");
         bool has_onoff = list_contains_mode(supported_modes, "onoff");
-        out.supports_brightness = has_brightness;
+        out.supports_brightness = has_brightness || has_color || has_temperature;
         out.supports_color = has_color;
         out.supports_temperature = has_temperature;
-        out.supported_onoff_only = has_onoff && !has_brightness && !has_color;
+        out.supported_onoff_only =
+            has_onoff && !has_brightness && !has_color && !has_temperature;
       }
 
       if (extract_json_string_field(attributes, "color_mode", color_mode)) {
         String mode = color_mode;
         mode.toLowerCase();
-        if (mode == "brightness") {
-          out.supports_brightness = true;
-          out.supported_onoff_only = false;
-        }
-        if (mode == "color_temp") {
-          out.supports_temperature = true;
-        }
-        if (is_color_mode(mode)) {
-          out.supports_color = true;
-          out.supported_onoff_only = false;
-        }
-        if (mode == "onoff" && !out.supported_modes_known) {
-          out.supported_modes_known = true;
-          out.supported_onoff_only = true;
+        if (!out.supported_modes_known) {
+          if (mode == "brightness") {
+            out.supports_brightness = true;
+            out.supported_onoff_only = false;
+          }
+          if (mode == "color_temp") {
+            out.supports_temperature = true;
+            out.supports_brightness = true;
+            out.supported_onoff_only = false;
+          }
+          if (is_color_mode(mode)) {
+            out.supports_color = true;
+            out.supports_brightness = true;
+            out.supported_onoff_only = false;
+          }
+          if (mode == "onoff") {
+            out.supported_onoff_only = true;
+          }
         }
       }
 
@@ -1377,18 +1390,20 @@ static SwitchState parse_switch_payload(const char* payload) {
     out.is_on = true;
   }
 
-  if (out.has_color) {
-    out.supports_color = true;
-  }
-  if (out.has_hs) {
-    out.supports_color = true;
-  }
-  if (out.has_color_temp) {
-    out.supports_temperature = true;
-  }
-  if (out.has_brightness) {
-    out.supports_brightness = true;
-    out.supported_onoff_only = false;
+  // Legacy payloads did not always include supported_color_modes. Keep the
+  // old value-based detection only for those payloads. Modern HA payloads can
+  // contain converted rgb_color/hs_color values even for CCT-only lights.
+  if (!out.supported_modes_known) {
+    if (out.has_color || out.has_hs) {
+      out.supports_color = true;
+    }
+    if (out.has_color_temp) {
+      out.supports_temperature = true;
+    }
+    if (out.has_brightness || out.supports_color || out.supports_temperature) {
+      out.supports_brightness = true;
+      out.supported_onoff_only = false;
+    }
   }
   if (out.supports_color) {
     out.supports_brightness = true;
@@ -1417,8 +1432,10 @@ void update_switch_tile_state(GridType grid_type, uint8_t grid_index, const char
   if (!state.has_state &&
       !state.has_color &&
       !state.has_brightness &&
+      !state.has_color_temp &&
       !state.supports_color &&
-      !state.supports_brightness) {
+      !state.supports_brightness &&
+      !state.supports_temperature) {
     return;
   }
 
@@ -1428,6 +1445,7 @@ void update_switch_tile_state(GridType grid_type, uint8_t grid_index, const char
     state.supported_onoff_only = prev.supported_onoff_only;
     state.supports_color = prev.supports_color;
     state.supports_brightness = prev.supports_brightness;
+    state.supports_temperature = prev.supports_temperature;
   }
   if (!state.supported_modes_known) {
     if (!state.supports_color && prev.supports_color) {
@@ -1435,6 +1453,9 @@ void update_switch_tile_state(GridType grid_type, uint8_t grid_index, const char
     }
     if (!state.supports_brightness && prev.supports_brightness) {
       state.supports_brightness = true;
+    }
+    if (!state.supports_temperature && prev.supports_temperature) {
+      state.supports_temperature = true;
     }
   }
   if (state.supports_color) {
@@ -1456,6 +1477,7 @@ void update_switch_tile_state(GridType grid_type, uint8_t grid_index, const char
     if (state.supported_modes_known && state.supported_onoff_only) {
       state.supports_color = false;
       state.supports_brightness = false;
+      state.supports_temperature = false;
     }
   }
 
@@ -1477,7 +1499,16 @@ void update_switch_tile_state(GridType grid_type, uint8_t grid_index, const char
 
   uint32_t icon_color = kIconOff;
   if (!state.has_state || state.is_on) {
-    icon_color = state.has_color ? state.color : kIconOn;
+    if (state.supports_temperature && !state.supports_color && state.has_color_temp) {
+      // Reine CCT-Leuchten liefern keine echte RGB-Faehigkeit. Ihre Kachel
+      // verwendet deshalb dieselbe Kelvin-Farbe wie das Popup statt der
+      // festen gelben Standardfarbe fuer einfache Ein/Aus-Leuchten.
+      icon_color = lv_color_to_u32(
+                       light_color_from_temperature_kelvin(state.color_temp_kelvin)) &
+                   0xFFFFFF;
+    } else {
+      icon_color = state.has_color ? state.color : kIconOn;
+    }
   }
 
   uint32_t label_color = use_switch_widget ? kIconNeutral : icon_color;

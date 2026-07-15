@@ -1593,6 +1593,10 @@ static void on_overlay_delete(lv_event_t* e) {
 
 }  // namespace
 
+lv_color_t light_color_from_temperature_kelvin(uint16_t kelvin) {
+  return color_from_temperature_kelvin(kelvin);
+}
+
 void show_light_popup(const LightPopupInit& init) {
   if (!init.entity_id.length()) return;
   hide_sensor_popup();
