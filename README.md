@@ -49,7 +49,21 @@ the whole chain: MQTT broker, bridge integration, and connecting the display.
 - [FAQ & Troubleshooting](docs/faq.md) — common questions and known quirks
 - [BOARD_SETTINGS.md](BOARD_SETTINGS.md) — Arduino IDE build settings per device
 
-## Highlights Of v0.5.1
+## Highlights Of v0.5.3
+
+- Correct controls for CCT-only lights: brightness and color temperature remain
+  available while the unsupported color palette stays hidden
+- CCT-only light tiles now reflect the selected warm-to-cool color temperature
+  instead of always using the generic yellow light color
+- Energy and history requests no longer get stuck behind throttled MQTT
+  subscriptions on ESP32-P4 devices
+- Energy data requests now retry in a controlled way when a response is delayed
+  or a queue operation cannot be completed
+
+See the [v0.5.3 release notes](docs/releases/v0.5.3.md) for details.
+
+<details>
+<summary>Highlights of the v0.5.0 and v0.5.1 releases</summary>
 
 - Optional subtle tile borders across the complete normal dashboard, controlled globally under **Settings → Display**
 - Cleaner web-admin checkboxes and clearer **Slideshow / Images** terminology in the screensaver editor
@@ -62,6 +76,8 @@ the whole chain: MQTT broker, bridge integration, and connecting the display.
 - Energy tiles now show aggregated Energy Dashboard values in the web preview as well as on the device
 
 See the [screensaver setup guide](docs/screensaver.md) for the required `/images` folder and all controls.
+
+</details>
 
 ### Screensaver
 
