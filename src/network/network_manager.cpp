@@ -28,13 +28,6 @@ static constexpr uint32_t kMqttPostConnectQuietMs = 3000;
 static constexpr uint8_t kMqttOutboundDrainNormal = 12;
 static constexpr uint8_t kMqttOutboundDrainStorm = 1;
 static constexpr size_t kMqttMinDmaLargestBeforeTx = 8 * 1024;
-// Der esp-hosted-RX-Pfad fordert pro Frame rund 4,5 KB zusammenhaengenden
-// internen DMA-Speicher an und assertet bei nullptr. 16 KB lassen selbst nach
-// einer Frame-Allokation noch deutlich Reserve. 24 KB waren mit dem dauerhaft
-// benoetigten 24-KB-Media-Puffer auf dem 8-Zoll-P4 jedoch unerreichbar
-// (gemessen: stabil 18 KB) und blockierten dadurch die gesamte Queue. Die
-// zusaetzliche 50-ms-Abstandsregel unten verhindert weiterhin RX-Bursts.
-static constexpr size_t kMqttMinDmaLargestBeforeControl = 16 * 1024;
 // Subscribe/Unsubscribe kann sofort ein retained Paket ausloesen. Auf dem P4
 // bekommt der SDIO-RX-Task zwischen diesen Kontrollpaketen Zeit, das Paket bis
 // in die MQTT-Inbound-Queue weiterzureichen und seinen DMA-Puffer freizugeben.
@@ -596,11 +589,6 @@ void Tab5NetworkManager::drainOutboundQueues(uint8_t max_commands) {
       g_mqtt_control_queue &&
       xQueuePeek(g_mqtt_control_queue, &cmd, 0) == pdTRUE;
   if (control_waiting && !control_quiet) {
-#if defined(CONFIG_IDF_TARGET_ESP32P4)
-    if (dma_largest < kMqttMinDmaLargestBeforeControl) {
-      log_dma_wait("Control", dma_largest);
-    } else
-#endif
     if (xQueueReceive(g_mqtt_control_queue, &cmd, 0) == pdTRUE) {
       bool ok = false;
       const char* verb = "control";
@@ -639,7 +627,6 @@ void Tab5NetworkManager::drainOutboundQueues(uint8_t max_commands) {
 
     // Der grosse Puffer wird erst jetzt angelegt, nachdem das Kommando einen
     // echten Queue-Platz hatte und unmittelbar vor dem Versand steht.
-    bool grew_large_buffer = false;
     if (cmd->large_buffer_hold_ms > 0 && mqtt_buffer_size < kMqttBufferLarge) {
       const bool startup_storm =
           mqtt_connected_at != 0 &&
@@ -655,12 +642,12 @@ void Tab5NetworkManager::drainOutboundQueues(uint8_t max_commands) {
       }
       if (!setMqttBufferSize(kMqttBufferLarge, "queued-publish")) {
         ++g_mqtt_outbound_dropped;
-        Serial.printf("[MQTT] Publish verworfen: Large-Buffer nicht verfuegbar (#%u)\n",
-                      static_cast<unsigned>(g_mqtt_outbound_dropped));
+        Serial.printf(
+            "[MQTT] Publish verworfen: Large-Buffer nicht verfuegbar (#%u)\n",
+            static_cast<unsigned>(g_mqtt_outbound_dropped));
         heap_caps_free(cmd);
         return;
       }
-      grew_large_buffer = true;
     }
 
 #if defined(CONFIG_IDF_TARGET_ESP32P4)
@@ -668,17 +655,11 @@ void Tab5NetworkManager::drainOutboundQueues(uint8_t max_commands) {
         heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
     if (dma_largest < kMqttMinDmaLargestBeforeTx) {
       log_dma_wait("Publish", dma_largest);
-      if (grew_large_buffer) {
-        // Ein Grow, der selbst die Publish-Reserve unterschreitet, darf kein
-        // neues Shrink/Grow-Livelock erzeugen. Zurueckrollen und den Request
-        // vom Energy-/History-Lifecycle spaeter neu anfordern lassen.
-        mqtt_large_until = 0;
-        setMqttBufferSize(mqttNormalBufferSize(), "large-dma-rollback");
-        heap_caps_free(cmd);
-        ++g_mqtt_outbound_dropped;
-        Serial.printf("[MQTT] Publish verworfen: DMA-Reserve nach Buffer-Grow (#%u)\n",
-                      static_cast<unsigned>(g_mqtt_outbound_dropped));
-      } else if (xQueueSendToFront(g_mqtt_publish_queue, &cmd, 0) != pdTRUE) {
+      // Der MQTT-Paketpuffer liegt in PSRAM und ist nicht die Ursache einer
+      // niedrigen DMA-Reserve. Das Kommando behalten und nach Erholung der
+      // Transportpuffer erneut versuchen, statt durch Shrink/Grow zu
+      // fragmentieren und History-/Energy-Requests zu verlieren.
+      if (xQueueSendToFront(g_mqtt_publish_queue, &cmd, 0) != pdTRUE) {
         heap_caps_free(cmd);
         ++g_mqtt_outbound_dropped;
         Serial.printf("[MQTT] Publish-Requeue fehlgeschlagen (#%u)\n",
@@ -865,10 +846,11 @@ bool Tab5NetworkManager::setMqttBufferSize(uint16_t size, const char* reason) {
   }
 
   mqtt_buffer_size = mqtt_client.getBufferSize();
-  Serial.printf("[MQTT] Buffer: %u -> %u bytes (%s)\n",
+  Serial.printf("[MQTT] Buffer: %u -> %u bytes (%s, %s)\n",
                 static_cast<unsigned>(before),
                 static_cast<unsigned>(mqtt_buffer_size),
-                reason ? reason : "?");
+                reason ? reason : "?",
+                mqtt_client.bufferInExternalRam() ? "PSRAM" : "internal");
   return true;
 }
 
@@ -967,9 +949,11 @@ const char* Tab5NetworkManager::getBridgeIconsTopic() const {
 
 // ========== mDNS-Advertising ==========
 // Rein additiv: erlaubt der HA-Bridge (Zeroconf), das Geraet zu finden BEVOR
-// es MQTT-Zugangsdaten hat. Laeuft ausschliesslich, waehrend WiFi verbunden
-// UND keine MQTT-Verbindung steht (siehe update()) -- ein bereits gepairtes,
-// verbundenes Geraet muss nicht laenger auffindbar sein. Wird immer erst NACH
+// es MQTT-Zugangsdaten hat. Laeuft ausschliesslich, solange noch keine
+// MQTT-Konfiguration vorhanden ist (siehe update()). Ein kurzer Broker-Ausfall
+// darf mDNS nicht staendig abbauen und neu anlegen: ESP-IDF gibt die dafuer
+// reservierten internen/DMA-Bloecke auf P4 nicht in jedem Zyklus vollstaendig
+// zurueck. Wird immer erst NACH
 // webAdminServer.start() versucht -- ein haengender/fehlschlagender
 // MDNS.begin() darf die admin-UI, die schon heute funktioniert, nicht
 // verzoegern.
@@ -1065,13 +1049,10 @@ void Tab5NetworkManager::update() {
       webAdminServer.start();
     }
 
-    // mDNS: nur an, solange (noch) KEINE MQTT-Verbindung steht -- ein bereits
-    // gepairtes, verbundenes Geraet muss nicht laenger auffindbar sein (spart
-    // das bisschen RAM, haelt "Discovered"-Karten in HA sauber). Faellt die
-    // Verbindung spaeter weg (Broker offline etc.), wird wieder advertised.
-    // Beide Aufrufe sind ueber mdns_active geguardet und im bereits erreichten
-    // Zielzustand billige No-Ops -- unproblematisch, das jeden Tick zu pruefen.
-    if (mqtt_enabled && isMqttConnected()) {
+    // mDNS dient nur dem erstmaligen Pairing. Sobald MQTT konfiguriert ist,
+    // bleibt es auch bei Broker-Reconnects aus. Das verhindert einen
+    // begin/end-Zyklus samt DMA-Fragmentierung bei jeder kurzen Unterbrechung.
+    if (configManager.hasMqttConfig()) {
       stopMdns();
     } else if (webAdminServer.isRunning()) {
       startMdns();

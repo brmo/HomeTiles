@@ -141,6 +141,7 @@ public:
 
    boolean setBufferSize(uint16_t size);
    uint16_t getBufferSize();
+   boolean bufferInExternalRam();
 
    boolean connect(const char* id);
    boolean connect(const char* id, const char* user, const char* pass);

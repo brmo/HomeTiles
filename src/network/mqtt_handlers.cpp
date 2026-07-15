@@ -1549,11 +1549,15 @@ void mqttSubscribeTopics() {
   for (const auto& route : kRoutes) {
     const char* tpc = mqttTopics.topic(route.key);
     if (!tpc || !*tpc) continue;
-    networkManager.mqttEnqueueSubscribe(tpc);
-    Serial.printf("MQTT: subscribe queued %s\n", tpc);
+    if (networkManager.mqttEnqueueSubscribe(tpc)) {
+      Serial.printf("MQTT: subscribe queued %s\n", tpc);
+    }
   }
 
-  mqttReloadDynamicSlots();
+  // Nach einem MQTT-(Re)connect existieren brokerseitig noch keine
+  // Subscriptions. Die bereits aufgebauten Routen deshalb genau einmal alle
+  // anmelden, aber nicht vorher sinnlos als Unsubscribe einreihen.
+  mqttReloadDynamicSlots(true);
 }
 
 // ========== Home Snapshot publizieren ==========
@@ -1966,25 +1970,21 @@ void mqttPublishDiscovery() {
   Serial.println("Legacy Home Assistant discovery cleared");
 }
 
-void mqttReloadDynamicSlots() {
+static bool topicListContains(const std::vector<String>& topics,
+                              const String& needle) {
+  return std::find(topics.begin(), topics.end(), needle) != topics.end();
+}
+
+void mqttReloadDynamicSlots(bool subscribe_all) {
   const bool mqtt_online = networkManager.isMqttConnected();
-  uint32_t t_unsub0 = millis();
-  if (mqtt_online) {
-    // (Un)subscribe geht nur noch als Kommando in die Outbound-Queue -- die
-    // eigentliche Netzwerk-I/O macht der MQTT-Worker auf dem 2. Core. Die
-    // LVGL-Pumps zwischen den Eintraegen bleiben trotzdem: das Enqueue selbst
-    // ist billig, aber die Schleifen laufen weiterhin synchron im
-    // Bridge-Reload auf dem Loop-Task.
-    for (const auto& route : g_dynamic_routes) {
-      networkManager.mqttEnqueueUnsubscribe(route.topic.c_str());
-      lvglServiceDuringBlockingWork();
-    }
-    for (const auto& route : g_dynamic_weather_routes) {
-      networkManager.mqttEnqueueUnsubscribe(route.topic.c_str());
-      lvglServiceDuringBlockingWork();
-    }
+  std::vector<String> old_topics;
+  old_topics.reserve(g_dynamic_routes.size() + g_dynamic_weather_routes.size());
+  for (const auto& route : g_dynamic_routes) {
+    if (!topicListContains(old_topics, route.topic)) old_topics.push_back(route.topic);
   }
-  Serial.printf("[Bridge] mqttReloadDynamicSlots unsubscribe: %u ms\n", (unsigned)(millis() - t_unsub0));
+  for (const auto& route : g_dynamic_weather_routes) {
+    if (!topicListContains(old_topics, route.topic)) old_topics.push_back(route.topic);
+  }
 
   uint32_t t_sensor0 = millis();
   rebuildDynamicRoutes(g_dynamic_routes);
@@ -1993,20 +1993,46 @@ void mqttReloadDynamicSlots() {
   rebuildDynamicWeatherRoutes(g_dynamic_weather_routes);
   Serial.printf("[Bridge] rebuildDynamicWeatherRoutes: %u ms\n", (unsigned)(millis() - t_weather0));
 
-  uint32_t t_sub0 = millis();
+  std::vector<String> new_topics;
+  new_topics.reserve(g_dynamic_routes.size() + g_dynamic_weather_routes.size());
+  for (const auto& route : g_dynamic_routes) {
+    if (!topicListContains(new_topics, route.topic)) new_topics.push_back(route.topic);
+  }
+  for (const auto& route : g_dynamic_weather_routes) {
+    if (!topicListContains(new_topics, route.topic)) new_topics.push_back(route.topic);
+  }
+
+  uint32_t t_control0 = millis();
+  size_t unsubscribe_count = 0;
+  size_t subscribe_count = 0;
   if (mqtt_online) {
-    for (const auto& route : g_dynamic_routes) {
-      networkManager.mqttEnqueueSubscribe(route.topic.c_str());
-      Serial.printf("MQTT: subscribe queued %s\n", route.topic.c_str());
-      lvglServiceDuringBlockingWork();
+    // Bei einem normalen Bridge-Refresh nur die echte Differenz anwenden.
+    // Zuvor wurden jedes Mal alle alten Topics ab- und alle neuen wieder
+    // angemeldet. Zwei schnelle Refreshes konnten so mehr als 128 Control-
+    // Kommandos erzeugen und die Queue dauerhaft ueberfuellen.
+    if (!subscribe_all) {
+      for (const auto& topic : old_topics) {
+        if (topicListContains(new_topics, topic)) continue;
+        if (networkManager.mqttEnqueueUnsubscribe(topic.c_str())) {
+          ++unsubscribe_count;
+        }
+        lvglServiceDuringBlockingWork();
+      }
     }
-    for (const auto& route : g_dynamic_weather_routes) {
-      networkManager.mqttEnqueueSubscribe(route.topic.c_str());
-      Serial.printf("MQTT: subscribe queued %s\n", route.topic.c_str());
+    for (const auto& topic : new_topics) {
+      if (!subscribe_all && topicListContains(old_topics, topic)) continue;
+      if (networkManager.mqttEnqueueSubscribe(topic.c_str())) {
+        ++subscribe_count;
+        Serial.printf("MQTT: subscribe queued %s\n", topic.c_str());
+      }
       lvglServiceDuringBlockingWork();
     }
   }
-  Serial.printf("[Bridge] mqttReloadDynamicSlots subscribe: %u ms\n", (unsigned)(millis() - t_sub0));
+  Serial.printf("[Bridge] mqttReloadDynamicSlots: -%u +%u Topics in %u ms%s\n",
+                static_cast<unsigned>(unsubscribe_count),
+                static_cast<unsigned>(subscribe_count),
+                static_cast<unsigned>(millis() - t_control0),
+                subscribe_all ? " (reconnect)" : "");
 }
 
 void mqttRequestDynamicSlotsReload(uint32_t quiet_ms) {

@@ -7,12 +7,9 @@ WebAdminServer webAdminServer;
 static volatile uint32_t g_web_admin_last_activity_ms = 0;
 
 WebAdminServer::WebAdminServer()
-    : server(80),
-      running(false),
-      github_check_callback(nullptr),
-      github_install_callback(nullptr),
-      last_github_check(),
-      github_check_valid(false),
+    : server(80), running(false), routes_registered(false),
+      github_check_callback(nullptr), github_install_callback(nullptr),
+      last_github_check(), github_check_valid(false),
       github_install_requested(false) {}
 
 void WebAdminServer::setGithubUpdateCallbacks(web_github_check_callback_t check_cb,
@@ -46,59 +43,93 @@ bool WebAdminServer::start() {
     return false;
   }
 
-  server.on("/", [this]() { this->handleRoot(); });
-  server.on("/assets/inter-4.1-regular.woff2", HTTP_GET,
-            [this]() { sendWebFontRegular(this->server); });
-  server.on("/assets/inter-4.1-semibold.woff2", HTTP_GET,
-            [this]() { sendWebFontSemibold(this->server); });
-  server.on("/mqtt", HTTP_POST, [this]() { this->handleSaveMQTT(); });
-  server.on("/status", [this]() { this->handleStatus(); });
-  server.on("/bridge_refresh", HTTP_POST, [this]() { this->handleBridgeRefresh(); });
-  server.on("/bridge", HTTP_POST, [this]() { this->handleSaveBridge(); });
-  server.on("/game_controls", HTTP_POST, [this]() { this->handleSaveGameControls(); });
-  server.on("/restart", HTTP_POST, [this]() { this->handleRestart(); });
-  server.on("/api/status", [this]() { this->handleStatus(); });
-  server.on("/api/tiles", HTTP_GET, [this]() { this->handleGetTiles(); });
-  server.on("/api/tiles", HTTP_POST, [this]() { this->handleSaveTiles(); });
-  server.on("/api/tiles/reorder", HTTP_POST, [this]() { this->handleReorderTiles(); });
-  server.on("/api/folders", HTTP_GET, [this]() { this->handleGetFolders(); });
-  server.on("/api/folders/tab", HTTP_GET, [this]() { this->handleGetFolderTab(); });
-  server.on("/api/folders/delete", HTTP_POST, [this]() { this->handleDeleteFolder(); });
-  server.on("/api/sensor_values", HTTP_GET, [this]() { this->handleGetSensorValues(); });
-  server.on("/api/entity_options", HTTP_GET, [this]() { this->handleGetEntityOptions(); });
-  server.on("/api/screensaver", HTTP_GET, [this]() { this->handleGetScreensaver(); });
-  server.on("/api/screensaver", HTTP_POST, [this]() { this->handleSaveScreensaver(); });
-  server.on("/api/display/tile-borders", HTTP_POST,
-            [this]() { this->handleSaveTileBorders(); });
-  server.on("/api/screensaver/wallpaper", HTTP_GET,
-            [this]() { this->handleGetScreensaverWallpaper(); });
-  server.on("/api/sd_images", HTTP_GET, [this]() { this->handleGetSdImages(); });
-  server.on("/api/sd_icons", HTTP_GET, [this]() { this->handleGetSdIcons(); });
-  server.on("/api/screenshot", HTTP_POST, [this]() { this->handleCreateScreenshot(); });
-  server.on("/api/screenshot/download", HTTP_GET, [this]() { this->handleDownloadScreenshot(); });
-  server.on("/api/ota/prepare", HTTP_POST, [this]() { this->handlePrepareOtaUpload(); });
-  server.on("/api/ota/upload", HTTP_POST,
-    [this]() { this->handleOtaUploadDone(); },
-    [this]() { this->handleOtaUpdate(); });
-  server.on("/api/ota/install", HTTP_POST, [this]() { this->handleStartOtaInstall(); });
-  server.on("/api/ota/status", HTTP_GET, [this]() { this->handleGetOtaStatus(); });
-  server.on("/api/ota/github/check", HTTP_POST, [this]() { this->handleGithubUpdateCheck(); });
-  server.on("/api/ota/github/install", HTTP_POST, [this]() { this->handleGithubUpdateInstall(); });
-  server.on("/api/ota/github/status", HTTP_GET, [this]() { this->handleGetGithubUpdateStatus(); });
-  server.on("/api/upload_icon", HTTP_POST,
-    [this]() { this->handleUploadIconDone(); },
-    [this]() { this->handleUploadIcon(); });
-  server.on("/api/files/list", HTTP_GET, [this]() { this->handleFileManagerList(); });
-  server.on("/api/files/download", HTTP_GET, [this]() { this->handleFileManagerDownload(); });
-  server.on("/api/files/delete", HTTP_POST, [this]() { this->handleFileManagerDelete(); });
-  server.on("/api/files/rename", HTTP_POST, [this]() { this->handleFileManagerRename(); });
-  server.on("/api/files/mkdir", HTTP_POST, [this]() { this->handleFileManagerMkdir(); });
-  server.on("/api/files/upload", HTTP_POST,
-    [this]() { this->handleFileManagerUploadDone(); },
-    [this]() { this->handleFileManagerUpload(); });
-  server.on("/api/coredump", HTTP_GET, [this]() { this->handleCoreDumpDownload(); });
-  server.on("/api/coredump/erase", HTTP_POST, [this]() { this->handleCoreDumpErase(); });
-  server.on("/api/crashlog", HTTP_GET, [this]() { this->handleCrashLogDownload(); });
+  // WebServer::stop() behaelt die Handler-Liste. Ohne diesen Guard wuerde
+  // jeder WLAN/AP-Zyklus alle Admin-Routen erneut im internen Heap anlegen.
+  if (!routes_registered) {
+    server.on("/", [this]() { this->handleRoot(); });
+    server.on("/assets/inter-4.1-regular.woff2", HTTP_GET,
+              [this]() { sendWebFontRegular(this->server); });
+    server.on("/assets/inter-4.1-semibold.woff2", HTTP_GET,
+              [this]() { sendWebFontSemibold(this->server); });
+    server.on("/mqtt", HTTP_POST, [this]() { this->handleSaveMQTT(); });
+    server.on("/status", [this]() { this->handleStatus(); });
+    server.on("/bridge_refresh", HTTP_POST,
+              [this]() { this->handleBridgeRefresh(); });
+    server.on("/bridge", HTTP_POST, [this]() { this->handleSaveBridge(); });
+    server.on("/game_controls", HTTP_POST,
+              [this]() { this->handleSaveGameControls(); });
+    server.on("/restart", HTTP_POST, [this]() { this->handleRestart(); });
+    server.on("/api/status", [this]() { this->handleStatus(); });
+    server.on("/api/tiles", HTTP_GET, [this]() { this->handleGetTiles(); });
+    server.on("/api/tiles", HTTP_POST, [this]() { this->handleSaveTiles(); });
+    server.on("/api/tiles/reorder", HTTP_POST,
+              [this]() { this->handleReorderTiles(); });
+    server.on("/api/folders", HTTP_GET, [this]() { this->handleGetFolders(); });
+    server.on("/api/folders/tab", HTTP_GET,
+              [this]() { this->handleGetFolderTab(); });
+    server.on("/api/folders/delete", HTTP_POST,
+              [this]() { this->handleDeleteFolder(); });
+    server.on("/api/sensor_values", HTTP_GET,
+              [this]() { this->handleGetSensorValues(); });
+    server.on("/api/entity_options", HTTP_GET,
+              [this]() { this->handleGetEntityOptions(); });
+    server.on("/api/screensaver", HTTP_GET,
+              [this]() { this->handleGetScreensaver(); });
+    server.on("/api/screensaver", HTTP_POST,
+              [this]() { this->handleSaveScreensaver(); });
+    server.on("/api/display/tile-borders", HTTP_POST,
+              [this]() { this->handleSaveTileBorders(); });
+    server.on("/api/screensaver/wallpaper", HTTP_GET,
+              [this]() { this->handleGetScreensaverWallpaper(); });
+    server.on("/api/sd_images", HTTP_GET,
+              [this]() { this->handleGetSdImages(); });
+    server.on("/api/sd_icons", HTTP_GET,
+              [this]() { this->handleGetSdIcons(); });
+    server.on("/api/screenshot", HTTP_POST,
+              [this]() { this->handleCreateScreenshot(); });
+    server.on("/api/screenshot/download", HTTP_GET,
+              [this]() { this->handleDownloadScreenshot(); });
+    server.on("/api/ota/prepare", HTTP_POST,
+              [this]() { this->handlePrepareOtaUpload(); });
+    server.on(
+        "/api/ota/upload", HTTP_POST, [this]() { this->handleOtaUploadDone(); },
+        [this]() { this->handleOtaUpdate(); });
+    server.on("/api/ota/install", HTTP_POST,
+              [this]() { this->handleStartOtaInstall(); });
+    server.on("/api/ota/status", HTTP_GET,
+              [this]() { this->handleGetOtaStatus(); });
+    server.on("/api/ota/github/check", HTTP_POST,
+              [this]() { this->handleGithubUpdateCheck(); });
+    server.on("/api/ota/github/install", HTTP_POST,
+              [this]() { this->handleGithubUpdateInstall(); });
+    server.on("/api/ota/github/status", HTTP_GET,
+              [this]() { this->handleGetGithubUpdateStatus(); });
+    server.on(
+        "/api/upload_icon", HTTP_POST,
+        [this]() { this->handleUploadIconDone(); },
+        [this]() { this->handleUploadIcon(); });
+    server.on("/api/files/list", HTTP_GET,
+              [this]() { this->handleFileManagerList(); });
+    server.on("/api/files/download", HTTP_GET,
+              [this]() { this->handleFileManagerDownload(); });
+    server.on("/api/files/delete", HTTP_POST,
+              [this]() { this->handleFileManagerDelete(); });
+    server.on("/api/files/rename", HTTP_POST,
+              [this]() { this->handleFileManagerRename(); });
+    server.on("/api/files/mkdir", HTTP_POST,
+              [this]() { this->handleFileManagerMkdir(); });
+    server.on(
+        "/api/files/upload", HTTP_POST,
+        [this]() { this->handleFileManagerUploadDone(); },
+        [this]() { this->handleFileManagerUpload(); });
+    server.on("/api/coredump", HTTP_GET,
+              [this]() { this->handleCoreDumpDownload(); });
+    server.on("/api/coredump/erase", HTTP_POST,
+              [this]() { this->handleCoreDumpErase(); });
+    server.on("/api/crashlog", HTTP_GET,
+              [this]() { this->handleCrashLogDownload(); });
+    routes_registered = true;
+  }
 
   server.begin();
   running = true;

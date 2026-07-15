@@ -36,7 +36,7 @@ bool mqttPublishEnergyRequest(const char* period = "day");
 void mqttPublishHomeSnapshot();
 void mqttPublishDeviceSettings();
 void mqttServiceLocalSensors();
-void mqttReloadDynamicSlots();
+void mqttReloadDynamicSlots(bool subscribe_all = false);
 void mqttRequestDynamicSlotsReload(uint32_t quiet_ms = 3000);
 void mqttServiceDynamicSlotsReload();
 // Boot-Scan fuer setup(): Media-Tile in der gespeicherten Config? Ergebnis

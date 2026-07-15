@@ -95,6 +95,7 @@ public:
 
 private:
   bool running;
+  bool routes_registered;
   web_github_check_callback_t github_check_callback;
   web_github_install_callback_t github_install_callback;
   GithubUpdate::CheckResult last_github_check;

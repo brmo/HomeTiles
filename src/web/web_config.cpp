@@ -39,15 +39,14 @@ const char* webConfigApPassword() {
 }
 
 static void restoreStaModeAfterAp() {
-#if defined(DEVICE_M5STACKS_TAB5)
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
   WiFi.persistent(false);
-#endif
 }
 
-WebConfigServer::WebConfigServer() : server(80), running(false), config_saved(false) {
-}
+WebConfigServer::WebConfigServer()
+    : server(80), running(false), config_saved(false),
+      routes_registered(false) {}
 
 bool WebConfigServer::start() {
   if (running) {
@@ -57,7 +56,6 @@ bool WebConfigServer::start() {
 
   Serial.println("\n🌐 Starte WiFi-Konfigurationsmodus...");
 
-  // Stoppe bisherige WiFi-Verbindung (hilft beim Captive Portal)
   // Stoppe bisherige WiFi-Verbindung (hilft beim Captive Portal)
   WiFi.disconnect();
   delay(100);
@@ -92,25 +90,30 @@ bool WebConfigServer::start() {
     Serial.println("⚠️ DNS Server konnte nicht gestartet werden!");
   }
 
-  // Webserver Routes
-  server.on("/", [this]() { this->handleRoot(); });
-  server.on("/assets/inter-4.1-regular.woff2", HTTP_GET,
-            [this]() { sendWebFontRegular(this->server); });
-  server.on("/assets/inter-4.1-semibold.woff2", HTTP_GET,
-            [this]() { sendWebFontSemibold(this->server); });
-  auto captive_handler = [this]() { this->handleCaptivePortal(); };
-  server.on("/generate_204", captive_handler);
-  server.on("/gen_204", captive_handler);
-  server.on("/hotspot-detect.html", captive_handler);
-  server.on("/library/test/success.html", captive_handler);
-  server.on("/success.txt", captive_handler);
-  server.on("/ncsi.txt", captive_handler);
-  server.on("/connecttest.txt", captive_handler);
-  server.on("/redirect", captive_handler);
-  server.on("/wpad.dat", captive_handler);
-  server.on("/favicon.ico", captive_handler);
-  server.on("/save", HTTP_POST, [this]() { this->handleSave(); });
-  server.onNotFound([this]() { this->handleNotFound(); });
+  // WebServer::stop() schliesst nur den Socket und behaelt alle Handler.
+  // Daher die Routen pro Objekt genau einmal registrieren; andernfalls
+  // kostet jeder AP-Start dauerhaft internen Heap.
+  if (!routes_registered) {
+    server.on("/", [this]() { this->handleRoot(); });
+    server.on("/assets/inter-4.1-regular.woff2", HTTP_GET,
+              [this]() { sendWebFontRegular(this->server); });
+    server.on("/assets/inter-4.1-semibold.woff2", HTTP_GET,
+              [this]() { sendWebFontSemibold(this->server); });
+    auto captive_handler = [this]() { this->handleCaptivePortal(); };
+    server.on("/generate_204", captive_handler);
+    server.on("/gen_204", captive_handler);
+    server.on("/hotspot-detect.html", captive_handler);
+    server.on("/library/test/success.html", captive_handler);
+    server.on("/success.txt", captive_handler);
+    server.on("/ncsi.txt", captive_handler);
+    server.on("/connecttest.txt", captive_handler);
+    server.on("/redirect", captive_handler);
+    server.on("/wpad.dat", captive_handler);
+    server.on("/favicon.ico", captive_handler);
+    server.on("/save", HTTP_POST, [this]() { this->handleSave(); });
+    server.onNotFound([this]() { this->handleNotFound(); });
+    routes_registered = true;
+  }
 
   server.begin();
   Serial.println("✓ Webserver gestartet auf http://192.168.4.1");
@@ -122,7 +125,8 @@ bool WebConfigServer::start() {
 }
 
 void WebConfigServer::stop() {
-  if (!running) return;
+  if (!running)
+    return;
 
   Serial.println("🛑 Stoppe WebConfigServer...");
 
@@ -136,10 +140,11 @@ void WebConfigServer::stop() {
   restoreStaModeAfterAp();
   Serial.println("  ✓ AP getrennt");
 
-  Serial.println("  ✓ WiFi-Modus: AP/STA");
+  Serial.println("  ✓ WiFi-Modus: STA");
 
   running = false;
-  Serial.println("✓ WebConfigServer gestoppt - bereit für normale WiFi-Verbindung");
+  Serial.println(
+      "✓ WebConfigServer gestoppt - bereit für normale WiFi-Verbindung");
 }
 
 void WebConfigServer::handle() {

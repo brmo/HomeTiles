@@ -9,6 +9,39 @@
 #include "Arduino.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#if defined(ARDUINO_ARCH_ESP32)
+#include <esp_heap_caps.h>
+#include <esp_memory_utils.h>
+#endif
+
+namespace {
+
+void* mqttPacketBufferAlloc(size_t size) {
+#if defined(ARDUINO_ARCH_ESP32)
+    // Der MQTT-Paketpuffer muss nicht DMA-faehig sein. Auf ESP32-P4 nimmt ein
+    // interner 24/32-KB-Puffer dem ESP-Hosted-SDIO-Treiber genau den knappen
+    // zusammenhaengenden DMA-Speicher weg. PSRAM ist fuer die TCP-Kopie und
+    // das anschliessende MQTT-Parsen ausreichend schnell.
+    void* external = heap_caps_malloc(
+        size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (external != NULL) return external;
+#endif
+    return malloc(size);
+}
+
+void* mqttPacketBufferRealloc(void* current, size_t size) {
+#if defined(ARDUINO_ARCH_ESP32)
+    // heap_caps_realloc darf einen bisherigen internen Block in den PSRAM
+    // verschieben. Das ist wichtig, weil der globale PubSubClient-Konstruktor
+    // bereits vor der PSRAM-Initialisierung seinen kleinen Startpuffer anlegt.
+    void* external = heap_caps_realloc(
+        current, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (external != NULL) return external;
+#endif
+    return realloc(current, size);
+}
+
+}  // namespace
 
 PubSubClient::PubSubClient() {
     this->_state = MQTT_DISCONNECTED;
@@ -758,9 +791,10 @@ boolean PubSubClient::setBufferSize(uint16_t size) {
         return false;
     }
     if (this->bufferSize == 0) {
-        this->buffer = (uint8_t*)malloc(size);
+        this->buffer = (uint8_t*)mqttPacketBufferAlloc(size);
     } else {
-        uint8_t* newBuffer = (uint8_t*)realloc(this->buffer, size);
+        uint8_t* newBuffer = (uint8_t*)mqttPacketBufferRealloc(
+            this->buffer, size);
         if (newBuffer != NULL) {
             this->buffer = newBuffer;
         } else {
@@ -773,6 +807,14 @@ boolean PubSubClient::setBufferSize(uint16_t size) {
 
 uint16_t PubSubClient::getBufferSize() {
     return this->bufferSize;
+}
+
+boolean PubSubClient::bufferInExternalRam() {
+#if defined(ARDUINO_ARCH_ESP32)
+    return this->buffer != NULL && esp_ptr_external_ram(this->buffer);
+#else
+    return false;
+#endif
 }
 PubSubClient& PubSubClient::setKeepAlive(uint16_t keepAlive) {
     this->keepAlive = keepAlive;

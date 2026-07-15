@@ -17,7 +17,6 @@
 namespace {
 
 constexpr size_t kInstallReadChunk = 2048;
-constexpr size_t kInstallStageBytes = 512 * 1024;
 constexpr size_t kInstallWriteSliceBytes = 16 * 1024;
 constexpr size_t kSocketRxBufferBytes = 4 * 1024;
 constexpr size_t kMaxHttpLineLen = 4096;
@@ -550,11 +549,11 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
       tag, String("hometiles_") + tag + "_" + Device::profile().key + ".bin");
   Serial.printf("[Update] Lade %s\n", url.c_str());
 
-  // Netzwerk-Lesepuffer und OTA-Staging liegen im PSRAM. Der Download wird
-  // erst in PSRAM gepuffert; Update.write() laeuft danach ohne offene HTTPS-
-  // Verbindung, damit Flash-Writes SDIO-WLAN nicht mit RX-Puffern blockieren
-  // koennen. Der Stage-Puffer wird erst nach dem Header-Check alloziert,
-  // wenn die Image-Groesse bekannt ist (bevorzugt: komplettes Image).
+  // Netzwerk-Lesepuffer und OTA-Staging liegen im PSRAM. Das VOLLSTAENDIGE
+  // Image wird vor Update.begin() heruntergeladen. Erst nachdem TLS beendet
+  // und sein interner AES/DMA-Speicher wieder frei ist, beginnt der
+  // Flash-Schreibvorgang. So konkurrieren ESP-Hosted-RX, mbedTLS und der
+  // verschluesselte OTA-Writer nie gleichzeitig um das knappe interne RAM.
   uint8_t* net_buf = static_cast<uint8_t*>(
       heap_caps_malloc(kInstallReadChunk, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (!net_buf) net_buf = static_cast<uint8_t*>(malloc(kInstallReadChunk));
@@ -624,35 +623,58 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
   }
 
   size_t stage_capacity = 0;
+  size_t staged_len = 0;
   if (!failed) {
-    // Bevorzugt das komplette Image am Stueck nach PSRAM laden: nur eine
-    // weitere TLS-Verbindung statt einer pro 512KB-Stage. Jeder Handshake
-    // kostet kurzzeitig ~45KB internes RAM, und genau in so einer Spitze
-    // konnte der esp-hosted-SDIO-Treiber keine RX-Puffer mehr allozieren
-    // (assert sdio_rx_get_buffer, sdio_drv.c:896 - Crash beim Aufbau der
-    // dritten Range-Verbindung mitten im Install). Reicht der PSRAM nicht,
-    // faellt der Code auf die alten 512KB-Stages zurueck.
+    // Kein Teil-Stage-Fallback: Er wuerde Download und Flash-Schreiben wieder
+    // verschachteln und damit genau den SDIO-RX-Crash ermoeglichen, den das
+    // Staging verhindern soll. Alle unterstuetzten Geraete besitzen genug
+    // PSRAM fuer das derzeit etwa 6 MB grosse OTA-Image. Fehlt dieser freie
+    // Block ausnahmsweise, brechen wir sicher ab und veraendern das Flash nicht.
     stage_capacity = total_sz - head_ctx.len;
     stage_buf = static_cast<uint8_t*>(
         heap_caps_malloc(stage_capacity, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     if (!stage_buf) {
-      stage_capacity = kInstallStageBytes;
-      stage_buf = static_cast<uint8_t*>(heap_caps_malloc(
-          stage_capacity, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-      if (!stage_buf) stage_buf = static_cast<uint8_t*>(malloc(stage_capacity));
-    }
-    if (!stage_buf) {
-      error_out = "alloc failed";
+      error_out = "not enough contiguous PSRAM for safe OTA staging";
       failed = true;
     } else {
-      Serial.printf("[Update] Staged Range-Download: %uB TCP RX, %uB Lesechunk, %uKB Stage%s\n",
+      Serial.printf("[Update] Safe staged download: %uB TCP RX, %uB Lesechunk, %uKB PSRAM\n",
                     static_cast<unsigned>(kSocketRxBufferBytes),
                     static_cast<unsigned>(kInstallReadChunk),
-                    static_cast<unsigned>(stage_capacity / 1024),
-                    (stage_capacity >= total_sz - head_ctx.len)
-                        ? " (komplettes Image)" : "");
+                    static_cast<unsigned>(stage_capacity / 1024));
     }
   }
+
+  // Den kompletten Rest laden, solange Update/Flash noch unangetastet sind.
+  if (!failed) {
+    const size_t range_start = head_ctx.len;
+    const size_t range_end = total_sz - 1;
+    const size_t expected_len = range_end - range_start + 1;
+    size_t range_total = 0;
+    HeadBufferCtx stage_ctx{stage_buf, stage_capacity, 0};
+    if (!fetchHttpRange(url, range_start, range_end, net_buf,
+                        kInstallReadChunk, storeBufferBytes, &stage_ctx,
+                        range_total, error_out)) {
+      failed = true;
+    } else if (range_total != total_sz) {
+      error_out = "image size changed";
+      failed = true;
+    } else if (stage_ctx.len != expected_len) {
+      error_out = "staged image incomplete";
+      failed = true;
+    } else {
+      staged_len = stage_ctx.len;
+      Serial.printf("[Update] Download vollstaendig im PSRAM: %u / %u Bytes\n",
+                    static_cast<unsigned>(head_ctx.len + staged_len),
+                    static_cast<unsigned>(total_sz));
+    }
+  }
+
+  // Der HTTPS-Client ist nach fetchHttpRange bereits zerstoert. Auch den
+  // letzten Lesepuffer vor Update.begin freigeben und dem SDIO-Task kurz Zeit
+  // geben, bereits empfangene Pakete abzuarbeiten.
+  free(net_buf);
+  net_buf = nullptr;
+  if (!failed) delay(50);
 
   if (!failed) {
     if (!Update.begin(total_sz, U_FLASH)) {
@@ -676,47 +698,16 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
         reportInstallProgress(write_ctx, true);
       }
 
-      while (!failed && write_ctx.written < total_sz) {
-        const size_t range_start = write_ctx.written;
-        size_t range_end = range_start + stage_capacity - 1;
-        if (range_end >= total_sz || range_end < range_start) {
-          range_end = total_sz - 1;
-        }
-        const size_t expected_len = range_end - range_start + 1;
-
-        size_t range_total = 0;
-        HeadBufferCtx stage_ctx{stage_buf, stage_capacity, 0};
-        stage_ctx.progress_base = range_start;
-        stage_ctx.progress_total = total_sz;
-        stage_ctx.progress = progress;
-        if (!fetchHttpRange(url, range_start, range_end, net_buf, kInstallReadChunk,
-                            storeBufferBytes, &stage_ctx, range_total,
-                            error_out)) {
-          failed = true;
-          break;
-        }
-        if (range_total != total_sz) {
-          error_out = "image size changed";
-          failed = true;
-          break;
-        }
-        if (stage_ctx.len != expected_len) {
-          error_out = "staged range incomplete";
-          failed = true;
-          break;
-        }
-        delay(20);
-        if (!writeUpdateBytes(stage_buf, stage_ctx.len, &write_ctx)) {
-          if (!error_out.length()) error_out = Update.errorString();
-          failed = true;
-          break;
-        }
+      if (!failed &&
+          !writeUpdateBytes(stage_buf, staged_len, &write_ctx)) {
+        if (!error_out.length()) error_out = Update.errorString();
+        failed = true;
       }
     }
   }
 
   if (stage_buf) free(stage_buf);
-  free(net_buf);
+  if (net_buf) free(net_buf);
 
   if (failed) {
     if (update_started) Update.abort();

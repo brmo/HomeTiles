@@ -188,8 +188,14 @@ static void apply_hotspot_mode(bool enable) {
       settings_update_ap_mode(true);
       return;
     }
-    if (networkManager.isMqttConnected()) networkManager.disconnectMqtt();
-    if (webAdminServer.isRunning()) webAdminServer.stop();
+    // Den Worker vor dem Disconnect sperren. Sonst verbindet er sich waehrend
+    // der AP-Initialisierung erneut, solange die STA-Verbindung noch kurz als
+    // aktiv gemeldet wird.
+    networkManager.deferMqttReconnect(AP_MODE_TIMEOUT_MS + 10000UL);
+    if (networkManager.isMqttConnected())
+      networkManager.disconnectMqtt();
+    if (webAdminServer.isRunning())
+      webAdminServer.stop();
     networkManager.stopMdns();
     settings_update_ap_mode(true);
 #if defined(DEVICE_M5STACKS_TAB5)
@@ -209,6 +215,9 @@ static void apply_hotspot_mode(bool enable) {
     } else {
       ap_mode_started_at = 0;
       ap_mode_disable_block_until = 0;
+      networkManager.deferMqttReconnect(1000);
+      if (configManager.isConfigured())
+        networkManager.connectWifi();
     }
     return;
   }

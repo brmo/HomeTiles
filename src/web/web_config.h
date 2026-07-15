@@ -39,6 +39,7 @@ private:
   DNSServer dnsServer;
   bool running;
   bool config_saved;
+  bool routes_registered;
 
   // Request Handler
   void handleRoot();
