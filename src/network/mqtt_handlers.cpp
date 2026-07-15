@@ -1838,7 +1838,6 @@ void mqttPublishHistoryRequest(const char* entity_id,
 
   // HA hat Prioritaet: wenn erreichbar, zuerst dort Historie holen.
   if (can_request_ha) {
-    networkManager.requestLargeMqttBuffer(20000);
     if (!time_valid && is_internal_tab5_entity(entity_id)) {
       Serial.printf("[History] Zeit lokal ungueltig, fordere HA-Historie fuer %s an\n", entity_id);
     }
@@ -1856,8 +1855,8 @@ void mqttPublishHistoryRequest(const char* entity_id,
     // koennen nach einem Route-Reload viele sicher gedrosselte Subscribe-
     // Kommandos stehen; hinten einsortiert wuerde der 2-s-Fallback den Graphen
     // leeren, bevor der Request ueberhaupt gesendet wurde.
-    bool ok = networkManager.mqttEnqueuePublishPriority(
-        history_topic, payload.c_str(), false);
+    bool ok = networkManager.mqttEnqueuePublishWithLargeBuffer(
+        history_topic, payload.c_str(), false, 20000, true);
     Serial.printf("History request -> MQTT '%s' (%s, priority)\n",
                   history_topic, ok ? "queued" : "queue-full");
     if (ok) {
@@ -1918,12 +1917,11 @@ bool mqttPublishEnergyRequest(const char* period) {
   payload += p;
   payload += "\"}";
 
-  networkManager.requestLargeMqttBuffer(12000);
   // Wie History-Requests ist auch der gewaehlte Zeitraum interaktiv. Vor
   // einem langen Subscribe-Sturm einsortieren, ohne den MQTT-Client aus dem
   // Loop-Task anzufassen oder die P4-SDIO-Schutzabstaende zu umgehen.
-  bool queued = networkManager.mqttEnqueuePublishPriority(
-      energy_topic, payload.c_str(), false);
+  bool queued = networkManager.mqttEnqueuePublishWithLargeBuffer(
+      energy_topic, payload.c_str(), false, 12000, true);
   Serial.printf("Energy request -> MQTT '%s' period=%s (%s, priority)\n",
                 energy_topic,
                 p,

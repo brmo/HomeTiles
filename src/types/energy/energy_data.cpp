@@ -31,10 +31,21 @@ PendingEnergyResponse g_pending_month;
 std::vector<EnergyEntryData> g_day_entries;
 std::vector<EnergyEntryData> g_week_entries;
 std::vector<EnergyEntryData> g_month_entries;
-uint32_t g_last_day_request_ms = 0;
-uint32_t g_last_week_request_ms = 0;
-uint32_t g_last_month_request_ms = 0;
+
+struct EnergyRequestState {
+  uint32_t last_attempt_ms = 0;  // loop-task only
+  volatile bool awaiting_response = false;
+  volatile bool retry_requested = false;
+};
+
+EnergyRequestState g_day_request;
+EnergyRequestState g_week_request;
+EnergyRequestState g_month_request;
 uint32_t g_last_periodic_ms = 0;
+
+constexpr uint32_t kEnergyRequestThrottleMs = 10000UL;
+constexpr uint32_t kEnergyRetryBackoffMs = 2000UL;
+constexpr uint32_t kEnergyResponseTimeoutMs = 15000UL;
 
 const char* normalize_period(const char* period) {
   if (!period || !*period) return "day";
@@ -70,11 +81,44 @@ const char* response_period(const char* payload) {
   return "day";
 }
 
-uint32_t& last_request_slot(const char* period) {
+EnergyRequestState& request_state_for_period(const char* period) {
   const char* p = normalize_period(period);
-  if (strcmp(p, "week") == 0) return g_last_week_request_ms;
-  if (strcmp(p, "month") == 0) return g_last_month_request_ms;
-  return g_last_day_request_ms;
+  if (strcmp(p, "week") == 0) return g_week_request;
+  if (strcmp(p, "month") == 0) return g_month_request;
+  return g_day_request;
+}
+
+bool enqueue_energy_request(const char* period,
+                            EnergyRequestState& state,
+                            uint32_t now) {
+  state.last_attempt_ms = now;
+  // Vor dem Cross-Task-Enqueue markieren: der MQTT-Worker kann den Request
+  // sofort senden und die Antwort bereits zurueckmelden, bevor dieser Aufruf
+  // in den Loop-Task zurueckkehrt.
+  state.awaiting_response = true;
+  state.retry_requested = false;
+  const bool queued = mqttPublishEnergyRequest(period);
+  if (!queued) {
+    state.awaiting_response = false;
+    state.retry_requested = true;
+  }
+  return queued;
+}
+
+void service_energy_retry(const char* period,
+                          EnergyRequestState& state,
+                          uint32_t now) {
+  if (state.awaiting_response) {
+    if ((uint32_t)(now - state.last_attempt_ms) < kEnergyResponseTimeoutMs) return;
+    state.awaiting_response = false;
+    state.retry_requested = true;
+  }
+  if (!state.retry_requested) return;
+  if (state.last_attempt_ms != 0 &&
+      (uint32_t)(now - state.last_attempt_ms) < kEnergyRetryBackoffMs) {
+    return;
+  }
+  enqueue_energy_request(period, state, now);
 }
 
 std::vector<EnergyEntryData>& cache_for_period(const char* period) {
@@ -246,9 +290,13 @@ void parse_energy_response(const char* payload) {
 
 void queue_energy_response(const char* payload, size_t len) {
   if (!payload || len == 0) return;
-  PendingEnergyResponse& pending = pending_for_period(response_period(payload));
+  const char* period = response_period(payload);
+  PendingEnergyResponse& pending = pending_for_period(period);
   pending.payload = String(payload).substring(0, len);
   pending.valid = true;
+  EnergyRequestState& request = request_state_for_period(period);
+  request.awaiting_response = false;
+  request.retry_requested = false;
 }
 
 void process_energy_response_queue() {
@@ -276,16 +324,28 @@ void process_energy_response_queue() {
 
 bool energy_request_period(const char* period, bool force) {
   const char* p = normalize_period(period);
-  uint32_t& last = last_request_slot(p);
+  EnergyRequestState& request = request_state_for_period(p);
   const uint32_t now = millis();
-  if (!force && last != 0 && (uint32_t)(now - last) < 10000UL) {
+
+  if (request.awaiting_response) {
+    if ((uint32_t)(now - request.last_attempt_ms) < kEnergyResponseTimeoutMs) {
+      return true;
+    }
+    request.awaiting_response = false;
+    request.retry_requested = true;
+  }
+  if (request.retry_requested) {
+    if (request.last_attempt_ms != 0 &&
+        (uint32_t)(now - request.last_attempt_ms) < kEnergyRetryBackoffMs) {
+      return true;
+    }
+    return enqueue_energy_request(p, request, now);
+  }
+  if (!force && request.last_attempt_ms != 0 &&
+      (uint32_t)(now - request.last_attempt_ms) < kEnergyRequestThrottleMs) {
     return true;
   }
-  if (!mqttPublishEnergyRequest(p)) {
-    return false;
-  }
-  last = now;
-  return true;
+  return enqueue_energy_request(p, request, now);
 }
 
 bool energy_request_day_for_tiles(bool force) {
@@ -295,6 +355,9 @@ bool energy_request_day_for_tiles(bool force) {
 void energy_service_periodic() {
   if (!networkManager.isMqttConnected()) return;
   const uint32_t now = millis();
+  service_energy_retry("day", g_day_request, now);
+  service_energy_retry("week", g_week_request, now);
+  service_energy_retry("month", g_month_request, now);
   if (g_last_periodic_ms != 0 && (uint32_t)(now - g_last_periodic_ms) < 60UL * 1000UL) {
     return;
   }

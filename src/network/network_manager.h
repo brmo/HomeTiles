@@ -21,7 +21,7 @@ void buildDeviceId(char* buffer, size_t len);
 // Single-Owner MQTT: das PubSubClient-Objekt (mqtt_client) wird nach init()
 // ausschliesslich vom MQTT-Worker-Task angefasst (mqtt_worker_task in der
 // .ino ruft serviceMqttWorker() in einer Schleife auf dem 2. Core). Alle
-// anderen Tasks kommunizieren nur ueber die Outbound-Command-Queue
+// anderen Tasks kommunizieren nur ueber die Outbound-Command-Queues
 // (mqttEnqueue*) und volatile Request-Flags mit dem Worker -- dadurch
 // braucht es keinerlei Mutex um den Client.
 class Tab5NetworkManager {
@@ -46,7 +46,7 @@ public:
   uint16_t getMqttBufferSize() const { return mqtt_buffer_size; }
 
   // Von JEDEM Task sicher aufrufbar: kopiert Topic+Payload in einen (PSRAM-)
-  // Block und reiht ihn nicht-blockierend in die Outbound-Queue ein. Der
+  // Block und reiht ihn nicht-blockierend in die passende Outbound-Queue ein. Der
   // Worker fuehrt das Kommando in seiner naechsten Iteration (~2ms) aus.
   bool mqttEnqueuePublish(const char* topic, const char* payload, bool retain);
   bool mqttEnqueuePublish(const char* topic, const uint8_t* payload, size_t length, bool retain);
@@ -54,6 +54,14 @@ public:
   // einsortiert werden. Der Worker bleibt weiterhin der einzige Client-Owner.
   bool mqttEnqueuePublishPriority(const char* topic, const char* payload,
                                   bool retain);
+  // Publish, fuer dessen Versand bzw. erwartete Antwort der grosse MQTT-
+  // Puffer benoetigt wird. Die Anforderung reist mit dem Kommando und wird
+  // erst vom MQTT-Worker unmittelbar vor dem tatsaechlichen Versand aktiv.
+  bool mqttEnqueuePublishWithLargeBuffer(const char* topic,
+                                         const char* payload,
+                                         bool retain,
+                                         uint32_t hold_ms,
+                                         bool priority = false);
   bool mqttEnqueueSubscribe(const char* topic);
   bool mqttEnqueueUnsubscribe(const char* topic);
 
@@ -78,9 +86,7 @@ public:
   // hier live neu gesetzt werden soll (Erstkonfiguration, Host geleert etc.).
   void requestMqttReconfigure();
 
-  // Reine Merker/Request-Flags: das eigentliche setBufferSize() macht nur der
-  // Worker in serviceBufferHousekeeping() (naechste Iteration, ~2ms spaeter).
-  void requestLargeMqttBuffer(uint32_t hold_ms = 15000);
+  // Das eigentliche setBufferSize() macht ausschliesslich der Worker.
   void restoreMqttBufferNormal();
 
   // Media-Tiles konfiguriert? Dann faehrt der Worker den "normalen" Puffer auf
@@ -174,7 +180,7 @@ private:
 
   // worker-only (nach init()):
   void connectMqtt();
-  void drainOutboundQueue(uint8_t max_commands);
+  void drainOutboundQueues(uint8_t max_commands);
   void serviceBufferHousekeeping(uint32_t now_ms);
   bool setMqttBufferSize(uint16_t size, const char* reason);
 

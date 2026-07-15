@@ -47,10 +47,13 @@ static constexpr uint32_t kMqttSdioControlQuietMs = 50;
 static constexpr uint32_t kMqttStormWindowMs = 8000;
 
 // ---------------------------------------------------------------------------
-// Outbound-Command-Queue (Single-Owner MQTT)
+// Outbound-Command-Queues (Single-Owner MQTT)
 //
 // Gegenstueck zur Inbound-Queue in mqtt_handlers.cpp: jeder Task darf
 // enqueuen, NUR der Worker-Task nimmt heraus und fasst mqtt_client an.
+// Publishes und SDIO-Kontrollkommandos liegen bewusst getrennt: ein Subscribe,
+// das auf mehr freien DMA-Speicher warten muss, darf keine sicheren Publishes
+// dahinter blockieren (Head-of-line-Blocking).
 // Ein Allokations-Block pro Kommando, [MqttOutboundCmd][topic\0][payload],
 // PSRAM bevorzugt -- 1:1 das Muster von mqttAllocInbound().
 // ---------------------------------------------------------------------------
@@ -59,6 +62,7 @@ enum class MqttCmdKind : uint8_t { PUBLISH, SUBSCRIBE, UNSUBSCRIBE };
 struct MqttOutboundCmd {
   MqttCmdKind kind;
   bool retain;
+  uint32_t large_buffer_hold_ms;
   size_t payload_len;
   char* topic;       // -> in dieselbe Allokation
   uint8_t* payload;  // -> in dieselbe Allokation (leer bei SUBSCRIBE/UNSUBSCRIBE)
@@ -68,8 +72,10 @@ struct MqttOutboundCmd {
 // Post-Connect-Burst (kRoutes + Discovery + Settings + Snapshot + Reload,
 // zusammen ~90 Kommandos) kann aber auflaufen, wenn der Worker gerade in
 // einem grossen readPacket() steckt -- deshalb 128.
-static constexpr size_t kMqttOutboundQueueDepth = 128;
-static QueueHandle_t g_mqtt_outbound_queue = nullptr;
+static constexpr size_t kMqttPublishQueueDepth = 128;
+static constexpr size_t kMqttControlQueueDepth = 128;
+static QueueHandle_t g_mqtt_publish_queue = nullptr;
+static QueueHandle_t g_mqtt_control_queue = nullptr;
 static uint32_t g_mqtt_outbound_dropped = 0;
 static uint32_t g_mqtt_last_tx_guard_log_ms = 0;
 static uint32_t g_mqtt_sdio_control_quiet_until = 0;
@@ -78,7 +84,8 @@ static MqttOutboundCmd* mqttAllocOutbound(MqttCmdKind kind,
                                           const char* topic,
                                           const uint8_t* payload,
                                           size_t payload_len,
-                                          bool retain) {
+                                          bool retain,
+                                          uint32_t large_buffer_hold_ms) {
   if (!topic || !*topic) return nullptr;
   const size_t topic_len = strlen(topic);
   const size_t total = sizeof(MqttOutboundCmd) + topic_len + 1 + payload_len;
@@ -88,6 +95,7 @@ static MqttOutboundCmd* mqttAllocOutbound(MqttCmdKind kind,
   MqttOutboundCmd* cmd = reinterpret_cast<MqttOutboundCmd*>(block);
   cmd->kind = kind;
   cmd->retain = retain;
+  cmd->large_buffer_hold_ms = large_buffer_hold_ms;
   cmd->payload_len = payload_len;
   cmd->topic = reinterpret_cast<char*>(block + sizeof(MqttOutboundCmd));
   cmd->payload = reinterpret_cast<uint8_t*>(cmd->topic + topic_len + 1);
@@ -104,21 +112,26 @@ static bool enqueueOutboundCmd(MqttCmdKind kind,
                                const uint8_t* payload,
                                size_t payload_len,
                                bool retain,
-                               bool priority = false) {
-  if (!g_mqtt_outbound_queue) return false;
-  MqttOutboundCmd* cmd = mqttAllocOutbound(kind, topic, payload, payload_len, retain);
+                               bool priority = false,
+                               uint32_t large_buffer_hold_ms = 0) {
+  QueueHandle_t queue = kind == MqttCmdKind::PUBLISH
+                            ? g_mqtt_publish_queue
+                            : g_mqtt_control_queue;
+  if (!queue) return false;
+  MqttOutboundCmd* cmd = mqttAllocOutbound(
+      kind, topic, payload, payload_len, retain, large_buffer_hold_ms);
   if (!cmd) {
     Serial.println("[MQTT] Outbound-Alloc fehlgeschlagen -> Kommando verworfen");
     return false;
   }
   const BaseType_t queued = priority
-                                ? xQueueSendToFront(g_mqtt_outbound_queue,
-                                                    &cmd, 0)
-                                : xQueueSend(g_mqtt_outbound_queue, &cmd, 0);
+                                ? xQueueSendToFront(queue, &cmd, 0)
+                                : xQueueSend(queue, &cmd, 0);
   if (queued != pdTRUE) {
     heap_caps_free(cmd);
     ++g_mqtt_outbound_dropped;
-    Serial.printf("[MQTT] Outbound-Queue voll -> verworfen (#%u)\n",
+    Serial.printf("[MQTT] Outbound-%s-Queue voll -> verworfen (#%u)\n",
+                  kind == MqttCmdKind::PUBLISH ? "Publish" : "Control",
                   static_cast<unsigned>(g_mqtt_outbound_dropped));
     return false;
   }
@@ -126,10 +139,13 @@ static bool enqueueOutboundCmd(MqttCmdKind kind,
 }
 
 static void purgeOutboundQueue() {
-  if (!g_mqtt_outbound_queue) return;
-  MqttOutboundCmd* cmd = nullptr;
-  while (xQueueReceive(g_mqtt_outbound_queue, &cmd, 0) == pdTRUE) {
-    if (cmd) heap_caps_free(cmd);
+  QueueHandle_t queues[] = {g_mqtt_publish_queue, g_mqtt_control_queue};
+  for (QueueHandle_t queue : queues) {
+    if (!queue) continue;
+    MqttOutboundCmd* cmd = nullptr;
+    while (xQueueReceive(queue, &cmd, 0) == pdTRUE) {
+      if (cmd) heap_caps_free(cmd);
+    }
   }
 }
 
@@ -394,10 +410,18 @@ void Tab5NetworkManager::connectMqtt() {
 
 // ========== Single-Owner MQTT: Worker ==========
 void Tab5NetworkManager::beginMqttWorker() {
-  if (!g_mqtt_outbound_queue) {
-    g_mqtt_outbound_queue = xQueueCreate(kMqttOutboundQueueDepth, sizeof(MqttOutboundCmd*));
-    if (!g_mqtt_outbound_queue) {
-      Serial.println("[MQTT] Outbound-Queue konnte nicht erstellt werden");
+  if (!g_mqtt_publish_queue) {
+    g_mqtt_publish_queue =
+        xQueueCreate(kMqttPublishQueueDepth, sizeof(MqttOutboundCmd*));
+    if (!g_mqtt_publish_queue) {
+      Serial.println("[MQTT] Outbound-Publish-Queue konnte nicht erstellt werden");
+    }
+  }
+  if (!g_mqtt_control_queue) {
+    g_mqtt_control_queue =
+        xQueueCreate(kMqttControlQueueDepth, sizeof(MqttOutboundCmd*));
+    if (!g_mqtt_control_queue) {
+      Serial.println("[MQTT] Outbound-Control-Queue konnte nicht erstellt werden");
     }
   }
 }
@@ -523,87 +547,160 @@ void Tab5NetworkManager::serviceMqttWorker() {
     return;
   }
 
-  // Erst ausgehende Kommandos, dann den Socket pumpen. Housekeeping lief
-  // davor, damit ein requestLargeMqttBuffer() des Loop-Tasks noch vor dem
-  // zugehoerigen (gerade enqueueten) grossen Publish wirksam wird.
+  // Erst ausgehende Kommandos, dann den Socket pumpen. Large-Buffer-Wuensche
+  // reisen mit dem Publish-Kommando und werden im Drain unmittelbar vor dem
+  // Versand aktiviert.
   const bool startup_storm =
       mqtt_connected_at != 0 && (uint32_t)(now_ms - mqtt_connected_at) < kMqttStormWindowMs;
-  drainOutboundQueue(startup_storm ? kMqttOutboundDrainStorm : kMqttOutboundDrainNormal);
+  drainOutboundQueues(startup_storm ? kMqttOutboundDrainStorm
+                                    : kMqttOutboundDrainNormal);
   mqtt_client.loop();
   if (!mqtt_client.connected()) {
     mqtt_connected_flag = false;
   }
 }
 
-void Tab5NetworkManager::drainOutboundQueue(uint8_t max_commands) {
-  if (!g_mqtt_outbound_queue || max_commands == 0) return;
-  MqttOutboundCmd* next_cmd = nullptr;
-  if (xQueuePeek(g_mqtt_outbound_queue, &next_cmd, 0) != pdTRUE) return;
-#if defined(CONFIG_IDF_TARGET_ESP32P4)
+void Tab5NetworkManager::drainOutboundQueues(uint8_t max_commands) {
+  if (max_commands == 0) return;
+
   const uint32_t now_ms = millis();
-  if (g_mqtt_sdio_control_quiet_until != 0 &&
-      static_cast<int32_t>(now_ms - g_mqtt_sdio_control_quiet_until) < 0) {
-    return;
-  }
-  g_mqtt_sdio_control_quiet_until = 0;
-  const size_t dma_largest =
+  size_t dma_largest = static_cast<size_t>(-1);
+  bool control_quiet = false;
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+  control_quiet = g_mqtt_sdio_control_quiet_until != 0 &&
+                  static_cast<int32_t>(now_ms - g_mqtt_sdio_control_quiet_until) < 0;
+  if (!control_quiet) g_mqtt_sdio_control_quiet_until = 0;
+  dma_largest =
       heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
-  const bool next_is_sdio_control =
-      next_cmd && next_cmd->kind != MqttCmdKind::PUBLISH;
-  const size_t min_dma_largest = next_is_sdio_control
-                                     ? kMqttMinDmaLargestBeforeControl
-                                     : kMqttMinDmaLargestBeforeTx;
-  if (dma_largest < min_dma_largest) {
+#endif
+
+  auto log_dma_wait = [&](const char* lane, size_t largest) {
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
     if ((uint32_t)(now_ms - g_mqtt_last_tx_guard_log_ms) >= 2000) {
       g_mqtt_last_tx_guard_log_ms = now_ms;
-      Serial.printf("[MQTT] TX verschoben: DMA largest nur %u KB\n",
-                    static_cast<unsigned>(dma_largest / 1024));
+      Serial.printf("[MQTT] %s wartet: DMA largest nur %u KB\n",
+                    lane,
+                    static_cast<unsigned>(largest / 1024));
     }
-    return;
-  }
+#else
+    (void)lane;
+    (void)largest;
 #endif
+  };
+
+  // Kontrollkommandos behalten Prioritaet, werden auf dem P4 aber weiterhin
+  // einzeln und mit Abstand gesendet. Wenn eines auf DMA wartet, laufen
+  // Publishes aus ihrer getrennten Queue trotzdem weiter.
   MqttOutboundCmd* cmd = nullptr;
-  uint32_t drained = 0;
-  while (drained < max_commands &&
-         xQueueReceive(g_mqtt_outbound_queue, &cmd, 0) == pdTRUE) {
-    bool spaced_sdio_control = false;
-    if (cmd) {
+  const bool control_waiting =
+      g_mqtt_control_queue &&
+      xQueuePeek(g_mqtt_control_queue, &cmd, 0) == pdTRUE;
+  if (control_waiting && !control_quiet) {
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+    if (dma_largest < kMqttMinDmaLargestBeforeControl) {
+      log_dma_wait("Control", dma_largest);
+    } else
+#endif
+    if (xQueueReceive(g_mqtt_control_queue, &cmd, 0) == pdTRUE) {
       bool ok = false;
-      const char* verb = "?";
-      switch (cmd->kind) {
-        case MqttCmdKind::PUBLISH:
-          verb = "publish";
-          ok = mqtt_client.publish(cmd->topic, cmd->payload, cmd->payload_len, cmd->retain);
-          break;
-        case MqttCmdKind::SUBSCRIBE:
+      const char* verb = "control";
+      if (cmd) {
+        if (cmd->kind == MqttCmdKind::SUBSCRIBE) {
           verb = "subscribe";
           ok = mqtt_client.subscribe(cmd->topic);
-          spaced_sdio_control = true;
-          break;
-        case MqttCmdKind::UNSUBSCRIBE:
+        } else if (cmd->kind == MqttCmdKind::UNSUBSCRIBE) {
           verb = "unsubscribe";
           ok = mqtt_client.unsubscribe(cmd->topic);
-          spaced_sdio_control = true;
-          break;
+        }
+        if (!ok) {
+          Serial.printf("[MQTT] Worker: %s '%s' fehlgeschlagen\n",
+                        verb, cmd->topic);
+        }
+        heap_caps_free(cmd);
       }
-      if (!ok) {
-        Serial.printf("[MQTT] Worker: %s '%s' fehlgeschlagen\n", verb, cmd->topic);
-      }
-      heap_caps_free(cmd);
-    }
 #if defined(CONFIG_IDF_TARGET_ESP32P4)
-    if (spaced_sdio_control) {
       g_mqtt_sdio_control_quiet_until = millis() + kMqttSdioControlQuietMs;
+#endif
+      return;
+    }
+  }
+
+  if (!g_mqtt_publish_queue) return;
+
+  // Direkt nach einem Subscribe/Unsubscribe hoechstens ein Publish, danach
+  // wird mqtt_client.loop() aufgerufen und kann ein sofortiges retained Paket
+  // abholen. So bleibt der bisherige SDIO-Schutz erhalten, ohne die Publish-
+  // Lane fuer die gesamten 50 ms komplett anzuhalten.
+  const uint8_t publish_limit = control_quiet ? 1 : max_commands;
+  uint32_t drained = 0;
+  while (drained < publish_limit &&
+         xQueueReceive(g_mqtt_publish_queue, &cmd, 0) == pdTRUE) {
+    if (!cmd) continue;
+
+    // Der grosse Puffer wird erst jetzt angelegt, nachdem das Kommando einen
+    // echten Queue-Platz hatte und unmittelbar vor dem Versand steht.
+    bool grew_large_buffer = false;
+    if (cmd->large_buffer_hold_ms > 0 && mqtt_buffer_size < kMqttBufferLarge) {
+      const bool startup_storm =
+          mqtt_connected_at != 0 &&
+          (uint32_t)(millis() - mqtt_connected_at) < kMqttStormWindowMs;
+      if (startup_storm) {
+        if (xQueueSendToFront(g_mqtt_publish_queue, &cmd, 0) != pdTRUE) {
+          heap_caps_free(cmd);
+          ++g_mqtt_outbound_dropped;
+          Serial.printf("[MQTT] Publish-Requeue fehlgeschlagen (#%u)\n",
+                        static_cast<unsigned>(g_mqtt_outbound_dropped));
+        }
+        return;
+      }
+      if (!setMqttBufferSize(kMqttBufferLarge, "queued-publish")) {
+        ++g_mqtt_outbound_dropped;
+        Serial.printf("[MQTT] Publish verworfen: Large-Buffer nicht verfuegbar (#%u)\n",
+                      static_cast<unsigned>(g_mqtt_outbound_dropped));
+        heap_caps_free(cmd);
+        return;
+      }
+      grew_large_buffer = true;
+    }
+
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+    dma_largest =
+        heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+    if (dma_largest < kMqttMinDmaLargestBeforeTx) {
+      log_dma_wait("Publish", dma_largest);
+      if (grew_large_buffer) {
+        // Ein Grow, der selbst die Publish-Reserve unterschreitet, darf kein
+        // neues Shrink/Grow-Livelock erzeugen. Zurueckrollen und den Request
+        // vom Energy-/History-Lifecycle spaeter neu anfordern lassen.
+        mqtt_large_until = 0;
+        setMqttBufferSize(mqttNormalBufferSize(), "large-dma-rollback");
+        heap_caps_free(cmd);
+        ++g_mqtt_outbound_dropped;
+        Serial.printf("[MQTT] Publish verworfen: DMA-Reserve nach Buffer-Grow (#%u)\n",
+                      static_cast<unsigned>(g_mqtt_outbound_dropped));
+      } else if (xQueueSendToFront(g_mqtt_publish_queue, &cmd, 0) != pdTRUE) {
+        heap_caps_free(cmd);
+        ++g_mqtt_outbound_dropped;
+        Serial.printf("[MQTT] Publish-Requeue fehlgeschlagen (#%u)\n",
+                      static_cast<unsigned>(g_mqtt_outbound_dropped));
+      }
+      return;
     }
 #endif
-    // subscribe()/unsubscribe() warten laut PubSubClient-Quelle nicht auf ein
-    // Ack (Fire-and-Forget-Write) -- trotzdem soll ein grosser Drain-Burst
-    // den Idle-Task (Watchdog-Futter) nie aushungern: alle 8 Kommandos ein
-    // echter Scheduler-Yield.
-    if ((++drained & 0x07) == 0) {
-      vTaskDelay(1);
+
+    if (cmd->large_buffer_hold_ms > 0) {
+      mqtt_large_until = millis() + cmd->large_buffer_hold_ms;
     }
-    if (spaced_sdio_control) break;
+
+    const bool ok = mqtt_client.publish(
+        cmd->topic, cmd->payload, cmd->payload_len, cmd->retain);
+    if (!ok) {
+      Serial.printf("[MQTT] Worker: publish '%s' fehlgeschlagen\n", cmd->topic);
+    }
+    heap_caps_free(cmd);
+
+    // Auch ein grosser Publish-Burst darf den Idle-Task nicht aushungern.
+    if ((++drained & 0x07) == 0) vTaskDelay(1);
   }
 }
 
@@ -658,6 +755,19 @@ bool Tab5NetworkManager::mqttEnqueuePublishPriority(const char* topic,
   return enqueueOutboundCmd(MqttCmdKind::PUBLISH, topic,
                             reinterpret_cast<const uint8_t*>(payload), len,
                             retain, true);
+}
+
+bool Tab5NetworkManager::mqttEnqueuePublishWithLargeBuffer(
+    const char* topic,
+    const char* payload,
+    bool retain,
+    uint32_t hold_ms,
+    bool priority) {
+  const size_t len = payload ? strlen(payload) : 0;
+  if (hold_ms == 0) hold_ms = 15000;
+  return enqueueOutboundCmd(MqttCmdKind::PUBLISH, topic,
+                            reinterpret_cast<const uint8_t*>(payload), len,
+                            retain, priority, hold_ms);
 }
 
 bool Tab5NetworkManager::mqttEnqueueSubscribe(const char* topic) {
@@ -762,13 +872,6 @@ bool Tab5NetworkManager::setMqttBufferSize(uint16_t size, const char* reason) {
   return true;
 }
 
-void Tab5NetworkManager::requestLargeMqttBuffer(uint32_t hold_ms) {
-  if (hold_ms == 0) hold_ms = 15000;
-  // Nur den Zeitstempel setzen -- das eigentliche setBufferSize() macht der
-  // Worker in serviceBufferHousekeeping() (inkl. Startup-Sturm-Aufschub).
-  mqtt_large_until = millis() + hold_ms;
-}
-
 void Tab5NetworkManager::restoreMqttBufferNormal() {
   // Request-Flag statt direktem Client-Touch; der Worker setzt den Puffer
   // zurueck und hebt dabei auch eine evtl. OTA-Suspendierung wieder auf
@@ -811,14 +914,14 @@ void Tab5NetworkManager::publishBridgeConfig() {
   String topic = "tab5_lvgl/config/";
   topic += did;
   topic += "/bridge";
-  requestLargeMqttBuffer(15000);
   const size_t packet_estimate = payload.length() + topic.length() + 16;
-  if (packet_estimate > getMqttBufferSize()) {
+  if (packet_estimate > kMqttBufferLarge) {
     Serial.printf("[Network] Bridge config too large for MQTT buffer: %u > %u bytes\n",
                   static_cast<unsigned>(packet_estimate),
-                  static_cast<unsigned>(getMqttBufferSize()));
+                  static_cast<unsigned>(kMqttBufferLarge));
   }
-  mqttEnqueuePublish(topic.c_str(), payload.c_str(), true);
+  mqttEnqueuePublishWithLargeBuffer(
+      topic.c_str(), payload.c_str(), true, 15000);
   Serial.println("[Network] Home Assistant Bridge-Konfiguration publiziert");
 }
 
@@ -829,8 +932,8 @@ const char* Tab5NetworkManager::getBridgeApplyTopic() const {
 void Tab5NetworkManager::publishBridgeRequest() {
   if (!isMqttConnected()) return;
   if (bridge_request_topic_.isEmpty()) return;
-  requestLargeMqttBuffer(30000);
-  mqttEnqueuePublish(bridge_request_topic_.c_str(), "", false);
+  mqttEnqueuePublishWithLargeBuffer(
+      bridge_request_topic_.c_str(), "", false, 30000);
   Serial.println("[Network] Home Assistant Bridge-Aktualisierung angefordert");
 }
 
