@@ -14,9 +14,20 @@ the **Screensaver** tab of the web admin and runs on every supported display.
    can upload several selected files at once.
 4. Open or reload the **Screensaver** tab. The images appear in the wallpaper list.
 
-Images should be at least as large as the target display. For the 8-inch model,
-1280×800 or larger is recommended. The firmware preserves the source aspect ratio
-and crops it to the display; **Zoom**, **Focus X**, and **Focus Y** control that crop.
+### Image Requirements
+
+- **Format:** JPEG (`.jpg` or `.jpeg`)
+- **Maximum file size:** 8 MB per image
+- **Recommended size:** at least 1280×800 pixels; 1280×800 or 1920×1080 keeps
+  files reasonably small while looking sharp on every supported display
+- **For the fastest hardware decode:** use dimensions divisible by 16 and no more
+  than about 4.2 megapixels in total
+
+Larger phone or camera photos are automatically scaled down by the fallback decoder,
+but take longer to load and use more temporary memory. For best performance, resize
+them to the smallest resolution that is still at least 1280 pixels wide and 800
+pixels high while preserving the original aspect ratio. The firmware then crops the
+image to the display; **Zoom**, **Focus X**, and **Focus Y** control that crop.
 
 Without a card or usable JPEG, the screensaver still works with a black background
 and the configured clock and tiles.
