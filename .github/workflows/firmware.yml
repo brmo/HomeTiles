@@ -211,17 +211,15 @@ jobs:
           restore_sketch_profiles
           trap - EXIT
 
-          # Both strings are fatal allocation assertions from the unpatched
-          # ESP-Hosted objects. Fail the release job if a future profile/tool
-          # reinstall ever restores either stock object again.
+          # `copy_buff` exists only in the unpatched fatal TX assertion. The RX
+          # identifier `pkt_rxbuff` remains as a normal variable in the patched
+          # object, so it cannot be used as a binary-level patch marker.
           firmware_bin="build/ci/${{ matrix.key }}/HomeTiles.ino.bin"
           test -f "${firmware_bin}"
-          for forbidden_assert in copy_buff pkt_rxbuff; do
-            if grep -a -q "${forbidden_assert}" "${firmware_bin}"; then
-              echo "Stock ESP-Hosted assert '${forbidden_assert}' found in ${firmware_bin}" >&2
-              exit 1
-            fi
-          done
+          if grep -a -q "copy_buff" "${firmware_bin}"; then
+            echo "Stock ESP-Hosted assert 'copy_buff' found in ${firmware_bin}" >&2
+            exit 1
+          fi
 
       - name: Package firmware binaries
         shell: bash
