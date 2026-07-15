@@ -259,7 +259,7 @@ static const Strings kStringsDe = {
 
     "Bilder verwenden",
     "Zufällige Reihenfolge",
-    "Wallpapers",
+    "Bilder",
     "Anzeigedauer (Sekunden)",
     "Zoom",
     "Fokus X",
@@ -537,9 +537,9 @@ static const Strings kStringsEn = {
     "Pairing",
     "Pairing: reconnecting MQTT...",
 
-    "Use wallpapers",
+    "Use images",
     "Shuffle",
-    "Wallpapers",
+    "Images",
     "Duration (seconds)",
     "Zoom",
     "Focus X",

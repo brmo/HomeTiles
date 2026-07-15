@@ -3954,7 +3954,21 @@ lv_obj_t* render_tile(lv_obj_t* parent, int col, int row, const Tile& tile, uint
 
   const TileTypeDescriptor* desc = get_tile_type_descriptor(tile.type);
   if (desc && desc->render) {
-    return desc->render(parent, col, row, tile, index, grid_type, scene_cb);
+    lv_obj_t* tile_obj =
+        desc->render(parent, col, row, tile, index, grid_type, scene_cb);
+    // Die normale Oberflaeche nutzt eine globale Display-Option. Der
+    // Screensaver besitzt bewusst seine eigene, getrennte Einstellung und
+    // wendet sie nach dem Rendern in image_screensaver.cpp an.
+    if (tile_obj && grid_type != GridType::SCREENSAVER &&
+        tile.type != TILE_EMPTY) {
+      const bool enabled = configManager.getConfig().tile_borders;
+      lv_obj_set_style_border_width(tile_obj, enabled ? 1 : 0, LV_PART_MAIN);
+      lv_obj_set_style_border_color(tile_obj, lv_color_white(), LV_PART_MAIN);
+      lv_obj_set_style_border_opa(
+          tile_obj, enabled ? 38 : LV_OPA_TRANSP, LV_PART_MAIN);
+      lv_obj_set_style_border_side(tile_obj, LV_BORDER_SIDE_FULL, LV_PART_MAIN);
+    }
+    return tile_obj;
   }
   return render_empty_tile(parent, col, row);
 }

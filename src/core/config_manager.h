@@ -52,6 +52,7 @@ struct DeviceConfig {
 
   // Display & Power Settings
   uint8_t display_brightness;  // 75-255
+  bool tile_borders;           // Feine Rahmen um normale Dashboard-Kacheln
   bool display_rotated_180;    // Display 180 deg gedreht?
   uint8_t display_rotation_quarters; // 0=0°, 1=90°, 2=180°, 3=270°
   uint8_t display_rotation_mode; // 0=Normal, 1=180, 2=Auto

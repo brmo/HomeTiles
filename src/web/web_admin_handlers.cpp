@@ -1236,6 +1236,7 @@ void WebAdminServer::handleSaveMQTT() {
     cfg.global_date_format =
         clock_tile::normalize_date_format(server.arg("locale_date_format").toInt());
   }
+  cfg.tile_borders = server.hasArg("tile_borders");
 
   if (configManager.save(cfg)) {
     settings_refresh_language();

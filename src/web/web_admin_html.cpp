@@ -189,7 +189,11 @@ static void appendTileTabHTML(
           <div class="tile-grid-scroll">
           <!-- Grid Preview -->
           <div class="tile-grid)html";
-  if (screensaver_mode) html += " screensaver-tile-grid";
+  if (screensaver_mode) {
+    html += " screensaver-tile-grid";
+  } else if (configManager.getConfig().tile_borders) {
+    html += " tiles-bordered";
+  }
   html += R"html(" id=")html";
   html += tab_id;
   html += R"html(Grid">
@@ -399,11 +403,15 @@ static void appendTileTabHTML(
 )html";
   if (screensaver_mode) {
     html += R"html(            <div id="screensaverBackgroundSettings" class="screensaver-background-settings">
-              <div class="tile-settings-head"><h3 style="margin-top:0;">Screensaver</h3></div>
+              <div class="tile-settings-head"><h3 style="margin-top:0;">)html";
+    html += strcmp(tr.html_lang, "de") == 0 ? "Diashow" : "Slideshow";
+    html += R"html(</h3></div>
               <div class="tile-settings-body">
                 <div class="screensaver-fixed-type"><label>)html";
     html += tr.admin_type;
-    html += R"html(</label><input value="Screensaver" disabled></div>
+    html += R"html(</label><input value=")html";
+    html += strcmp(tr.html_lang, "de") == 0 ? "Diashow" : "Slideshow";
+    html += R"html(" disabled></div>
                 <label class="inline-checkbox"><input id="screensaverUseWallpapers" type="checkbox"> )html";
     html += tr.screensaver_use_wallpapers;
     html += R"html(</label>
@@ -1084,6 +1092,31 @@ String WebAdminServer::getAdminPage() {
       <!-- Tab 3: Settings (Network/MQTT Configuration) -->
       <div id="tab-network" class="tab-content">
         <form id="admin_settings_form" action="/mqtt" method="POST">
+          <div class="settings-section">
+            <div class="section-title">)html";
+  html += tr.display_label;
+  html += R"html(</div>
+            <div class="settings-grid">
+              <div class="settings-full">
+                <label class="settings-checkbox" for="tile_borders">
+                  <input type="checkbox" id="tile_borders" name="tile_borders" onchange="setNormalTileBordersPreview(this.checked)" )html";
+  if (cfg.tile_borders) {
+    html += "checked";
+  }
+  html += R"html(>
+                  <span>)html";
+  html += is_german ? "Feine Kachel-Rahmen" : "Subtle tile borders";
+  html += R"html(</span>
+                </label>
+                <div class="settings-note">)html";
+  html += is_german
+              ? "Gilt global fuer die normale Oberflaeche; der Screensaver besitzt eine eigene Option."
+              : "Applies globally to the normal interface; the screensaver has its own option.";
+  html += R"html(</div>
+              </div>
+            </div>
+          </div>
+
           <div class="settings-section">
             <div class="section-title-row">
               <div class="section-title">)html";

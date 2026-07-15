@@ -72,6 +72,10 @@ The editor requires JPEG images in `/images` on a microSD card. The complete set
 all slideshow options, automatic activation, and media-tile performance notes are
 documented in the [Screensaver guide](screensaver.md).
 
+The **Settings → Display** section also contains a global **Subtle tile borders**
+option. It applies to every tile on the normal dashboard and its web previews.
+The screensaver keeps its own independent **Tile borders** option.
+
 ## Device Settings
 
 The **Settings** tab configures the device itself — the same options as in the

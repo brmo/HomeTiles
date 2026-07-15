@@ -97,6 +97,12 @@ void appendAdminScripts(String& html) {
     });
     return out;
   }
+
+  function setNormalTileBordersPreview(enabled) {
+    document.querySelectorAll('.tile-grid:not(.screensaver-tile-grid)').forEach(grid => {
+      grid.classList.toggle('tiles-bordered', !!enabled);
+    });
+  }
 )html";
   html += R"html(
   function switchTab(tabName) {

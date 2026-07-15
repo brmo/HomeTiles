@@ -139,6 +139,7 @@ ConfigManager::ConfigManager() {
 
   // Display & Power Defaults
   config.display_brightness = 200;
+  config.tile_borders = true;
   config.display_rotated_180 = false;
   config.display_rotation_quarters = Device::kRotationDefault;
   config.display_rotation_mode = kDisplayRotationNormal;
@@ -200,6 +201,7 @@ bool ConfigManager::load() {
 
   // Display & Power Settings laden
   config.display_brightness = prefs.getUChar("disp_bright", 200);
+  config.tile_borders = prefs.getBool("tile_border", true);
   bool rot_180 = prefs.getBool("disp_rot180", false);
   uint8_t rot_mode = rot_180 ? kDisplayRotationFlipped : kDisplayRotationNormal;
   if (prefs.isKey("disp_rot_mode")) {
@@ -324,6 +326,7 @@ bool ConfigManager::save(const DeviceConfig& cfg) {
 
   // Display & Power Settings speichern
   prefs.putUChar("disp_bright", normalized.display_brightness);
+  prefs.putBool("tile_border", normalized.tile_borders);
   prefs.putBool("disp_rot180", normalized.display_rotated_180);
   prefs.putUChar("disp_rot_q", normalized.display_rotation_quarters);
   prefs.putUChar("disp_rot_mode", normalized.display_rotation_mode);
@@ -485,6 +488,7 @@ void ConfigManager::clear() {
   set_timezone_code(config.timezone, sizeof(config.timezone), "berlin");
   config.global_time_format = clock_tile::TIME_FORMAT_AUTO;
   config.global_date_format = clock_tile::DATE_FORMAT_AUTO;
+  config.tile_borders = true;
   config.display_rotated_180 = false;
   config.display_rotation_quarters = Device::kRotationDefault;
   config.display_rotation_mode = kDisplayRotationNormal;

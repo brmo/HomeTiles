@@ -273,7 +273,8 @@ void appendAdminStyles(String& html) {
       transition:border-color 0.15s, box-shadow 0.15s;
     }
     input::placeholder, textarea::placeholder { color:var(--muted); }
-    input:focus, select:focus, textarea:focus {
+    input:not([type="checkbox"]):not([type="radio"]):focus,
+    select:focus, textarea:focus {
       outline:none;
       border-color:var(--accent);
       box-shadow:0 0 0 3px var(--accent-ring);
@@ -314,7 +315,17 @@ void appendAdminStyles(String& html) {
       select optgroup { background:transparent; font-size:12px; color:var(--text-3); }
     }
     textarea { resize:vertical; }
-    input[type="checkbox"], input[type="radio"] { width:16px; height:16px; padding:0; cursor:pointer; }
+    input[type="checkbox"], input[type="radio"] {
+      width:16px;
+      height:16px;
+      padding:0;
+      cursor:pointer;
+      box-shadow:none;
+    }
+    input[type="checkbox"]:focus, input[type="radio"]:focus {
+      outline:none;
+      box-shadow:none;
+    }
     input[type="range"] { padding:0; border:none; background:transparent; height:32px; box-shadow:none; cursor:pointer; }
     input[type="range"]:focus { box-shadow:none; }
     input[type="color"] { padding:5px 8px; height:44px; cursor:pointer; }
@@ -677,7 +688,7 @@ void appendAdminStyles(String& html) {
     }
     /* Die feine Linie sitzt an der aeusseren Kartenkante. Ein Kind-Overlay
        waere wegen des transparenten 3px-Editorrahmens sichtbar eingerueckt. */
-    .screensaver-tile-grid.tiles-bordered > .tile:not(.empty) {
+    .tile-grid.tiles-bordered > .tile:not(.empty) {
       outline:1px solid rgba(255,255,255,0.15);
       outline-offset:-1px;
     }
@@ -983,8 +994,8 @@ void appendAdminStyles(String& html) {
     .screensaver-fixed-type { display:grid; grid-template-columns:1fr 1.35fr; gap:10px; align-items:center; margin-bottom:10px; }
     .screensaver-fixed-type label { margin:0; }
     .screensaver-fixed-type input { margin:0; }
-    .screensaver-wallpaper-heading { color:var(--text-3); font-weight:700; font-size:12px; letter-spacing:.1em; text-transform:uppercase; margin:18px 0 8px; }
-    .screensaver-storage-hint { color:var(--text-3); font-size:12px; line-height:1.4; margin:-2px 0 10px; }
+    .screensaver-wallpaper-heading { color:var(--text); font-weight:700; font-size:13px; letter-spacing:.08em; text-transform:uppercase; margin:18px 0 8px; }
+    .screensaver-storage-hint { color:var(--text-2); font-size:12px; line-height:1.4; margin:-2px 0 10px; }
     .screensaver-wallpaper-list { display:flex; flex-direction:column; gap:7px; max-height:190px; overflow:auto; }
     .screensaver-wallpaper-row { display:grid; grid-template-columns:auto 1fr auto auto; align-items:center; gap:8px; padding:7px 9px; border:1px solid var(--line); border-radius:10px; background:var(--well); }
     .screensaver-wallpaper-row.active { border-color:#26b5aa; }

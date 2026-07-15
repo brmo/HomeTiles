@@ -49,8 +49,10 @@ the whole chain: MQTT broker, bridge integration, and connecting the display.
 - [FAQ & Troubleshooting](docs/faq.md) — common questions and known quirks
 - [BOARD_SETTINGS.md](BOARD_SETTINGS.md) — Arduino IDE build settings per device
 
-## Highlights Of v0.5.0
+## Highlights Of v0.5.1
 
+- Optional subtle tile borders across the complete normal dashboard, controlled globally under **Settings → Display**
+- Cleaner web-admin checkboxes and clearer **Slideshow / Images** terminology in the screensaver editor
 - New configurable screensaver with JPEG slideshows from a microSD card, shuffle, global duration, zoom, and focus controls
 - Dedicated live screensaver editor in the web admin: freely move and resize the clock and place regular tiles in the bottom two rows
 - Optional tile shadows, subtle borders, opacity controls, clock alignment, larger UI fonts, and a consistent Inter-based interface

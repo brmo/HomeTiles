@@ -12,7 +12,7 @@ the **Screensaver** tab of the web admin and runs on every supported display.
 2. Create a folder named `images` in the root of the card, so its path is `/images`.
 3. Copy JPEG files (`.jpg` or `.jpeg`) into that folder. The web admin file manager
    can upload several selected files at once.
-4. Open or reload the **Screensaver** tab. The images appear in the wallpaper list.
+4. Open or reload the **Screensaver** tab. The files appear in the **Images** list.
 
 ### Image Requirements
 
@@ -50,11 +50,11 @@ background to select the slideshow settings.
 
 | Setting | What it does |
 | --- | --- |
-| **Use wallpapers** | Enables the image background; disabled means black background |
+| **Use images** | Enables the slideshow background; disabled means black background |
 | **Shuffle** | Chooses the next enabled image randomly instead of using list order |
 | **Tile shadows** | Adds shadows below the overlay tiles |
 | **Tile borders** | Adds a subtle modern outline around overlay tiles |
-| **Wallpaper checkboxes** | Include or exclude individual JPEG files |
+| **Image checkboxes** | Include or exclude individual JPEG files |
 | **Arrow buttons** | Set the slideshow order |
 | **Duration** | Global display time in seconds for every image |
 | **Zoom** | Enlarges the selected image while preserving its aspect ratio |
