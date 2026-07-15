@@ -10,6 +10,7 @@
 #include "src/game/game_controls_config.h"
 #include "src/web/web_admin_scripts.h"
 #include "src/web/web_admin_styles.h"
+#include "src/web/web_admin_fonts.h"
 #include "src/web/web_admin_tile_helpers.h"
 #include "src/tiles/tile_config.h"
 #include "src/types/types_registry.h"
@@ -19,6 +20,7 @@
 #include "src/core/i18n.h"
 #include "src/devices/device.h"
 #include "src/types/clock/clock_format.h"
+#include "src/types/energy/energy_data.h"
 #include "src/ui/screensaver_config.h"
 #include <cstring>
 
@@ -689,7 +691,8 @@ bool buildAdminFolderTabFragments(uint16_t folder_id, String& button_html, Strin
 
   const HaBridgeConfigData& ha = haBridgeConfig.get();
   const auto sensorOptions = parseSensorList(ha.sensors_text);
-  const auto energyOptions = parseSensorList(ha.energy_text);
+  auto energyOptions = parseSensorList(ha.energy_text);
+  energy_append_cached_entity_ids(energyOptions);
   const auto weatherOptions = parseSensorList(ha.weathers_text);
   const auto sceneOptions = parseSceneList(ha.scene_alias_text);
   const auto lightOptions = parseSensorList(ha.lights_text);
@@ -769,7 +772,8 @@ String WebAdminServer::getAdminPage() {
       String("hometiles_") + FW_VERSION + "_" + Device::profile().key;
   const HaBridgeConfigData& ha = haBridgeConfig.get();
   const auto sensorOptions = parseSensorList(ha.sensors_text);
-  const auto energyOptions = parseSensorList(ha.energy_text);
+  auto energyOptions = parseSensorList(ha.energy_text);
+  energy_append_cached_entity_ids(energyOptions);
   const auto weatherOptions = parseSensorList(ha.weathers_text);
   const auto sceneOptions = parseSceneList(ha.scene_alias_text);
   const auto lightOptions = parseSensorList(ha.lights_text);
@@ -1502,8 +1506,11 @@ String WebAdminServer::getSuccessPage() {
   <title>)html";
   html += tr.save;
   html += R"html(</title>
+)html";
+  appendWebFontFaceStyles(html);
+  html += R"html(
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; background:#0a0a0a; height:100vh; margin:0; display:flex; align-items:center; justify-content:center; }
+    body { font-family:'HomeTiles Inter', sans-serif; background:#0a0a0a; height:100vh; margin:0; display:flex; align-items:center; justify-content:center; }
     .box { background:#1c1c1c; border:1px solid #2a2a2a; padding:32px; border-radius:22px; box-shadow:0 20px 60px rgba(0,0,0,.5); text-align:center; }
     h1 { margin:0 0 10px; color:#ffffff; font-size:22px; }
     p { margin:0; color:#8a8a8a; }
@@ -1534,8 +1541,11 @@ String WebAdminServer::getBridgeSuccessPage() {
   <title>)html";
   html += tr.bridge_saved_title;
   html += R"html(</title>
+)html";
+  appendWebFontFaceStyles(html);
+  html += R"html(
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; background:#0a0a0a; height:100vh; margin:0; display:flex; align-items:center; justify-content:center; }
+    body { font-family:'HomeTiles Inter', sans-serif; background:#0a0a0a; height:100vh; margin:0; display:flex; align-items:center; justify-content:center; }
     .box { background:#1c1c1c; border:1px solid #2a2a2a; padding:32px; border-radius:22px; box-shadow:0 20px 60px rgba(0,0,0,.5); text-align:center; }
     h1 { margin:0 0 10px; color:#ffffff; font-size:22px; }
     p { margin:0; color:#8a8a8a; }

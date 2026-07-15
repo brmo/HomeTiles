@@ -50,6 +50,10 @@ public:
   // Worker fuehrt das Kommando in seiner naechsten Iteration (~2ms) aus.
   bool mqttEnqueuePublish(const char* topic, const char* payload, bool retain);
   bool mqttEnqueuePublish(const char* topic, const uint8_t* payload, size_t length, bool retain);
+  // Interaktive kleine Requests duerfen vor einem langen Subscribe-Sturm
+  // einsortiert werden. Der Worker bleibt weiterhin der einzige Client-Owner.
+  bool mqttEnqueuePublishPriority(const char* topic, const char* payload,
+                                  bool retain);
   bool mqttEnqueueSubscribe(const char* topic);
   bool mqttEnqueueUnsubscribe(const char* topic);
 

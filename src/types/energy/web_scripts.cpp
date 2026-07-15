@@ -35,7 +35,18 @@ void append_energy_scripts(String& html) {
   function loadEnergyFields(tab, data) {
     const prefix = tab;
     const entityEl = document.getElementById(prefix + '_energy_entity');
-    if (entityEl) entityEl.value = data.sensor_entity || data.energy_entity || '';
+    if (entityEl) {
+      const configuredEntity = data.sensor_entity || data.energy_entity || '';
+      entityEl.dataset.configuredValue = configuredEntity;
+      entityEl.value = configuredEntity;
+      if (configuredEntity && entityEl.value !== configuredEntity) {
+        const opt = document.createElement('option');
+        opt.value = configuredEntity;
+        opt.textContent = configuredEntity;
+        entityEl.appendChild(opt);
+        entityEl.value = configuredEntity;
+      }
+    }
     const unitEl = document.getElementById(prefix + '_energy_unit');
     if (unitEl) unitEl.value = data.sensor_unit || '';
     const decEl = document.getElementById(prefix + '_energy_decimals');
@@ -51,7 +62,8 @@ void append_energy_scripts(String& html) {
 
   function saveEnergyFields(tab, formData) {
     const prefix = tab;
-    const entity = document.getElementById(prefix + '_energy_entity')?.value || '';
+    const entityEl = document.getElementById(prefix + '_energy_entity');
+    const entity = entityEl ? (entityEl.value || entityEl.dataset.configuredValue || '') : '';
     formData.append('energy_entity', entity);
     formData.append('sensor_entity', entity);
     formData.append('sensor_unit', document.getElementById(prefix + '_energy_unit')?.value || '');

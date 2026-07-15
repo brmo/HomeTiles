@@ -427,9 +427,9 @@ bool HaBridgeConfig::applyJson(const char* json_payload, bool* out_reload, bool*
   }
 
   int energy_idx = json.indexOf("\"energy\"");
-  if (energy_idx < 0) {
-    merged.energy_text = "";
-  }
+  // Eine Bridge-Antwort ohne Energy-Block ist kein Befehl zum Loeschen.
+  // Das kann waehrend HA/energy noch initialisiert oder bei einer partiellen
+  // Antwort passieren. Die letzte gueltige Quellenliste muss erhalten bleiben.
 
   int weathers_idx = json.indexOf("\"weathers\"");
   if (weathers_idx >= 0) {

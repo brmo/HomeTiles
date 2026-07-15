@@ -24,6 +24,7 @@
 #include "src/tiles/tile_renderer_shared.h"
 #include "src/types/clock/clock_format.h"
 #include "src/types/clock/renderer.h"
+#include "src/types/energy/energy_data.h"
 #include "src/ui/screensaver_config.h"
 #include "src/ui/tab_tiles_unified.h"
 
@@ -58,6 +59,11 @@ struct ScreensaverState {
   uint32_t next_wallpaper_ms = 0;
   uint32_t next_slot_refresh_ms = 0;
   String slot_payloads[TILES_PER_GRID];
+  // Einheit separat merken: Der Wert kann schon per retained State da sein,
+  // bevor der erste Bridge-Sync die HA-Metadaten (z. B. kWh) liefert. Nur den
+  // Payload zu vergleichen wuerde die spaeter eintreffende Einheit dauerhaft
+  // verschlucken.
+  String slot_units[TILES_PER_GRID];
 #if defined(CONFIG_IDF_TARGET_ESP32P4)
   // Fertiger LVGL-Frame fuer ruhige Diawechsel: Wallpaper, Uhr, Kacheln und
   // ein eventuell offenes Popup werden zuerst unsichtbar in PSRAM gerendert
@@ -868,17 +874,25 @@ void refresh_slot_values(ScreensaverState* st) {
       payload = haBridgeConfig.findSensorInitialValue(tile.sensor_entity);
     }
     if (!payload.length()) continue;
-    if (payload == st->slot_payloads[i]) continue;
-    st->slot_payloads[i] = payload;
-    if (tile.type == TILE_SENSOR) {
+    if (tile.type == TILE_SENSOR || tile.type == TILE_ENERGY) {
       String unit = tile.sensor_unit;
       if (!unit.length()) unit = haBridgeConfig.findSensorUnit(tile.sensor_entity);
+      if (!unit.length() && tile.type == TILE_ENERGY) {
+        unit = energy_find_cached_unit(tile.sensor_entity);
+      }
+      if (payload == st->slot_payloads[i] && unit == st->slot_units[i]) continue;
+      st->slot_payloads[i] = payload;
+      st->slot_units[i] = unit;
       queue_sensor_tile_update(GridType::SCREENSAVER, static_cast<uint8_t>(i),
-                               payload.c_str(), unit.c_str());
+                               payload.c_str(), unit.length() ? unit.c_str() : nullptr);
     } else if (tile.type == TILE_SWITCH) {
+      if (payload == st->slot_payloads[i]) continue;
+      st->slot_payloads[i] = payload;
       queue_switch_tile_update(GridType::SCREENSAVER, static_cast<uint8_t>(i),
                                payload.c_str());
     } else if (tile.type == TILE_MEDIA) {
+      if (payload == st->slot_payloads[i]) continue;
+      st->slot_payloads[i] = payload;
       queue_media_tile_update(GridType::SCREENSAVER, static_cast<uint8_t>(i),
                               payload.c_str());
     }

@@ -3,6 +3,7 @@
 #include "src/core/config_manager.h"
 #include "src/core/i18n.h"
 #include "src/network/ha_bridge_config.h"
+#include "src/types/energy/energy_data.h"
 #include "src/web/web_admin_utils.h"
 
 namespace {
@@ -52,6 +53,7 @@ void append_energy_fields_html(String& html,
       name = humanizeIdentifier(opt, true);
     }
     String unit = haBridgeConfig.findSensorUnit(opt);
+    if (!unit.length()) unit = energy_find_cached_unit(opt);
     String label = name;
     if (unit.length() && !label_already_has_unit_suffix(label, unit)) {
       label += " (";

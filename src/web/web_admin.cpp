@@ -1,4 +1,5 @@
 #include "src/web/web_admin.h"
+#include "src/web/web_admin_fonts.h"
 #include "src/web/web_admin_utils.h"
 #include <WiFi.h>
 
@@ -46,6 +47,10 @@ bool WebAdminServer::start() {
   }
 
   server.on("/", [this]() { this->handleRoot(); });
+  server.on("/assets/inter-4.1-regular.woff2", HTTP_GET,
+            [this]() { sendWebFontRegular(this->server); });
+  server.on("/assets/inter-4.1-semibold.woff2", HTTP_GET,
+            [this]() { sendWebFontSemibold(this->server); });
   server.on("/mqtt", HTTP_POST, [this]() { this->handleSaveMQTT(); });
   server.on("/status", [this]() { this->handleStatus(); });
   server.on("/bridge_refresh", HTTP_POST, [this]() { this->handleBridgeRefresh(); });

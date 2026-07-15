@@ -5,8 +5,6 @@ void apply_energy_fields_from_request(WebServer& server, Tile& tile) {
     tile.sensor_entity = server.arg("energy_entity");
   } else if (server.hasArg("sensor_entity")) {
     tile.sensor_entity = server.arg("sensor_entity");
-  } else {
-    tile.sensor_entity = "";
   }
 
   tile.sensor_unit = server.hasArg("sensor_unit") ? server.arg("sensor_unit") : "";

@@ -258,7 +258,7 @@ static const Strings kStringsDe = {
     "Koppeln: MQTT verbindet neu...",
 
     "Bilder verwenden",
-    "Zufaellige Reihenfolge",
+    "Zufällige Reihenfolge",
     "Wallpapers",
     "Anzeigedauer (Sekunden)",
     "Zoom",

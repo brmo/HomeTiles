@@ -7,6 +7,7 @@
 #include "src/ui/sensor_popup.h"
 #include "src/ui/weather_popup.h"
 #include "src/network/ha_bridge_config.h"
+#include "src/types/energy/energy_data.h"
 #include "src/web/web_admin.h"
 #include "src/tiles/mdi_icons.h"
 #include <misc/cache/instance/lv_image_cache.h>
@@ -231,6 +232,24 @@ static bool is_disabled_token(const String& value) {
   if (!t.length()) return true;
   t.toLowerCase();
   return t == "-" || t == "none" || t == "null" || t == "no" || t == "off";
+}
+
+static String resolve_tile_sensor_unit(const Tile& tile) {
+  String unit = tile.sensor_unit;
+  if (is_disabled_token(unit)) return String();
+
+  unit.trim();
+  if (!unit.length() && tile.sensor_entity.length()) {
+    unit = haBridgeConfig.findSensorUnit(tile.sensor_entity);
+  }
+  // Energy-Popups verwenden diesen Perioden-Cache bereits als Fallback.
+  // Derselbe Fallback muss auch bei jedem Ordner-/Widget-Cache-Apply gelten,
+  // sonst ueberschreibt ein Folder-Wechsel "17.55 kWh" mit "17.55".
+  if (!unit.length() && tile.type == TILE_ENERGY && tile.sensor_entity.length()) {
+    unit = energy_find_cached_unit(tile.sensor_entity);
+  }
+  unit.trim();
+  return unit;
 }
 
 static String normalize_preview_key_local(String raw) {
@@ -523,12 +542,7 @@ static void apply_cached_states(GridType grid_type, const TileGridConfig& config
     if (!get_cached_or_initial_payload(tile, payload)) continue;
 
     if (tile.type == TILE_SENSOR || tile.type == TILE_ENERGY) {
-      String unit = tile.sensor_unit;
-      if (is_disabled_token(unit)) {
-        unit = "";
-      } else if (!unit.length()) {
-        unit = haBridgeConfig.findSensorUnit(tile.sensor_entity);
-      }
+      String unit = resolve_tile_sensor_unit(tile);
       const char* unit_cstr = unit.length() > 0 ? unit.c_str() : nullptr;
       queue_sensor_tile_update(grid_type, i, payload.c_str(), unit_cstr);
     } else if (tile.type == TILE_SWITCH) {
@@ -738,12 +752,7 @@ static void apply_cached_state_for_index(GridType grid_type, const TileGridConfi
   if (!get_cached_or_initial_payload(tile, payload)) return;
 
   if (tile.type == TILE_SENSOR || tile.type == TILE_ENERGY) {
-    String unit = tile.sensor_unit;
-    if (is_disabled_token(unit)) {
-      unit = "";
-    } else if (!unit.length()) {
-      unit = haBridgeConfig.findSensorUnit(tile.sensor_entity);
-    }
+    String unit = resolve_tile_sensor_unit(tile);
     const char* unit_cstr = unit.length() > 0 ? unit.c_str() : nullptr;
     queue_sensor_tile_update(grid_type, index, payload.c_str(), unit_cstr);
   } else if (tile.type == TILE_SWITCH) {
@@ -1370,17 +1379,19 @@ void tiles_update_sensor_by_entity(GridType grid_type, const char* entity_id, co
   // Find tile with matching sensor_entity
   for (uint8_t i = 0; i < TILES_PER_GRID; i++) {
     const Tile& tile = config.tiles[i];
-    if (tile.type == TILE_SENSOR && tile.sensor_entity.equalsIgnoreCase(entity_id)) {
-      String unit = tile.sensor_unit;
-      if (is_disabled_token(unit)) {
-        unit = "";
-      } else if (!unit.length()) {
-        unit = haBridgeConfig.findSensorUnit(entity_id);
-      }
+    if ((tile.type == TILE_SENSOR || tile.type == TILE_ENERGY) &&
+        tile.sensor_entity.equalsIgnoreCase(entity_id)) {
+      String unit = resolve_tile_sensor_unit(tile);
       const char* unit_cstr = unit.length() > 0 ? unit.c_str() : nullptr;
       queue_sensor_tile_update(grid_type, i, value, unit_cstr);
-      Serial.printf("[%s] Sensor %s@%u queued: %s %s\n", getGridName(grid_type), entity_id, i, value, unit_cstr ? unit_cstr : "");
-      if (!popup_queued) {
+      Serial.printf("[%s] %s %s@%u queued: %s %s\n",
+                    getGridName(grid_type),
+                    tile.type == TILE_ENERGY ? "Energy" : "Sensor",
+                    entity_id, i, value, unit_cstr ? unit_cstr : "");
+      // Das Sensor-Popup hat seine eigene Live-Queue. Energy-Popups werden
+      // dagegen aus dem Energy-Perioden-Cache aktualisiert und duerfen hier
+      // nicht versehentlich wie ein Sensor-Popup behandelt werden.
+      if (tile.type == TILE_SENSOR && !popup_queued) {
         queue_sensor_popup_value(entity_id, value, unit.length() ? unit.c_str() : nullptr, tile.sensor_decimals);
         popup_queued = true;
       }

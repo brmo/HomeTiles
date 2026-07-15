@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <stddef.h>
+#include <vector>
 
 static constexpr uint8_t ENERGY_VALUES_MAX = 32;
 
@@ -29,3 +30,11 @@ bool energy_request_period(const char* period, bool force = false);
 bool energy_request_day_for_tiles(bool force = false);
 void energy_service_periodic();
 bool energy_find_entry(const String& id, const char* period, EnergyEntryData& out);
+// Einheit aus einem beliebigen bereits empfangenen Energy-Zeitraum holen.
+// Aggregierte Energy-IDs existieren nicht zwingend als normale HA-Entity und
+// fehlen deshalb im allgemeinen HaBridgeConfig-Unit-Index.
+String energy_find_cached_unit(const String& id);
+// Fuegt alle IDs aus bereits empfangenen Energy-Antworten hinzu. Damit kann
+// die WebUI ihre Quellen auch dann anbieten, wenn eine Bridge-Konfigurations-
+// antwort voruebergehend keinen Energy-Block enthielt.
+void energy_append_cached_entity_ids(std::vector<String>& ids);

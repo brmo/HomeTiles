@@ -1183,7 +1183,7 @@ void appendAdminScripts(String& html) {
   function rebuildEntitySelect(id, entries) {
     const el = document.getElementById(id);
     if (!el || !Array.isArray(entries)) return;
-    const keep = el.value;
+    const keep = el.value || el.dataset.configuredValue || '';
     const placeholder = el.options.length ? el.options[0].cloneNode(true) : null;
     el.innerHTML = '';
     if (placeholder) el.appendChild(placeholder);
@@ -1204,6 +1204,7 @@ void appendAdminScripts(String& html) {
       el.appendChild(opt);
       el.value = keep;
     }
+    if (keep) el.dataset.configuredValue = keep;
   }
 
   // Holt die Entity-Listen frisch von der Firmware und baut alle Editor-
@@ -2086,7 +2087,14 @@ void appendAdminScripts(String& html) {
     bindLive(entitySelect, 'change', 'sensorEntity', () => { maybeFillTitleFromSensor(tab); updateTilePreview(tab); updateSensorValuePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(weatherSelect, 'change', 'weatherEntity', () => { maybeFillTitleFromWeather(tab); updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(weatherPopupModeSelect, 'change', 'weatherPopupMode', () => { updateDraft(tab); scheduleAutoSave(tab); });
-    bindLive(energySelect, 'change', 'energyEntity', () => { maybeFillTitleFromEnergy(tab); updateTilePreview(tab); updateEnergyValuePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
+    bindLive(energySelect, 'change', 'energyEntity', () => {
+      energySelect.dataset.configuredValue = energySelect.value || '';
+      maybeFillTitleFromEnergy(tab);
+      updateTilePreview(tab);
+      updateEnergyValuePreview(tab);
+      updateDraft(tab);
+      scheduleAutoSave(tab);
+    });
     bindLive(energyUnitInput, 'input', 'energyUnit', () => { updateEnergyValuePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(energyDecimalsInput, 'input', 'energyDecimals', () => { updateEnergyValuePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(energyValueFontSelect, 'change', 'energyValueFont', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });

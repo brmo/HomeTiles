@@ -17,6 +17,7 @@
 #include "src/web/web_admin_tile_helpers.h"
 #include "src/types/types_registry.h"
 #include "src/types/clock/clock_format.h"
+#include "src/types/energy/energy_data.h"
 #include "src/devices/device.h"
 #include "src/core/board_hal.h"
 #include "src/core/crash_log.h"
@@ -2114,11 +2115,14 @@ void WebAdminServer::handleGetEntityOptions() {
 
   json += "\"energy\":[";
   {
+    auto energy_ids = parseSensorList(ha.energy_text);
+    energy_append_cached_entity_ids(energy_ids);
     bool first = true;
-    for (const auto& id : parseSensorList(ha.energy_text)) {
+    for (const auto& id : energy_ids) {
       String name = haBridgeConfig.findSensorName(id);
       if (!name.length()) name = humanizeIdentifier(id, true);
-      const String unit = haBridgeConfig.findSensorUnit(id);
+      String unit = haBridgeConfig.findSensorUnit(id);
+      if (!unit.length()) unit = energy_find_cached_unit(id);
       String label = name;
       if (unit.length() && !hasUnitSuffix(label, unit)) {
         label += " (";

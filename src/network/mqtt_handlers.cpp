@@ -1116,7 +1116,8 @@ static void rebuildDynamicRoutes(std::vector<DynamicSensorRoute>& routes) {
   auto add_grid_entities = [&](const FolderEntitySlotView* slots, size_t count) {
     for (size_t i = 0; i < count; ++i) {
       const FolderEntitySlotView& slot = slots[i];
-      if ((slot.type == TILE_SENSOR || slot.type == TILE_SWITCH || slot.type == TILE_MEDIA) &&
+      if ((slot.type == TILE_SENSOR || slot.type == TILE_ENERGY ||
+           slot.type == TILE_SWITCH || slot.type == TILE_MEDIA) &&
           slot.entity[0]) {
         add_route(String(slot.entity), -1);
         if (slot.type == TILE_MEDIA) {
@@ -1156,7 +1157,8 @@ static void rebuildDynamicRoutes(std::vector<DynamicSensorRoute>& routes) {
   const TileGridConfig& screensaver_grid = screensaverConfig.tileGrid();
   for (size_t i = 0; i < TILES_PER_GRID; ++i) {
     const Tile& tile = screensaver_grid.tiles[i];
-    if ((tile.type != TILE_SENSOR && tile.type != TILE_SWITCH &&
+    if ((tile.type != TILE_SENSOR && tile.type != TILE_ENERGY &&
+         tile.type != TILE_SWITCH &&
          tile.type != TILE_MEDIA) ||
         !tile.sensor_entity.length()) {
       continue;
@@ -1666,8 +1668,9 @@ void mqttPublishMediaCommand(const char* entity_id, const char* command) {
   const char* action = (command && *command) ? command : "play_pause";
   char payload[256];
   snprintf(payload, sizeof(payload), "{\"entity_id\":\"%s\",\"command\":\"%s\"}", entity_id, action);
-  bool queued = networkManager.mqttEnqueuePublish(topic, payload, false);
-  Serial.printf("Media command -> MQTT '%s' (%s)\n", topic, queued ? "queued" : "queue-full");
+  bool queued = networkManager.mqttEnqueuePublishPriority(topic, payload, false);
+  Serial.printf("Media command -> MQTT '%s' (%s, priority)\n",
+                topic, queued ? "queued" : "queue-full");
 }
 
 void mqttPublishMediaSeek(const char* entity_id, float position_seconds) {
@@ -1691,8 +1694,8 @@ void mqttPublishMediaSeek(const char* entity_id, float position_seconds) {
            "{\"entity_id\":\"%s\",\"command\":\"media_seek\",\"seek_position\":%.1f}",
            entity_id,
            position_seconds);
-  bool queued = networkManager.mqttEnqueuePublish(topic, payload, false);
-  Serial.printf("Media seek -> MQTT '%s' %.1fs (%s)\n",
+  bool queued = networkManager.mqttEnqueuePublishPriority(topic, payload, false);
+  Serial.printf("Media seek -> MQTT '%s' %.1fs (%s, priority)\n",
                 topic,
                 position_seconds,
                 queued ? "queued" : "queue-full");
@@ -1720,8 +1723,10 @@ void mqttPublishMediaVolume(const char* entity_id, float volume_level) {
            "{\"entity_id\":\"%s\",\"command\":\"volume_set\",\"volume_level\":%.3f}",
            entity_id,
            volume_level);
-  bool queued = networkManager.mqttEnqueuePublish(topic, payload, false);
-  Serial.printf("Media volume -> MQTT '%s' %.0f%% (%s)\n", topic, volume_level * 100.0f, queued ? "queued" : "queue-full");
+  bool queued = networkManager.mqttEnqueuePublishPriority(topic, payload, false);
+  Serial.printf("Media volume -> MQTT '%s' %.0f%% (%s, priority)\n",
+                topic, volume_level * 100.0f,
+                queued ? "queued" : "queue-full");
 }
 
 void mqttPublishMediaMute(const char* entity_id, bool muted) {
@@ -1744,8 +1749,10 @@ void mqttPublishMediaMute(const char* entity_id, bool muted) {
            "{\"entity_id\":\"%s\",\"command\":\"volume_mute\",\"is_volume_muted\":%s}",
            entity_id,
            muted ? "true" : "false");
-  bool queued = networkManager.mqttEnqueuePublish(topic, payload, false);
-  Serial.printf("Media mute -> MQTT '%s' %s (%s)\n", topic, muted ? "on" : "off", queued ? "queued" : "queue-full");
+  bool queued = networkManager.mqttEnqueuePublishPriority(topic, payload, false);
+  Serial.printf("Media mute -> MQTT '%s' %s (%s, priority)\n",
+                topic, muted ? "on" : "off",
+                queued ? "queued" : "queue-full");
 }
 
 void mqttPublishLightCommand(const char* entity_id,
@@ -1845,8 +1852,14 @@ void mqttPublishHistoryRequest(const char* entity_id,
     payload += ",\"points\":";
     payload += String(points);
     payload += ",\"stat\":\"mean\"}";
-    bool ok = networkManager.mqttEnqueuePublish(history_topic, payload.c_str(), false);
-    Serial.printf("History request -> MQTT '%s' (%s)\n", history_topic, ok ? "queued" : "queue-full");
+    // Der Nutzer wartet sichtbar auf diesen Graphen. Vor dem History-Request
+    // koennen nach einem Route-Reload viele sicher gedrosselte Subscribe-
+    // Kommandos stehen; hinten einsortiert wuerde der 2-s-Fallback den Graphen
+    // leeren, bevor der Request ueberhaupt gesendet wurde.
+    bool ok = networkManager.mqttEnqueuePublishPriority(
+        history_topic, payload.c_str(), false);
+    Serial.printf("History request -> MQTT '%s' (%s, priority)\n",
+                  history_topic, ok ? "queued" : "queue-full");
     if (ok) {
       mark_pending_history_request(entity_id, millis(), hours, period_minutes, points);
       return;
@@ -1906,8 +1919,12 @@ bool mqttPublishEnergyRequest(const char* period) {
   payload += "\"}";
 
   networkManager.requestLargeMqttBuffer(12000);
-  bool queued = networkManager.mqttEnqueuePublish(energy_topic, payload.c_str(), false);
-  Serial.printf("Energy request -> MQTT '%s' period=%s (%s)\n",
+  // Wie History-Requests ist auch der gewaehlte Zeitraum interaktiv. Vor
+  // einem langen Subscribe-Sturm einsortieren, ohne den MQTT-Client aus dem
+  // Loop-Task anzufassen oder die P4-SDIO-Schutzabstaende zu umgehen.
+  bool queued = networkManager.mqttEnqueuePublishPriority(
+      energy_topic, payload.c_str(), false);
+  Serial.printf("Energy request -> MQTT '%s' period=%s (%s, priority)\n",
                 energy_topic,
                 p,
                 queued ? "queued" : "queue-full");

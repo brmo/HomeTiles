@@ -3,6 +3,7 @@
 #include <ArduinoJson.h>
 #include <cstring>
 #include <math.h>
+#include <utility>
 #include <vector>
 
 #include "src/core/power_manager.h"
@@ -21,7 +22,12 @@ struct PendingEnergyResponse {
   bool valid = false;
 };
 
-PendingEnergyResponse g_pending_energy;
+// Responses fuer verschiedene Zeitraeume duerfen sich nicht gegenseitig
+// ueberschreiben. Das passiert z. B. wenn direkt nach einem manuellen
+// 7-Tage-Request noch die periodische 24-h-Antwort eintrifft.
+PendingEnergyResponse g_pending_day;
+PendingEnergyResponse g_pending_week;
+PendingEnergyResponse g_pending_month;
 std::vector<EnergyEntryData> g_day_entries;
 std::vector<EnergyEntryData> g_week_entries;
 std::vector<EnergyEntryData> g_month_entries;
@@ -37,6 +43,33 @@ const char* normalize_period(const char* period) {
   return "day";
 }
 
+PendingEnergyResponse& pending_for_period(const char* period) {
+  const char* p = normalize_period(period);
+  if (strcmp(p, "week") == 0) return g_pending_week;
+  if (strcmp(p, "month") == 0) return g_pending_month;
+  return g_pending_day;
+}
+
+// Nur das kleine period-Feld lesen, bevor die vollstaendige JSON-Antwort in
+// der normalen Loop-Verarbeitung geparst wird. So brauchen wir hier weder ein
+// zweites grosses JSON-Dokument noch eine weitere Payload-Kopie.
+const char* response_period(const char* payload) {
+  if (!payload) return "day";
+  const char* key = strstr(payload, "\"period\"");
+  if (!key) return "day";
+  const char* colon = strchr(key + 8, ':');
+  if (!colon) return "day";
+  const char* begin = strchr(colon + 1, '"');
+  if (!begin) return "day";
+  ++begin;
+  const char* end = strchr(begin, '"');
+  if (!end) return "day";
+  const size_t len = static_cast<size_t>(end - begin);
+  if (len == 4 && strncmp(begin, "week", len) == 0) return "week";
+  if (len == 5 && strncmp(begin, "month", len) == 0) return "month";
+  return "day";
+}
+
 uint32_t& last_request_slot(const char* period) {
   const char* p = normalize_period(period);
   if (strcmp(p, "week") == 0) return g_last_week_request_ms;
@@ -49,6 +82,20 @@ std::vector<EnergyEntryData>& cache_for_period(const char* period) {
   if (strcmp(p, "week") == 0) return g_week_entries;
   if (strcmp(p, "month") == 0) return g_month_entries;
   return g_day_entries;
+}
+
+String cached_unit_for_entry(const String& id) {
+  if (!id.length()) return String();
+  const std::vector<EnergyEntryData>* caches[] = {
+      &g_day_entries, &g_week_entries, &g_month_entries};
+  for (const auto* cache : caches) {
+    for (const auto& entry : *cache) {
+      if (entry.id.equalsIgnoreCase(id) && entry.unit.length()) {
+        return entry.unit;
+      }
+    }
+  }
+  return String();
 }
 
 bool is_disabled_token(const String& value) {
@@ -151,6 +198,11 @@ void parse_energy_response(const char* payload) {
     }
     if (!entry.unit.length()) {
       entry.unit = haBridgeConfig.findSensorUnit(entry.id);
+      if (!entry.unit.length()) {
+        // Manche Energy-Antworten enthalten die Einheit nicht. Eine bereits
+        // bekannte Einheit darf dadurch nicht aus dem RAM-Cache verschwinden.
+        entry.unit = cached_unit_for_entry(entry.id);
+      }
     }
 
     JsonVariant total = obj["total"];
@@ -194,15 +246,28 @@ void parse_energy_response(const char* payload) {
 
 void queue_energy_response(const char* payload, size_t len) {
   if (!payload || len == 0) return;
-  g_pending_energy.payload = String(payload).substring(0, len);
-  g_pending_energy.valid = true;
+  PendingEnergyResponse& pending = pending_for_period(response_period(payload));
+  pending.payload = String(payload).substring(0, len);
+  pending.valid = true;
 }
 
 void process_energy_response_queue() {
-  if (!g_pending_energy.valid) return;
-  String payload = g_pending_energy.payload;
-  g_pending_energy.valid = false;
-  g_pending_energy.payload = "";
+  // Wochen-/Monatsdaten stammen normalerweise von einer direkten
+  // Benutzeraktion und werden vor dem periodischen Tages-Refresh verarbeitet.
+  PendingEnergyResponse* pending = nullptr;
+  if (g_pending_week.valid) {
+    pending = &g_pending_week;
+  } else if (g_pending_month.valid) {
+    pending = &g_pending_month;
+  } else if (g_pending_day.valid) {
+    pending = &g_pending_day;
+  }
+  if (!pending) return;
+
+  // Buffer uebernehmen statt die bis zu 32 KB grosse Antwort zu kopieren.
+  // Nach dem Parsen gibt der lokale String den Speicher direkt wieder frei.
+  String payload = std::move(pending->payload);
+  pending->valid = false;
   parse_energy_response(payload.c_str());
   if (!powerManager.isInSleep()) {
     process_sensor_update_queue();
@@ -248,4 +313,26 @@ bool energy_find_entry(const String& id, const char* period, EnergyEntryData& ou
     }
   }
   return false;
+}
+
+String energy_find_cached_unit(const String& id) {
+  return cached_unit_for_entry(id);
+}
+
+void energy_append_cached_entity_ids(std::vector<String>& ids) {
+  const std::vector<EnergyEntryData>* caches[] = {
+      &g_day_entries, &g_week_entries, &g_month_entries};
+  for (const auto* cache : caches) {
+    for (const auto& entry : *cache) {
+      if (!entry.id.length()) continue;
+      bool exists = false;
+      for (const auto& id : ids) {
+        if (id.equalsIgnoreCase(entry.id)) {
+          exists = true;
+          break;
+        }
+      }
+      if (!exists) ids.push_back(entry.id);
+    }
+  }
 }

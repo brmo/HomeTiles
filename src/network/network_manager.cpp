@@ -29,10 +29,12 @@ static constexpr uint8_t kMqttOutboundDrainNormal = 12;
 static constexpr uint8_t kMqttOutboundDrainStorm = 1;
 static constexpr size_t kMqttMinDmaLargestBeforeTx = 8 * 1024;
 // Der esp-hosted-RX-Pfad fordert pro Frame rund 4,5 KB zusammenhaengenden
-// internen DMA-Speicher an und assertet bei nullptr. Vor Subscribe/Unsubscribe
-// mehr Luft als vor einem normalen Publish lassen, weil mehrere retained
-// Frames als direkte Antwort unterwegs sein koennen.
-static constexpr size_t kMqttMinDmaLargestBeforeControl = 24 * 1024;
+// internen DMA-Speicher an und assertet bei nullptr. 16 KB lassen selbst nach
+// einer Frame-Allokation noch deutlich Reserve. 24 KB waren mit dem dauerhaft
+// benoetigten 24-KB-Media-Puffer auf dem 8-Zoll-P4 jedoch unerreichbar
+// (gemessen: stabil 18 KB) und blockierten dadurch die gesamte Queue. Die
+// zusaetzliche 50-ms-Abstandsregel unten verhindert weiterhin RX-Bursts.
+static constexpr size_t kMqttMinDmaLargestBeforeControl = 16 * 1024;
 // Subscribe/Unsubscribe kann sofort ein retained Paket ausloesen. Auf dem P4
 // bekommt der SDIO-RX-Task zwischen diesen Kontrollpaketen Zeit, das Paket bis
 // in die MQTT-Inbound-Queue weiterzureichen und seinen DMA-Puffer freizugeben.
@@ -101,14 +103,19 @@ static bool enqueueOutboundCmd(MqttCmdKind kind,
                                const char* topic,
                                const uint8_t* payload,
                                size_t payload_len,
-                               bool retain) {
+                               bool retain,
+                               bool priority = false) {
   if (!g_mqtt_outbound_queue) return false;
   MqttOutboundCmd* cmd = mqttAllocOutbound(kind, topic, payload, payload_len, retain);
   if (!cmd) {
     Serial.println("[MQTT] Outbound-Alloc fehlgeschlagen -> Kommando verworfen");
     return false;
   }
-  if (xQueueSend(g_mqtt_outbound_queue, &cmd, 0) != pdTRUE) {
+  const BaseType_t queued = priority
+                                ? xQueueSendToFront(g_mqtt_outbound_queue,
+                                                    &cmd, 0)
+                                : xQueueSend(g_mqtt_outbound_queue, &cmd, 0);
+  if (queued != pdTRUE) {
     heap_caps_free(cmd);
     ++g_mqtt_outbound_dropped;
     Serial.printf("[MQTT] Outbound-Queue voll -> verworfen (#%u)\n",
@@ -642,6 +649,15 @@ bool Tab5NetworkManager::mqttEnqueuePublish(const char* topic, const char* paylo
 bool Tab5NetworkManager::mqttEnqueuePublish(const char* topic, const uint8_t* payload,
                                             size_t length, bool retain) {
   return enqueueOutboundCmd(MqttCmdKind::PUBLISH, topic, payload, length, retain);
+}
+
+bool Tab5NetworkManager::mqttEnqueuePublishPriority(const char* topic,
+                                                    const char* payload,
+                                                    bool retain) {
+  const size_t len = payload ? strlen(payload) : 0;
+  return enqueueOutboundCmd(MqttCmdKind::PUBLISH, topic,
+                            reinterpret_cast<const uint8_t*>(payload), len,
+                            retain, true);
 }
 
 bool Tab5NetworkManager::mqttEnqueueSubscribe(const char* topic) {

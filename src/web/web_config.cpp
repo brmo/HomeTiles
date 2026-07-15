@@ -2,6 +2,7 @@
 #include "src/devices/device_select.h"
 #include "src/devices/device.h"
 #include "src/web/web_admin_utils.h"
+#include "src/web/web_admin_fonts.h"
 #include <WiFi.h>
 
 // Globale Instanz
@@ -93,6 +94,10 @@ bool WebConfigServer::start() {
 
   // Webserver Routes
   server.on("/", [this]() { this->handleRoot(); });
+  server.on("/assets/inter-4.1-regular.woff2", HTTP_GET,
+            [this]() { sendWebFontRegular(this->server); });
+  server.on("/assets/inter-4.1-semibold.woff2", HTTP_GET,
+            [this]() { sendWebFontSemibold(this->server); });
   auto captive_handler = [this]() { this->handleCaptivePortal(); };
   server.on("/generate_204", captive_handler);
   server.on("/gen_204", captive_handler);
@@ -246,10 +251,13 @@ String WebConfigServer::getConfigPage() {
   html += ap_page_title;
   html += R"html(</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='10' fill='%2316181c'/%3E%3Crect x='4' y='4' width='17' height='17' rx='4' fill='%23ffffff'/%3E%3Crect x='27' y='4' width='17' height='17' rx='4' fill='%23ffffff'/%3E%3Crect x='4' y='27' width='17' height='17' rx='4' fill='%23ffffff'/%3E%3Cpath d='M33 26h5v6.5h6.5v5H38V44h-5v-6.5h-6.5v-5H33z' fill='%2326a69a'/%3E%3C/svg%3E">
+)html";
+  appendWebFontFaceStyles(html);
+  html += R"html(
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+      font-family: 'HomeTiles Inter', sans-serif;
       background: #0a0a0a;
       min-height: 100vh;
       display: flex;
@@ -407,7 +415,7 @@ String WebConfigServer::getConfigPage() {
 }
 
 String WebConfigServer::getSuccessPage() {
-  return R"html(
+  String html = R"html(
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -415,10 +423,13 @@ String WebConfigServer::getSuccessPage() {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Connecting...</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='10' fill='%2316181c'/%3E%3Crect x='4' y='4' width='17' height='17' rx='4' fill='%23ffffff'/%3E%3Crect x='27' y='4' width='17' height='17' rx='4' fill='%23ffffff'/%3E%3Crect x='4' y='27' width='17' height='17' rx='4' fill='%23ffffff'/%3E%3Cpath d='M33 26h5v6.5h6.5v5H38V44h-5v-6.5h-6.5v-5H33z' fill='%2326a69a'/%3E%3C/svg%3E">
+)html";
+  appendWebFontFaceStyles(html);
+  html += R"html(
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+      font-family: 'HomeTiles Inter', sans-serif;
       background: #0a0a0a;
       min-height: 100vh;
       display: flex;
@@ -467,4 +478,5 @@ String WebConfigServer::getSuccessPage() {
 </body>
 </html>
 )html";
+  return html;
 }
