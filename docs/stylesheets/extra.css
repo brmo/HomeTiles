@@ -140,6 +140,37 @@
   margin: 1.2em auto 1.6em;
 }
 
+/* Dashboard und Screensaver direkt gemeinsam als Produkt-Hero zeigen. */
+.md-typeset .ht-hero-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8em;
+  margin: 1.2em auto 1.6em;
+}
+
+.md-typeset .ht-hero-grid figure {
+  margin: 0;
+}
+
+.md-typeset .ht-hero-grid img {
+  display: block;
+  width: 100%;
+  border-radius: 10px;
+}
+
+.md-typeset .ht-hero-grid figcaption {
+  margin-top: 0.4em;
+  color: var(--md-default-fg-color--lighter);
+  font-size: 0.64rem;
+  text-align: center;
+}
+
+@media screen and (max-width: 44.984375em) {
+  .md-typeset .ht-hero-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Browser-native demo video, matching the rounded documentation imagery */
 .md-typeset video.ht-demo {
   display: block;

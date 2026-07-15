@@ -8,7 +8,16 @@ description: Open-source firmware for configurable Home Assistant touch dashboar
 Tile-based firmware that turns ESP32-P4 touch displays into Home Assistant control
 panels — configured entirely in the browser, updated over the air, connected via MQTT.
 
-![Home dashboard](images/8in-home.png){ width="82%" .ht-hero }
+<div class="ht-hero-grid">
+  <figure>
+    <img src="images/8in-home.png" alt="HomeTiles dashboard on the Waveshare 8 inch display">
+    <figcaption>Dashboard</figcaption>
+  </figure>
+  <figure>
+    <img src="images/8in-screensaver.png" alt="HomeTiles screensaver with clock and sensor tiles">
+    <figcaption>Screensaver</figcaption>
+  </figure>
+</div>
 
 ## Demo
 
