@@ -10,10 +10,14 @@
 namespace {
 
 constexpr char kConfigDir[] = "/_screensaver";
-constexpr char kConfigPath[] = "/_screensaver/config_v1.json";
-constexpr char kConfigTmpPath[] = "/_screensaver/config_v1.json.tmp";
-constexpr char kConfigBackupPath[] = "/_screensaver/config_v1.json.bak";
-constexpr uint16_t kConfigVersion = 1;
+constexpr char kConfigPath[] = "/_screensaver/config_v2.json";
+constexpr char kConfigTmpPath[] = "/_screensaver/config_v2.json.tmp";
+constexpr char kConfigBackupPath[] = "/_screensaver/config_v2.json.bak";
+constexpr char kLegacyConfigPath[] = "/_screensaver/config_v1.json";
+constexpr char kLegacyConfigTmpPath[] = "/_screensaver/config_v1.json.tmp";
+constexpr char kLegacyConfigBackupPath[] = "/_screensaver/config_v1.json.bak";
+constexpr uint16_t kConfigVersion = 2;
+constexpr uint16_t kLegacyConfigVersion = 1;
 constexpr size_t kMaxConfigBytes = 64U * 1024U;
 
 uint16_t clamp_u16(int value, int low, int high) {
@@ -44,6 +48,7 @@ uint8_t normalize_font(int value, uint8_t fallback, uint8_t maximum = 96) {
 TileType normalize_screensaver_type(int raw) {
   switch (static_cast<TileType>(raw)) {
     case TILE_SENSOR:
+    case TILE_ENERGY:
     case TILE_SCENE:
     case TILE_SWITCH:
     case TILE_MEDIA:
@@ -64,6 +69,18 @@ String safe_wallpaper_name(const String& raw) {
   lower.toLowerCase();
   if (!lower.endsWith(".jpg") && !lower.endsWith(".jpeg")) return String();
   return name;
+}
+
+uint16_t legacy_duration_from_doc(const JsonDocument& doc) {
+  int first_duration = -1;
+  for (JsonObjectConst item : doc["wallpapers"].as<JsonArrayConst>()) {
+    const int duration = item["duration_seconds"] | 15;
+    if (first_duration < 0) first_duration = duration;
+    if (item["enabled"] | true) {
+      return clamp_u16(duration, 3, 3600);
+    }
+  }
+  return clamp_u16(first_duration < 0 ? 15 : first_duration, 3, 3600);
 }
 
 void legacy_tile_from_json(JsonObjectConst in, Tile& tile, size_t index) {
@@ -156,10 +173,15 @@ void ScreensaverConfigStore::resetDefaults() {
 void ScreensaverConfigStore::normalize() {
   data_.time_format = clock_tile::normalize_time_format(data_.time_format);
   data_.date_format = clock_tile::normalize_date_format(data_.date_format);
+  data_.time_alignment = static_cast<uint8_t>(
+      constrain(data_.time_alignment, 0, 2));
+  data_.date_alignment = static_cast<uint8_t>(
+      constrain(data_.date_alignment, 0, 2));
   data_.time_font_size = normalize_font(data_.time_font_size, 48);
   data_.date_font_size = normalize_font(data_.date_font_size, 28, 72);
   data_.clock_x = clamp_u16(data_.clock_x, 0, 1000);
   data_.clock_y = clamp_u16(data_.clock_y, 0, 1000);
+  data_.duration_seconds = clamp_u16(data_.duration_seconds, 3, 3600);
 
   if (data_.wallpapers.size() > kMaxScreensaverWallpapers) {
     data_.wallpapers.resize(kMaxScreensaverWallpapers);
@@ -172,7 +194,6 @@ void ScreensaverConfigStore::normalize() {
     wallpaper.focus_x = clamp_u16(wallpaper.focus_x, 0, 1000);
     wallpaper.focus_y = clamp_u16(wallpaper.focus_y, 0, 1000);
     wallpaper.zoom = clamp_u16(wallpaper.zoom, 1000, 3000);
-    wallpaper.duration_seconds = clamp_u16(wallpaper.duration_seconds, 3, 3600);
     clean.push_back(wallpaper);
   }
   data_.wallpapers.swap(clean);
@@ -186,6 +207,11 @@ void ScreensaverConfigStore::normalizeTileGrid(TileGridConfig& grid) {
     if (tile.type == TILE_EMPTY) {
       tile.background_opacity = 0;
       continue;
+    }
+    if (tile.type == TILE_SENSOR) {
+      // History is distributed only to normal folder grids. Screensaver
+      // sensors therefore use the compact value presentation exclusively.
+      tile.sensor_display_mode = 0;
     }
     if (tile.col >= GRID_COLS) tile.col = GRID_COLS - 1;
     if (tile.row < first_row) tile.row = first_row;
@@ -212,22 +238,30 @@ bool ScreensaverConfigStore::loadPath(const char* path) {
   JsonDocument doc;
   const DeserializationError err = deserializeJson(doc, f);
   f.close();
-  if (err || (doc["version"] | 0) != kConfigVersion) return false;
+  const uint16_t version = doc["version"] | 0;
+  if (err || (version != kConfigVersion &&
+              version != kLegacyConfigVersion)) return false;
 
   ScreensaverConfigData loaded;
   loaded.use_wallpapers = doc["use_wallpapers"] | true;
   loaded.shuffle = doc["shuffle"] | false;
   loaded.tile_shadow = doc["tile_shadow"] | false;
+  loaded.tile_border = doc["tile_border"] | true;
   loaded.show_time = doc["show_time"] | true;
   loaded.show_date = doc["show_date"] | true;
   loaded.show_weekday = doc["show_weekday"] | false;
   loaded.clock_shadow = doc["clock_shadow"] | true;
   loaded.time_format = doc["time_format"] | 0;
   loaded.date_format = doc["date_format"] | 0;
+  loaded.time_alignment = doc["time_alignment"] | 1;
+  loaded.date_alignment = doc["date_alignment"] | 1;
   loaded.time_font_size = doc["time_font_size"] | 48;
   loaded.date_font_size = doc["date_font_size"] | 28;
   loaded.clock_x = doc["clock_x"] | 500;
   loaded.clock_y = doc["clock_y"] | 350;
+  loaded.duration_seconds = doc["duration_seconds"].is<int>()
+                                ? clamp_u16(doc["duration_seconds"].as<int>(), 3, 3600)
+                                : legacy_duration_from_doc(doc);
 
   JsonArrayConst wallpapers = doc["wallpapers"].as<JsonArrayConst>();
   for (JsonObjectConst item : wallpapers) {
@@ -238,7 +272,6 @@ bool ScreensaverConfigStore::loadPath(const char* path) {
     wallpaper.focus_x = item["focus_x"] | 500;
     wallpaper.focus_y = item["focus_y"] | 500;
     wallpaper.zoom = item["zoom"] | 1000;
-    wallpaper.duration_seconds = item["duration_seconds"] | 15;
     loaded.wallpapers.push_back(wallpaper);
   }
 
@@ -264,6 +297,7 @@ bool ScreensaverConfigStore::load() {
   if (!Device::storageReady()) return false;
 
   bool config_ok = false;
+  bool config_needs_migration = false;
   fs::FS& fs = Device::storageFS();
   if (loadPath(kConfigTmpPath)) {
     fs.remove(kConfigPath);
@@ -277,6 +311,18 @@ bool ScreensaverConfigStore::load() {
     fs.rename(kConfigBackupPath, kConfigPath);
     Serial.println("[ScreensaverConfig] aus .bak wiederhergestellt");
     config_ok = true;
+  } else if (loadPath(kLegacyConfigTmpPath)) {
+    Serial.println("[ScreensaverConfig] alte v1-.tmp geladen");
+    config_ok = true;
+    config_needs_migration = true;
+  } else if (loadPath(kLegacyConfigPath)) {
+    Serial.println("[ScreensaverConfig] alte v1-Konfiguration geladen");
+    config_ok = true;
+    config_needs_migration = true;
+  } else if (loadPath(kLegacyConfigBackupPath)) {
+    Serial.println("[ScreensaverConfig] alte v1-.bak geladen");
+    config_ok = true;
+    config_needs_migration = true;
   } else {
     Serial.println("[ScreensaverConfig] keine Konfiguration, Standardwerte aktiv");
   }
@@ -298,10 +344,16 @@ bool ScreensaverConfigStore::load() {
     }
     normalizeTileGrid(tile_grid_);
     if (tileConfig.saveScreensaverGrid(tile_grid_)) {
-      // Einmalige Migration aus dem verworfenen JSON-Slotformat. save()
-      // schreibt danach nur noch Bild/Uhr/Diashow und entfernt "slots".
-      save();
+      // Einmalige Migration aus dem verworfenen JSON-Slotformat.
+      config_needs_migration = true;
       Serial.println("[ScreensaverConfig] alte JSON-Slots ins TileGrid migriert");
+    }
+  }
+  if (config_ok && config_needs_migration) {
+    if (save()) {
+      Serial.println("[ScreensaverConfig] Konfiguration nach v2 migriert");
+    } else {
+      Serial.println("[ScreensaverConfig] v2-Migration fehlgeschlagen, v1 bleibt nutzbar");
     }
   }
   return config_ok || grid_ok;
@@ -313,16 +365,20 @@ String ScreensaverConfigStore::toJson(bool include_device_meta) const {
   doc["use_wallpapers"] = data_.use_wallpapers;
   doc["shuffle"] = data_.shuffle;
   doc["tile_shadow"] = data_.tile_shadow;
+  doc["tile_border"] = data_.tile_border;
   doc["show_time"] = data_.show_time;
   doc["show_date"] = data_.show_date;
   doc["show_weekday"] = data_.show_weekday;
   doc["clock_shadow"] = data_.clock_shadow;
   doc["time_format"] = data_.time_format;
   doc["date_format"] = data_.date_format;
+  doc["time_alignment"] = data_.time_alignment;
+  doc["date_alignment"] = data_.date_alignment;
   doc["time_font_size"] = data_.time_font_size;
   doc["date_font_size"] = data_.date_font_size;
   doc["clock_x"] = data_.clock_x;
   doc["clock_y"] = data_.clock_y;
+  doc["duration_seconds"] = data_.duration_seconds;
   if (include_device_meta) {
     doc["screen_width"] = Device::kScreenWidth;
     doc["screen_height"] = Device::kScreenHeight;
@@ -342,7 +398,6 @@ String ScreensaverConfigStore::toJson(bool include_device_meta) const {
     item["focus_x"] = wallpaper.focus_x;
     item["focus_y"] = wallpaper.focus_y;
     item["zoom"] = wallpaper.zoom;
-    item["duration_seconds"] = wallpaper.duration_seconds;
   }
 
   String json;
@@ -398,6 +453,14 @@ bool ScreensaverConfigStore::replaceFromJson(const String& json, String& error,
   }
   if (preview_wallpaper) {
     *preview_wallpaper = String(doc["preview_wallpaper"] | "");
+  }
+  // v1 hatte die Dauer pro Wallpaper. Beim Import alter Konfigurationen wird
+  // einmalig der Wert des ersten aktivierten Bildes zum globalen v2-Wert.
+  if (!doc["duration_seconds"].is<int>()) {
+    doc["duration_seconds"] = legacy_duration_from_doc(doc);
+  }
+  for (JsonObject item : doc["wallpapers"].as<JsonArray>()) {
+    item.remove("duration_seconds");
   }
   doc["version"] = kConfigVersion;
   // Kacheldaten gehoeren nicht in diese JSON-Datei. Alte/fehlerhafte

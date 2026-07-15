@@ -197,7 +197,7 @@ static void appendTileTabHTML(
 
   if (screensaver_mode) {
     html += R"html(            <div class="screensaver-grid-image-frame">
-              <img id="screensaverPreviewImage" class="screensaver-grid-image" alt="" draggable="false">
+              <img id="screensaverPreviewImage" class="screensaver-grid-image" alt="" draggable="false" hidden>
             </div>
             <div id="screensaverClock" class="screensaver-grid-clock">
               <div id="screensaverClockTime">--:--</div>
@@ -413,8 +413,14 @@ static void appendTileTabHTML(
                 <label class="inline-checkbox"><input id="screensaverTileShadow" type="checkbox"> )html";
     html += tr.screensaver_tile_shadow;
     html += R"html(</label>
+                <label class="inline-checkbox"><input id="screensaverTileBorder" type="checkbox"> )html";
+    html += tr.screensaver_tile_border;
+    html += R"html(</label>
                 <div class="screensaver-wallpaper-heading">)html";
     html += tr.screensaver_wallpapers_heading;
+    html += R"html(</div>
+                <div class="screensaver-storage-hint">)html";
+    html += tr.screensaver_storage_hint;
     html += R"html(</div>
                 <div id="screensaverWallpaperList" class="screensaver-wallpaper-list"></div>
                 <div id="screensaverWallpaperControls" class="screensaver-wallpaper-controls">
@@ -467,6 +473,24 @@ static void appendTileTabHTML(
     html += tr.date_font_size;
     html += R"html(<select id="screensaverDateFont"><option>20</option><option>24</option><option selected>28</option><option>32</option><option>40</option><option>48</option><option>56</option><option>64</option><option>72</option></select></label>
                     <label>)html";
+    html += tr.screensaver_time_alignment;
+    html += R"html(<select id="screensaverTimeAlignment"><option value="0">)html";
+    html += tr.alignment_left;
+    html += R"html(</option><option value="1" selected>)html";
+    html += tr.alignment_center;
+    html += R"html(</option><option value="2">)html";
+    html += tr.alignment_right;
+    html += R"html(</option></select></label>
+                    <label>)html";
+    html += tr.screensaver_date_alignment;
+    html += R"html(<select id="screensaverDateAlignment"><option value="0">)html";
+    html += tr.alignment_left;
+    html += R"html(</option><option value="1" selected>)html";
+    html += tr.alignment_center;
+    html += R"html(</option><option value="2">)html";
+    html += tr.alignment_right;
+    html += R"html(</option></select></label>
+                    <label>)html";
     html += tr.time_format_label;
     html += R"html(<select id="screensaverTimeFormat"><option value="0">)html";
     html += tr.format_auto_localization;
@@ -503,6 +527,8 @@ static void appendTileTabHTML(
     html += tr.tile_type_empty;
     html += "</option><option value=\"1\">";
     html += tr.tile_type_sensor;
+    html += "</option><option value=\"14\">";
+    html += tr.tile_type_energy;
     html += "</option><option value=\"2\">";
     html += tr.tile_type_scene;
     html += "</option><option value=\"5\">";
@@ -546,14 +572,29 @@ static void appendTileTabHTML(
   html += R"html(</a>
             </div>
 
-            <label>)html";
+            <div class="tile-color-label-row)html";
+  if (screensaver_mode) html += " has-opacity";
+  html += R"html("><span>)html";
   html += tr.admin_color;
-  html += R"html(</label>
-            <div class="tile-color-row">
+  html += R"html(</span>)html";
+  if (screensaver_mode) {
+    html += R"html(<span>)html";
+    html += tr.screensaver_background_opacity;
+    html += R"html(</span><span aria-hidden="true"></span>)html";
+  }
+  html += R"html(</div>
+            <div class="tile-color-row)html";
+  if (screensaver_mode) html += " has-opacity";
+  html += R"html(">
             <input type="color" id=")html";
   html += tab_id;
   html += R"html(_tile_color" value="#2A2A2A">
-              <button type="button" class="tile-color-reset-btn" title="Auf #2A2A2A zuruecksetzen" onclick="resetTileColor(')html";
+)html";
+  if (screensaver_mode) {
+    html += R"html(              <input type="range" id="screensaver_tile_opacity" min="0" max="255" step="1" value="0">
+)html";
+  }
+  html += R"html(              <button type="button" class="tile-color-reset-btn" title="Reset" onclick="resetTileColor(')html";
   html += tab_id;
   html += R"html(')"><i class="mdi mdi-restore"></i></button>
             </div>
@@ -604,15 +645,6 @@ static void appendTileTabHTML(
             </div>
 
 )html";
-
-            if (screensaver_mode) {
-              html += R"html(
-            <label>)html";
-              html += tr.screensaver_background_opacity;
-              html += R"html(</label>
-            <input type="range" id="screensaver_tile_opacity" min="0" max="255" step="1" value="0">
-)html";
-            }
 
             TileTypeWebContext type_ctx;
             type_ctx.tab_id = &tab_id;
@@ -1347,7 +1379,7 @@ String WebAdminServer::getAdminPage() {
                 </div>
                 <div class="file-manager-upload-row">
                   <button class="btn btn-secondary file-manager-toolbar-btn file-manager-requires-sd" type="button" onclick="document.getElementById('file_manager_upload').click()" disabled>)html";
-  html += is_german ? "Datei w&auml;hlen" : "Choose file";
+  html += is_german ? "Dateien w&auml;hlen" : "Choose files";
   html += R"html(</button>
                   <button class="btn btn-secondary file-manager-toolbar-btn file-manager-requires-sd" type="button" onclick="uploadFileManagerFile()" disabled>)html";
   html += is_german ? "Hochladen" : "Upload";
@@ -1356,7 +1388,7 @@ String WebAdminServer::getAdminPage() {
   html += is_german ? "Keine Datei ausgew&auml;hlt" : "No file selected";
   html += R"html(</span>
                 </div>
-                <input type="file" id="file_manager_upload" style="display:none" onchange="updateFileManagerUploadName(this)">
+                <input type="file" id="file_manager_upload" multiple style="display:none" onchange="updateFileManagerUploadName(this)">
                 <div class="file-manager-selection-bar">
                   <div id="file_manager_selection" class="file-manager-selection-info">)html";
   html += is_german ? "Keine Auswahl" : "No selection";

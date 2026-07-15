@@ -67,10 +67,14 @@ The settings tile (gear icon) opens the on-device settings menu:
 
 ### Display
 
-Brightness, sleep timeout (up to *Never*), and a rotate button that turns the
-whole UI by 180° — for mounting the display upside down.
+Brightness, sleep timeout (up to *Never*), a separate screensaver timeout, and a
+rotate button that turns the whole UI by 180° — for mounting the display upside
+down. Set the screensaver slider to *Never* to disable automatic activation.
 
-![Display settings](images/8in-display-popup.png){ width="70%" }
+![Display settings with screensaver timeout](images/8in-display-popup-screensaver.png){ width="70%" }
+
+You can also open the screensaver immediately by tapping any **Clock** tile. See
+the [Screensaver guide](screensaver.md) for microSD setup and layout configuration.
 
 ### WiFi
 

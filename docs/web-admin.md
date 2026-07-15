@@ -58,6 +58,20 @@ a back tile placed in the top-left corner for you.
 The folder tab has a **Delete Folder / Tab** button that removes the sub-page and
 all tiles on it. The back tile can be restyled (icon, color) but keeps its function.
 
+## Screensaver Editor
+
+The dedicated **Screensaver** tab is a live preview of the separate screensaver
+layout. Click the background to configure the slideshow, click the clock to change
+its content and alignment, or select one of the slots in the bottom two rows to
+configure a tile. The clock can be moved and resized freely; screensaver tiles use
+the same drag, resize, copy, paste, color, and opacity controls as the normal grid.
+
+![Screensaver editor](images/web-admin-screensaver.png)
+
+The editor requires JPEG images in `/images` on a microSD card. The complete setup,
+all slideshow options, automatic activation, and media-tile performance notes are
+documented in the [Screensaver guide](screensaver.md).
+
 ## Device Settings
 
 The **Settings** tab configures the device itself — the same options as in the
@@ -76,14 +90,15 @@ next to it is the device restart button.
 
 ## Import / Export
 
-Exports the complete dashboard — all folders and tiles — as a single JSON file;
-import restores it. Useful as a backup before bigger layout changes, or to copy
-a layout to a second device.
+Exports the complete dashboard — all folders, tiles, and the screensaver layout —
+as a single JSON file; import restores it. Useful as a backup before bigger layout
+changes, or to copy a layout to a second device. Older exports without a screensaver
+section remain supported and leave the current screensaver configuration unchanged.
 
 ![Import and export](images/web-admin-import-export.png)
 
 !!! warning
-    Import overwrites all tiles in existing folders.
+    Import overwrites the folders, tiles, and screensaver data contained in the file.
 
 ## Screenshot & Diagnostics
 
@@ -112,6 +127,7 @@ manually uploaded `update.bin`. Details on all update paths are on the
 
 ## File Manager
 
-If a microSD card (FAT32) is inserted, a file manager section appears: upload,
-download, rename, delete, and folders. The card is optional — it is only used for
-the file manager and for screenshot export.
+If a microSD card (FAT32) is inserted, a file manager section appears: upload one
+or several selected files, download, rename, delete, and create folders. The card
+is optional for the normal dashboard, but required for screenshot export and
+screensaver images.

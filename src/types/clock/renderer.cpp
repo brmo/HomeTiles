@@ -46,30 +46,75 @@ static uint8_t resolve_clock_date_format(const Tile& tile) {
   return clock_tile::resolve_date_format(tile.sensor_gauge_max, cfg.global_date_format, cfg.language);
 }
 
-// LVGL kennt keinen weichen Glyphen-Schatten. Neun schwache, fest versetzte
-// Kopien ergeben einen ruhigen Fake-Blur. Die Abstaende bleiben bei jeder
-// Schriftgroesse gleich, damit Zeit und Datum denselben Schatten haben.
+static uint8_t normalize_clock_alignment(uint8_t raw) {
+  return raw <= 2 ? raw : 1;
+}
+
+static lv_text_align_t clock_text_align(uint8_t raw) {
+  switch (normalize_clock_alignment(raw)) {
+    case 0:
+      return LV_TEXT_ALIGN_LEFT;
+    case 2:
+      return LV_TEXT_ALIGN_RIGHT;
+    default:
+      return LV_TEXT_ALIGN_CENTER;
+  }
+}
+
+// Bewaehrte weiche Variante aus der stabilen Screensaver-Version: neun sehr
+// schwache Kopien ergeben einen ruhigen Fake-Blur. Die spaetere Erweiterung
+// auf 21 Kopien wurde wegen der zusaetzlichen PPA-Last wieder verworfen.
 static constexpr uint8_t kClockShadowCopies = 9;
 
 struct ClockShadowSet {
   lv_obj_t* line = nullptr;
+  lv_obj_t* main_label = nullptr;
   const lv_font_t* font = nullptr;
+  bool container = false;
+  bool fill_parent = false;
+  uint8_t alignment = 1;
+  lv_coord_t text_width = 0;
+  lv_coord_t text_height = 0;
   lv_obj_t* labels[kClockShadowCopies] = {};
 
   void set_text(const char* text) {
+    if (main_label) lv_label_set_text(main_label, text ? text : "");
     for (lv_obj_t* label : labels) {
-      if (label) lv_label_set_text(label, text);
+      if (label) lv_label_set_text(label, text ? text : "");
     }
     if (!line || !font) return;
 
-    // Die Schattenkopien liegen ausserhalb dieser expliziten Textbox. Damit
-    // vergroessern sie nicht die Flex-Zeile und schieben das Datum nicht nach
-    // unten. OVERFLOW_VISIBLE sorgt trotzdem fuer die vollstaendige Ausgabe.
     lv_point_t text_size{};
     lv_text_get_size(&text_size, text ? text : "", font, 0, 0,
                      LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    lv_obj_set_size(line, text_size.x > 0 ? text_size.x : 1,
-                    text_size.y > 0 ? text_size.y : font->line_height);
+    text_width = text_size.x > 0 ? text_size.x : 1;
+    text_height = text_size.y > 0 ? text_size.y : font->line_height;
+    if (fill_parent) return;
+
+    // Vor jeder Neuberechnung erst auf die echte Textbreite zuruecksetzen.
+    // Danach erhalten beide Uhrzeilen gemeinsam die Breite der laengeren.
+    lv_obj_set_size(line, text_width, text_height);
+    if (container) {
+      if (main_label) lv_obj_set_size(main_label, text_width, text_height);
+      for (lv_obj_t* label : labels) {
+        if (label) lv_obj_set_size(label, text_width, text_height);
+      }
+    }
+  }
+
+  void set_box_width(lv_coord_t width) {
+    if (!line || width < 1) return;
+    lv_obj_set_width(line, width);
+    const lv_text_align_t align = clock_text_align(alignment);
+    if (main_label) lv_obj_set_style_text_align(main_label, align, 0);
+    for (lv_obj_t* label : labels) {
+      if (label) lv_obj_set_style_text_align(label, align, 0);
+    }
+    if (!container) return;
+    if (main_label) lv_obj_set_width(main_label, width);
+    for (lv_obj_t* label : labels) {
+      if (label) lv_obj_set_width(label, width);
+    }
   }
 };
 
@@ -80,12 +125,25 @@ struct ClockTileData {
   bool show_date_text = true;
   bool show_weekday = false;
   bool weekday_german = false;
+  bool fill_parent = false;
+  lv_obj_t* stack = nullptr;
   lv_obj_t* time_label = nullptr;
   lv_obj_t* date_label = nullptr;
   ClockShadowSet time_shadows;
   ClockShadowSet date_shadows;
   lv_timer_t* timer = nullptr;
 };
+
+static void apply_clock_line_alignment(ClockTileData* data) {
+  if (!data || data->fill_parent) return;
+  lv_coord_t width = 0;
+  if (data->time_label) width = max(width, data->time_shadows.text_width);
+  if (data->date_label) width = max(width, data->date_shadows.text_width);
+  if (width < 1) return;
+  if (data->time_label) data->time_shadows.set_box_width(width);
+  if (data->date_label) data->date_shadows.set_box_width(width);
+  if (data->stack) lv_obj_update_layout(data->stack);
+}
 
 static uint8_t get_clock_flags(const Tile& tile) {
   uint8_t flags = tile.sensor_decimals;
@@ -108,7 +166,6 @@ static void update_clock_labels(ClockTileData* data) {
       } else {
         snprintf(buf, sizeof(buf), "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
       }
-      lv_label_set_text(data->time_label, buf);
       data->time_shadows.set_text(buf);
     }
     if (data->date_label) {
@@ -146,9 +203,9 @@ static void update_clock_labels(ClockTileData* data) {
       } else {
         snprintf(buf, sizeof(buf), "%s", weekday[0] ? weekday : date_buf);
       }
-      lv_label_set_text(data->date_label, buf);
       data->date_shadows.set_text(buf);
     }
+    apply_clock_line_alignment(data);
   }
 }
 
@@ -165,6 +222,7 @@ static lv_obj_t* create_clock_line(lv_obj_t* stack,
                                    const ClockWidgetConfig& config,
                                    uint8_t raw_font_size, uint8_t fallback,
                                    bool date_line,
+                                   uint8_t alignment,
                                    ClockShadowSet* shadow_out) {
   const uint8_t font_size = date_line
                                 ? normalize_clock_date_font_size(raw_font_size,
@@ -177,15 +235,26 @@ static lv_obj_t* create_clock_line(lv_obj_t* stack,
     if (!label) return nullptr;
     set_label_style(label, lv_color_white(), font);
     if (config.fill_parent) lv_obj_set_width(label, LV_PCT(100));
-    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_align(label, clock_text_align(alignment), 0);
     lv_label_set_text(label, "");
+    if (shadow_out) {
+      shadow_out->line = label;
+      shadow_out->main_label = label;
+      shadow_out->font = font;
+      shadow_out->fill_parent = config.fill_parent;
+      shadow_out->alignment = normalize_clock_alignment(alignment);
+    }
     return label;
   }
 
   lv_obj_t* line = lv_obj_create(stack);
   if (!line) return nullptr;
   lv_obj_remove_style_all(line);
-  lv_obj_set_size(line, 1, font->line_height);
+  if (config.fill_parent) {
+    lv_obj_set_size(line, LV_PCT(100), font->line_height);
+  } else {
+    lv_obj_set_size(line, 1, font->line_height);
+  }
   lv_obj_remove_flag(line, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_remove_flag(line, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_flag(line, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
@@ -210,6 +279,8 @@ static lv_obj_t* create_clock_line(lv_obj_t* stack,
     if (!shadow) break;
     set_label_style(shadow, lv_color_black(), font);
     lv_obj_set_style_text_opa(shadow, copies[i].opa, 0);
+    lv_obj_set_style_text_align(shadow, clock_text_align(alignment), 0);
+    if (config.fill_parent) lv_obj_set_width(shadow, LV_PCT(100));
     lv_obj_set_pos(shadow, copies[i].x, copies[i].y);
     lv_label_set_text(shadow, "");
     if (shadow_out) shadow_out->labels[i] = shadow;
@@ -217,12 +288,18 @@ static lv_obj_t* create_clock_line(lv_obj_t* stack,
   if (shadow_out) {
     shadow_out->line = line;
     shadow_out->font = font;
+    shadow_out->container = true;
+    shadow_out->fill_parent = config.fill_parent;
+    shadow_out->alignment = normalize_clock_alignment(alignment);
   }
   lv_obj_t* label = lv_label_create(line);
   if (!label) return nullptr;  // line wird mit dem Stack aufgeraeumt
   set_label_style(label, lv_color_white(), font);
+  lv_obj_set_style_text_align(label, clock_text_align(alignment), 0);
+  if (config.fill_parent) lv_obj_set_width(label, LV_PCT(100));
   lv_obj_set_pos(label, 0, 0);
   lv_label_set_text(label, "");
+  if (shadow_out) shadow_out->main_label = label;
   return label;
 }
 
@@ -256,6 +333,7 @@ lv_obj_t* create_clock_widget(lv_obj_t* parent,
   if (config.show_time) {
     time_label =
         create_clock_line(stack, config, config.time_font_size, 40, false,
+                          config.time_alignment,
                           &time_shadows);
   }
 
@@ -265,6 +343,7 @@ lv_obj_t* create_clock_widget(lv_obj_t* parent,
   if (config.show_date || config.show_weekday) {
     date_label =
         create_clock_line(stack, config, config.date_font_size, 20, true,
+                          config.date_alignment,
                           &date_shadows);
   }
 
@@ -279,6 +358,8 @@ lv_obj_t* create_clock_widget(lv_obj_t* parent,
   data->show_date_text = config.show_date;
   data->show_weekday = config.show_weekday;
   data->weekday_german = config.weekday_german;
+  data->fill_parent = config.fill_parent;
+  data->stack = stack;
   data->time_label = time_label;
   data->date_label = date_label;
   data->time_shadows = time_shadows;

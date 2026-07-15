@@ -571,13 +571,16 @@ void appendAdminStyles(String& html) {
       cursor:pointer;
       user-select:none;
     }
-    /* Hover gestrichelt, Auswahl solide - gleiche Sprache wie .tile. */
+    /* Outline liegt ausserhalb des Bildes und veraendert dessen Layout nicht. */
+    .screensaver-tile-grid.selected-background .screensaver-grid-image-frame {
+      outline:3px solid #26a69a;
+      outline-offset:0;
+    }
+    /* Hover nur vor der Auswahl. Ein ausgewaehlter Hintergrund behaelt
+       ausschliesslich seinen durchgehenden Auswahlrahmen. */
     .screensaver-tile-grid:not(.selected-background) .screensaver-grid-image-frame:hover {
       outline:3px dashed rgba(38,166,154,0.6);
-      outline-offset:-3px;
-    }
-    .screensaver-tile-grid.selected-background .screensaver-grid-image-frame {
-      box-shadow:0 0 0 3px #26a69a, 0 0 12px rgba(38,166,154,0.55);
+      outline-offset:0;
     }
     .screensaver-grid-image {
       position:absolute;
@@ -588,6 +591,7 @@ void appendAdminStyles(String& html) {
       pointer-events:none;
       user-select:none;
     }
+    .screensaver-grid-image[hidden] { display:none !important; }
     .screensaver-grid-clock {
       position:absolute;
       z-index:3;
@@ -599,9 +603,20 @@ void appendAdminStyles(String& html) {
       touch-action:none;
       white-space:nowrap;
     }
-    /* Fester, weicher Schatten fuer beide Zeilen; auf dem halb skalierten
-       Editor entspricht das etwa den 4px/6px-Kopien auf dem Display. */
-    .screensaver-grid-clock.clock-shadowed { text-shadow:2px 2px 4px rgba(0,0,0,0.42); }
+    /* Grosser, weicher Schatten mit nur kleinem Versatz. Die Display-Version
+       bildet denselben Verlauf mit mehreren sehr schwachen Textkopien nach. */
+    .screensaver-grid-clock.clock-shadowed {
+      text-shadow:
+        var(--screensaver-clock-shadow-4, 2.5px) var(--screensaver-clock-shadow-4, 2.5px) 0 rgba(0,0,0,0.133),
+        var(--screensaver-clock-shadow-2, 1.25px) var(--screensaver-clock-shadow-4, 2.5px) 0 rgba(0,0,0,0.055),
+        var(--screensaver-clock-shadow-6, 3.75px) var(--screensaver-clock-shadow-4, 2.5px) 0 rgba(0,0,0,0.055),
+        var(--screensaver-clock-shadow-4, 2.5px) var(--screensaver-clock-shadow-2, 1.25px) 0 rgba(0,0,0,0.055),
+        var(--screensaver-clock-shadow-4, 2.5px) var(--screensaver-clock-shadow-6, 3.75px) 0 rgba(0,0,0,0.055),
+        var(--screensaver-clock-shadow-2, 1.25px) var(--screensaver-clock-shadow-2, 1.25px) 0 rgba(0,0,0,0.031),
+        var(--screensaver-clock-shadow-6, 3.75px) var(--screensaver-clock-shadow-2, 1.25px) 0 rgba(0,0,0,0.031),
+        var(--screensaver-clock-shadow-2, 1.25px) var(--screensaver-clock-shadow-6, 3.75px) 0 rgba(0,0,0,0.031),
+        var(--screensaver-clock-shadow-6, 3.75px) var(--screensaver-clock-shadow-6, 3.75px) 0 rgba(0,0,0,0.031);
+    }
     .screensaver-grid-clock:hover {
       outline:3px dashed rgba(38,166,154,0.65);
       outline-offset:6px;
@@ -659,6 +674,12 @@ void appendAdminStyles(String& html) {
        statt box-shadow, damit Auswahl-/Hover-Shadows unangetastet bleiben. */
     .screensaver-tile-grid.tiles-shadowed > .tile:not(.empty) {
       filter:drop-shadow(0 2px 8px rgba(0,0,0,0.65));
+    }
+    /* Die feine Linie sitzt an der aeusseren Kartenkante. Ein Kind-Overlay
+       waere wegen des transparenten 3px-Editorrahmens sichtbar eingerueckt. */
+    .screensaver-tile-grid.tiles-bordered > .tile:not(.empty) {
+      outline:1px solid rgba(255,255,255,0.15);
+      outline-offset:-1px;
     }
 
     /* Display-aehnliche Kacheln (50% Skalierung) */
@@ -920,8 +941,15 @@ void appendAdminStyles(String& html) {
     }
     .gauge-fields > label, .graph-fields > label,
     .gauge-fields > input, .graph-fields > input { margin:0; }
-    .tile-color-row { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
-    .tile-color-row input[type="color"] { flex:1 1 auto; min-width:0; height:38px; margin-bottom:0; padding:4px 7px; border-radius:10px; }
+    .tile-color-label-row,
+    .tile-color-row { display:grid; grid-template-columns:minmax(72px,1fr) 38px; gap:8px; align-items:center; }
+    .tile-color-label-row.has-opacity,
+    .tile-color-row.has-opacity { grid-template-columns:minmax(72px,1fr) minmax(110px,1.5fr) 38px; }
+    .tile-color-label-row { margin-top:13px; margin-bottom:4px; }
+    .tile-color-label-row span { color:var(--text-2); font-size:12px; font-weight:600; line-height:14px; }
+    .tile-color-row { margin-bottom:10px; }
+    .tile-color-row input[type="color"] { width:100%; min-width:0; height:38px; margin:0; padding:4px 7px; border-radius:10px; }
+    .tile-color-row input[type="range"] { width:100%; min-width:0; margin:0; padding:0; align-self:center; }
     .tile-color-reset-btn {
       flex:0 0 38px;
       width:38px;
@@ -956,6 +984,7 @@ void appendAdminStyles(String& html) {
     .screensaver-fixed-type label { margin:0; }
     .screensaver-fixed-type input { margin:0; }
     .screensaver-wallpaper-heading { color:var(--text-3); font-weight:700; font-size:12px; letter-spacing:.1em; text-transform:uppercase; margin:18px 0 8px; }
+    .screensaver-storage-hint { color:var(--text-3); font-size:12px; line-height:1.4; margin:-2px 0 10px; }
     .screensaver-wallpaper-list { display:flex; flex-direction:column; gap:7px; max-height:190px; overflow:auto; }
     .screensaver-wallpaper-row { display:grid; grid-template-columns:auto 1fr auto auto; align-items:center; gap:8px; padding:7px 9px; border:1px solid var(--line); border-radius:10px; background:var(--well); }
     .screensaver-wallpaper-row.active { border-color:#26b5aa; }

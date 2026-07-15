@@ -3,6 +3,7 @@
 #include "src/tiles/tile_config.h"
 #include "src/core/config_manager.h"
 #include "src/core/i18n.h"
+#include "src/ui/screensaver_config.h"
 
 static void appendJsStringLiteral(String& html, const char* value) {
   html += "'";
@@ -314,10 +315,15 @@ void appendAdminScripts(String& html) {
   function updateFileManagerUploadName(inputEl) {
     const nameEl = document.getElementById('file_manager_upload_name');
     if (!nameEl) return;
-    const file = inputEl && inputEl.files && inputEl.files.length ? inputEl.files[0] : null;
-    nameEl.textContent = file
-      ? file.name
-      : fileManagerText('Keine Datei ausgew\u00e4hlt', 'No file selected');
+    const files = inputEl && inputEl.files ? Array.from(inputEl.files) : [];
+    if (!files.length) {
+      nameEl.textContent = fileManagerText('Keine Datei ausgew\u00e4hlt', 'No file selected');
+    } else if (files.length === 1) {
+      nameEl.textContent = files[0].name;
+    } else {
+      nameEl.textContent = files.length + fileManagerText(
+        ' Dateien ausgew\u00e4hlt', ' files selected');
+    }
   }
 
   function formatFileManagerSize(entry) {
@@ -670,6 +676,7 @@ void appendAdminScripts(String& html) {
         path,
         name: trimmed
       });
+      invalidateScreensaverEditor();
       showNotification(fileManagerText('Umbenannt.', 'Renamed.'));
       loadFileManager();
     } catch (err) {
@@ -687,6 +694,7 @@ void appendAdminScripts(String& html) {
         fs: fileManagerState.fs,
         path
       });
+      invalidateScreensaverEditor();
       showNotification(fileManagerText('Gel\u00f6scht.', 'Deleted.'));
       loadFileManager();
     } catch (err) {
@@ -714,33 +722,42 @@ void appendAdminScripts(String& html) {
       return;
     }
     if (fileManagerUploadBusy) return;
-    const file = input.files[0];
+    const files = Array.from(input.files);
     fileManagerUploadBusy = true;
     try {
-      let offset = 0;
-      let firstPart = true;
-      while (offset < file.size || firstPart) {
-        const end = Math.min(offset + FILE_MANAGER_UPLOAD_PART_SIZE, file.size);
-        const formData = new FormData();
-        formData.append('file', new File([file.slice(offset, end)], file.name));
-        const pct = file.size ? Math.round((end / file.size) * 100) : 100;
-        setFileManagerStatus(fileManagerText('Upload l\u00e4uft... ', 'Uploading... ') + pct + '%');
-        const res = await fetch(fileManagerUrl('/api/files/upload', {
-          fs: fileManagerState.fs,
-          path: fileManagerState.path || '/',
-          append: firstPart ? '0' : '1'
-        }), { method: 'POST', body: formData });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.success) {
-          throw new Error(data.error || fileManagerText('Upload fehlgeschlagen.', 'Upload failed.'));
+      for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+        const file = files[fileIndex];
+        let offset = 0;
+        let firstPart = true;
+        while (offset < file.size || firstPart) {
+          const end = Math.min(offset + FILE_MANAGER_UPLOAD_PART_SIZE, file.size);
+          const formData = new FormData();
+          formData.append('file', new File([file.slice(offset, end)], file.name));
+          const pct = file.size ? Math.round((end / file.size) * 100) : 100;
+          setFileManagerStatus(
+            fileManagerText('Upload ', 'Upload ') + (fileIndex + 1) + '/' + files.length +
+            ': ' + file.name + ' - ' + pct + '%');
+          const res = await fetch(fileManagerUrl('/api/files/upload', {
+            fs: fileManagerState.fs,
+            path: fileManagerState.path || '/',
+            append: firstPart ? '0' : '1'
+          }), { method: 'POST', body: formData });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data.success) {
+            throw new Error(data.error || fileManagerText('Upload fehlgeschlagen.', 'Upload failed.'));
+          }
+          offset = end;
+          firstPart = false;
         }
-        offset = end;
-        firstPart = false;
       }
       input.value = '';
       updateFileManagerUploadName(input);
-      setFileManagerStatus(fileManagerText('Upload abgeschlossen.', 'Upload complete.'), true);
-      showNotification(fileManagerText('Upload abgeschlossen.', 'Upload complete.'));
+      const completeMessage = files.length === 1
+        ? fileManagerText('Upload abgeschlossen.', 'Upload complete.')
+        : files.length + fileManagerText(' Dateien hochgeladen.', ' files uploaded.');
+      setFileManagerStatus(completeMessage, true);
+      showNotification(completeMessage);
+      invalidateScreensaverEditor();
       loadFileManager();
     } catch (err) {
       const message = err?.message || fileManagerText('Upload fehlgeschlagen.', 'Upload failed.');
@@ -1051,6 +1068,8 @@ void appendAdminScripts(String& html) {
   html += "  const MEDIA_TILE_TYPE = " + String(static_cast<unsigned>(TILE_MEDIA)) + ";\n";
   html += "  const MEDIA_TILE_MIN_SPAN = " + String(MEDIA_TILE_MIN_SPAN) + ";\n";
   html += "  const MEDIA_TILE_MAX_SPAN = " + String(MEDIA_TILE_MAX_SPAN) + ";\n";
+  html += "  const SCREENSAVER_TILE_DEFAULT_OPACITY = " +
+          String(kScreensaverDefaultTileOpacity) + ";\n";
   html += R"html(
   const tileTabs = [];
   const folderByTab = {};
@@ -1077,13 +1096,15 @@ void appendAdminScripts(String& html) {
     const hasMeta = Object.prototype.hasOwnProperty.call(payload, 'values') ||
                     Object.prototype.hasOwnProperty.call(payload, 'units') ||
                     Object.prototype.hasOwnProperty.call(payload, 'icons') ||
-                    Object.prototype.hasOwnProperty.call(payload, 'names');
+                    Object.prototype.hasOwnProperty.call(payload, 'names') ||
+                    Object.prototype.hasOwnProperty.call(payload, 'energy_values') ||
+                    Object.prototype.hasOwnProperty.call(payload, 'energy_units');
     if (!hasMeta) {
       return { values: payload || {}, units: {}, icons: {}, names: {}, loaded: true };
     }
     return {
-      values: payload.values || {},
-      units: payload.units || {},
+      values: Object.assign({}, payload.values || {}, payload.energy_values || {}),
+      units: Object.assign({}, payload.units || {}, payload.energy_units || {}),
       icons: payload.icons || {},
       names: payload.names || {},
       loaded: true
@@ -2078,6 +2099,12 @@ void appendAdminScripts(String& html) {
     bindLive(spanWInput, 'input', 'tileSpanW', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(spanHInput, 'input', 'tileSpanH', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(typeSelect, 'change', 'tileType', () => {
+      const tileEl = document.getElementById(tab + '-tile-' + currentTileIndex);
+      const previousType = Number(tileEl?.dataset.type ?? 0);
+      if (isScreensaverTileTab(tab) && previousType === 0 &&
+          Number(typeSelect.value) !== 0 && opacityInput) {
+        opacityInput.value = String(SCREENSAVER_TILE_DEFAULT_OPACITY);
+      }
       normalizeLayoutInputs(tab);
       updateLayoutFromInputs(tab);
       updateTilePreview(tab);
@@ -2672,9 +2699,41 @@ void appendAdminScripts(String& html) {
     return isNaN(num) ? 0 : num;
   }
 
+  function buildScreensaverExportConfig(data) {
+    return {
+      version: Number(data?.version || 1),
+      use_wallpapers: !!data?.use_wallpapers,
+      shuffle: !!data?.shuffle,
+      tile_shadow: !!data?.tile_shadow,
+      tile_border: data?.tile_border !== false,
+      show_time: !!data?.show_time,
+      show_date: !!data?.show_date,
+      show_weekday: !!data?.show_weekday,
+      clock_shadow: !!data?.clock_shadow,
+      time_format: Number(data?.time_format || 0),
+      date_format: Number(data?.date_format || 0),
+      time_alignment: Math.round(ssClamp(data?.time_alignment ?? 1, 0, 2)),
+      date_alignment: Math.round(ssClamp(data?.date_alignment ?? 1, 0, 2)),
+      time_font_size: Number(data?.time_font_size || 48),
+      date_font_size: Number(data?.date_font_size || 28),
+      clock_x: Number(data?.clock_x ?? 500),
+      clock_y: Number(data?.clock_y ?? 350),
+      duration_seconds: Number(data?.duration_seconds ?? 15),
+      wallpapers: Array.isArray(data?.wallpapers) ? data.wallpapers.map(wallpaper => ({
+        file_name: String(wallpaper?.file_name || ''),
+        enabled: !!wallpaper?.enabled,
+        focus_x: Number(wallpaper?.focus_x ?? 500),
+        focus_y: Number(wallpaper?.focus_y ?? 500),
+        zoom: Number(wallpaper?.zoom ?? 1000)
+      })) : []
+    };
+  }
+
   async function exportTilesConfig() {
     try {
       const tabs = tileTabs.filter(tab => !isScreensaverTileTab(tab));
+      const screensaverFolderId = getFolderIdForTab('screensaver');
+      if (screensaverFolderId === undefined) throw new Error('Screensaver grid unavailable');
       const tileRequests = tabs.map(tab => {
         const folderId = getFolderIdForTab(tab);
         if (folderId === undefined) return Promise.resolve([]);
@@ -2682,7 +2741,21 @@ void appendAdminScripts(String& html) {
           .then(res => res.json())
           .catch(() => []);
       });
-      const tilesLists = await Promise.all(tileRequests);
+      const screensaverConfigRequest = fetch('/api/screensaver').then(async res => {
+        const data = await res.json();
+        if (!res.ok || !data?.success) throw new Error('Screensaver config export failed');
+        return data;
+      });
+      const screensaverGridRequest = fetch(
+        '/api/tiles?folder=' + encodeURIComponent(screensaverFolderId)
+      ).then(async res => {
+        const data = await res.json();
+        if (!res.ok || !Array.isArray(data)) throw new Error('Screensaver grid export failed');
+        return data;
+      });
+      const [tilesLists, screensaverData, screensaverGrid] = await Promise.all([
+        Promise.all(tileRequests), screensaverConfigRequest, screensaverGridRequest
+      ]);
       const folders = tabs.map(tab => {
         const folderId = getFolderIdForTab(tab);
         const tabEl = document.getElementById('tab-tiles-' + tab);
@@ -2703,10 +2776,21 @@ void appendAdminScripts(String& html) {
       });
 
       const payload = {
-        version: 2,
+        version: 3,
         exported_at: new Date().toISOString(),
         folders: folders,
-        grids: grids
+        grids: grids,
+        screensaver: {
+          version: 2,
+          config: buildScreensaverExportConfig(screensaverData),
+          grid: screensaverGrid,
+          source_layout: {
+            screen_width: Number(screensaverData.screen_width || 0),
+            screen_height: Number(screensaverData.screen_height || 0),
+            grid_cols: Number(screensaverData.grid_cols || 0),
+            grid_rows: Number(screensaverData.grid_rows || 0)
+          }
+        }
       };
       const ts = new Date().toISOString().replace(/[:.]/g, '-');
       downloadJsonFile('waveshare_tiles_' + ts + '.json', JSON.stringify(payload, null, 2));
@@ -2824,6 +2908,116 @@ void appendAdminScripts(String& html) {
     }
   }
 
+  function prepareScreensaverTilesForImport(sourceTiles, sourceLayout) {
+    const tileCount = GRID_COLS * GRID_ROWS;
+    const sourceCols = Number(sourceLayout?.grid_cols || 0);
+    const sourceRows = Number(sourceLayout?.grid_rows || 0);
+    const sameLayout = sourceCols === GRID_COLS && sourceRows === GRID_ROWS;
+    const sourceEntries = (Array.isArray(sourceTiles) ? sourceTiles : [])
+      .map((tile, index) => ({ tile: tile || {}, sourceIndex: index }))
+      .filter(entry => Number(entry.tile.type || 0) !== 0);
+
+    if (sameLayout) {
+      return sourceEntries.slice(0, tileCount).map(entry => ({
+        targetIndex: entry.sourceIndex,
+        tile: entry.tile
+      }));
+    }
+
+    // Bei einem Import zwischen 7xN und 4xN wird die relative Anordnung in
+    // den beiden unteren Reihen beibehalten und auf das Zielraster gepackt.
+    const firstTargetRow = Math.max(0, GRID_ROWS - 2);
+    const firstSourceRow = sourceRows > 1 ? sourceRows - 2 : 0;
+    const occupied = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(false));
+    const prepared = [];
+    for (const entry of sourceEntries) {
+      if (prepared.length >= tileCount) throw new Error('Screensaver grid does not fit target device');
+      const tile = entry.tile;
+      const mediaTile = Number(tile.type) === MEDIA_TILE_TYPE;
+      let spanW = Math.max(1, Number(tile.span_w || 1));
+      let spanH = Math.max(1, Number(tile.span_h || 1));
+      if (mediaTile) {
+        spanW = Math.max(MEDIA_TILE_MIN_SPAN, spanW);
+        spanH = Math.max(MEDIA_TILE_MIN_SPAN, spanH);
+      }
+      spanW = Math.min(spanW, GRID_COLS, mediaTile ? MEDIA_TILE_MAX_SPAN : GRID_COLS);
+      spanH = Math.min(spanH, 2, mediaTile ? MEDIA_TILE_MAX_SPAN : 2);
+
+      const sourceSpanW = Math.max(1, Number(tile.span_w || 1));
+      const sourceColRange = Math.max(0, sourceCols - sourceSpanW);
+      const targetColRange = Math.max(0, GRID_COLS - spanW);
+      const relativeCol = sourceColRange > 0
+        ? Math.max(0, Math.min(1, Number(tile.col || 0) / sourceColRange))
+        : 0;
+      const desiredCol = Math.round(relativeCol * targetColRange);
+      const sourceRowOffset = Math.max(0, Math.min(1, Number(tile.row || 0) - firstSourceRow));
+      const desiredRow = Math.min(GRID_ROWS - spanH, firstTargetRow + sourceRowOffset);
+
+      let best = null;
+      for (let row = firstTargetRow; row <= GRID_ROWS - spanH; row++) {
+        for (let col = 0; col <= GRID_COLS - spanW; col++) {
+          let free = true;
+          for (let y = row; y < row + spanH && free; y++) {
+            for (let x = col; x < col + spanW; x++) {
+              if (occupied[y][x]) { free = false; break; }
+            }
+          }
+          if (!free) continue;
+          const score = Math.abs(row - desiredRow) * (GRID_COLS + 1) + Math.abs(col - desiredCol);
+          if (!best || score < best.score) best = { row, col, score };
+        }
+      }
+      if (!best) throw new Error('Screensaver grid does not fit target device');
+      for (let y = best.row; y < best.row + spanH; y++) {
+        for (let x = best.col; x < best.col + spanW; x++) occupied[y][x] = true;
+      }
+      prepared.push({
+        targetIndex: prepared.length,
+        tile: { ...tile, col: best.col, row: best.row, span_w: spanW, span_h: spanH }
+      });
+    }
+    return prepared;
+  }
+
+  async function replaceScreensaverGridForImport(sourceTiles, sourceLayout = null) {
+    const folderId = getFolderIdForTab('screensaver');
+    if (folderId === undefined) throw new Error('Screensaver grid unavailable');
+    const currentTiles = await fetchTilesForImport(folderId);
+    const tileCount = GRID_COLS * GRID_ROWS;
+    const preparedTiles = prepareScreensaverTilesForImport(sourceTiles, sourceLayout);
+    const supportedTypes = new Set([1, 2, 5, 14, MEDIA_TILE_TYPE]);
+    for (const entry of preparedTiles) {
+      if (!supportedTypes.has(Number(entry.tile.type || 0))) {
+        throw new Error('Unsupported screensaver tile type');
+      }
+    }
+
+    // Erst vorhandene Kacheln entfernen, damit die importierten Positionen
+    // nicht an temporaeren Ueberlappungen mit dem alten Grid scheitern.
+    for (let i = 0; i < tileCount; i++) {
+      if (Number(currentTiles[i]?.type || 0) !== 0) {
+        await postTile(folderId, i, buildEmptyImportTile(i));
+      }
+    }
+
+    for (const entry of preparedTiles) {
+      const tile = entry.tile;
+      await postTile(folderId, entry.targetIndex, tile);
+    }
+  }
+
+  async function importScreensaverConfig(config) {
+    const res = await fetch('/api/screensaver', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || 'Screensaver config import failed');
+    }
+  }
+
   async function importTilesPayload(payload) {
     try {
       if (!payload || typeof payload !== 'object') {
@@ -2879,6 +3073,22 @@ void appendAdminScripts(String& html) {
         throw new Error('Folder mapping failed');
       }
 
+      // Version 1/2 hatten keinen Screensaver-Block und bleiben unveraendert
+      // importierbar. Auch alternative flache Feldnamen werden akzeptiert,
+      // falls ein Zwischenstand dieser Exportfunktion verwendet wurde.
+      const screensaverBlock = payload.screensaver && typeof payload.screensaver === 'object'
+        ? payload.screensaver
+        : null;
+      const screensaverConfig = screensaverBlock?.config || payload.screensaver_config;
+      const screensaverGrid = screensaverBlock?.grid || payload.screensaver_grid;
+      if (screensaverConfig && typeof screensaverConfig === 'object') {
+        await importScreensaverConfig(screensaverConfig);
+      }
+      if (Array.isArray(screensaverGrid)) {
+        await replaceScreensaverGridForImport(
+          screensaverGrid, screensaverBlock?.source_layout || null);
+      }
+
       try { localStorage.removeItem('tileDrafts'); } catch (e) {}
       showNotification(t('importComplete'));
       setTimeout(() => location.reload(), 600);
@@ -2913,6 +3123,9 @@ void appendAdminScripts(String& html) {
     fd.append('row', layout.row);
     fd.append('span_w', layout.span_w);
     fd.append('span_h', layout.span_h);
+    if (tile.background_opacity !== undefined && tile.background_opacity !== null) {
+      fd.append('background_opacity', tile.background_opacity);
+    }
 
     if (safeType === 1) {
       fd.append('sensor_entity', tile.sensor_entity || '');
@@ -2924,7 +3137,10 @@ void appendAdminScripts(String& html) {
       if (tile.sensor_value_font !== undefined && tile.sensor_value_font !== null) {
         fd.append('sensor_value_font', tile.sensor_value_font);
       }
-      const displayMode = (tile.sensor_display_mode !== undefined) ? tile.sensor_display_mode : (tile.sensor_gauge ? 1 : 0);
+      const isScreensaverTile = Number(folderId) === Number(getFolderIdForTab('screensaver'));
+      const displayMode = isScreensaverTile
+        ? 0
+        : ((tile.sensor_display_mode !== undefined) ? tile.sensor_display_mode : (tile.sensor_gauge ? 1 : 0));
       fd.append('sensor_display_mode', String(displayMode));
       if (tile.sensor_gauge_min !== undefined && tile.sensor_gauge_min !== null && String(tile.sensor_gauge_min).length > 0) {
         fd.append('sensor_gauge_min', tile.sensor_gauge_min);
@@ -3003,6 +3219,8 @@ void appendAdminScripts(String& html) {
       if (tile.sensor_value_y_offset !== undefined && tile.sensor_value_y_offset !== null && String(tile.sensor_value_y_offset).length > 0) {
         fd.append('sensor_value_y_offset', tile.sensor_value_y_offset);
       }
+    } else if (safeType === MEDIA_TILE_TYPE) {
+      fd.append('media_entity', tile.sensor_entity || tile.media_entity || '');
     } else if (safeType === 16) {
       fd.append('animation_file', tile.animation_file || tile.scene_alias || '');
       fd.append('animation_fps', tile.animation_fps || tile.image_slideshow_sec || '10');
@@ -3074,6 +3292,10 @@ void appendAdminScripts(String& html) {
     if (!input) return;
     input.value = '#2A2A2A';
     input.dataset.bgColorDefault = '0';
+    if (isScreensaverTileTab(tab)) {
+      const opacity = document.getElementById('screensaver_tile_opacity');
+      if (opacity) opacity.value = String(SCREENSAVER_TILE_DEFAULT_OPACITY);
+    }
     updateTilePreview(tab);
     updateDraft(tab);
     scheduleAutoSave(tab);
@@ -3100,7 +3322,8 @@ void appendAdminScripts(String& html) {
     else {
       const bg = tileBgToHex(tile.bg_color, meta.defaultBg || '#353535');
       if (isScreensaverTileTab(tab)) {
-        const opacity = clampInt(tile.background_opacity, 0, 255, 0);
+        const opacity = clampInt(tile.background_opacity, 0, 255,
+                                 SCREENSAVER_TILE_DEFAULT_OPACITY);
         el.style.background = bg + opacity.toString(16).padStart(2, '0');
       } else {
         el.style.background = bg;
@@ -4095,6 +4318,13 @@ void appendAdminScripts(String& html) {
   const screensaverTimeFontSizes = [20, 24, 28, 32, 40, 48, 56, 64, 72, 80, 96];
   const screensaverDateFontSizes = [20, 24, 28, 32, 40, 48, 56, 64, 72];
 
+  function invalidateScreensaverEditor() {
+    screensaverLoaded = false;
+    screensaverLoading = false;
+    screensaverDraft = null;
+    screensaverWallpaperIndex = -1;
+  }
+
   function ssClamp(value, min, max) {
     const n = Number(value);
     return Math.max(min, Math.min(max, Number.isFinite(n) ? n : min));
@@ -4106,6 +4336,14 @@ void appendAdminScripts(String& html) {
     return sizes.reduce((best, size) =>
       Math.abs(size - wanted) < Math.abs(best - wanted) ? size : best,
       sizes[0]);
+  }
+
+  function ssClockAlignment(value) {
+    return Math.round(ssClamp(value ?? 1, 0, 2));
+  }
+
+  function ssClockAlignmentCss(value) {
+    return ['left', 'center', 'right'][ssClockAlignment(value)];
   }
 
   function getScreensaverClockPreviewDate(d) {
@@ -4123,14 +4361,19 @@ void appendAdminScripts(String& html) {
   function ssNormalizeLoaded(data) {
     data.time_font_size = ssNearestClockFont(data.time_font_size || 48, false);
     data.date_font_size = ssNearestClockFont(data.date_font_size || 28, true);
+    data.time_alignment = ssClockAlignment(data.time_alignment);
+    data.date_alignment = ssClockAlignment(data.date_alignment);
+    data.tile_border = data.tile_border !== false;
     data.wallpapers = Array.isArray(data.wallpapers) ? data.wallpapers : [];
+    data.duration_seconds = Math.round(ssClamp(
+      data.duration_seconds ?? 15, 3, 3600));
     const configured = new Map(data.wallpapers.map(item => [item.file_name, item]));
     const hadConfiguredWallpapers = data.wallpapers.length > 0;
     (data.available_wallpapers || []).forEach(name => {
       if (!configured.has(name)) {
         data.wallpapers.push({
           file_name: name, enabled: !hadConfiguredWallpapers,
-          focus_x: 500, focus_y: 500, zoom: 1000, duration_seconds: 15
+          focus_x: 500, focus_y: 500, zoom: 1000
         });
       }
     });
@@ -4159,27 +4402,30 @@ void appendAdminScripts(String& html) {
   function ssPayload() {
     const d = screensaverDraft;
     return {
-      version: 1,
+      version: 2,
       use_wallpapers: !!d.use_wallpapers,
       shuffle: !!d.shuffle,
       tile_shadow: !!d.tile_shadow,
+      tile_border: d.tile_border !== false,
       show_time: !!d.show_time,
       show_date: !!d.show_date,
       show_weekday: !!d.show_weekday,
       clock_shadow: !!d.clock_shadow,
       time_format: Number(d.time_format || 0),
       date_format: Number(d.date_format || 0),
+      time_alignment: ssClockAlignment(d.time_alignment),
+      date_alignment: ssClockAlignment(d.date_alignment),
       time_font_size: ssNearestClockFont(d.time_font_size || 48, false),
       date_font_size: ssNearestClockFont(d.date_font_size || 28, true),
       clock_x: Math.round(ssClamp(d.clock_x, 0, 1000)),
       clock_y: Math.round(ssClamp(d.clock_y, 0, 1000)),
+      duration_seconds: Math.round(ssClamp(d.duration_seconds, 3, 3600)),
       preview_wallpaper: ssCurrentWallpaper()?.file_name || '',
       wallpapers: d.wallpapers.map(w => ({
         file_name: w.file_name, enabled: !!w.enabled,
         focus_x: Math.round(ssClamp(w.focus_x, 0, 1000)),
         focus_y: Math.round(ssClamp(w.focus_y, 0, 1000)),
-        zoom: Math.round(ssClamp(w.zoom, 1000, 3000)),
-        duration_seconds: Math.round(ssClamp(w.duration_seconds, 3, 3600))
+        zoom: Math.round(ssClamp(w.zoom, 1000, 3000))
       }))
     };
   }
@@ -4307,16 +4553,23 @@ void appendAdminScripts(String& html) {
     clock.classList.toggle('selected-clock', screensaverSelected.kind === 'clock');
     const width = preview.getBoundingClientRect().width || 800;
     const scale = width / Number(d.screen_width || 1280);
+    clock.style.setProperty('--screensaver-clock-shadow-2', (2 * scale) + 'px');
+    clock.style.setProperty('--screensaver-clock-shadow-4', (4 * scale) + 'px');
+    clock.style.setProperty('--screensaver-clock-shadow-6', (6 * scale) + 'px');
     const wallpaper = ssCurrentWallpaper();
     if (d.use_wallpapers && wallpaper && wallpaper.file_name) {
       const wanted = '/api/screensaver/wallpaper?name=' + encodeURIComponent(wallpaper.file_name);
       if (image.dataset.src !== wanted) { image.src = wanted; image.dataset.src = wanted; }
       image.hidden = false;
+      image.style.display = 'block';
       image.style.objectPosition = (wallpaper.focus_x / 10) + '% ' + (wallpaper.focus_y / 10) + '%';
       image.style.transformOrigin = (wallpaper.focus_x / 10) + '% ' + (wallpaper.focus_y / 10) + '%';
       image.style.transform = 'scale(' + (wallpaper.zoom / 1000) + ')';
     } else {
       image.hidden = true;
+      image.style.display = 'none';
+      image.removeAttribute('src');
+      delete image.dataset.src;
     }
     clock.style.left = (d.clock_x / 10) + '%';
     clock.style.top = (d.clock_y / 10) + '%';
@@ -4328,25 +4581,40 @@ void appendAdminScripts(String& html) {
     date.style.fontSize = Math.max(8, Number(d.date_font_size || 28) * scale) + 'px';
     time.textContent = getClockPreviewTime(d.time_format);
     date.textContent = getScreensaverClockPreviewDate(d);
+    time.style.width = 'auto';
+    date.style.width = 'auto';
+    time.style.textAlign = ssClockAlignmentCss(d.time_alignment);
+    date.style.textAlign = ssClockAlignmentCss(d.date_alignment);
+    // Beide Zeilen erhalten die Breite der laengeren Zeile. Dadurch ist die
+    // Ausrichtung im Browser dieselbe wie im kompakten LVGL-Uhr-Container.
+    const clockLineWidth = Math.ceil(Math.max(
+      time.hidden ? 0 : time.getBoundingClientRect().width,
+      date.hidden ? 0 : date.getBoundingClientRect().width));
+    if (!time.hidden && clockLineWidth) time.style.width = clockLineWidth + 'px';
+    if (!date.hidden && clockLineWidth) date.style.width = clockLineWidth + 'px';
     clock.hidden = false;
     clock.classList.toggle('clock-disabled', !d.show_time && !d.show_date && !d.show_weekday);
     clock.classList.toggle('clock-shadowed', !!d.clock_shadow);
     preview.classList.toggle('tiles-shadowed', !!d.tile_shadow);
+    preview.classList.toggle('tiles-bordered', d.tile_border !== false);
     document.getElementById('screensaverUseWallpapers').checked = !!d.use_wallpapers;
     document.getElementById('screensaverShuffle').checked = !!d.shuffle;
     document.getElementById('screensaverTileShadow').checked = !!d.tile_shadow;
+    document.getElementById('screensaverTileBorder').checked = d.tile_border !== false;
     document.getElementById('screensaverShowTime').checked = !!d.show_time;
     document.getElementById('screensaverShowDate').checked = !!d.show_date;
     document.getElementById('screensaverShowWeekday').checked = !!d.show_weekday;
     document.getElementById('screensaverClockShadow').checked = !!d.clock_shadow;
     document.getElementById('screensaverTimeFont').value = String(d.time_font_size || 48);
     document.getElementById('screensaverDateFont').value = String(d.date_font_size || 28);
+    document.getElementById('screensaverTimeAlignment').value = String(ssClockAlignment(d.time_alignment));
+    document.getElementById('screensaverDateAlignment').value = String(ssClockAlignment(d.date_alignment));
     document.getElementById('screensaverTimeFormat').value = String(d.time_format || 0);
     document.getElementById('screensaverDateFormat').value = String(d.date_format || 0);
     const controls = document.getElementById('screensaverWallpaperControls');
     controls.hidden = !wallpaper;
     if (wallpaper) {
-      document.getElementById('screensaverWallpaperDuration').value = wallpaper.duration_seconds;
+      document.getElementById('screensaverWallpaperDuration').value = d.duration_seconds;
       document.getElementById('screensaverWallpaperZoom').value = wallpaper.zoom;
       document.getElementById('screensaverFocusX').value = wallpaper.focus_x;
       document.getElementById('screensaverFocusY').value = wallpaper.focus_y;
@@ -4468,6 +4736,7 @@ void appendAdminScripts(String& html) {
     bind('screensaverUseWallpapers', 'change', el => { screensaverDraft.use_wallpapers = el.checked; });
     bind('screensaverShuffle', 'change', el => { screensaverDraft.shuffle = el.checked; });
     bind('screensaverTileShadow', 'change', el => { screensaverDraft.tile_shadow = el.checked; });
+    bind('screensaverTileBorder', 'change', el => { screensaverDraft.tile_border = el.checked; });
     bind('screensaverShowTime', 'change', el => { screensaverDraft.show_time = el.checked; });
     bind('screensaverShowDate', 'change', el => { screensaverDraft.show_date = el.checked; });
     bind('screensaverShowWeekday', 'change', el => { screensaverDraft.show_weekday = el.checked; });
@@ -4478,9 +4747,17 @@ void appendAdminScripts(String& html) {
     bind('screensaverDateFont', 'change', el => {
       screensaverDraft.date_font_size = ssNearestClockFont(el.value, true);
     });
+    bind('screensaverTimeAlignment', 'change', el => {
+      screensaverDraft.time_alignment = ssClockAlignment(el.value);
+    });
+    bind('screensaverDateAlignment', 'change', el => {
+      screensaverDraft.date_alignment = ssClockAlignment(el.value);
+    });
     bind('screensaverTimeFormat', 'change', el => { screensaverDraft.time_format = Number(el.value); });
     bind('screensaverDateFormat', 'change', el => { screensaverDraft.date_format = Number(el.value); });
-    bind('screensaverWallpaperDuration', 'change', el => { const w = ssCurrentWallpaper(); if (w) w.duration_seconds = Number(el.value); });
+    bind('screensaverWallpaperDuration', 'change', el => {
+      screensaverDraft.duration_seconds = Math.round(ssClamp(el.value, 3, 3600));
+    });
     bind('screensaverWallpaperZoom', 'input', el => { const w = ssCurrentWallpaper(); if (w) w.zoom = Number(el.value); }, false);
     bind('screensaverWallpaperZoom', 'change', el => { const w = ssCurrentWallpaper(); if (w) w.zoom = Number(el.value); });
     bind('screensaverFocusX', 'input', el => { const w = ssCurrentWallpaper(); if (w) w.focus_x = Number(el.value); }, false);
@@ -4497,11 +4774,14 @@ void appendAdminScripts(String& html) {
     loadSelectedTileStates();
     loadDraftsFromStorage();
     loadTileClipboard();
-    // Der Editor startet immer mit der Kachel in Home, Spalte 1 / Zeile 1.
-    // Damit ist das Settings-Panel sofort mit einer echten Kachel gefuellt
-    // und zeigt nie den leeren Anfangszustand.
+    // Nach einem Browser-Neuladen auf dem zuletzt geoeffneten Admin-Tab
+    // bleiben. Nur wenn dieser nicht mehr existiert, auf Home zurueckfallen.
+    let initialTab = '';
+    try { initialTab = localStorage.getItem('activeAdminTab') || ''; } catch (e) {}
     const homeTab = tabByFolder[0] || tileTabs[0];
-    if (homeTab) {
+    if (initialTab && document.getElementById(initialTab)) {
+      switchTab(initialTab);
+    } else if (homeTab) {
       switchTab('tab-tiles-' + homeTab);
     } else {
       switchTab('tab-network');

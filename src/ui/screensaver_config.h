@@ -6,6 +6,7 @@
 #include "src/tiles/tile_config.h"
 
 static constexpr size_t kMaxScreensaverWallpapers = 32;
+static constexpr uint8_t kScreensaverDefaultTileOpacity = 217;  // ca. 85 %
 
 struct ScreensaverWallpaperConfig {
   String file_name;
@@ -13,26 +14,29 @@ struct ScreensaverWallpaperConfig {
   uint16_t focus_x = 500;       // 0..1000
   uint16_t focus_y = 500;       // 0..1000
   uint16_t zoom = 1000;         // 1000..3000
-  uint16_t duration_seconds = 15;
 };
 
-// Nur die wirklich screensaverspezifischen Daten liegen in config_v1.json.
+// Nur die wirklich screensaverspezifischen Daten liegen in config_v2.json.
 // Die Kacheln selbst werden separat als normales TileGridConfig ueber
 // TileConfig im gepackten LittleFS-Format gespeichert.
 struct ScreensaverConfigData {
   bool use_wallpapers = true;
   bool shuffle = false;
   bool tile_shadow = false;
+  bool tile_border = true;
   bool show_time = true;
   bool show_date = true;
   bool show_weekday = false;
   bool clock_shadow = true;
   uint8_t time_format = 0;
   uint8_t date_format = 0;
+  uint8_t time_alignment = 1;  // 0=links, 1=zentriert, 2=rechts
+  uint8_t date_alignment = 1;
   uint8_t time_font_size = 48;
   uint8_t date_font_size = 28;
   uint16_t clock_x = 500;  // Mittelpunkt relativ zum Bildschirm, 0..1000
   uint16_t clock_y = 350;
+  uint16_t duration_seconds = 15;  // Globale Bildwechselzeit, 3..3600 s
   std::vector<ScreensaverWallpaperConfig> wallpapers;
 };
 

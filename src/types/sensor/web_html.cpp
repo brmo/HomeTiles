@@ -57,7 +57,12 @@ void append_sensor_fields_html(String& html, const String& tab_id, const std::ve
                   <option value="3">32</option>
                   <option value="4">40</option>
                 </select>
-                <label>)html";
+)html";
+  // Screensaver tiles never receive graph history (and gauges would turn the
+  // compact overlay tile into a different presentation). Keep sensors there
+  // as the normal value tile instead of offering controls that cannot work.
+  if (tab_id != "screensaver") {
+    html += R"html(                <label>)html";
   html += tr.sensor_display_mode;
   html += R"html(</label>
                 <select id=")html";
@@ -118,6 +123,7 @@ void append_sensor_fields_html(String& html, const String& tab_id, const std::ve
   html += R"html(_sensor_graph_height" min="20" max="200" step="1" placeholder="60">
                 </div>
 )html";
+  }
   if (tab_id != "screensaver") {
     html += R"html(                <label>)html";
     html += tr.popup_open;

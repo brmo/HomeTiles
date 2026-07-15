@@ -10,6 +10,7 @@
 #include <driver/ledc.h>
 #include <esp_err.h>
 #include <esp_ldo_regulator.h>
+#include <string.h>
 
 #include "src/devices/waveshare_4b/waveshare_sdmmc.h"
 #include "src/devices/waveshare_4b/vendor/displays_config.h"
@@ -314,11 +315,38 @@ void DeviceWaveshare4B::displayPushPixelsDMA(int32_t x, int32_t y, int32_t w, in
 }
 
 bool DeviceWaveshare4B::displayTryFullFramePreview(
-    int32_t, int32_t, int32_t, int32_t,
-    const uint16_t*, size_t, bool) {
-  // Der B4 braucht keine zusaetzliche Rotationsvorschau. LVGL zeichnet den
-  // vorbereiteten Vollbildpuffer bereits ueber den normalen Displaypfad.
-  return false;
+    int32_t x, int32_t y, int32_t w, int32_t h,
+    const uint16_t* data, size_t data_size, bool byte_swap) {
+  // Der B4 braucht keine PPA-Rotation: sein logischer 720x720-Frame entspricht
+  // bei der normalen Ausrichtung direkt dem physischen DSI-Framebuffer. Den
+  // bereits fertig zusammengesetzten Screensaver-Frame deshalb in einem Zug
+  // uebernehmen. So wird nicht erst das Wallpaper streifenweise durch LVGL aus
+  // dem PSRAM aufgebaut und danach Uhr/Kacheln darueber gezeichnet.
+  //
+  // Nur der exakt passende native RGB565-Vollframe nimmt diesen Pfad. Bei
+  // gedrehtem Display, abweichendem Ausschnitt oder Byte-Swap bleibt der
+  // bewaehrte LVGL-Pfad als sicherer Fallback erhalten.
+  if (!g_gfx || !data || byte_swap || x != 0 || y != 0 ||
+      w != display_cfg.width || h != display_cfg.height ||
+      g_gfx->getRotation() != 0) {
+    return false;
+  }
+
+  const size_t required_bytes =
+      static_cast<size_t>(w) * static_cast<size_t>(h) * sizeof(uint16_t);
+  if (data_size < required_bytes) {
+    return false;
+  }
+
+  uint16_t* framebuffer = g_gfx->getFramebuffer();
+  if (!framebuffer) return false;
+
+  if (framebuffer != data) memcpy(framebuffer, data, required_bytes);
+  // auto_flush ist beim B4 aktiv. flush(true) erzwingt hier trotzdem genau
+  // einen Cache-Writeback nach der kompletten Kopie, statt hunderte sichtbare
+  // Teil-Flushes waehrend des LVGL-Renderns zu erzeugen.
+  g_gfx->flush(true);
+  return true;
 }
 
 void DeviceWaveshare4B::displayWaitDMA() {

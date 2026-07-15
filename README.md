@@ -42,13 +42,33 @@ the whole chain: MQTT broker, bridge integration, and connecting the display.
 - [Home Assistant Setup Guide](docs/home-assistant-setup.md) — MQTT broker, bridge integration, first connection
 - [Bridge Integration](docs/bridge.md) — installation, panel settings, entity configuration
 - [Web Admin Panel](docs/web-admin.md) — creating tiles, drag & drop, folders, import/export
+- [Screensaver](docs/screensaver.md) — microSD images, slideshow, clock, and overlay tiles
 - [On-Device UI](docs/device-ui.md) — popups and on-device settings, with screenshots
 - [Tile Types](docs/tiles.md) — every tile type and what it needs
 - [Firmware Updates](docs/updating.md) — on-device updater, web OTA, factory flash
 - [FAQ & Troubleshooting](docs/faq.md) — common questions and known quirks
 - [BOARD_SETTINGS.md](BOARD_SETTINGS.md) — Arduino IDE build settings per device
 
-## Highlights Of The v0.4.x Releases
+## Highlights Of v0.5.0
+
+- New configurable screensaver with JPEG slideshows from a microSD card, shuffle, global duration, zoom, and focus controls
+- Dedicated live screensaver editor in the web admin: freely move and resize the clock and place regular tiles in the bottom two rows
+- Optional tile shadows, subtle borders, opacity controls, clock alignment, larger UI fonts, and a consistent Inter-based interface
+- Automatic screensaver timeout in the on-device Display settings; tapping any Clock tile still opens it immediately
+- Faster hardware-assisted image preparation on all supported ESP32-P4 displays, with stable overlays while slides change
+- Web admin improvements including live entity refresh, multi-file uploads, persistent tabs/selections, and screensaver-aware import/export
+- Energy tiles now show aggregated Energy Dashboard values in the web preview as well as on the device
+
+See the [screensaver setup guide](docs/screensaver.md) for the required `/images` folder and all controls.
+
+### Screensaver
+
+<p align="center">
+  <img src="docs/images/8in-screensaver.png" alt="HomeTiles screensaver on the Waveshare 8 inch display" width="48%"> <img src="docs/images/web-admin-screensaver.png" alt="Screensaver editor in the HomeTiles web admin" width="48%">
+</p>
+
+<details>
+<summary>Highlights of the v0.4.x releases</summary>
 
 - Redesigned web admin panel: live tile grid preview, pinned tile settings panel, smoother drag & drop, and per-folder selection memory
 - Firmware updates from the browser: the web admin can now run the GitHub update check itself, in addition to the manual file upload
@@ -58,6 +78,8 @@ the whole chain: MQTT broker, bridge integration, and connecting the display.
 - More reliable on-device GitHub updates: the installer now downloads the image in one pass, fixing a crash that could occur mid-update
 - Screenshot export now uses the hardware JPEG encoder
 - Built-in crash diagnostics: after a crash the device writes a crash log and keeps a core dump, both downloadable from the web admin — see [FAQ](https://galusperes.github.io/HomeTiles/faq/#the-display-crashed-or-restarted-by-itself) for how to report a crash
+
+</details>
 
 <details>
 <summary>Highlights of the v0.3.x releases</summary>

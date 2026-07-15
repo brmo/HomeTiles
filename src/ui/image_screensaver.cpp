@@ -30,7 +30,8 @@
 
 namespace {
 
-constexpr char kWallpaperDir[] = "/wallpapers";
+constexpr char kImageDir[] = "/images";
+constexpr char kLegacyWallpaperDir[] = "/wallpapers";
 constexpr size_t kMaxFileBytes = 8U * 1024U * 1024U;
 
 // Obergrenze fuer den voll dekodierten Zwischenpuffer: 2048x2048 RGB565 sind
@@ -67,7 +68,8 @@ struct ScreensaverState {
 #if defined(CONFIG_IDF_TARGET_ESP32P4)
   // Fertiger LVGL-Frame fuer ruhige Diawechsel: Wallpaper, Uhr, Kacheln und
   // ein eventuell offenes Popup werden zuerst unsichtbar in PSRAM gerendert
-  // und erst danach gemeinsam per PPA auf das Panel geschrieben.
+  // und erst danach gemeinsam ueber den geraetespezifischen Vollbildpfad auf
+  // das Panel geschrieben (PPA-Rotation bei Tab5/8-Zoll, direkte Kopie beim B4).
   uint8_t* composite_storage = nullptr;
   size_t composite_storage_size = 0;
   lv_draw_buf_t composite_draw_buf{};
@@ -234,7 +236,13 @@ uint8_t* read_wallpaper_file(const String& file_name, size_t& out_len) {
     Serial.println("[Screensaver] microSD nicht bereit");
     return nullptr;
   }
-  const String path = String(kWallpaperDir) + "/" + file_name;
+  String path = String(kImageDir) + "/" + file_name;
+  // v0.5.0 uses /images. Existing cards/configurations from older releases
+  // continue to work without moving files immediately.
+  if (!Device::sdFS().exists(path)) {
+    const String legacy_path = String(kLegacyWallpaperDir) + "/" + file_name;
+    if (Device::sdFS().exists(legacy_path)) path = legacy_path;
+  }
   fs::File f = Device::sdFS().open(path, FILE_READ);
   if (!f) {
     Serial.printf("[Screensaver] open fail: '%s'\n", path.c_str());
@@ -697,35 +705,36 @@ bool is_wallpaper_file(const String& file_name) {
 // direkt scheitern, obwohl andere gueltige Bilder auf der Karte liegen.
 bool sd_wallpaper_file_exists(const String& file_name) {
   if (!is_wallpaper_file(file_name) || !Device::sdReady()) return false;
-  return Device::sdFS().exists(String(kWallpaperDir) + "/" + file_name);
+  return Device::sdFS().exists(String(kImageDir) + "/" + file_name) ||
+         Device::sdFS().exists(String(kLegacyWallpaperDir) + "/" + file_name);
 }
 
 bool find_first_sd_wallpaper(ScreensaverWallpaperConfig& out) {
   if (!Device::sdReady()) return false;
-  fs::File dir = Device::sdFS().open(kWallpaperDir, FILE_READ);
-  // Bei der Waveshare-SDMMC-Implementierung kann isDirectory() fuer einen
-  // erfolgreich geoeffneten Ordner false liefern. openNextFile() ist hier
-  // deshalb (wie im Dateimanager) die verlaessliche Pruefung.
-  if (!dir) {
-    if (dir) dir.close();
-    return false;
-  }
-  fs::File entry = dir.openNextFile();
-  while (entry) {
-    String name = entry.name();
-    const int slash = max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
-    if (slash >= 0) name = name.substring(slash + 1);
-    const bool usable = !entry.isDirectory() && is_wallpaper_file(name);
-    entry.close();
-    if (usable) {
-      out = ScreensaverWallpaperConfig{};
-      out.file_name = name;
-      dir.close();
-      return true;
+  const char* directories[] = {kImageDir, kLegacyWallpaperDir};
+  for (const char* directory : directories) {
+    fs::File dir = Device::sdFS().open(directory, FILE_READ);
+    // Bei der Waveshare-SDMMC-Implementierung kann isDirectory() fuer einen
+    // erfolgreich geoeffneten Ordner false liefern. openNextFile() ist hier
+    // deshalb (wie im Dateimanager) die verlaessliche Pruefung.
+    if (!dir) continue;
+    fs::File entry = dir.openNextFile();
+    while (entry) {
+      String name = entry.name();
+      const int slash = max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
+      if (slash >= 0) name = name.substring(slash + 1);
+      const bool usable = !entry.isDirectory() && is_wallpaper_file(name);
+      entry.close();
+      if (usable) {
+        out = ScreensaverWallpaperConfig{};
+        out.file_name = name;
+        dir.close();
+        return true;
+      }
+      entry = dir.openNextFile();
     }
-    entry = dir.openNextFile();
+    dir.close();
   }
-  dir.close();
   return false;
 }
 
@@ -788,6 +797,8 @@ void rebuild_global_clock(ScreensaverState* st) {
   widget_config.text_shadow = config.clock_shadow;
   widget_config.time_font_size = config.time_font_size;
   widget_config.date_font_size = config.date_font_size;
+  widget_config.time_alignment = config.time_alignment;
+  widget_config.date_alignment = config.date_alignment;
   widget_config.time_format = clock_tile::resolve_time_format(
       config.time_format, configManager.getConfig().global_time_format,
       configManager.getConfig().language);
@@ -839,13 +850,14 @@ bool apply_wallpaper(ScreensaverState* st, int index, bool allow_fallback,
   st->active_wallpaper = index;
   st->active_wallpaper_name = wallpaper.file_name;
   st->next_wallpaper_ms = millis() +
-      static_cast<uint32_t>(wallpaper.duration_seconds) * 1000U;
+      static_cast<uint32_t>(screensaverConfig.get().duration_seconds) * 1000U;
 
   // Auf den gedrehten P4-Geraeten darf PPA nicht zuerst nur das Wallpaper auf
   // den sichtbaren Puffer schreiben: dabei waeren Uhr und Kacheln bis zu ihrem
   // anschliessenden LVGL-Redraw wirklich weg und wuerden sichtbar blinken.
   // Stattdessen wird der komplette Top-Layer unsichtbar zusammengesetzt und
-  // als fertiger Frame praesentiert. Der B4 bleibt beim bewaehrten LVGL-Pfad.
+  // als fertiger Frame praesentiert. Beim B4 geschieht das ohne Rotation
+  // direkt in dessen nativen DSI-Framebuffer.
   const uint32_t started = millis();
   bool preview_ok = false;
 #if defined(CONFIG_IDF_TARGET_ESP32P4)
@@ -856,8 +868,8 @@ bool apply_wallpaper(ScreensaverState* st, int index, bool allow_fallback,
                 cache_hit ? "cache" : "decode",
                 static_cast<unsigned>(millis() - started));
   if (!preview_ok) {
-    // B4 bzw. jeder sichere PPA-Fallback: dort muss LVGL das neue Bild wie
-    // bisher selbst zeichnen.
+    // Falls der geraetespezifische Vollbildpfad nicht verfuegbar ist, zeichnet
+    // LVGL das neue Bild weiterhin sicher wie bisher selbst.
     lv_obj_invalidate(st->image);
   }
   return true;
@@ -927,6 +939,21 @@ void apply_slot_tile_shadows(ScreensaverState* st) {
   }
 }
 
+void apply_slot_tile_borders(ScreensaverState* st) {
+  if (!st || !st->slot_grid) return;
+  const bool enabled = screensaverConfig.get().tile_border;
+  const uint32_t count = lv_obj_get_child_count(st->slot_grid);
+  for (uint32_t i = 0; i < count; ++i) {
+    lv_obj_t* card = lv_obj_get_child(st->slot_grid, i);
+    if (!card) continue;
+    lv_obj_set_style_border_width(card, enabled ? 1 : 0, LV_PART_MAIN);
+    lv_obj_set_style_border_color(card, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_border_opa(card, enabled ? 38 : LV_OPA_TRANSP,
+                                LV_PART_MAIN);  // ca. 15 %
+    lv_obj_set_style_border_side(card, LV_BORDER_SIDE_FULL, LV_PART_MAIN);
+  }
+}
+
 void rebuild_slot_grid(ScreensaverState* st) {
   if (!st || !st->overlay) return;
 
@@ -988,6 +1015,7 @@ void rebuild_slot_grid(ScreensaverState* st) {
   }
 
   apply_slot_tile_shadows(st);
+  apply_slot_tile_borders(st);
 
   // Entspricht der Web-Vorschau: Tiles z=2, frei platzierbare Uhr z=3.
   if (st->clock_box) lv_obj_move_foreground(st->clock_box);
@@ -1023,6 +1051,7 @@ void refresh_live_background_and_clock(ScreensaverState* st,
   if (!st) return;
   rebuild_global_clock(st);
   apply_slot_tile_shadows(st);
+  apply_slot_tile_borders(st);
 
   const ScreensaverConfigData& config = screensaverConfig.get();
   if (!config.use_wallpapers) {
@@ -1057,7 +1086,7 @@ void refresh_live_background_and_clock(ScreensaverState* st,
       // erneut per PPA ueber den ganzen Bildschirm zu schreiben.
       st->active_wallpaper = desired;
       st->next_wallpaper_ms = millis() +
-          static_cast<uint32_t>(wallpaper.duration_seconds) * 1000U;
+          static_cast<uint32_t>(config.duration_seconds) * 1000U;
     } else {
       apply_wallpaper(st, desired, false, allow_disabled);
     }

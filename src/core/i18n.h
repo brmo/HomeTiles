@@ -277,9 +277,16 @@ struct Strings {
   const char* screensaver_clock_heading;
   const char* screensaver_show_weekday;
   const char* screensaver_clock_shadow;
+  const char* screensaver_time_alignment;
+  const char* screensaver_date_alignment;
+  const char* alignment_left;
+  const char* alignment_center;
+  const char* alignment_right;
   const char* screensaver_tile_shadow;
+  const char* screensaver_tile_border;
   const char* screensaver_background_opacity;
   const char* screensaver_hint;
+  const char* screensaver_storage_hint;
   const char* screensaver_no_wallpapers;
   const char* js_screensaver_saved;
   const char* js_screensaver_save_failed;

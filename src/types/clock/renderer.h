@@ -18,6 +18,8 @@ struct ClockWidgetConfig {
   uint8_t date_font_size = 20;
   uint8_t time_format = 0;
   uint8_t date_format = 0;
+  uint8_t time_alignment = 1;  // 0=left, 1=center, 2=right
+  uint8_t date_alignment = 1;
 };
 
 // Gemeinsamer, rahmenloser Uhr-Inhalt fuer Clock-Tile und Screensaver. Das

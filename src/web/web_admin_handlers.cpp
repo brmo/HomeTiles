@@ -1621,7 +1621,8 @@ void WebAdminServer::handleSaveTiles() {
   int type = server.arg("type").toInt();
 
   if (screensaver_grid && type != TILE_EMPTY && type != TILE_SENSOR &&
-      type != TILE_SCENE && type != TILE_SWITCH && type != TILE_MEDIA) {
+      type != TILE_ENERGY && type != TILE_SCENE && type != TILE_SWITCH &&
+      type != TILE_MEDIA) {
     server.send(400, "application/json",
                 "{\"success\":false,\"error\":\"Tile type not supported in screensaver\"}");
     return;
@@ -1723,6 +1724,9 @@ void WebAdminServer::handleSaveTiles() {
   if (server.hasArg("background_opacity")) {
     tile.background_opacity = static_cast<uint8_t>(constrain(
         server.arg("background_opacity").toInt(), 0, 255));
+  } else if (screensaver_grid && previous_tile.type == TILE_EMPTY &&
+             type != TILE_EMPTY) {
+    tile.background_opacity = kScreensaverDefaultTileOpacity;
   }
 
   // Parse layout (0-based col/row, span >= 1)
@@ -1797,6 +1801,11 @@ void WebAdminServer::handleSaveTiles() {
       server.send(500, "application/json", String("{\"success\":false,\"error\":\"") + err + "\"}");
       return;
     }
+  }
+  if (screensaver_grid && tile.type == TILE_SENSOR) {
+    // Sensor history is not routed into the screensaver widget context.
+    // Enforce the plain value mode for old imports and direct API callers too.
+    tile.sensor_display_mode = 0;
   }
 
   if (deleting_folder) {
@@ -1960,6 +1969,40 @@ void WebAdminServer::handleGetSensorValues() {
   appendKeyValueMapJson(json, ha.entity_icons_map);
   json += ",\"names\":";
   appendKeyValueMapJson(json, ha.sensor_names_map);
+
+  // Aggregierte Energy-Quellen (z. B. solar_total) sind keine normalen
+  // Home-Assistant-Entities und fehlen daher im allgemeinen Sensor-Cache.
+  // Der Web-Editor bekommt ihre aktuellen Tages-Summen separat; der Browser
+  // fuehrt beide Maps zusammen, sodass normale Sensoren unveraendert bleiben.
+  auto energy_ids = parseSensorList(ha.energy_text);
+  energy_append_cached_entity_ids(energy_ids);
+  json += ",\"energy_values\":{";
+  bool first_energy_value = true;
+  for (const auto& id : energy_ids) {
+    EnergyEntryData entry;
+    if (!energy_find_entry(id, "day", entry)) continue;
+    if (!first_energy_value) json += ',';
+    first_energy_value = false;
+    json += '"';
+    appendJsonEscaped(json, id);
+    json += "\":\"";
+    appendJsonEscaped(json, String(entry.total, entry.is_cost ? 2 : 3));
+    json += '"';
+  }
+  json += "},\"energy_units\":{";
+  bool first_energy_unit = true;
+  for (const auto& id : energy_ids) {
+    String unit = energy_find_cached_unit(id);
+    if (!unit.length()) continue;
+    if (!first_energy_unit) json += ',';
+    first_energy_unit = false;
+    json += '"';
+    appendJsonEscaped(json, id);
+    json += "\":\"";
+    appendJsonEscaped(json, unit);
+    json += '"';
+  }
+  json += "}";
   json += "}";
 
   sendChunkedResponse(server, 200, "application/json", json);
@@ -2188,27 +2231,39 @@ void WebAdminServer::handleGetScreensaver() {
   json += ",\"success\":true,\"available_wallpapers\":[";
   bool first = true;
   if (Device::sdReady()) {
-    fs::File root = Device::sdFS().open("/wallpapers", FILE_READ);
-    if (root) {
+    std::vector<String> names;
+    const char* directories[] = {"/images", "/wallpapers"};
+    for (const char* directory : directories) {
+      fs::File root = Device::sdFS().open(directory, FILE_READ);
+      if (!root) continue;
       for (fs::File entry = root.openNextFile(); entry;
            entry = root.openNextFile()) {
-        if (entry.isDirectory()) {
-          entry.close();
-          continue;
+        if (!entry.isDirectory()) {
+          String name = entry.name();
+          const int slash = max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
+          if (slash >= 0) name = name.substring(slash + 1);
+          if (endsWithIgnoreCase(name, ".jpg") ||
+              endsWithIgnoreCase(name, ".jpeg")) {
+            bool duplicate = false;
+            for (const auto& existing : names) {
+              if (existing.equalsIgnoreCase(name)) {
+                duplicate = true;
+                break;
+              }
+            }
+            if (!duplicate) names.push_back(name);
+          }
         }
-        String name = entry.name();
         entry.close();
-        const int slash = name.lastIndexOf('/');
-        if (slash >= 0) name = name.substring(slash + 1);
-        if (!endsWithIgnoreCase(name, ".jpg") &&
-            !endsWithIgnoreCase(name, ".jpeg")) continue;
-        if (!first) json += ',';
-        first = false;
-        json += '"';
-        appendJsonEscaped(json, name);
-        json += '"';
       }
       root.close();
+    }
+    for (const auto& name : names) {
+      if (!first) json += ',';
+      first = false;
+      json += '"';
+      appendJsonEscaped(json, name);
+      json += '"';
     }
   }
   json += "]}";
@@ -2246,7 +2301,9 @@ void WebAdminServer::handleGetScreensaverWallpaper() {
     server.send(400, "text/plain", "Invalid wallpaper");
     return;
   }
-  fs::File file = Device::sdFS().open(String("/wallpapers/") + name, FILE_READ);
+  String path = String("/images/") + name;
+  if (!Device::sdFS().exists(path)) path = String("/wallpapers/") + name;
+  fs::File file = Device::sdFS().open(path, FILE_READ);
   if (!file || file.isDirectory()) {
     if (file) file.close();
     server.send(404, "text/plain", "Wallpaper not found");

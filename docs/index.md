@@ -51,7 +51,8 @@ panels — configured entirely in the browser, updated over the air, connected v
 </div>
 
 Looking for something specific? [Tile Types](tiles.md) ·
-[Firmware Updates](updating.md) · [FAQ & Troubleshooting](faq.md) ·
+[Screensaver](screensaver.md) · [Firmware Updates](updating.md) ·
+[FAQ & Troubleshooting](faq.md) ·
 [GitHub](https://github.com/GalusPeres/HomeTiles)
 
 ## Supported Devices
