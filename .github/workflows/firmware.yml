@@ -187,6 +187,19 @@ jobs:
           ' sketch.yaml)"
           test -n "${fqbn}"
 
+          # arduino-cli still discovers sketch.yaml even when compiling with
+          # --fqbn and then reinstalls the default profile dependencies. Hide
+          # the profile file for the compile itself so the patched ESP-Hosted
+          # archive cannot be replaced by the stock core package again.
+          sketch_profiles_file="${RUNNER_TEMP}/hometiles-sketch-${{ matrix.key }}.yaml"
+          mv sketch.yaml "${sketch_profiles_file}"
+          restore_sketch_profiles() {
+            if [ -f "${sketch_profiles_file}" ]; then
+              mv "${sketch_profiles_file}" sketch.yaml
+            fi
+          }
+          trap restore_sketch_profiles EXIT
+
           common_flags="-DLV_CONF_INCLUDE_SIMPLE -I$GITHUB_WORKSPACE -I$HOME/Arduino/libraries"
           arduino-cli compile \
             --fqbn "${fqbn}" \
@@ -194,6 +207,9 @@ jobs:
             --output-dir "build/ci/${{ matrix.key }}" \
             --build-property "compiler.c.extra_flags=$common_flags" \
             --build-property "compiler.cpp.extra_flags=-DHOMETILES_CI_TARGET -D${{ matrix.define }} $common_flags"
+
+          restore_sketch_profiles
+          trap - EXIT
 
           # Both strings are fatal allocation assertions from the unpatched
           # ESP-Hosted objects. Fail the release job if a future profile/tool
