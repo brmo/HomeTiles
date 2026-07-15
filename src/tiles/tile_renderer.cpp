@@ -16,6 +16,7 @@
 #include "src/core/i18n.h"
 #include "src/web/web_admin.h"
 #include "src/ui/screensaver_config.h"
+#include "src/ui/ui_surface_style.h"
 #include <Arduino.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
@@ -3961,12 +3962,7 @@ lv_obj_t* render_tile(lv_obj_t* parent, int col, int row, const Tile& tile, uint
     // wendet sie nach dem Rendern in image_screensaver.cpp an.
     if (tile_obj && grid_type != GridType::SCREENSAVER &&
         tile.type != TILE_EMPTY) {
-      const bool enabled = configManager.getConfig().tile_borders;
-      lv_obj_set_style_border_width(tile_obj, enabled ? 1 : 0, LV_PART_MAIN);
-      lv_obj_set_style_border_color(tile_obj, lv_color_white(), LV_PART_MAIN);
-      lv_obj_set_style_border_opa(
-          tile_obj, enabled ? 38 : LV_OPA_TRANSP, LV_PART_MAIN);
-      lv_obj_set_style_border_side(tile_obj, LV_BORDER_SIDE_FULL, LV_PART_MAIN);
+      ui_surface_style::apply_global_tile_border(tile_obj);
     }
     return tile_obj;
   }

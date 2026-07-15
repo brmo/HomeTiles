@@ -68,6 +68,8 @@ bool WebAdminServer::start() {
   server.on("/api/entity_options", HTTP_GET, [this]() { this->handleGetEntityOptions(); });
   server.on("/api/screensaver", HTTP_GET, [this]() { this->handleGetScreensaver(); });
   server.on("/api/screensaver", HTTP_POST, [this]() { this->handleSaveScreensaver(); });
+  server.on("/api/display/tile-borders", HTTP_POST,
+            [this]() { this->handleSaveTileBorders(); });
   server.on("/api/screensaver/wallpaper", HTTP_GET,
             [this]() { this->handleGetScreensaverWallpaper(); });
   server.on("/api/sd_images", HTTP_GET, [this]() { this->handleGetSdImages(); });

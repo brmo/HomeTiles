@@ -3,6 +3,7 @@
 #include "src/ui/sensor_popup.h"
 #include "src/ui/media_popup.h"
 #include "src/ui/popup_layout.h"
+#include "src/ui/ui_surface_style.h"
 #include "src/network/mqtt_handlers.h"
 #include "src/core/display_manager.h"
 #include "src/ui/tab_tiles_unified.h"
@@ -2898,6 +2899,7 @@ static void build_popup_ui(WeatherPopupContext* ctx, const WeatherPopupInit& ini
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
   lv_obj_set_style_radius(card, 22, 0);
   lv_obj_set_style_border_width(card, 0, 0);
+  ui_surface_style::apply_global_tile_border(card);
   lv_obj_set_style_pad_all(card, kCardPad, 0);
   lv_obj_set_style_shadow_width(card, 28, 0);
   lv_obj_set_style_shadow_color(card, lv_color_hex(0x000000), 0);

@@ -16,6 +16,7 @@
 #include "src/ui/popup_layout.h"
 #include "src/ui/sensor_popup.h"
 #include "src/ui/weather_popup.h"
+#include "src/ui/ui_surface_style.h"
 
 // lvgl.h exportiert lv_image_cache_drop() in 9.5 nicht mehr, die Deklaration
 // liegt nur noch im Instanz-Header.
@@ -598,6 +599,7 @@ void show_media_popup(const MediaPopupInit& init) {
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
   lv_obj_set_style_radius(card, 22, 0);
   lv_obj_set_style_border_width(card, 0, 0);
+  ui_surface_style::apply_global_tile_border(card);
   lv_obj_set_style_pad_all(card, kCardPad, 0);
   lv_obj_set_style_shadow_width(card, 28, 0);
   lv_obj_set_style_shadow_color(card, lv_color_hex(0x000000), 0);

@@ -316,6 +316,7 @@ lv_obj_set_style_bg_grad_dir(card, LV_GRAD_DIR_NONE, LV_PART_MAIN | LV_STATE_PRE
       init.entity_id = data->entity_id;
       init.title = title;
       init.bg_color = data->bg_color;
+      finish_press_before_popup(e);
       show_weather_popup(init);
     };
 

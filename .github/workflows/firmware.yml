@@ -164,13 +164,48 @@ jobs:
       - name: Compile firmware
         shell: bash
         run: |
+          set -euo pipefail
+
+          # `arduino-cli compile --profile` installs the profile platform again
+          # immediately before compiling. That silently replaced the patched
+          # ESP-Hosted archive above with the stock 3.3.7 archive. Read the FQBN
+          # from the same profile, but compile by FQBN so the prepared toolchain
+          # remains untouched.
+          profile="${{ matrix.profile }}"
+          fqbn="$(awk -v wanted="${profile}" '
+            /^  [^[:space:]][^:]*:$/ {
+              name=$1
+              sub(/:$/, "", name)
+              in_profile=(name == wanted)
+              next
+            }
+            in_profile && /^    fqbn:/ {
+              sub(/^    fqbn:[[:space:]]*/, "")
+              print
+              exit
+            }
+          ' sketch.yaml)"
+          test -n "${fqbn}"
+
           common_flags="-DLV_CONF_INCLUDE_SIMPLE -I$GITHUB_WORKSPACE -I$HOME/Arduino/libraries"
           arduino-cli compile \
-            --profile "${{ matrix.profile }}" \
+            --fqbn "${fqbn}" \
             --export-binaries \
             --output-dir "build/ci/${{ matrix.key }}" \
             --build-property "compiler.c.extra_flags=$common_flags" \
             --build-property "compiler.cpp.extra_flags=-DHOMETILES_CI_TARGET -D${{ matrix.define }} $common_flags"
+
+          # Both strings are fatal allocation assertions from the unpatched
+          # ESP-Hosted objects. Fail the release job if a future profile/tool
+          # reinstall ever restores either stock object again.
+          firmware_bin="build/ci/${{ matrix.key }}/HomeTiles.ino.bin"
+          test -f "${firmware_bin}"
+          for forbidden_assert in copy_buff pkt_rxbuff; do
+            if grep -a -q "${forbidden_assert}" "${firmware_bin}"; then
+              echo "Stock ESP-Hosted assert '${forbidden_assert}' found in ${firmware_bin}" >&2
+              exit 1
+            fi
+          done
 
       - name: Package firmware binaries
         shell: bash
@@ -268,7 +303,7 @@ jobs:
           if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$GITHUB_REF_NAME" \
               --repo "$GITHUB_REPOSITORY" \
-              --title "$GITHUB_REF_NAME" \
+              --title "HomeTiles $GITHUB_REF_NAME" \
               --generate-notes
           fi
           gh release upload "$GITHUB_REF_NAME" build/release-assets/*.bin \

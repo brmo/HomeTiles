@@ -377,6 +377,25 @@ static void appendTileTabHTML(
           </div>
           </div>
           <div class="folder-footer">
+            <div class="folder-footer-options">
+)html";
+  if (screensaver_mode) {
+    html += R"html(              <label class="inline-checkbox"><input id="screensaverTileBorder" type="checkbox"> )html";
+  } else {
+    html += R"html(              <label class="inline-checkbox"><input class="normal-tile-border-toggle" type="checkbox" onchange="saveNormalTileBorders(this.checked)" )html";
+    if (configManager.getConfig().tile_borders) html += "checked";
+    html += "> ";
+  }
+  html += tr.screensaver_tile_border;
+  html += R"html(</label>
+)html";
+  if (screensaver_mode) {
+    html += R"html(              <label class="inline-checkbox"><input id="screensaverTileShadow" type="checkbox"> )html";
+    html += tr.screensaver_tile_shadow;
+    html += R"html(</label>
+)html";
+  }
+  html += R"html(            </div>
             <p class="hint">)html";
   if (screensaver_mode) {
     html += tr.screensaver_hint;
@@ -417,12 +436,6 @@ static void appendTileTabHTML(
     html += R"html(</label>
                 <label class="inline-checkbox"><input id="screensaverShuffle" type="checkbox"> )html";
     html += tr.screensaver_shuffle;
-    html += R"html(</label>
-                <label class="inline-checkbox"><input id="screensaverTileShadow" type="checkbox"> )html";
-    html += tr.screensaver_tile_shadow;
-    html += R"html(</label>
-                <label class="inline-checkbox"><input id="screensaverTileBorder" type="checkbox"> )html";
-    html += tr.screensaver_tile_border;
     html += R"html(</label>
                 <div class="screensaver-wallpaper-heading">)html";
     html += tr.screensaver_wallpapers_heading;
@@ -1093,31 +1106,6 @@ String WebAdminServer::getAdminPage() {
       <div id="tab-network" class="tab-content">
         <form id="admin_settings_form" action="/mqtt" method="POST">
           <div class="settings-section">
-            <div class="section-title">)html";
-  html += tr.display_label;
-  html += R"html(</div>
-            <div class="settings-grid">
-              <div class="settings-full">
-                <label class="settings-checkbox" for="tile_borders">
-                  <input type="checkbox" id="tile_borders" name="tile_borders" onchange="setNormalTileBordersPreview(this.checked)" )html";
-  if (cfg.tile_borders) {
-    html += "checked";
-  }
-  html += R"html(>
-                  <span>)html";
-  html += is_german ? "Feine Kachel-Rahmen" : "Subtle tile borders";
-  html += R"html(</span>
-                </label>
-                <div class="settings-note">)html";
-  html += is_german
-              ? "Gilt global fuer die normale Oberflaeche; der Screensaver besitzt eine eigene Option."
-              : "Applies globally to the normal interface; the screensaver has its own option.";
-  html += R"html(</div>
-              </div>
-            </div>
-          </div>
-
-          <div class="settings-section">
             <div class="section-title-row">
               <div class="section-title">)html";
   html += tr.admin_settings_wifi;
@@ -1539,10 +1527,10 @@ String WebAdminServer::getAdminPage() {
           </div>
         </form>
 
-        <form id="admin_restart_form" action="/restart" method="POST" onsubmit="return confirm('Geraet wirklich neu starten?');" class="admin-hidden-form"></form>
+        <form id="admin_restart_form" action="/restart" method="POST" onsubmit="return confirm('Gerät wirklich neu starten?');" class="admin-hidden-form"></form>
         <div class="admin-footer-actions">
           <button class="btn btn-go admin-footer-btn" type="submit" form="admin_settings_form">Speichern</button>
-          <button class="btn btn-secondary admin-footer-btn" type="submit" form="admin_restart_form">Geraet neu starten</button>
+          <button class="btn btn-secondary admin-footer-btn" type="submit" form="admin_restart_form">Gerät neu starten</button>
         </div>
       </div>
     </div>
@@ -1555,8 +1543,8 @@ String WebAdminServer::getAdminPage() {
 )html";
 
   html.replace(">Speichern</button>", String(">") + tr.save + "</button>");
-  html.replace("return confirm('Geraet wirklich neu starten?');", String("return confirm('") + tr.restart_confirm + "');");
-  html.replace(">Geraet neu starten</button>", String(">") + tr.restart_button + "</button>");
+  html.replace("return confirm('Gerät wirklich neu starten?');", String("return confirm('") + tr.restart_confirm + "');");
+  html.replace(">Gerät neu starten</button>", String(">") + tr.restart_button + "</button>");
 
   return html;
 }

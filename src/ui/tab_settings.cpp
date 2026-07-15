@@ -20,6 +20,7 @@
 #include "src/web/web_config.h"
 #include "src/ui/ui_keyboard.h"
 #include "src/ui/hometiles_logo.h"
+#include "src/ui/ui_surface_style.h"
 
 static lv_obj_t *brightness_label = nullptr;
 static lv_obj_t *display_rotate_btn = nullptr;
@@ -490,6 +491,7 @@ static void create_settings_back_button(lv_obj_t *parent) {
 
   uint32_t btn_color = 0x2A2A2A;
   style_settings_button(btn, btn_color);
+  ui_surface_style::apply_global_tile_border(btn);
 
   lv_obj_add_event_cb(btn, on_settings_back_clicked, LV_EVENT_CLICKED, nullptr);
 
@@ -2578,6 +2580,7 @@ static void open_settings_popup(SettingsPopupKind kind) {
   lv_obj_set_style_bg_color(settings_popup_card, lv_color_hex(0x2A2A2A), 0);
   lv_obj_set_style_border_opa(settings_popup_card, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(settings_popup_card, 0, 0);
+  ui_surface_style::apply_global_tile_border(settings_popup_card);
   lv_obj_set_style_radius(settings_popup_card, 22, 0);
   lv_obj_set_style_clip_corner(settings_popup_card, false, 0);
   lv_obj_set_style_pad_all(settings_popup_card, 20, 0);
@@ -2667,6 +2670,7 @@ static void open_settings_popup(SettingsPopupKind kind) {
 
 static void on_settings_tile_clicked(lv_event_t* e) {
   const uintptr_t raw = reinterpret_cast<uintptr_t>(lv_event_get_user_data(e));
+  finish_press_before_popup(e);
   open_settings_popup(static_cast<SettingsPopupKind>(static_cast<uint8_t>(raw)));
 }
 
@@ -2687,6 +2691,7 @@ static lv_obj_t* create_settings_menu_tile(lv_obj_t* parent, uint8_t col, uint8_
   lv_obj_set_style_shadow_opa(tile, LV_OPA_TRANSP, 0);
   lv_obj_set_style_pad_all(tile, 0, 0);
   lv_obj_set_style_pad_column(tile, 0, 0);
+  ui_surface_style::apply_global_tile_border(tile);
   lv_obj_set_flex_flow(tile, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(tile, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_add_event_cb(tile, on_settings_tile_clicked, LV_EVENT_CLICKED,

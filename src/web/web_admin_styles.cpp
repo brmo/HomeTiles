@@ -541,6 +541,8 @@ void appendAdminStyles(String& html) {
     /* width:0 + min-width:100% - der Footer richtet sich nach der Grid-Breite,
        ohne dass sein (langer) Hinweistext die Spalte aufblaeht. */
     .folder-footer { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; width:0; min-width:100%; }
+    .folder-footer-options { flex:0 0 100%; display:flex; align-items:center; gap:16px; }
+    .folder-footer-options .inline-checkbox { margin:0; }
     .folder-footer .hint { margin:0; }
     .btn-delete-folder { padding:8px 16px; font-size:13px; flex:0 0 auto; }
     .tile-actions { display:flex; gap:8px; margin-top:8px; }
@@ -689,7 +691,7 @@ void appendAdminStyles(String& html) {
     /* Die feine Linie sitzt an der aeusseren Kartenkante. Ein Kind-Overlay
        waere wegen des transparenten 3px-Editorrahmens sichtbar eingerueckt. */
     .tile-grid.tiles-bordered > .tile:not(.empty) {
-      outline:1px solid rgba(255,255,255,0.15);
+      outline:1px solid rgba(255,255,255,0.20);
       outline-offset:-1px;
     }
 
@@ -994,7 +996,7 @@ void appendAdminStyles(String& html) {
     .screensaver-fixed-type { display:grid; grid-template-columns:1fr 1.35fr; gap:10px; align-items:center; margin-bottom:10px; }
     .screensaver-fixed-type label { margin:0; }
     .screensaver-fixed-type input { margin:0; }
-    .screensaver-wallpaper-heading { color:var(--text); font-weight:700; font-size:13px; letter-spacing:.08em; text-transform:uppercase; margin:18px 0 8px; }
+    .screensaver-wallpaper-heading { color:var(--text-2); font-weight:600; font-size:13px; letter-spacing:normal; text-transform:none; margin:18px 0 6px; }
     .screensaver-storage-hint { color:var(--text-2); font-size:12px; line-height:1.4; margin:-2px 0 10px; }
     .screensaver-wallpaper-list { display:flex; flex-direction:column; gap:7px; max-height:190px; overflow:auto; }
     .screensaver-wallpaper-row { display:grid; grid-template-columns:auto 1fr auto auto; align-items:center; gap:8px; padding:7px 9px; border:1px solid var(--line); border-radius:10px; background:var(--well); }

@@ -101,7 +101,7 @@ void append_pixelanim_fields_html(String& html, const String& tab_id) {
   html += tab_id;
   html += R"html(_animation_fit">
                 <option value="0">Einpassen</option>
-                <option value="1">Randlos fuellen</option>
+                <option value="1">Randlos füllen</option>
                 <option value="2">Strecken</option>
               </select>
               <label style="margin-top:10px;">Zoom (<span id=")html";

@@ -27,6 +27,7 @@
 #include "src/types/energy/energy_data.h"
 #include "src/ui/screensaver_config.h"
 #include "src/ui/tab_tiles_unified.h"
+#include "src/ui/ui_surface_style.h"
 
 namespace {
 
@@ -219,7 +220,7 @@ bool present_composited_screensaver_frame(ScreensaverState* st) {
       st->composite_draw_buf.data_size,
       false);  // Snapshot ist natives RGB565, nicht RGB565_SWAPPED.
   Serial.printf("[Screensaver] Composite-Preview %s in %u ms\n",
-                preview_ok ? "OK" : "uebersprungen",
+                preview_ok ? "OK" : "übersprungen",
                 static_cast<unsigned>(millis() - snapshot_started));
   return preview_ok;
 }
@@ -773,6 +774,27 @@ int next_enabled_wallpaper(int current) {
   return first_enabled_wallpaper();
 }
 
+void position_global_clock(ScreensaverState* st) {
+  if (!st || !st->clock_box) return;
+  const ScreensaverConfigData& config = screensaverConfig.get();
+  const int x = (static_cast<int>(config.clock_x) * Device::kScreenWidth) / 1000;
+  const int y = (static_cast<int>(config.clock_y) * Device::kScreenHeight) / 1000;
+  lv_obj_set_pos(st->clock_box, x - lv_obj_get_width(st->clock_box) / 2,
+                 y - lv_obj_get_height(st->clock_box) / 2);
+}
+
+void on_global_clock_size_changed(lv_event_t* e) {
+  ScreensaverState* st =
+      static_cast<ScreensaverState*>(lv_event_get_user_data(e));
+  if (!st || lv_event_get_target(e) != st->clock_box) return;
+  // Beim sehr frühen Öffnen ist die Systemzeit eventuell noch unbekannt.
+  // Dann entsteht die Uhr zunächst fast ohne Breite. Sobald NTP die erste
+  // Zeit liefert und die Labels wachsen, den gespeicherten Mittelpunkt erneut
+  // anwenden, statt den Text von dort nach rechts aus dem Display wachsen zu
+  // lassen.
+  position_global_clock(st);
+}
+
 void rebuild_global_clock(ScreensaverState* st) {
   if (!st || !st->overlay) return;
 
@@ -807,11 +829,10 @@ void rebuild_global_clock(ScreensaverState* st) {
       configManager.getConfig().language);
   st->clock_box = create_clock_widget(st->overlay, widget_config);
   if (!st->clock_box) return;
+  lv_obj_add_event_cb(st->clock_box, on_global_clock_size_changed,
+                      LV_EVENT_SIZE_CHANGED, st);
   lv_obj_update_layout(st->clock_box);
-  const int x = (static_cast<int>(config.clock_x) * Device::kScreenWidth) / 1000;
-  const int y = (static_cast<int>(config.clock_y) * Device::kScreenHeight) / 1000;
-  lv_obj_set_pos(st->clock_box, x - lv_obj_get_width(st->clock_box) / 2,
-                 y - lv_obj_get_height(st->clock_box) / 2);
+  position_global_clock(st);
 }
 
 bool apply_wallpaper(ScreensaverState* st, int index, bool allow_fallback,
@@ -864,7 +885,7 @@ bool apply_wallpaper(ScreensaverState* st, int index, bool allow_fallback,
   preview_ok = present_composited_screensaver_frame(st);
 #endif
   Serial.printf("[Screensaver] Hardware-Preview %s (%s) in %u ms\n",
-                preview_ok ? "OK" : "uebersprungen",
+                preview_ok ? "OK" : "übersprungen",
                 cache_hit ? "cache" : "decode",
                 static_cast<unsigned>(millis() - started));
   if (!preview_ok) {
@@ -946,11 +967,7 @@ void apply_slot_tile_borders(ScreensaverState* st) {
   for (uint32_t i = 0; i < count; ++i) {
     lv_obj_t* card = lv_obj_get_child(st->slot_grid, i);
     if (!card) continue;
-    lv_obj_set_style_border_width(card, enabled ? 1 : 0, LV_PART_MAIN);
-    lv_obj_set_style_border_color(card, lv_color_white(), LV_PART_MAIN);
-    lv_obj_set_style_border_opa(card, enabled ? 38 : LV_OPA_TRANSP,
-                                LV_PART_MAIN);  // ca. 15 %
-    lv_obj_set_style_border_side(card, LV_BORDER_SIDE_FULL, LV_PART_MAIN);
+    ui_surface_style::apply_tile_border(card, enabled);
   }
 }
 

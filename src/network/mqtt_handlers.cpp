@@ -1869,7 +1869,7 @@ void mqttPublishHistoryRequest(const char* entity_id,
     return;
   }
 
-  if (queue_history_fallback_for_entity(entity_id, time_valid, "HA nicht verfuegbar",
+  if (queue_history_fallback_for_entity(entity_id, time_valid, "HA nicht verfügbar",
                                         hours, period_minutes, points)) {
     return;
   }

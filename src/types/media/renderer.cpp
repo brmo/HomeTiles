@@ -177,6 +177,7 @@ static void show_media_popup_event_cb(lv_event_t* e) {
                          : widgets.cover_ref->dsc;
     init.cover_hash = widgets.cover_ref->url_hash;
   }
+  finish_press_before_popup(e);
   show_media_popup(init);
 }
 

@@ -192,6 +192,8 @@ lv_obj_t* render_energy_tile(lv_obj_t* parent,
           init.unit = unit;
           init.decimals = data->decimals;
           init.bg_color = data->bg_color;
+
+          finish_press_before_popup(e);
           show_energy_popup(init);
         },
         popup_event,

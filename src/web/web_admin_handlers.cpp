@@ -14,6 +14,7 @@
 #include "src/ui/ui_manager.h"
 #include "src/ui/image_screensaver.h"
 #include "src/ui/screensaver_config.h"
+#include "src/ui/ui_surface_style.h"
 #include "src/web/web_admin_tile_helpers.h"
 #include "src/types/types_registry.h"
 #include "src/types/clock/clock_format.h"
@@ -1160,6 +1161,7 @@ void WebAdminServer::handleSaveMQTT() {
     cfg.mqtt_port = 1883;
     strncpy(cfg.mqtt_base_topic, "hometiles", CONFIG_MQTT_BASE_MAX - 1);
     strncpy(cfg.ha_prefix, "ha/statestream", CONFIG_HA_PREFIX_MAX - 1);
+    cfg.tile_borders = true;
   }
 
   auto copyIfNonEmpty = [this](char* dest, size_t max_len, const char* field) {
@@ -1236,8 +1238,6 @@ void WebAdminServer::handleSaveMQTT() {
     cfg.global_date_format =
         clock_tile::normalize_date_format(server.arg("locale_date_format").toInt());
   }
-  cfg.tile_borders = server.hasArg("tile_borders");
-
   if (configManager.save(cfg)) {
     settings_refresh_language();
     uiManager.scheduleNtpSync(0);
@@ -1438,7 +1438,7 @@ void WebAdminServer::handleSaveGameControls() {
 void WebAdminServer::handleBridgeRefresh() {
   if (!networkManager.isMqttConnected()) {
     server.send(503, "text/html",
-                "<h1>MQTT ist nicht verbunden - bitte spaeter erneut versuchen.</h1>");
+                "<h1>MQTT ist nicht verbunden - bitte später erneut versuchen.</h1>");
     return;
   }
   networkManager.publishBridgeRequest();
@@ -2285,6 +2285,31 @@ void WebAdminServer::handleSaveScreensaver() {
   }
   image_screensaver_config_changed(preview_wallpaper);
   server.send(200, "application/json", "{\"success\":true}");
+}
+
+void WebAdminServer::handleSaveTileBorders() {
+  webAdminMarkActivity();
+  if (!server.hasArg("enabled")) {
+    sendJsonError(server, 400, "Missing enabled value");
+    return;
+  }
+
+  String value = server.arg("enabled");
+  value.trim();
+  value.toLowerCase();
+  const bool enabled = value == "1" || value == "true" || value == "on";
+  if (!configManager.saveTileBorders(enabled)) {
+    sendJsonError(server, 500, "Could not save tile borders");
+    return;
+  }
+
+  // Alle registrierten normalen Oberflaechen (Tiles, Folder, Back, Settings
+  // und Popups) uebernehmen die Option im naechsten sicheren UI-Durchlauf.
+  // Der Web-Handler selbst fasst LVGL nicht an; der Screensaver bleibt separat.
+  ui_surface_style::request_global_tile_border_refresh();
+  server.send(200, "application/json",
+              enabled ? "{\"success\":true,\"enabled\":true}"
+                      : "{\"success\":true,\"enabled\":false}");
 }
 
 void WebAdminServer::handleGetScreensaverWallpaper() {

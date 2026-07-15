@@ -468,6 +468,19 @@ bool ConfigManager::saveScreensaverTimeout(bool enabled, uint16_t seconds) {
   return true;
 }
 
+bool ConfigManager::saveTileBorders(bool enabled) {
+  Preferences prefs;
+  if (!prefs.begin(PREF_NAMESPACE, false)) {
+    Serial.println("ConfigManager: Tile-Border-Preferences oeffnen fehlgeschlagen");
+    return false;
+  }
+  prefs.putBool("tile_border", enabled);
+  prefs.end();
+
+  config.tile_borders = enabled;
+  return true;
+}
+
 void ConfigManager::clear() {
   Preferences prefs;
 

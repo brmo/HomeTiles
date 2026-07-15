@@ -67,3 +67,19 @@ static inline void disable_pressed_button_animation(lv_obj_t* obj) {
   lv_obj_set_style_translate_x(obj, 0, LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_set_style_translate_y(obj, 0, LV_PART_MAIN | LV_STATE_PRESSED);
 }
+
+// Ein vorgeladenes Popup wird im Klick-Callback sofort eingeblendet. Ist der
+// letzte Press-/Release-Refresh der auslösenden Kachel noch offen, rendert
+// LVGL deren rechteckige Dirty-Fläche bereits mit einem einzelnen Ausschnitt
+// des Popups. Den Button deshalb zuerst vollständig in den Normalzustand
+// zeichnen; anschließend kann das Popup sauber von oben nach unten erscheinen.
+static inline void finish_press_before_popup(lv_event_t* event) {
+  if (!event) return;
+  lv_obj_t* source = static_cast<lv_obj_t*>(lv_event_get_target(event));
+  if (source) {
+    lv_obj_clear_state(source, LV_STATE_PRESSED);
+    lv_obj_invalidate(source);
+  }
+  lv_display_t* display = lv_display_get_default();
+  if (display) lv_refr_now(display);
+}

@@ -91,6 +91,7 @@ public:
                            uint8_t wake_mode_battery);
 
   bool saveScreensaverTimeout(bool enabled, uint16_t seconds);
+  bool saveTileBorders(bool enabled);
 
   void setRuntimeDisplayRotation(bool rotate_180);
   void setRuntimeDisplayRotationQuarters(uint8_t rotation_quarters);

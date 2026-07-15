@@ -266,6 +266,7 @@ lv_obj_set_style_bg_grad_dir(container, LV_GRAD_DIR_NONE, LV_PART_MAIN | LV_STAT
             SwitchEventData* data = static_cast<SwitchEventData*>(lv_event_get_user_data(e));
             if (!data) return;
             LightPopupInit init = build_light_popup_init(data);
+            finish_press_before_popup(e);
             show_light_popup(init);
           },
           popup_event,

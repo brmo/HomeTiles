@@ -612,7 +612,7 @@ const TileTypeDescriptor kTileTypes[] = {
   },
   {
     TILE_BACK,
-    "Zurueck",
+    "Zurück",
     "navigate",
     "navigate",
     "none",

@@ -6,6 +6,7 @@
 #include "src/tiles/tile_renderer.h"
 #include "src/ui/sensor_popup.h"
 #include "src/ui/weather_popup.h"
+#include "src/ui/ui_surface_style.h"
 #include "src/network/ha_bridge_config.h"
 #include "src/types/energy/energy_data.h"
 #include "src/web/web_admin.h"
@@ -1054,6 +1055,7 @@ static void process_folder_cache_invalidation() {
 }
 
 void tiles_process_reload_requests() {
+  ui_surface_style::process_pending_updates();
   bool did_reload = false;
 
   process_folder_cache_invalidation();

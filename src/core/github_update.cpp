@@ -529,7 +529,7 @@ CheckResult checkLatest() {
   result.update_available = isNewerThanCurrent(result.latest_tag);
   Serial.printf("[Update] Installiert %s, neuestes Release %s -> %s\n",
                 FW_VERSION, result.latest_tag,
-                result.update_available ? "Update verfuegbar" : "aktuell");
+                result.update_available ? "Update verfügbar" : "aktuell");
   return result;
 }
 
