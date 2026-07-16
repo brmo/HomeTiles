@@ -190,4 +190,25 @@ void logBootDiagnostics() {
   Serial.printf("[CrashLog] Absturz protokolliert -> %s\n", kLogPath);
 }
 
+void appendOtaFailureReport(const char* target_tag, const String& error,
+                            const String& detail) {
+  rotateLogIfNeeded();
+  File f = LittleFS.open(kLogPath, FILE_APPEND);
+  if (!f) {
+    Serial.println("[CrashLog] crashlog.txt nicht beschreibbar");
+    return;
+  }
+  f.printf("=== OTA install failed | firmware %s -> %s ===\n", FW_VERSION,
+           (target_tag && *target_tag) ? target_tag : "?");
+  f.printf("Error: %s\n", error.c_str());
+  if (detail.length()) {
+    f.print(detail);
+    if (!detail.endsWith("\n")) f.print("\n");
+  }
+  f.print("Device performed a safe automatic restart (no crash, no core "
+          "dump)\n\n");
+  f.close();
+  Serial.printf("[CrashLog] OTA-Fehlbericht protokolliert -> %s\n", kLogPath);
+}
+
 }  // namespace CrashLog

@@ -50,6 +50,18 @@ typedef void (*ProgressFn)(size_t written, size_t total);
 // selbst neu. Bei false steht der Grund in error_out.
 bool install(const char* tag, ProgressFn progress, String& error_out);
 
+// Forensik des letzten install()-Laufs (fehlgeschlagene Ranges, Versuche,
+// Speicher-/WLAN-Lage), mehrzeilig. Der Aufrufer haengt sie vor dem sicheren
+// Neustart an den Absturzbericht an, da der Neustart selbst keinen Core-Dump
+// hinterlaesst. Leer, solange kein Install lief.
+String lastInstallDiag();
+
+// True, wenn der letzte install()-Fehlschlag NACH der Validierung von Asset
+// und Firmware-Metadaten passierte (Transportabriss statt inhaltlichem
+// Fehler). Nur dann lohnt ein automatischer neuer Versuch nach dem Neustart;
+// bei "device mismatch" o.ae. wuerde er nur eine Reboot-Schleife erzeugen.
+bool lastInstallRetryable();
+
 }  // namespace GithubUpdate
 
 #endif  // GITHUB_UPDATE_H

@@ -6,6 +6,7 @@
 #include <freertos/task.h>
 #include <freertos/idf_additions.h>  // xTaskCreatePinnedToCoreWithCaps (PSRAM-Task-Stack)
 #include <nvs_flash.h>
+#include <Preferences.h>  // GitHub-OTA-Auto-Retry ueber den Neustart hinweg
 #include <esp_err.h>
 #include <esp_wifi.h>  // esp_wifi_scan_stop (AP-Wechsel bricht laufenden Scan ab)
 #include <esp_ota_ops.h>
@@ -316,6 +317,42 @@ static void request_system_reboot() {
   system_reboot_pending = true;
 }
 
+// GitHub-OTA-Auto-Retry: Frisch gebootet laeuft der 6-MB-Download nachweislich
+// durch (Feldtest 2026-07-16), waehrend der ESP-Hosted-Link im gealterten
+// System an zufaelliger Stelle abreisst. Nach dem sicheren Neustart wegen
+// eines fehlgeschlagenen Installs stoesst das Geraet den Install deshalb von
+// selbst erneut an. Tag + Versuchszaehler ueberleben den Neustart im NVS.
+static constexpr uint8_t kFwInstallMaxAutoRetries = 3;
+static constexpr const char* kFwRetryNvsNamespace = "otaretry";
+static bool fw_install_auto_retry_checked = false;
+
+static void arm_fw_install_auto_retry(const char* tag) {
+  Preferences prefs;
+  if (!prefs.begin(kFwRetryNvsNamespace, false)) return;
+  const uint8_t attempts = prefs.getUChar("att", 0);
+  if (attempts >= kFwInstallMaxAutoRetries) {
+    prefs.clear();
+    prefs.end();
+    Serial.printf("[Update] Auto-Retry aufgegeben (%u Versuche verbraucht)\n",
+                  static_cast<unsigned>(attempts));
+    return;
+  }
+  prefs.putString("tag", tag);
+  prefs.putUChar("att", attempts + 1);
+  prefs.end();
+  Serial.printf("[Update] Auto-Retry %u/%u nach Neustart geplant\n",
+                static_cast<unsigned>(attempts + 1),
+                static_cast<unsigned>(kFwInstallMaxAutoRetries));
+}
+
+static void clear_fw_install_auto_retry() {
+  Preferences prefs;
+  if (prefs.begin(kFwRetryNvsNamespace, false)) {
+    prefs.clear();
+    prefs.end();
+  }
+}
+
 static GithubUpdate::CheckResult perform_fw_check() {
   // Auch der reine Versions-Check braucht einen frischen GitHub-TLS-Handshake.
   // Auf ESP32-P4/SDIO-WiFi ist das stabiler, wenn MQTT kurz ruhig ist und der
@@ -422,6 +459,7 @@ static void apply_fw_install() {
   String err;
   const bool ok = GithubUpdate::install(fw_install_tag, fw_install_progress, err);
   if (ok) {
+    clear_fw_install_auto_retry();
     settings_fw_install_done();
     Serial.println("[Update] Erfolgreich - Neustart");
     BoardHAL::prepareForRestart();
@@ -433,16 +471,30 @@ static void apply_fw_install() {
   Serial.printf("[Update] Fehlgeschlagen: %s\n", err.c_str());
   webAdminServer.setGithubUpdateInstallFailed(err.c_str());
   settings_fw_install_failed(err.c_str());
-  // Zurueck in den Normalbetrieb (Gegenstueck zur Vorbereitung oben)
-  networkManager.restoreMqttBufferNormal();
-  BoardHAL::displayPowerSaveOff();
-  displayManager.restoreBufferLinesAfterOta(SCREEN_HEIGHT / Device::kDisplayFlushBands);
-  if (networkManager.isWifiConnected() && !webAdminServer.isRunning()) {
-    webAdminServer.start();
+  // Der sichere Neustart unten hinterlaesst keinen Core-Dump. Damit der
+  // Fehlschlag trotzdem nachvollziehbar bleibt, wandern Fehlertext und die
+  // Range-/Speicher-Forensik aus install() in den Absturzbericht
+  // (/crashlog.txt, Web-Admin-Abschnitt "Absturzbericht").
+  CrashLog::appendOtaFailureReport(fw_install_tag, err,
+                                   GithubUpdate::lastInstallDiag());
+  // Frisch gebootet klappt der Download zuverlaessig - also nach dem
+  // Neustart automatisch weiterprobieren (nur bei Transportfehlern; ein
+  // "device mismatch" o.ae. wuerde sonst eine Reboot-Schleife erzeugen).
+  if (GithubUpdate::lastInstallRetryable()) {
+    arm_fw_install_auto_retry(fw_install_tag);
+  } else {
+    clear_fw_install_auto_retry();
   }
-  displayManager.setInputEnabled(true);
-  lv_obj_invalidate(lv_screen_active());
-  lv_refr_now(displayManager.getDisplay());
+  // Nach einem abgebrochenen grossen HTTPS-Transfer kann der ESP-Hosted-
+  // Coprozessor bereits festhaengen. Ein Wiederanlauf von WLAN/MQTT fuehrt
+  // dann nur zu wiederholten 5-Sekunden-RPC-Timeouts und blockiert die UI.
+  // Da das Image vollstaendig vor Update.begin() geladen wird (bzw. ein
+  // gestartetes Update bei Fehler abgebrochen wurde), ist ein Neustart sicher
+  // und bootet die unveraenderte aktive Firmware.
+  Serial.println("[Update] Sicherer Neustart nach fehlgeschlagenem Install");
+  BoardHAL::prepareForRestart();
+  delay(500);
+  BoardHAL::restart();
 }
 
 static void apply_system_reboot() {
@@ -883,6 +935,23 @@ void loop() {
     // Erzwungener MQTT-Reconnect: die Post-Connect-Publishes (Status/
     // Settings/Snapshot) lassen die HA-Bridge das Geraet neu erkennen.
     networkManager.requestMqttReconfigure();
+  }
+
+  // Geplanten Auto-Retry aus dem NVS einmalig einloesen, sobald WLAN steht
+  // und das frisch gebootete System kurz zur Ruhe gekommen ist.
+  if (!fw_install_auto_retry_checked && millis() > 30000 &&
+      networkManager.isWifiConnected()) {
+    fw_install_auto_retry_checked = true;
+    Preferences prefs;
+    if (prefs.begin(kFwRetryNvsNamespace, true)) {
+      const String retry_tag = prefs.getString("tag", "");
+      prefs.end();
+      if (retry_tag.length()) {
+        Serial.printf("[Update] Setze Update nach Neustart automatisch fort: %s\n",
+                      retry_tag.c_str());
+        request_fw_install(retry_tag.c_str());
+      }
+    }
   }
 
   if (fw_check_pending) {

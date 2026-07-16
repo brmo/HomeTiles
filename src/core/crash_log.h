@@ -33,6 +33,13 @@ bool hasCoreDump();
 // leer, wenn kein Dump vorliegt.
 String coreDumpSummaryLine();
 
+// Haengt nach einem fehlgeschlagenen GitHub-OTA-Install einen Bericht an
+// /crashlog.txt an. Der anschliessende sichere Neustart hinterlaesst keinen
+// Core-Dump - dieser Eintrag ersetzt ihn als Diagnosequelle (Fehlertext plus
+// Range-/Speicher-Details aus GithubUpdate::lastInstallDiag()).
+void appendOtaFailureReport(const char* target_tag, const String& error,
+                            const String& detail);
+
 }  // namespace CrashLog
 
 #endif  // CRASH_LOG_H

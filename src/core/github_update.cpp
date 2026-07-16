@@ -19,10 +19,17 @@ namespace {
 constexpr size_t kInstallReadChunk = 2048;
 constexpr size_t kInstallWriteSliceBytes = 16 * 1024;
 constexpr size_t kSocketRxBufferBytes = 4 * 1024;
+constexpr size_t kStageRangeBytes = 512 * 1024;
+constexpr uint8_t kStageRangeAttempts = 3;
+// Feldtest v0.5.4->v0.5.5: Nach ~4 MB Dauerempfang lief die ESP-Hosted
+// RX-Queue voll ("Failed to push data to rx queue") und der C6 kippte um.
+// Deshalb zwischen den Ranges ein echtes Erholungsfenster und beim Lesen
+// staerker drosseln (2 ms je 2-KB-Chunk = max. ~1 MB/s statt ~2 MB/s).
+constexpr uint32_t kStageRangePauseMs = 750;
 constexpr size_t kMaxHttpLineLen = 4096;
 constexpr uint32_t kConnectTimeoutMs = 10000;
 constexpr uint32_t kReadTimeoutMs = 20000;
-constexpr uint32_t kReadPaceMs = 0;
+constexpr uint32_t kReadPaceMs = 2;
 
 struct ParsedHttpsUrl {
   String host;
@@ -166,6 +173,41 @@ void logCheckNetworkState(const char* label, const String& url) {
                 static_cast<unsigned>(ESP.getFreePsram() / 1024));
 }
 
+// Forensik fuer den sicheren Neustart nach fehlgeschlagenem Install: Der
+// Neustart hinterlaesst keinen Core-Dump. install() sammelt hier deshalb die
+// Details (Range, Versuch, Fehler, Speicher-/WLAN-Lage), und der Aufrufer
+// haengt sie vor dem Restart an den Absturzbericht (/crashlog.txt) an.
+String g_install_diag;
+constexpr size_t kInstallDiagMaxBytes = 1536;
+// True, sobald Asset und Firmware-Metadaten validiert sind: Jeder spaetere
+// Fehler ist ein Transportproblem (ESP-Hosted-Abriss, CDN), kein inhaltliches
+// - nur dann lohnt ein automatischer neuer Versuch nach dem Neustart.
+bool g_install_retryable = false;
+
+void installDiagLine(const String& line) {
+  if (g_install_diag.length() + line.length() + 1 > kInstallDiagMaxBytes) {
+    return;  // Bericht bleibt begrenzt; die ersten Fehler sind die wichtigsten
+  }
+  g_install_diag += line;
+  g_install_diag += '\n';
+}
+
+String memSnapshotLine() {
+  char buf[112];
+  snprintf(buf, sizeof(buf),
+           "mem int=%uKB largest=%uKB dma_largest=%uKB psram_largest=%uKB",
+           static_cast<unsigned>(
+               heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+           static_cast<unsigned>(
+               heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024),
+           static_cast<unsigned>(heap_caps_get_largest_free_block(
+                                     MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) /
+                                 1024),
+           static_cast<unsigned>(
+               heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024));
+  return String(buf);
+}
+
 // Gibt den mbedTLS-Fehlercode zurueck (0 = keiner), damit der Aufrufer
 // Speicher-Fehlschlaege (MBEDTLS_ERR_SSL_ALLOC_FAILED) erkennen kann.
 int logCheckFailureDetails(int code, WiFiClientSecure& client, const String& url) {
@@ -200,7 +242,8 @@ typedef bool (*RangeDataFn)(const uint8_t* data, size_t len, void* ctx);
 
 bool fetchHttpRange(const String& start_url, size_t from, size_t to,
                     uint8_t* buf, size_t buf_len, RangeDataFn on_data,
-                    void* ctx, size_t& content_total, String& error_out) {
+                    void* ctx, size_t& content_total, String& error_out,
+                    String* final_url_out = nullptr) {
   if (!buf || !buf_len || !on_data || to < from) {
     error_out = "invalid range request";
     return false;
@@ -344,6 +387,7 @@ bool fetchHttpRange(const String& start_url, size_t from, size_t to,
     }
 
     client.stop();
+    if (final_url_out) *final_url_out = url;
     return true;
   }
 
@@ -549,6 +593,11 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
       tag, String("hometiles_") + tag + "_" + Device::profile().key + ".bin");
   Serial.printf("[Update] Lade %s\n", url.c_str());
 
+  g_install_diag = "";
+  g_install_retryable = false;
+  installDiagLine(String("Start: Uptime ") + (millis() / 1000) + " s | RSSI " +
+                  WiFi.RSSI() + " dBm | " + memSnapshotLine());
+
   // Netzwerk-Lesepuffer und OTA-Staging liegen im PSRAM. Das VOLLSTAENDIGE
   // Image wird vor Update.begin() heruntergeladen. Erst nachdem TLS beendet
   // und sein interner AES/DMA-Speicher wieder frei ist, beginnt der
@@ -569,8 +618,10 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
 
   uint8_t image_head[firmware_meta::kDeviceDescriptorImageBytes] = {0};
   HeadBufferCtx head_ctx{image_head, sizeof(image_head), 0};
+  String resolved_asset_url;
   if (!fetchHttpRange(url, 0, sizeof(image_head) - 1, net_buf, kInstallReadChunk,
-                      storeHeadBytes, &head_ctx, total_sz, error_out)) {
+                      storeHeadBytes, &head_ctx, total_sz, error_out,
+                      &resolved_asset_url)) {
     const String first_error = error_out;
     const String legacy_url = releaseDownloadUrl(
         tag,
@@ -580,16 +631,22 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
     head_ctx.len = 0;
     total_sz = 0;
     error_out = "";
+    resolved_asset_url = "";
     Serial.printf("[Update] Asset nicht gefunden/lesbar (%s), versuche %s\n",
                   first_error.c_str(), legacy_url.c_str());
     if (!fetchHttpRange(legacy_url, 0, sizeof(image_head) - 1, net_buf,
                         kInstallReadChunk, storeHeadBytes, &head_ctx, total_sz,
-                        error_out)) {
+                        error_out, &resolved_asset_url)) {
       error_out = first_error + "; fallback: " + error_out;
       failed = true;
     } else {
       url = legacy_url;
     }
+  }
+  if (!failed && resolved_asset_url.length()) {
+    // Fuer alle weiteren Ranges direkt die bereits aufgeloeste CDN-URL
+    // verwenden. Das spart pro Block den GitHub-Redirect samt TLS-Verbindung.
+    url = resolved_asset_url;
   }
   if (!failed) {
     delay(20);
@@ -622,6 +679,10 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
     }
   }
 
+  if (!failed) {
+    g_install_retryable = true;
+  }
+
   size_t stage_capacity = 0;
   size_t staged_len = 0;
   if (!failed) {
@@ -637,32 +698,77 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
       error_out = "not enough contiguous PSRAM for safe OTA staging";
       failed = true;
     } else {
-      Serial.printf("[Update] Safe staged download: %uB TCP RX, %uB Lesechunk, %uKB PSRAM\n",
+      Serial.printf("[Update] Safe staged download: %uB TCP RX, %uB Lesechunk, %uKB Ranges, %uKB PSRAM\n",
                     static_cast<unsigned>(kSocketRxBufferBytes),
                     static_cast<unsigned>(kInstallReadChunk),
+                    static_cast<unsigned>(kStageRangeBytes / 1024),
                     static_cast<unsigned>(stage_capacity / 1024));
     }
   }
 
   // Den kompletten Rest laden, solange Update/Flash noch unangetastet sind.
+  // Mehrere begrenzte Range-Requests verhindern, dass ESP-Hosted minutenlang
+  // einen einzigen RX-Strom abarbeiten muss. Jeder Block darf neu gestartet
+  // werden, ohne bereits geladene Daten oder das Flash zu veraendern.
   if (!failed) {
-    const size_t range_start = head_ctx.len;
-    const size_t range_end = total_sz - 1;
-    const size_t expected_len = range_end - range_start + 1;
-    size_t range_total = 0;
-    HeadBufferCtx stage_ctx{stage_buf, stage_capacity, 0};
-    if (!fetchHttpRange(url, range_start, range_end, net_buf,
-                        kInstallReadChunk, storeBufferBytes, &stage_ctx,
-                        range_total, error_out)) {
-      failed = true;
-    } else if (range_total != total_sz) {
-      error_out = "image size changed";
-      failed = true;
-    } else if (stage_ctx.len != expected_len) {
-      error_out = "staged image incomplete";
-      failed = true;
-    } else {
-      staged_len = stage_ctx.len;
+    while (staged_len < stage_capacity && !failed) {
+      const size_t range_start = head_ctx.len + staged_len;
+      size_t range_len = stage_capacity - staged_len;
+      if (range_len > kStageRangeBytes) range_len = kStageRangeBytes;
+      const size_t range_end = range_start + range_len - 1;
+      bool range_ok = false;
+
+      for (uint8_t attempt = 1; attempt <= kStageRangeAttempts; ++attempt) {
+        size_t range_total = 0;
+        HeadBufferCtx stage_ctx{stage_buf + staged_len, range_len, 0};
+        stage_ctx.progress_base = range_start;
+        stage_ctx.progress_total = total_sz;
+        stage_ctx.progress = progress;
+        error_out = "";
+
+        Serial.printf("[Update] Lade Range %u-%u (Versuch %u/%u)\n",
+                      static_cast<unsigned>(range_start),
+                      static_cast<unsigned>(range_end),
+                      static_cast<unsigned>(attempt),
+                      static_cast<unsigned>(kStageRangeAttempts));
+        if (fetchHttpRange(url, range_start, range_end, net_buf,
+                           kInstallReadChunk, storeBufferBytes, &stage_ctx,
+                           range_total, error_out) &&
+            range_total == total_sz && stage_ctx.len == range_len) {
+          range_ok = true;
+          break;
+        }
+
+        if (!error_out.length()) {
+          error_out = (range_total && range_total != total_sz)
+                          ? "image size changed"
+                          : "range incomplete";
+        }
+        Serial.printf("[Update] Range fehlgeschlagen: %s\n", error_out.c_str());
+        installDiagLine(String("Range ") + range_start + "-" + range_end +
+                        " Versuch " + attempt + ": " + error_out + " | " +
+                        memSnapshotLine());
+        // Nach einem Streamabriss braucht der ESP-Hosted-Link deutlich
+        // laenger als ein paar hundert Millisekunden, um Queues und Mempool
+        // zu leeren. Sofortige Reconnects scheitern sonst direkt wieder
+        // ("connect failed" im Feldtest).
+        if (attempt < kStageRangeAttempts) delay(3000);
+      }
+
+      if (!range_ok) {
+        failed = true;
+        break;
+      }
+
+      staged_len += range_len;
+      if (progress) progress(head_ctx.len + staged_len, total_sz);
+      Serial.printf("[Update] Download progress: %u / %u Bytes\n",
+                    static_cast<unsigned>(head_ctx.len + staged_len),
+                    static_cast<unsigned>(total_sz));
+      if (staged_len < stage_capacity) delay(kStageRangePauseMs);
+    }
+
+    if (!failed) {
       Serial.printf("[Update] Download vollstaendig im PSRAM: %u / %u Bytes\n",
                     static_cast<unsigned>(head_ctx.len + staged_len),
                     static_cast<unsigned>(total_sz));
@@ -712,6 +818,8 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
   if (failed) {
     if (update_started) Update.abort();
     Serial.printf("[Update] Install fehlgeschlagen: %s\n", error_out.c_str());
+    installDiagLine(String("Abbruch bei ") + (head_ctx.len + staged_len) +
+                    " / " + total_sz + " Bytes: " + error_out);
     return false;
   }
 
@@ -724,5 +832,9 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
                 static_cast<unsigned>(total_sz));
   return true;
 }
+
+String lastInstallDiag() { return g_install_diag; }
+
+bool lastInstallRetryable() { return g_install_retryable; }
 
 }  // namespace GithubUpdate
