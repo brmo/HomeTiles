@@ -15,10 +15,40 @@ directly on the device with a progress bar; afterwards it restarts into the new 
 Notes:
 - The device briefly disconnects from MQTT and stops the web admin during the install —
   both come back automatically.
-- If the install fails (network hiccup, crash), nothing is lost: the device keeps running
-  the old version. Just try again.
+- Since v0.5.6, a failed GitHub download is recorded and the device safely restarts before
+  retrying it from a fresh boot. The update can therefore cause more than one restart.
+  After the device has settled, open **Settings → System** again and verify the installed
+  firmware version.
+- If an install still fails, nothing is lost: the unchanged active firmware remains
+  bootable. Use the manual Web Admin upload described below.
 - If the update **check** itself fails even though WiFi works, restart the display and
   check again — see the [FAQ](faq.md#the-update-check-fails-even-though-wifi-works).
+
+### Troubleshooting ESP32-P4/C6 GitHub downloads
+
+On supported ESP32-P4 displays, WiFi is provided by a separate ESP32-C6 coprocessor
+connected through ESP-Hosted/SDIO. After a long uptime, a large outbound GitHub
+HTTPS/TLS download can occasionally fail with messages such as `connection lost` or
+`esp-aes: Failed to allocate memory`. The exact underlying ESP-Hosted/TLS interaction is
+still under investigation; this is not caused by selecting the wrong OTA partition.
+
+The v0.5.6 updater handles this failure safely by restarting and retrying from a fresh
+boot. If the automatic retry does not complete the update, the user must perform the
+manual Web Admin upload:
+
+1. Open the target version on the
+   [GitHub releases page](https://github.com/GalusPeres/HomeTiles/releases).
+2. Download the plain OTA `.bin` matching the device from the table below. Do **not**
+   use the `_factory.bin` file for this.
+3. Open the display's Web Admin at `http://<display-ip>/`.
+4. In the Firmware section, select the downloaded file and start the manual upload.
+5. Leave the device powered on. A black screen during this upload is intentional; the
+   device restarts automatically after a successful installation.
+
+The manual upload uses the browser to download the GitHub file and sends it to the
+display over the local network. The display therefore does not have to maintain the
+large outbound GitHub HTTPS/TLS stream through the ESP32-C6, which is why this method
+can work even when the on-device GitHub download does not.
 
 ## 2. Web Admin OTA Upload
 

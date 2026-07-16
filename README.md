@@ -49,7 +49,16 @@ the whole chain: MQTT broker, bridge integration, and connecting the display.
 - [FAQ & Troubleshooting](docs/faq.md) — common questions and known quirks
 - [BOARD_SETTINGS.md](BOARD_SETTINGS.md) — Arduino IDE build settings per device
 
-## Highlights Of v0.5.3
+## Highlights Of v0.5.6
+
+- Failed on-device GitHub OTA downloads now leave a diagnostic report, restart safely,
+  and retry from a fresh boot instead of leaving WiFi and the UI stuck.
+- The System popup explains that an update may restart the device twice and reminds the
+  user to verify the installed version afterwards.
+- Added dedicated [OTA troubleshooting](docs/updating.md#troubleshooting-esp32-p4c6-github-downloads)
+  for the ESP32-P4/ESP32-C6 HTTPS path and the reliable manual Web Admin fallback.
+
+### Earlier v0.5.x improvements
 
 - Correct controls for CCT-only lights: brightness and color temperature remain
   available while the unsupported color palette stays hidden

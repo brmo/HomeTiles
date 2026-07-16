@@ -76,9 +76,26 @@ failed" while everything else keeps working. **Restarting the display fixes it**
 the restart button in the on-device System popup or in the web admin, then run the
 check again right after boot.
 
-Since **v0.4.6** the firmware frees memory automatically before the check and retries,
-so this should no longer happen — if it still does on a current version, please
-[report it](#the-display-crashed-or-restarted-by-itself).
+The firmware frees memory automatically before the check. If it still fails on a
+current version, please [report it](#the-display-crashed-or-restarted-by-itself).
+
+## The GitHub update download fails or the device restarts during it
+
+ESP32-P4 displays use a separate ESP32-C6 WiFi coprocessor through ESP-Hosted/SDIO.
+After a long uptime, the large GitHub HTTPS/TLS download can occasionally stop with
+`connection lost` or an `esp-aes` allocation error. The exact interaction is still
+under investigation.
+
+Since v0.5.6 the device records the failure, safely restarts, and retries the update
+from a fresh boot. It may therefore restart more than once. When it has settled, open
+**Settings → System** and check whether the new version is shown.
+
+If the automatic retry still fails, the user must download the matching plain OTA
+`.bin` from the [release page](https://github.com/GalusPeres/HomeTiles/releases) and
+upload it manually in the Web Admin Firmware section. Do not use the `_factory.bin`.
+This manual path avoids the large outbound GitHub TLS stream on the display. See
+[Firmware Updates](updating.md#troubleshooting-esp32-p4c6-github-downloads) for the
+complete steps.
 
 ## The update check says "up to date" but I expected an update
 
