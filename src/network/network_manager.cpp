@@ -269,30 +269,26 @@ void HomeTilesNetworkManager::stopWifiForWired() {
   wifi_suspended_for_wired = true;
   networkTransport.setWifiDriverActive(false);
 
-  const wifi_mode_t mode = WiFi.getMode();
-  const bool sta_enabled =
-      (static_cast<uint8_t>(mode) & static_cast<uint8_t>(WIFI_MODE_STA)) != 0;
-  const bool ap_enabled =
-      (static_cast<uint8_t>(mode) & static_cast<uint8_t>(WIFI_MODE_AP)) != 0;
-  if (!sta_enabled || ap_enabled) {
-    networkTransport.setWifiDriverActive(mode != WIFI_MODE_NULL);
-    wifi_suspended_for_wired = false;
-    return;
-  }
-
+  // ESP-Hosted and the SD card use separate P4 SDMMC slots, but IDF 5.5
+  // deinitializes the shared SDMMC host queue when Hosted is torn down.
+  // Unmount first and remount immediately afterwards so no stale semaphore
+  // remains inside the mounted FAT driver.
+  const bool sd_was_mounted = Device::suspendSDCardForNetworkTransition();
   WiFi.setAutoReconnect(false);
-  const bool stopped = WiFi.disconnect(true, false, 500);
-  const bool driver_active = WiFi.getMode() != WIFI_MODE_NULL;
-  networkTransport.setWifiDriverActive(driver_active);
+  // WIFI_OFF performs one controlled mode query followed by the complete
+  // Arduino/ESP-Hosted teardown. Avoid the former disconnect()+getMode()
+  // sequence, which issued several RPCs exactly while DMA was being released.
+  const bool stopped = WiFi.mode(WIFI_OFF);
+  if (sd_was_mounted && !Device::resumeSDCardAfterNetworkTransition()) {
+    Serial.println("[Network] WARNUNG: SD-Karte nach WiFi-Stopp nicht gemountet");
+  }
+  networkTransport.setWifiDriverActive(!stopped);
   wifi_ps_state_known = false;
 
-  if (stopped && !driver_active) {
+  if (stopped) {
     Serial.println("[Network] WiFi/SDIO gestoppt: Ethernet ist aktiv");
   } else {
-    Serial.printf("[Network] WiFi-Stopp fuer Ethernet fehlgeschlagen "
-                  "(stopped=%u mode=%u)\n",
-                  stopped ? 1U : 0U,
-                  static_cast<unsigned>(WiFi.getMode()));
+    Serial.println("[Network] WiFi-Stopp fuer Ethernet fehlgeschlagen");
     wifi_suspended_for_wired = false;
   }
 }
@@ -389,8 +385,10 @@ void HomeTilesNetworkManager::connectWifi() {
     if (wired_ip_wait_until == 0) {
       wired_ip_wait_until = millis() + kWiredDhcpWaitMs;
     }
-    Serial.println("WiFi: nicht gestartet, Ethernet wartet auf DHCP");
-    return;
+    if (static_cast<int32_t>(millis() - wired_ip_wait_until) < 0) {
+      Serial.println("WiFi: nicht gestartet, Ethernet wartet auf DHCP");
+      return;
+    }
   }
 
   if (!configManager.isConfigured()) {
@@ -1158,6 +1156,19 @@ void HomeTilesNetworkManager::update() {
   }
   wired_link_was_up = wired_link_up;
 
+  const bool wired_dhcp_pending =
+      wired_link_up && !wired_connected && wired_ip_wait_until != 0 &&
+      static_cast<int32_t>(now_ms - wired_ip_wait_until) < 0;
+  if (wired_dhcp_pending && networkTransport.isWifiDriverActive()) {
+    // Close WiFi-owned sockets before the ESP-hosted driver is torn down.
+    // The USB backend delays Ethernet DHCP until this memory is available.
+    if (isMqttConnected()) disconnectMqtt();
+    if (webAdminServer.isRunning()) webAdminServer.stop();
+    stopMdns();
+    stopWifiForWired();
+    networkTransport.update();
+  }
+
   if (wired_connected) {
     wifi_fallback_at = 0;
     wired_ip_wait_until = 0;
@@ -1203,9 +1214,6 @@ void HomeTilesNetworkManager::update() {
     const bool fallback_ready =
         wifi_fallback_at == 0 ||
         static_cast<int32_t>(now_ms - wifi_fallback_at) >= 0;
-    const bool wired_dhcp_pending =
-        wired_link_up && wired_ip_wait_until != 0 &&
-        static_cast<int32_t>(now_ms - wired_ip_wait_until) < 0;
     if (!wifi_manual_disconnect && fallback_ready && !wired_dhcp_pending &&
         (int32_t)(now_ms - wifi_retry_at) >= 0) {
       wifi_fallback_at = 0;

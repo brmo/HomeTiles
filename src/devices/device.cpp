@@ -112,6 +112,14 @@ fs::FS& sdFS() {
   return DeviceImpl::sdFS();
 }
 
+bool suspendSDCardForNetworkTransition() {
+  return DeviceImpl::suspendSDCardForNetworkTransition();
+}
+
+bool resumeSDCardAfterNetworkTransition() {
+  return DeviceImpl::resumeSDCardAfterNetworkTransition();
+}
+
 bool initLittleFS() {
   return DeviceImpl::initLittleFS();
 }

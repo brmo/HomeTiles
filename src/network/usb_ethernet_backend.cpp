@@ -62,6 +62,7 @@ constexpr size_t kTxBufferSize = 2048;
 constexpr size_t kControlBufferSize = 16;
 constexpr size_t kMaxEthernetFrame = 1536;
 constexpr uint32_t kLinkPollMs = 500;
+constexpr uint32_t kLinkDhcpDelayMs = 750;
 constexpr uint32_t kUsbDiagnosticsMs = 3000;
 
 constexpr uint16_t kByteEnableDword = 0x00ff;
@@ -376,7 +377,7 @@ private:
       return ESP_ERR_INVALID_ARG;
     }
     if (!self->attached_.load() || !self->link_up_.load() ||
-        !self->tx_queue_) {
+        !self->data_path_active_.load() || !self->tx_queue_) {
       return ESP_ERR_INVALID_STATE;
     }
 
@@ -528,6 +529,7 @@ private:
 
       serviceEndpointRecovery();
       serviceTx();
+      serviceDataPath();
 
       const uint32_t now = millis();
       if (attached_.load() &&
@@ -642,8 +644,7 @@ private:
             : (device_info.speed == USB_SPEED_FULL ? "full" : "low"),
         bulk_in_endpoint_, bulk_out_endpoint_);
 
-    if (!allocateControlTransfer() || !initializeAdapter() ||
-        !allocateDataTransfers()) {
+    if (!allocateControlTransfer() || !initializeAdapter()) {
       Serial.println("[USB-ETH] RTL8156 initialization failed");
       cleanupDevice(false);
       return false;
@@ -662,9 +663,6 @@ private:
     attached_.store(true);
     next_link_poll_ms_ = 0;
 
-    for (size_t i = 0; i < kRxTransferCount; ++i) {
-      submitRx(i);
-    }
     pollLink();
     Serial.printf("[USB-ETH] Adapter ready, MAC %02X:%02X:%02X:%02X:%02X:%02X\n",
                   mac_[0], mac_[1], mac_[2], mac_[3], mac_[4], mac_[5]);
@@ -685,13 +683,44 @@ private:
   }
 
   bool allocateDataTransfers() {
+    if (!tx_transfer_) {
+      const esp_err_t tx_err =
+          usb_host_transfer_alloc(kTxBufferSize, 0, &tx_transfer_);
+      if (tx_err != ESP_OK || !tx_transfer_) {
+        releaseDataTransfers();
+        return false;
+      }
+      tx_transfer_->device_handle = dev_;
+      tx_transfer_->bEndpointAddress = bulk_out_endpoint_;
+      tx_transfer_->timeout_ms = 1000;
+      tx_transfer_->flags = USB_TRANSFER_FLAG_ZERO_PACK;
+      tx_transfer_->callback = &Rtl8156UsbDriver::txTransferCallback;
+      tx_transfer_->context = this;
+    }
+
+    size_t rx_count = 0;
     for (size_t i = 0; i < kRxTransferCount; ++i) {
+      if (rx_transfers_[i]) {
+        ++rx_count;
+        continue;
+      }
       const size_t transfer_size =
           static_cast<size_t>(usb_round_up_to_mps(
               static_cast<int>(kRxBufferSize), bulk_in_mps_));
       const esp_err_t err =
           usb_host_transfer_alloc(transfer_size, 0, &rx_transfers_[i]);
-      if (err != ESP_OK || !rx_transfers_[i]) return false;
+      if (err != ESP_OK || !rx_transfers_[i]) {
+        if (rx_count == 0) {
+          releaseDataTransfers();
+          return false;
+        }
+        Serial.printf(
+            "[USB-ETH] RX-Fallback: %u x %u KB (zweiter Transfer "
+            "nicht verfuegbar)\n",
+            static_cast<unsigned>(rx_count),
+            static_cast<unsigned>(kRxBufferSize / 1024));
+        break;
+      }
 
       rx_contexts_[i].owner = this;
       rx_contexts_[i].index = static_cast<uint8_t>(i);
@@ -701,18 +730,10 @@ private:
       rx_transfers_[i]->timeout_ms = 0;
       rx_transfers_[i]->callback = &Rtl8156UsbDriver::rxTransferCallback;
       rx_transfers_[i]->context = &rx_contexts_[i];
+      ++rx_count;
     }
 
-    const esp_err_t tx_err =
-        usb_host_transfer_alloc(kTxBufferSize, 0, &tx_transfer_);
-    if (tx_err != ESP_OK || !tx_transfer_) return false;
-    tx_transfer_->device_handle = dev_;
-    tx_transfer_->bEndpointAddress = bulk_out_endpoint_;
-    tx_transfer_->timeout_ms = 1000;
-    tx_transfer_->flags = USB_TRANSFER_FLAG_ZERO_PACK;
-    tx_transfer_->callback = &Rtl8156UsbDriver::txTransferCallback;
-    tx_transfer_->context = this;
-    return true;
+    return rx_count > 0;
   }
 
   static void controlTransferCallback(usb_transfer_t* transfer) {
@@ -1045,6 +1066,39 @@ private:
     setBits2(kUsbU2p3Ctrl, kMcuUsb, kU2p3Enable);
   }
 
+  bool enableAdapterDataPathHardware() {
+    io_ok_ = true;
+
+    write1(kPlaCrwecr, kMcuPla, kCrwecrConfig);
+    uint8_t mac_buffer[8] = {};
+    memcpy(mac_buffer, mac_, sizeof(mac_));
+    writeMemory(kPlaIdr, kMcuPla | kByteEnableSixBytes, mac_buffer,
+                sizeof(mac_buffer));
+    write1(kPlaCrwecr, kMcuPla, kCrwecrNormal);
+
+    write2(kUsbRxEarlyAgg, kMcuUsb, 80);
+    write2(kUsbRxExtraAggTimer, kMcuUsb, 1875);
+    const uint32_t early_size =
+        kRxBufferSize - (1500 + 14 + 4 + sizeof(RtlRxHeader) + 8);
+    write2(kUsbRxEarlySize, kMcuUsb, early_size / 8);
+    write1(kUsbUptRxdmaOwn, kMcuUsb, kOwnUpdate | kOwnClear);
+
+    if (is_8156b_) {
+      clearBits2(kUsbFwTask, kMcuUsb, kFcPatchTask);
+      vTaskDelay(pdMS_TO_TICKS(2));
+      setBits2(kUsbFwTask, kMcuUsb, kFcPatchTask);
+    }
+
+    clearBits2(kPlaFmc, kMcuPla, kFmcMcuEnable);
+    setBits2(kPlaFmc, kMcuPla, kFmcMcuEnable);
+    clearBits2(kPlaCpcr, kMcuPla, kCpcrRxVlan);
+    configureReceiveFilter();
+    setBits1(kPlaCr, kMcuPla, kCrRxEnable | kCrTxEnable);
+    clearBits2(kPlaMisc1, kMcuPla, kRxdyGatedEnable);
+    adapter_data_path_ready_ = io_ok_;
+    return adapter_data_path_ready_;
+  }
+
   void configureReceiveFilter() {
     uint32_t receive_mode = read4(kPlaRcr, kMcuPla);
     receive_mode &= ~(0x00000001U | kRcrAcceptMulticast);
@@ -1111,33 +1165,7 @@ private:
     }
 
     rtl8153bNicReset();
-
-    write1(kPlaCrwecr, kMcuPla, kCrwecrConfig);
-    uint8_t mac_buffer[8] = {};
-    memcpy(mac_buffer, mac_, sizeof(mac_));
-    writeMemory(kPlaIdr, kMcuPla | kByteEnableSixBytes, mac_buffer,
-                sizeof(mac_buffer));
-    write1(kPlaCrwecr, kMcuPla, kCrwecrNormal);
-
-    write2(kUsbRxEarlyAgg, kMcuUsb, 80);
-    write2(kUsbRxExtraAggTimer, kMcuUsb, 1875);
-    const uint32_t early_size =
-        kRxBufferSize - (1500 + 14 + 4 + sizeof(RtlRxHeader) + 8);
-    write2(kUsbRxEarlySize, kMcuUsb, early_size / 8);
-    write1(kUsbUptRxdmaOwn, kMcuUsb, kOwnUpdate | kOwnClear);
-
-    if (is_8156b_) {
-      clearBits2(kUsbFwTask, kMcuUsb, kFcPatchTask);
-      vTaskDelay(pdMS_TO_TICKS(2));
-      setBits2(kUsbFwTask, kMcuUsb, kFcPatchTask);
-    }
-
-    clearBits2(kPlaFmc, kMcuPla, kFmcMcuEnable);
-    setBits2(kPlaFmc, kMcuPla, kFmcMcuEnable);
-    clearBits2(kPlaCpcr, kMcuPla, kCpcrRxVlan);
-    setBits1(kPlaCr, kMcuPla, kCrRxEnable | kCrTxEnable);
-    clearBits2(kPlaMisc1, kMcuPla, kRxdyGatedEnable);
-    configureReceiveFilter();
+    if (!enableAdapterDataPathHardware()) return false;
     startAutoNegotiation();
 
     Serial.printf("[USB-ETH] RTL8156 chip version 0x%04x initialized\n",
@@ -1157,10 +1185,19 @@ private:
   void handleRxTransfer(size_t index, usb_transfer_t* transfer) {
     rx_callback_active_[index].store(true);
     if (transfer->status == USB_TRANSFER_STATUS_COMPLETED) {
+      const uint32_t completed = rx_completed_.fetch_add(1) + 1;
+      if (completed <= 3) {
+        Serial.printf("[USB-ETH] RX #%u: %u bytes\n",
+                      static_cast<unsigned>(completed),
+                      static_cast<unsigned>(transfer->actual_num_bytes));
+      }
       parseRxBuffer(transfer->data_buffer,
                     static_cast<size_t>(transfer->actual_num_bytes));
       rx_in_flight_[index].store(false);
-      if (attached_.load()) submitRx(index);
+      if (attached_.load() && link_up_.load() &&
+          data_path_active_.load()) {
+        submitRx(index);
+      }
       rx_callback_active_[index].store(false);
       return;
     }
@@ -1216,7 +1253,8 @@ private:
 
   bool submitRx(size_t index) {
     if (index >= kRxTransferCount || !rx_transfers_[index] ||
-        !attached_.load()) {
+        !attached_.load() || !link_up_.load() ||
+        !data_path_active_.load()) {
       return false;
     }
     bool expected = false;
@@ -1260,7 +1298,8 @@ private:
     TxFrame* frame = nullptr;
     if (xQueueReceive(tx_queue_, &frame, 0) != pdTRUE || !frame) return;
 
-    const size_t aligned_length = (frame->length + 3U) & ~3U;
+    const uint16_t frame_length = frame->length;
+    const size_t aligned_length = (frame_length + 3U) & ~3U;
     const size_t transfer_length = sizeof(RtlTxHeader) + aligned_length;
     if (transfer_length > tx_transfer_->data_buffer_size) {
       heap_caps_free(frame);
@@ -1269,13 +1308,13 @@ private:
 
     RtlTxHeader header = {};
     header.packet_length =
-        (frame->length & 0xffffU) | kTxFirstSegment | kTxLastSegment;
+        (frame_length & 0xffffU) | kTxFirstSegment | kTxLastSegment;
     memcpy(tx_transfer_->data_buffer, &header, sizeof(header));
     memcpy(tx_transfer_->data_buffer + sizeof(header), frame->data,
-           frame->length);
-    if (aligned_length > frame->length) {
-      memset(tx_transfer_->data_buffer + sizeof(header) + frame->length, 0,
-             aligned_length - frame->length);
+           frame_length);
+    if (aligned_length > frame_length) {
+      memset(tx_transfer_->data_buffer + sizeof(header) + frame_length, 0,
+             aligned_length - frame_length);
     }
     heap_caps_free(frame);
 
@@ -1286,11 +1325,18 @@ private:
       tx_in_flight_.store(false);
       Serial.printf("[USB-ETH] TX submit failed: %s\n",
                     esp_err_to_name(err));
+    } else {
+      const uint32_t submitted = tx_submitted_.fetch_add(1) + 1;
+      if (submitted <= 3) {
+        Serial.printf("[USB-ETH] TX #%u: %u bytes\n",
+                      static_cast<unsigned>(submitted),
+                      static_cast<unsigned>(frame_length));
+      }
     }
   }
 
   void serviceEndpointRecovery() {
-    if (!attached_.load() || !dev_) return;
+    if (!attached_.load() || !dev_ || !data_path_active_.load()) return;
 
     const uint32_t rx_mask = rx_recovery_mask_.exchange(0);
     if (rx_mask) {
@@ -1330,9 +1376,11 @@ private:
       } else {
         setBits2(kPlaMacPwrCtrl4, kMcuPla, 0x0040);
       }
-      if (netif_started_) {
-        esp_netif_action_connected(netif_, nullptr, 0, nullptr);
-      }
+      // Expose the physical link immediately, but start DHCP shortly later.
+      // This gives the shared transport manager time to stop hosted WiFi and
+      // return its DMA/lwIP memory before Ethernet allocates its data path.
+      netif_connect_at_ = millis() + kLinkDhcpDelayMs;
+      netif_connect_pending_.store(true);
       const char* speed =
           (status & kPhystatus2500)
               ? "2.5 Gbit/s"
@@ -1342,15 +1390,124 @@ private:
                                                 : "10 Mbit/s"));
       Serial.printf("[USB-ETH] Link up: %s\n", speed);
     } else {
+      netif_connect_pending_.store(false);
       if (netif_started_) {
         esp_netif_action_disconnected(netif_, nullptr, 0, nullptr);
       }
+      suspendDataPath();
       Serial.println("[USB-ETH] Link down");
     }
   }
 
+  bool releaseDataTransfers() {
+    if (tx_in_flight_.load() || anyRxBusy()) return false;
+
+    if (tx_transfer_) {
+      usb_host_transfer_free(tx_transfer_);
+      tx_transfer_ = nullptr;
+    }
+    for (size_t i = 0; i < kRxTransferCount; ++i) {
+      if (rx_transfers_[i]) {
+        usb_host_transfer_free(rx_transfers_[i]);
+        rx_transfers_[i] = nullptr;
+      }
+    }
+    rx_recovery_mask_.store(0);
+    tx_recovery_pending_.store(false);
+    data_release_pending_.store(false);
+    return true;
+  }
+
+  void suspendDataPath() {
+    data_path_active_.store(false);
+
+    TxFrame* frame = nullptr;
+    while (tx_queue_ && xQueueReceive(tx_queue_, &frame, 0) == pdTRUE) {
+      heap_caps_free(frame);
+    }
+
+    const bool has_rx_transfers =
+        rx_transfers_[0] != nullptr || rx_transfers_[1] != nullptr;
+    if (dev_ && has_rx_transfers) {
+      usb_host_endpoint_halt(dev_, bulk_in_endpoint_);
+      usb_host_endpoint_flush(dev_, bulk_in_endpoint_);
+      usb_host_endpoint_clear(dev_, bulk_in_endpoint_);
+    }
+    if (dev_ && tx_transfer_) {
+      usb_host_endpoint_halt(dev_, bulk_out_endpoint_);
+      usb_host_endpoint_flush(dev_, bulk_out_endpoint_);
+      usb_host_endpoint_clear(dev_, bulk_out_endpoint_);
+    }
+
+    const uint32_t wait_started = millis();
+    while ((tx_in_flight_.load() || anyRxBusy()) &&
+           millis() - wait_started < 1000) {
+      vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    if (releaseDataTransfers()) {
+      if (has_rx_transfers || tx_transfer_) {
+        Serial.println("[USB-ETH] Datenpuffer fuer WiFi freigegeben");
+      }
+    } else {
+      data_release_pending_.store(true);
+      Serial.println("[USB-ETH] Datenpuffer-Freigabe wird nachgeholt");
+    }
+
+    // Mirror the carrier-off sequence used by the reference RTL8156 driver:
+    // stop/gate the NIC and reset its buffer-management unit after all host
+    // transfers are gone. Otherwise the next RX URB can stay silent.
+    if (attached_.load() && dev_) {
+      rtl8153bNicReset();
+      adapter_data_path_ready_ = false;
+      Serial.println("[USB-ETH] RTL8156-Datenpfad gestoppt");
+    }
+  }
+
+  void serviceDataPath() {
+    if (data_release_pending_.load() && releaseDataTransfers()) {
+      Serial.println("[USB-ETH] Datenpuffer fuer WiFi freigegeben");
+    }
+
+    if (!netif_connect_pending_.load() || !netif_started_ ||
+        !attached_.load() || !link_up_.load()) {
+      return;
+    }
+    if (static_cast<int32_t>(millis() - netif_connect_at_) < 0) return;
+
+    if (!adapter_data_path_ready_ && !enableAdapterDataPathHardware()) {
+      netif_connect_at_ = millis() + 1000;
+      Serial.println("[USB-ETH] RTL8156-Datenpfad noch nicht bereit");
+      return;
+    }
+
+    if (data_release_pending_.load() || !allocateDataTransfers()) {
+      netif_connect_at_ = millis() + 1000;
+      Serial.println("[USB-ETH] Datenpuffer noch nicht verfuegbar");
+      return;
+    }
+
+    data_path_active_.store(true);
+    rx_completed_.store(0);
+    tx_submitted_.store(0);
+    size_t rx_ready = 0;
+    for (size_t i = 0; i < kRxTransferCount; ++i) {
+      if (rx_transfers_[i] && submitRx(i)) ++rx_ready;
+    }
+    if (rx_ready == 0) {
+      suspendDataPath();
+      netif_connect_at_ = millis() + 1000;
+      return;
+    }
+
+    netif_connect_pending_.store(false);
+    esp_netif_action_connected(netif_, nullptr, 0, nullptr);
+    Serial.println("[USB-ETH] Ethernet DHCP gestartet");
+  }
+
   void cleanupDevice(bool device_gone) {
     attached_.store(false);
+    netif_connect_pending_.store(false);
     setLink(false, 0);
 
     TxFrame* frame = nullptr;
@@ -1369,16 +1526,7 @@ private:
       netif_started_ = false;
     }
 
-    if (!tx_in_flight_.load() && tx_transfer_) {
-      usb_host_transfer_free(tx_transfer_);
-      tx_transfer_ = nullptr;
-    }
-    for (size_t i = 0; i < kRxTransferCount; ++i) {
-      if (!rx_in_flight_[i].load() && rx_transfers_[i]) {
-        usb_host_transfer_free(rx_transfers_[i]);
-        rx_transfers_[i] = nullptr;
-      }
-    }
+    releaseDataTransfers();
     if (control_transfer_) {
       usb_host_transfer_free(control_transfer_);
       control_transfer_ = nullptr;
@@ -1413,6 +1561,11 @@ private:
     rx_recovery_mask_.store(0);
     tx_recovery_pending_.store(false);
     tx_in_flight_.store(false);
+    data_path_active_.store(false);
+    data_release_pending_.store(false);
+    adapter_data_path_ready_ = false;
+    rx_completed_.store(0);
+    tx_submitted_.store(0);
     for (auto& in_flight : rx_in_flight_) in_flight.store(false);
     for (auto& callback_active : rx_callback_active_) {
       callback_active.store(false);
@@ -1434,7 +1587,14 @@ private:
   std::atomic<bool> client_registered_{false};
   std::atomic<bool> attached_{false};
   std::atomic<bool> link_up_{false};
+  std::atomic<bool> netif_connect_pending_{false};
+  std::atomic<bool> data_path_active_{false};
+  std::atomic<bool> data_release_pending_{false};
+  std::atomic<uint32_t> rx_completed_{0};
+  std::atomic<uint32_t> tx_submitted_{0};
   std::atomic<int> enumerated_devices_{0};
+  uint32_t netif_connect_at_ = 0;
+  bool adapter_data_path_ready_ = false;
 
   esp_netif_t* netif_ = nullptr;
   NetifGlue glue_;

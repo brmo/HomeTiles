@@ -512,6 +512,27 @@ fs::FS& DeviceWaveshare4B::sdFS() {
   return WaveshareSDMMC;
 }
 
+bool DeviceWaveshare4B::suspendSDCardForNetworkTransition() {
+  const bool was_mounted =
+      g_sd_available && WaveshareSDMMC.cardType() != CARD_NONE;
+  if (!was_mounted) return false;
+
+  WaveshareSDMMC.end();
+  g_sd_available = false;
+  g_sd_init_attempted = false;
+  Serial.println("[Device/Waveshare4B] SD card suspended for network transition");
+  return true;
+}
+
+bool DeviceWaveshare4B::resumeSDCardAfterNetworkTransition() {
+  g_sd_available = false;
+  g_sd_init_attempted = false;
+  const bool mounted = initSDCard();
+  Serial.printf("[Device/Waveshare4B] SD card remount after network transition: %s\n",
+                mounted ? "OK" : "failed");
+  return mounted;
+}
+
 bool DeviceWaveshare4B::initLittleFS() {
   if (g_littlefs_ready) {
     return true;

@@ -745,6 +745,26 @@ fs::FS& DeviceM5StacksTab5::sdFS() {
   return SD;
 }
 
+bool DeviceM5StacksTab5::suspendSDCardForNetworkTransition() {
+  const bool was_mounted = g_sd_available && SD.cardType() != CARD_NONE;
+  if (!was_mounted) return false;
+
+  SD.end();
+  g_sd_available = false;
+  g_sd_init_attempted = false;
+  Serial.println("[Device/M5StacksTab5] SD card suspended for network transition");
+  return true;
+}
+
+bool DeviceM5StacksTab5::resumeSDCardAfterNetworkTransition() {
+  g_sd_available = false;
+  g_sd_init_attempted = false;
+  const bool mounted = initSDCard();
+  Serial.printf("[Device/M5StacksTab5] SD card remount after network transition: %s\n",
+                mounted ? "OK" : "failed");
+  return mounted;
+}
+
 bool DeviceM5StacksTab5::initLittleFS() {
   if (g_littlefs_ready) {
     return true;

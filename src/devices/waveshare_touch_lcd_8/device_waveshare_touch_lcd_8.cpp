@@ -1411,6 +1411,27 @@ fs::FS& DeviceWaveshareTouchLCD8::sdFS() {
   return WaveshareSDMMC;
 }
 
+bool DeviceWaveshareTouchLCD8::suspendSDCardForNetworkTransition() {
+  const bool was_mounted =
+      g_sd_available && WaveshareSDMMC.cardType() != CARD_NONE;
+  if (!was_mounted) return false;
+
+  WaveshareSDMMC.end();
+  g_sd_available = false;
+  g_sd_init_attempted = false;
+  Serial.println("[Device/WaveshareTouchLCD8] SD card suspended for network transition");
+  return true;
+}
+
+bool DeviceWaveshareTouchLCD8::resumeSDCardAfterNetworkTransition() {
+  g_sd_available = false;
+  g_sd_init_attempted = false;
+  const bool mounted = initSDCard();
+  Serial.printf("[Device/WaveshareTouchLCD8] SD card remount after network transition: %s\n",
+                mounted ? "OK" : "failed");
+  return mounted;
+}
+
 bool DeviceWaveshareTouchLCD8::initLittleFS() {
   if (g_littlefs_ready) {
     return true;

@@ -59,6 +59,8 @@ fs::FS& storageFS();
 
 bool sdReady();
 fs::FS& sdFS();
+bool suspendSDCardForNetworkTransition();
+bool resumeSDCardAfterNetworkTransition();
 
 bool initLittleFS();
 void migrateStorageFromSD();
