@@ -2210,6 +2210,19 @@ static void system_show_status(const char* text, uint32_t color) {
   lv_obj_clear_flag(system_status_label, LV_OBJ_FLAG_HIDDEN);
 }
 
+static void system_show_update_available_status(bool show_restart_note) {
+  if (!system_status_label || !system_latest_tag[0]) return;
+  char headline[64];
+  snprintf(headline, sizeof(headline), tr().system_update_available_fmt,
+           system_latest_tag);
+  if (show_restart_note) {
+    String text = String(headline) + "\n" + tr().system_update_restart_note;
+    system_show_status(text.c_str(), 0x51CF66);
+  } else {
+    system_show_status(headline, 0x51CF66);
+  }
+}
+
 // Der gruene Haupt-Button ist zweistufig: erst "Nach Updates suchen", nach
 // einem positiven Check "Auf vX.Y.Z aktualisieren".
 static void system_update_check_btn_text() {
@@ -2426,10 +2439,7 @@ static void build_system_popup(lv_obj_t* parent) {
   lv_obj_set_style_text_color(system_status_label, lv_color_hex(0xC8C8C8), 0);
   if (system_update_available && system_latest_tag[0]) {
     // Bekanntes Check-Ergebnis aus einer frueheren Runde direkt anzeigen
-    char buf[64];
-    snprintf(buf, sizeof(buf), tr().system_update_available_fmt, system_latest_tag);
-    lv_label_set_text(system_status_label, buf);
-    lv_obj_set_style_text_color(system_status_label, lv_color_hex(0x51CF66), 0);
+    system_show_update_available_status(false);
   } else {
     lv_label_set_text(system_status_label, "");
   }
@@ -2816,9 +2826,9 @@ void settings_fw_check_result(bool ok, const char* latest_tag, bool update_avail
   if (!ok) {
     system_show_status(tr().system_check_failed, 0xFF6B6B);
   } else if (system_update_available) {
-    char buf[64];
-    snprintf(buf, sizeof(buf), tr().system_update_available_fmt, system_latest_tag);
-    system_show_status(buf, 0x51CF66);
+    // Den Neustart-Hinweis nur unmittelbar nach einem aktiv gestarteten Check
+    // anzeigen. Beim spaeteren Oeffnen bleibt die bekannte Statuszeile kurz.
+    system_show_update_available_status(true);
   } else {
     system_show_status(tr().system_up_to_date, 0x51CF66);
   }

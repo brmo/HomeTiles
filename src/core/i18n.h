@@ -255,6 +255,7 @@ struct Strings {
   const char* system_checking;
   const char* system_up_to_date;
   const char* system_update_available_fmt;  // %s = neue Version (Release-Tag)
+  const char* system_update_restart_note;
   const char* system_install_btn_fmt;       // %s = neue Version (Release-Tag)
   const char* system_check_failed;
   const char* system_downloading;
