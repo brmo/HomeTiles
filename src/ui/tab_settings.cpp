@@ -2438,8 +2438,9 @@ static void build_system_popup(lv_obj_t* parent) {
   lv_obj_set_style_text_font(system_status_label, &ui_font_24, 0);
   lv_obj_set_style_text_color(system_status_label, lv_color_hex(0xC8C8C8), 0);
   if (system_update_available && system_latest_tag[0]) {
-    // Bekanntes Check-Ergebnis aus einer frueheren Runde direkt anzeigen
-    system_show_update_available_status(false);
+    // Bekanntes Check-Ergebnis samt Neustart-Hinweis beim erneuten Oeffnen
+    // weiter anzeigen. Vor dem ersten erfolgreichen Check bleibt die Zeile leer.
+    system_show_update_available_status(true);
   } else {
     lv_label_set_text(system_status_label, "");
   }
@@ -2826,8 +2827,8 @@ void settings_fw_check_result(bool ok, const char* latest_tag, bool update_avail
   if (!ok) {
     system_show_status(tr().system_check_failed, 0xFF6B6B);
   } else if (system_update_available) {
-    // Den Neustart-Hinweis nur unmittelbar nach einem aktiv gestarteten Check
-    // anzeigen. Beim spaeteren Oeffnen bleibt die bekannte Statuszeile kurz.
+    // Der Hinweis bleibt zusammen mit dem bekannten Check-Ergebnis erhalten
+    // und wird beim erneuten Oeffnen des System-Popups wieder angezeigt.
     system_show_update_available_status(true);
   } else {
     system_show_status(tr().system_up_to_date, 0x51CF66);
