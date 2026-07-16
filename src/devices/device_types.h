@@ -14,6 +14,8 @@ struct Capabilities {
   bool has_imu;
   bool supports_auto_rotation;
   bool supports_battery_sleep_profile;
+  bool supports_usb_host_network;
+  bool supports_native_ethernet;
 };
 
 struct Profile {

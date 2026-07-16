@@ -27,6 +27,7 @@
 #include "src/ui/energy_popup.h"
 #include "src/types/energy/energy_data.h"
 #include "src/network/network_manager.h"
+#include "src/network/network_transport.h"
 #include "src/network/mqtt_handlers.h"
 #include "src/network/mqtt_topics.h"
 #include "src/web/web_config.h"
@@ -272,12 +273,12 @@ static void request_wifi_reconnect() {
 }
 
 static void apply_wifi_reconnect() {
-  esp_wifi_scan_stop();
+  if (networkTransport.isWifiDriverActive()) esp_wifi_scan_stop();
   if (networkManager.isMqttConnected()) networkManager.disconnectMqtt();
   // Alte Verbindung trennen; connectWifi() liest die frisch gespeicherten
   // Zugangsdaten aus der Config. Danach uebernimmt networkManager.update()
   // (WebAdmin/NTP/MQTT wie bei jedem normalen Verbindungsaufbau).
-  WiFi.disconnect();
+  if (networkTransport.isWifiConnected()) WiFi.disconnect();
   networkManager.deferMqttReconnect(6000);
   networkManager.connectWifi();
 }
@@ -851,7 +852,7 @@ void setup() {
     // retained Cover-Payload direkt nach dem Subscribe.
     networkManager.setMqttMediaBufferNeeded(mqttAnyMediaTileConfigured());
     networkManager.init();
-    if (WiFi.status() == WL_CONNECTED) uiManager.scheduleNtpSync(0);
+    if (networkTransport.isConnected()) uiManager.scheduleNtpSync(0);
     Serial.println("[Setup] Network OK");
     log_memory_status("after-network-init");
     Serial.flush();
@@ -927,7 +928,7 @@ void loop() {
 
   if (wifi_disconnect_pending) {
     wifi_disconnect_pending = false;
-    esp_wifi_scan_stop();
+    if (networkTransport.isWifiDriverActive()) esp_wifi_scan_stop();
     networkManager.disconnectWifiManual();
   }
   if (ha_pair_pending) {
@@ -940,7 +941,7 @@ void loop() {
   // Geplanten Auto-Retry aus dem NVS einmalig einloesen, sobald WLAN steht
   // und das frisch gebootete System kurz zur Ruhe gekommen ist.
   if (!fw_install_auto_retry_checked && millis() > 30000 &&
-      networkManager.isWifiConnected()) {
+      networkManager.isNetworkConnected()) {
     fw_install_auto_retry_checked = true;
     Preferences prefs;
     if (prefs.begin(kFwRetryNvsNamespace, true)) {
@@ -1126,9 +1127,15 @@ void loop() {
       // die aktuelle Zeit. Guenstig genug (liest nur Systemzeit/WiFi-Status,
       // setzt Label-Text), um hier ebenfalls alle ~20ms mitzulaufen.
       settings_update_power_status();
-      if (networkManager.isWifiConnected()) {
+      if (networkManager.isNetworkConnected()) {
         const DeviceConfig& sleep_cfg = configManager.getConfig();
-        settings_update_wifi_status(true, sleep_cfg.wifi_ssid, WiFi.localIP().toString().c_str());
+        const char* network_name =
+            networkTransport.activeKind() == NetworkTransportKind::Wifi
+                ? sleep_cfg.wifi_ssid
+                : networkTransport.activeName();
+        settings_update_wifi_status(
+            true, network_name,
+            networkTransport.localIP().toString().c_str());
       } else {
         settings_update_wifi_status(false, nullptr, nullptr);
       }
@@ -1278,9 +1285,9 @@ void loop() {
       if (first_run) Serial.println("[Loop] networkManager.update()...");
       networkManager.update();
     }
-    if (!logged_wifi_connected && networkManager.isWifiConnected()) {
+    if (!logged_wifi_connected && networkManager.isNetworkConnected()) {
       logged_wifi_connected = true;
-      log_memory_status("wifi-connected");
+      log_memory_status("network-connected");
     }
     if (!logged_mqtt_connected && networkManager.isMqttConnected()) {
       logged_mqtt_connected = true;
@@ -1316,8 +1323,14 @@ void loop() {
     if (configManager.isConfigured()) {
       uiManager.serviceNtpSync();
       const DeviceConfig& c = configManager.getConfig();
-      if (networkManager.isWifiConnected()) {
-        settings_update_wifi_status(true, c.wifi_ssid, WiFi.localIP().toString().c_str());
+      if (networkManager.isNetworkConnected()) {
+        const char* network_name =
+            networkTransport.activeKind() == NetworkTransportKind::Wifi
+                ? c.wifi_ssid
+                : networkTransport.activeName();
+        settings_update_wifi_status(
+            true, network_name,
+            networkTransport.localIP().toString().c_str());
       } else {
         settings_update_wifi_status(false, nullptr, nullptr);
       }

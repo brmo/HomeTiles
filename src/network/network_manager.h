@@ -2,7 +2,7 @@
 #define NETWORK_MANAGER_H
 
 #include <Arduino.h>
-#include <WiFi.h>
+#include <Network.h>
 // Vendored (not the global Arduino library): patched to insert a real
 // vTaskDelay() periodically inside the packet-read loop, since
 // readByte()/readPacket() otherwise only yield while WAITING for the next
@@ -16,7 +16,7 @@
 // beide garantiert denselben Wert berechnen.
 void buildDeviceId(char* buffer, size_t len);
 
-// Tab5 Network Manager - Verwaltet WiFi und MQTT
+// HomeTiles Network Manager - manages shared transports and MQTT.
 //
 // Single-Owner MQTT: das PubSubClient-Objekt (mqtt_client) wird nach init()
 // ausschliesslich vom MQTT-Worker-Task angefasst (mqtt_worker_task in der
@@ -24,7 +24,7 @@ void buildDeviceId(char* buffer, size_t len);
 // anderen Tasks kommunizieren nur ueber die Outbound-Command-Queues
 // (mqttEnqueue*) und volatile Request-Flags mit dem Worker -- dadurch
 // braucht es keinerlei Mutex um den Client.
-class Tab5NetworkManager {
+class HomeTilesNetworkManager {
 public:
   // Initialisierung (laeuft in setup(), VOR dem Worker-Start). Baut u.a. die
   // Bridge-/Request-Topic-Strings EINMALIG -- frueher baute connectMqtt() sie
@@ -95,7 +95,8 @@ public:
   // der Tile-Config gesetzt und bei jedem Route-Rebuild aktuell gehalten.
   void setMqttMediaBufferNeeded(bool needed) { mqtt_media_buffer_needed = needed; }
 
-  // WiFi-Status
+  // Shared network status plus WiFi-specific status for the WiFi settings UI.
+  bool isNetworkConnected() const;
   bool isWifiConnected() const;
   bool wasPreviouslyConnected() const { return was_connected; }
 
@@ -132,14 +133,20 @@ public:
   void stopMdns();
 
 private:
-  WiFiClient net_client;
+  NetworkClient net_client;
   PubSubClient mqtt_client;  // nach init() NUR noch vom Worker-Task beruehrt
 
   uint32_t wifi_retry_at = 0;
+  uint32_t wifi_fallback_at = 0;
+  uint32_t wired_ip_wait_until = 0;
   bool wifi_manual_disconnect = false;  // Loop-Task: setzt/liest, UI liest
+  bool wifi_suspended_for_wired = false;
+  bool wired_link_was_up = false;
+  bool wired_was_connected = false;
   uint32_t mqtt_retry_at = 0;      // worker-only
   uint32_t last_telemetry = 0;
   bool was_connected = false;
+  uint32_t transport_generation_seen = 0;
   bool mqtt_enabled = false;
   bool mdns_active = false;
   // Build-compat: used by older/newer network_manager.cpp variants.
@@ -184,6 +191,15 @@ private:
   void serviceBufferHousekeeping(uint32_t now_ms);
   bool setMqttBufferSize(uint16_t size, const char* reason);
 
+  // Wired transports are exclusive with STA WiFi. This matters especially on
+  // ESP32-P4, where an otherwise idle WiFi connection still keeps the hosted
+  // SDIO RX path and its DMA allocations alive.
+  bool isWiredConnected() const;
+  bool isWiredLinkUp() const;
+  bool isWifiStationEnabled() const;
+  bool ensureWifiStationStarted();
+  void stopWifiForWired();
+
   // mDNS-Start (Loop-Task, gleiche connect-Flanke wie webAdminServer). Rein
   // additiv fuers Zeroconf-Discovery der HA-Bridge -- beeinflusst weder MQTT
   // noch WebAdmin, wird bei Fehlschlag stillschweigend uebersprungen statt
@@ -192,6 +208,6 @@ private:
 };
 
 // Globale Instanz
-extern Tab5NetworkManager networkManager;
+extern HomeTilesNetworkManager networkManager;
 
 #endif // NETWORK_MANAGER_H

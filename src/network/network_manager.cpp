@@ -1,4 +1,5 @@
 #include "src/network/network_manager.h"
+#include "src/network/network_transport.h"
 #include "src/core/config_manager.h"
 #include "src/network/mqtt_handlers.h"
 #include "src/network/mqtt_topics.h"
@@ -12,9 +13,10 @@
 #include <freertos/queue.h>
 #include <freertos/task.h>
 #include <ESPmDNS.h>
+#include <WiFi.h>
 
 // Globale Instanz
-Tab5NetworkManager networkManager;
+HomeTilesNetworkManager networkManager;
 
 static constexpr uint16_t kMqttBufferOta = 1024;
 static constexpr uint16_t kMqttBufferNormal = 16 * 1024;
@@ -25,6 +27,8 @@ static constexpr uint16_t kMqttBufferNormal = 16 * 1024;
 static constexpr uint16_t kMqttBufferMedia = 24 * 1024;
 static constexpr uint16_t kMqttBufferLarge = 32 * 1024;
 static constexpr uint32_t kMqttPostConnectQuietMs = 3000;
+static constexpr uint32_t kWifiFallbackDelayMs = 4000;
+static constexpr uint32_t kWiredDhcpWaitMs = 10000;
 static constexpr uint8_t kMqttOutboundDrainNormal = 12;
 static constexpr uint8_t kMqttOutboundDrainStorm = 1;
 static constexpr size_t kMqttMinDmaLargestBeforeTx = 8 * 1024;
@@ -222,8 +226,82 @@ static void applyWifiAddressing(const DeviceConfig& cfg) {
   }
 }
 
+bool HomeTilesNetworkManager::isWiredConnected() const {
+  return networkTransport.isUsbEthernetConnected() ||
+         networkTransport.isNativeEthernetConnected();
+}
+
+bool HomeTilesNetworkManager::isWiredLinkUp() const {
+  return networkTransport.isUsbEthernetLinkUp() ||
+         networkTransport.isNativeEthernetLinkUp();
+}
+
+bool HomeTilesNetworkManager::isWifiStationEnabled() const {
+  return (static_cast<uint8_t>(WiFi.getMode()) &
+          static_cast<uint8_t>(WIFI_MODE_STA)) != 0;
+}
+
+bool HomeTilesNetworkManager::ensureWifiStationStarted() {
+  wifi_suspended_for_wired = false;
+  if (!isWifiStationEnabled()) {
+    if (!WiFi.mode(WIFI_STA)) {
+      networkTransport.setWifiDriverActive(false);
+      Serial.println("WiFi: STA-Start fehlgeschlagen");
+      return false;
+    }
+    logNetworkHeap("after-WiFi.mode");
+  }
+
+  networkTransport.setWifiDriverActive(true);
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(false);
+  return true;
+}
+
+void HomeTilesNetworkManager::stopWifiForWired() {
+  if (wifi_suspended_for_wired ||
+      !networkTransport.isWifiDriverActive()) {
+    return;
+  }
+  // Block every transport-level WiFi status/IP query before the hosted driver
+  // teardown starts. On ESP32-P4, an overlapping RPC can otherwise outlive
+  // the queue/semaphore it is using.
+  wifi_suspended_for_wired = true;
+  networkTransport.setWifiDriverActive(false);
+
+  const wifi_mode_t mode = WiFi.getMode();
+  const bool sta_enabled =
+      (static_cast<uint8_t>(mode) & static_cast<uint8_t>(WIFI_MODE_STA)) != 0;
+  const bool ap_enabled =
+      (static_cast<uint8_t>(mode) & static_cast<uint8_t>(WIFI_MODE_AP)) != 0;
+  if (!sta_enabled || ap_enabled) {
+    networkTransport.setWifiDriverActive(mode != WIFI_MODE_NULL);
+    wifi_suspended_for_wired = false;
+    return;
+  }
+
+  WiFi.setAutoReconnect(false);
+  const bool stopped = WiFi.disconnect(true, false, 500);
+  const bool driver_active = WiFi.getMode() != WIFI_MODE_NULL;
+  networkTransport.setWifiDriverActive(driver_active);
+  wifi_ps_state_known = false;
+
+  if (stopped && !driver_active) {
+    Serial.println("[Network] WiFi/SDIO gestoppt: Ethernet ist aktiv");
+  } else {
+    Serial.printf("[Network] WiFi-Stopp fuer Ethernet fehlgeschlagen "
+                  "(stopped=%u mode=%u)\n",
+                  stopped ? 1U : 0U,
+                  static_cast<unsigned>(WiFi.getMode()));
+    wifi_suspended_for_wired = false;
+  }
+}
+
 // ========== Initialisierung ==========
-void Tab5NetworkManager::init() {
+void HomeTilesNetworkManager::init() {
+  networkTransport.begin();
+  networkTransport.update();
+  transport_generation_seen = networkTransport.generation();
   Serial.println("🌐 Initialisiere Network Manager...");
 
   if (!configManager.isConfigured()) {
@@ -233,12 +311,29 @@ void Tab5NetworkManager::init() {
 
   const DeviceConfig& cfg = configManager.getConfig();
 
-  // WiFi-Setup
-  WiFi.mode(WIFI_STA);
-  logNetworkHeap("after-WiFi.mode");
-  WiFi.setAutoReconnect(true);
-  WiFi.persistent(false);
-  wifi_retry_at = 0;  // Sofortiger Verbindungsversuch
+  const bool has_wired_backend =
+      Device::kCapabilities.supports_usb_host_network ||
+      Device::kCapabilities.supports_native_ethernet;
+  wired_was_connected = isWiredConnected();
+  wired_link_was_up = isWiredLinkUp();
+  if (wired_link_was_up && !wired_was_connected) {
+    wired_ip_wait_until = millis() + kWiredDhcpWaitMs;
+  }
+  if (wired_was_connected) {
+    stopWifiForWired();
+    Serial.printf("[Network] %s bereits aktiv; WiFi/SDIO bleibt aus\n",
+                  networkTransport.activeName());
+  } else if (has_wired_backend) {
+    // USB enumeration, PHY link and DHCP need a short head start. Starting
+    // hosted WiFi immediately would make both P4 network stacks allocate
+    // their DMA pools during the heaviest boot phase.
+    wifi_fallback_at = millis() + kWifiFallbackDelayMs;
+    Serial.printf("[Network] Warte %u ms auf Ethernet, danach WiFi-Fallback\n",
+                  static_cast<unsigned>(kWifiFallbackDelayMs));
+  } else {
+    ensureWifiStationStarted();
+    wifi_retry_at = 0;  // Sofortiger Verbindungsversuch
+  }
 
   // Bridge-/Request-Topics EINMALIG hier bauen: sie haengen nur von der
   // (laufzeit-konstanten) Efuse-MAC ab. Frueher baute connectMqtt() sie bei
@@ -273,7 +368,7 @@ void Tab5NetworkManager::init() {
 }
 
 // ========== WiFi verbinden ==========
-void Tab5NetworkManager::connectWifi() {
+void HomeTilesNetworkManager::connectWifi() {
   wifi_retry_at = millis() + 5000UL;  // Retry in 5s
 
   // Jeder Verbindungsaufbau (manuell, neue Zugangsdaten, AP-Ende) hebt ein
@@ -283,6 +378,21 @@ void Tab5NetworkManager::connectWifi() {
     WiFi.setAutoReconnect(true);
   }
 
+  networkTransport.update();
+  if (isWiredConnected()) {
+    stopWifiForWired();
+    Serial.printf("WiFi: nicht gestartet, %s ist aktiv\n",
+                  networkTransport.activeName());
+    return;
+  }
+  if (isWiredLinkUp()) {
+    if (wired_ip_wait_until == 0) {
+      wired_ip_wait_until = millis() + kWiredDhcpWaitMs;
+    }
+    Serial.println("WiFi: nicht gestartet, Ethernet wartet auf DHCP");
+    return;
+  }
+
   if (!configManager.isConfigured()) {
     Serial.println("WiFi: Keine Konfiguration vorhanden");
     return;
@@ -290,6 +400,7 @@ void Tab5NetworkManager::connectWifi() {
 
   const DeviceConfig& cfg = configManager.getConfig();
   if (cfg.wifi_ssid && cfg.wifi_ssid[0]) {
+    if (!ensureWifiStationStarted()) return;
     Serial.printf("WiFi: Verbinde mit %s\n", cfg.wifi_ssid);
     applyWifiAddressing(cfg);
     WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
@@ -297,20 +408,23 @@ void Tab5NetworkManager::connectWifi() {
 }
 
 // ========== WiFi manuell trennen (WLAN-Popup "Trennen") ==========
-void Tab5NetworkManager::disconnectWifiManual() {
+void HomeTilesNetworkManager::disconnectWifiManual() {
   wifi_manual_disconnect = true;
-  if (isMqttConnected()) disconnectMqtt();
+  if (networkTransport.activeKind() == NetworkTransportKind::Wifi &&
+      isMqttConnected()) {
+    disconnectMqtt();
+  }
   WiFi.setAutoReconnect(false);
-  WiFi.disconnect();
+  if (isWifiStationEnabled()) WiFi.disconnect();
   Serial.println("WiFi: manuell getrennt (kein Auto-Reconnect bis Verbinden/Neustart)");
 }
 
 // ========== MQTT verbinden (worker-only) ==========
-void Tab5NetworkManager::connectMqtt() {
+void HomeTilesNetworkManager::connectMqtt() {
   if (!mqtt_enabled) return;
   mqtt_retry_at = millis() + 3000UL;  // Retry in 3s
 
-  if (WiFi.status() != WL_CONNECTED) return;
+  if (!networkTransport.isConnected()) return;
   if (mqtt_large_until == 0 && mqtt_client.getBufferSize() < mqttNormalBufferSize()) {
     setMqttBufferSize(mqttNormalBufferSize(), "connect");
   }
@@ -361,7 +475,8 @@ void Tab5NetworkManager::connectMqtt() {
   mqtt_client.publish(stat_topic, "1", true);
   const char* ip_topic = mqttTopics.topic(TopicKey::STAT_IP);
   if (ip_topic && *ip_topic) {
-    mqtt_client.publish(ip_topic, WiFi.localIP().toString().c_str(), true);
+    mqtt_client.publish(
+        ip_topic, networkTransport.localIP().toString().c_str(), true);
   }
   if (!bridge_apply_topic_.isEmpty()) {
     mqtt_client.subscribe(bridge_apply_topic_.c_str());
@@ -402,7 +517,7 @@ void Tab5NetworkManager::connectMqtt() {
 }
 
 // ========== Single-Owner MQTT: Worker ==========
-void Tab5NetworkManager::beginMqttWorker() {
+void HomeTilesNetworkManager::beginMqttWorker() {
   if (!g_mqtt_publish_queue) {
     g_mqtt_publish_queue =
         xQueueCreate(kMqttPublishQueueDepth, sizeof(MqttOutboundCmd*));
@@ -420,7 +535,7 @@ void Tab5NetworkManager::beginMqttWorker() {
 }
 
 // Worker-Task-Body: die EINZIGE Stelle, die mqtt_client nach init() anfasst.
-void Tab5NetworkManager::serviceMqttWorker() {
+void HomeTilesNetworkManager::serviceMqttWorker() {
   // Reconfigure-Request zuerst und VOR dem mqtt_enabled-Gate geprueft: genau
   // dieses Flag soll hier live neu gesetzt werden (Erstkonfiguration ueber
   // die Admin-Seite, Host geleert, Host geaendert). Alle anderen Requests
@@ -504,7 +619,7 @@ void Tab5NetworkManager::serviceMqttWorker() {
   }
   if (mqtt_suspended) return;
 
-  if (WiFi.status() != WL_CONNECTED) {
+  if (!networkTransport.isConnected()) {
     if (mqtt_connected_flag) mqtt_connected_flag = false;
     mqtt_post_connect_pending = false;
     mqtt_post_connect_ready_at = 0;
@@ -553,18 +668,21 @@ void Tab5NetworkManager::serviceMqttWorker() {
   }
 }
 
-void Tab5NetworkManager::drainOutboundQueues(uint8_t max_commands) {
+void HomeTilesNetworkManager::drainOutboundQueues(uint8_t max_commands) {
   if (max_commands == 0) return;
 
   const uint32_t now_ms = millis();
   size_t dma_largest = static_cast<size_t>(-1);
   bool control_quiet = false;
 #if defined(CONFIG_IDF_TARGET_ESP32P4)
-  control_quiet = g_mqtt_sdio_control_quiet_until != 0 &&
-                  static_cast<int32_t>(now_ms - g_mqtt_sdio_control_quiet_until) < 0;
-  if (!control_quiet) g_mqtt_sdio_control_quiet_until = 0;
-  dma_largest =
-      heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+  if (networkTransport.isSdioWifiActive()) {
+    control_quiet =
+        g_mqtt_sdio_control_quiet_until != 0 &&
+        static_cast<int32_t>(now_ms - g_mqtt_sdio_control_quiet_until) < 0;
+    if (!control_quiet) g_mqtt_sdio_control_quiet_until = 0;
+    dma_largest =
+        heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+  }
 #endif
 
   auto log_dma_wait = [&](const char* lane, size_t largest) {
@@ -607,7 +725,9 @@ void Tab5NetworkManager::drainOutboundQueues(uint8_t max_commands) {
         heap_caps_free(cmd);
       }
 #if defined(CONFIG_IDF_TARGET_ESP32P4)
-      g_mqtt_sdio_control_quiet_until = millis() + kMqttSdioControlQuietMs;
+      if (networkTransport.isSdioWifiActive()) {
+        g_mqtt_sdio_control_quiet_until = millis() + kMqttSdioControlQuietMs;
+      }
 #endif
       return;
     }
@@ -651,9 +771,12 @@ void Tab5NetworkManager::drainOutboundQueues(uint8_t max_commands) {
     }
 
 #if defined(CONFIG_IDF_TARGET_ESP32P4)
-    dma_largest =
-        heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
-    if (dma_largest < kMqttMinDmaLargestBeforeTx) {
+    if (networkTransport.isSdioWifiActive()) {
+      dma_largest =
+          heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+    }
+    if (networkTransport.isSdioWifiActive() &&
+        dma_largest < kMqttMinDmaLargestBeforeTx) {
       log_dma_wait("Publish", dma_largest);
       // Der MQTT-Paketpuffer liegt in PSRAM und ist nicht die Ursache einer
       // niedrigen DMA-Reserve. Das Kommando behalten und nach Erholung der
@@ -687,7 +810,7 @@ void Tab5NetworkManager::drainOutboundQueues(uint8_t max_commands) {
 
 // Grow/Shrink-Logik des Empfangspuffers, 1:1 aus dem frueheren update()-Code:
 // laeuft nur noch auf dem Worker, weil setBufferSize() den Client anfasst.
-void Tab5NetworkManager::serviceBufferHousekeeping(uint32_t now_ms) {
+void HomeTilesNetworkManager::serviceBufferHousekeeping(uint32_t now_ms) {
   const uint32_t large_until = mqtt_large_until;
   if (large_until == 0) {
     // Kein Large-Fenster aktiv: Normalgroesse an die Media-Konfiguration
@@ -718,18 +841,18 @@ void Tab5NetworkManager::serviceBufferHousekeeping(uint32_t now_ms) {
 }
 
 // ========== Single-Owner MQTT: API fuer andere Tasks ==========
-bool Tab5NetworkManager::mqttEnqueuePublish(const char* topic, const char* payload, bool retain) {
+bool HomeTilesNetworkManager::mqttEnqueuePublish(const char* topic, const char* payload, bool retain) {
   const size_t len = payload ? strlen(payload) : 0;
   return enqueueOutboundCmd(MqttCmdKind::PUBLISH, topic,
                             reinterpret_cast<const uint8_t*>(payload), len, retain);
 }
 
-bool Tab5NetworkManager::mqttEnqueuePublish(const char* topic, const uint8_t* payload,
+bool HomeTilesNetworkManager::mqttEnqueuePublish(const char* topic, const uint8_t* payload,
                                             size_t length, bool retain) {
   return enqueueOutboundCmd(MqttCmdKind::PUBLISH, topic, payload, length, retain);
 }
 
-bool Tab5NetworkManager::mqttEnqueuePublishPriority(const char* topic,
+bool HomeTilesNetworkManager::mqttEnqueuePublishPriority(const char* topic,
                                                     const char* payload,
                                                     bool retain) {
   const size_t len = payload ? strlen(payload) : 0;
@@ -738,7 +861,7 @@ bool Tab5NetworkManager::mqttEnqueuePublishPriority(const char* topic,
                             retain, true);
 }
 
-bool Tab5NetworkManager::mqttEnqueuePublishWithLargeBuffer(
+bool HomeTilesNetworkManager::mqttEnqueuePublishWithLargeBuffer(
     const char* topic,
     const char* payload,
     bool retain,
@@ -751,15 +874,15 @@ bool Tab5NetworkManager::mqttEnqueuePublishWithLargeBuffer(
                             retain, priority, hold_ms);
 }
 
-bool Tab5NetworkManager::mqttEnqueueSubscribe(const char* topic) {
+bool HomeTilesNetworkManager::mqttEnqueueSubscribe(const char* topic) {
   return enqueueOutboundCmd(MqttCmdKind::SUBSCRIBE, topic, nullptr, 0, false);
 }
 
-bool Tab5NetworkManager::mqttEnqueueUnsubscribe(const char* topic) {
+bool HomeTilesNetworkManager::mqttEnqueueUnsubscribe(const char* topic) {
   return enqueueOutboundCmd(MqttCmdKind::UNSUBSCRIBE, topic, nullptr, 0, false);
 }
 
-bool Tab5NetworkManager::consumeMqttPostConnectPending() {
+bool HomeTilesNetworkManager::consumeMqttPostConnectPending() {
   if (!mqtt_post_connect_pending) return false;
   if (!mqtt_connected_flag) {
     mqtt_post_connect_pending = false;
@@ -775,7 +898,7 @@ bool Tab5NetworkManager::consumeMqttPostConnectPending() {
   return true;
 }
 
-void Tab5NetworkManager::disconnectMqtt() {
+void HomeTilesNetworkManager::disconnectMqtt() {
   if (!mqtt_enabled) return;
   mqtt_disconnect_requested = true;
   // Der Worker prueft das Flag am Anfang jeder Iteration (~2ms Takt); der
@@ -788,7 +911,7 @@ void Tab5NetworkManager::disconnectMqtt() {
   }
 }
 
-void Tab5NetworkManager::requestMqttReconfigure() {
+void HomeTilesNetworkManager::requestMqttReconfigure() {
   // Bewusst KEIN "if (!mqtt_enabled) return;" wie bei disconnectMqtt() --
   // der Worker soll mqtt_enabled hier gerade erst neu bestimmen (z.B. erste
   // MQTT-Konfiguration ueberhaupt, wo es bislang false war).
@@ -801,7 +924,7 @@ void Tab5NetworkManager::requestMqttReconfigure() {
   }
 }
 
-void Tab5NetworkManager::prepareMqttForOta() {
+void HomeTilesNetworkManager::prepareMqttForOta() {
   if (!mqtt_enabled) return;
   mqtt_ota_prep_requested = true;
   for (int i = 0; i < 100 && mqtt_ota_prep_requested; ++i) {
@@ -812,7 +935,7 @@ void Tab5NetworkManager::prepareMqttForOta() {
   }
 }
 
-void Tab5NetworkManager::deferMqttReconnect(uint32_t hold_ms) {
+void HomeTilesNetworkManager::deferMqttReconnect(uint32_t hold_ms) {
   if (!mqtt_enabled) return;
   if (hold_ms == 0) hold_ms = 6000;
   mqtt_reconnect_hold_until = millis() + hold_ms;
@@ -825,11 +948,11 @@ void Tab5NetworkManager::deferMqttReconnect(uint32_t hold_ms) {
 }
 
 // ========== MQTT-Status ==========
-uint16_t Tab5NetworkManager::mqttNormalBufferSize() const {
+uint16_t HomeTilesNetworkManager::mqttNormalBufferSize() const {
   return mqtt_media_buffer_needed ? kMqttBufferMedia : kMqttBufferNormal;
 }
 
-bool Tab5NetworkManager::setMqttBufferSize(uint16_t size, const char* reason) {
+bool HomeTilesNetworkManager::setMqttBufferSize(uint16_t size, const char* reason) {
   if (size == 0) return false;
   const uint16_t before = mqtt_client.getBufferSize();
   if (before == size) {
@@ -854,20 +977,24 @@ bool Tab5NetworkManager::setMqttBufferSize(uint16_t size, const char* reason) {
   return true;
 }
 
-void Tab5NetworkManager::restoreMqttBufferNormal() {
+void HomeTilesNetworkManager::restoreMqttBufferNormal() {
   // Request-Flag statt direktem Client-Touch; der Worker setzt den Puffer
   // zurueck und hebt dabei auch eine evtl. OTA-Suspendierung wieder auf
   // (Aufrufer: restoreDisplayAfterOtaFailure()).
   mqtt_restore_normal_requested = true;
 }
 
-// ========== WiFi-Status ==========
-bool Tab5NetworkManager::isWifiConnected() const {
-  return WiFi.status() == WL_CONNECTED;
+// ========== Network status ==========
+bool HomeTilesNetworkManager::isNetworkConnected() const {
+  return networkTransport.isConnected();
+}
+
+bool HomeTilesNetworkManager::isWifiConnected() const {
+  return networkTransport.isWifiConnected();
 }
 
 // ========== Telemetrie senden ==========
-void Tab5NetworkManager::publishTelemetry() {
+void HomeTilesNetworkManager::publishTelemetry() {
   if (!isMqttConnected()) return;
 
   uint32_t now = millis();
@@ -883,7 +1010,7 @@ void Tab5NetworkManager::publishTelemetry() {
   }
 }
 
-void Tab5NetworkManager::publishBridgeConfig() {
+void HomeTilesNetworkManager::publishBridgeConfig() {
   if (!isMqttConnected()) return;
   if (!configManager.isConfigured()) return;
 
@@ -907,11 +1034,11 @@ void Tab5NetworkManager::publishBridgeConfig() {
   Serial.println("[Network] Home Assistant Bridge-Konfiguration publiziert");
 }
 
-const char* Tab5NetworkManager::getBridgeApplyTopic() const {
+const char* HomeTilesNetworkManager::getBridgeApplyTopic() const {
   return bridge_apply_topic_.length() ? bridge_apply_topic_.c_str() : nullptr;
 }
 
-void Tab5NetworkManager::publishBridgeRequest() {
+void HomeTilesNetworkManager::publishBridgeRequest() {
   if (!isMqttConnected()) return;
   if (bridge_request_topic_.isEmpty()) return;
   mqttEnqueuePublishWithLargeBuffer(
@@ -919,31 +1046,31 @@ void Tab5NetworkManager::publishBridgeRequest() {
   Serial.println("[Network] Home Assistant Bridge-Aktualisierung angefordert");
 }
 
-const char* Tab5NetworkManager::getBridgeRequestTopic() const {
+const char* HomeTilesNetworkManager::getBridgeRequestTopic() const {
   return bridge_request_topic_.length() ? bridge_request_topic_.c_str() : nullptr;
 }
 
-const char* Tab5NetworkManager::getHistoryRequestTopic() const {
+const char* HomeTilesNetworkManager::getHistoryRequestTopic() const {
   return history_request_topic_.length() ? history_request_topic_.c_str() : nullptr;
 }
 
-const char* Tab5NetworkManager::getHistoryResponseTopic() const {
+const char* HomeTilesNetworkManager::getHistoryResponseTopic() const {
   return history_response_topic_.length() ? history_response_topic_.c_str() : nullptr;
 }
 
-const char* Tab5NetworkManager::getWeatherRequestTopic() const {
+const char* HomeTilesNetworkManager::getWeatherRequestTopic() const {
   return weather_request_topic_.length() ? weather_request_topic_.c_str() : nullptr;
 }
 
-const char* Tab5NetworkManager::getEnergyRequestTopic() const {
+const char* HomeTilesNetworkManager::getEnergyRequestTopic() const {
   return energy_request_topic_.length() ? energy_request_topic_.c_str() : nullptr;
 }
 
-const char* Tab5NetworkManager::getEnergyResponseTopic() const {
+const char* HomeTilesNetworkManager::getEnergyResponseTopic() const {
   return energy_response_topic_.length() ? energy_response_topic_.c_str() : nullptr;
 }
 
-const char* Tab5NetworkManager::getBridgeIconsTopic() const {
+const char* HomeTilesNetworkManager::getBridgeIconsTopic() const {
   return bridge_icons_topic_.length() ? bridge_icons_topic_.c_str() : nullptr;
 }
 
@@ -957,7 +1084,7 @@ const char* Tab5NetworkManager::getBridgeIconsTopic() const {
 // webAdminServer.start() versucht -- ein haengender/fehlschlagender
 // MDNS.begin() darf die admin-UI, die schon heute funktioniert, nicht
 // verzoegern.
-void Tab5NetworkManager::startMdns() {
+void HomeTilesNetworkManager::startMdns() {
   if (mdns_active) return;
 
   char did[24];
@@ -1006,27 +1133,82 @@ void Tab5NetworkManager::startMdns() {
   logMdnsHeap("after-begin");
 }
 
-void Tab5NetworkManager::stopMdns() {
+void HomeTilesNetworkManager::stopMdns() {
   if (!mdns_active) return;
   MDNS.end();
   mdns_active = false;
 }
 
 // ========== Update-Schleife (Loop-Task) ==========
-void Tab5NetworkManager::update() {
+void HomeTilesNetworkManager::update() {
   if (!configManager.isConfigured()) {
     return;
   }
 
+  networkTransport.update();
   uint32_t now_ms = millis();
-  bool is_connected = (WiFi.status() == WL_CONNECTED);
+  const bool wired_connected = isWiredConnected();
+  const bool wired_link_up = isWiredLinkUp();
+  if (wired_link_up && !wired_link_was_up) {
+    wired_ip_wait_until = now_ms + kWiredDhcpWaitMs;
+    Serial.printf("[Network] Ethernet-Link steht; warte bis zu %u ms auf DHCP\n",
+                  static_cast<unsigned>(kWiredDhcpWaitMs));
+  } else if (!wired_link_up) {
+    wired_ip_wait_until = 0;
+  }
+  wired_link_was_up = wired_link_up;
 
-  // WiFi-Verbindung verwalten
+  if (wired_connected) {
+    wifi_fallback_at = 0;
+    wired_ip_wait_until = 0;
+    stopWifiForWired();
+  } else if (wired_was_connected) {
+    wifi_fallback_at = now_ms + kWifiFallbackDelayMs;
+    wifi_suspended_for_wired = false;
+    Serial.printf("[Network] Ethernet getrennt; WiFi-Fallback in %u ms\n",
+                  static_cast<unsigned>(kWifiFallbackDelayMs));
+  }
+  wired_was_connected = wired_connected;
+
+  const uint32_t current_generation = networkTransport.generation();
+  const bool transport_changed =
+      current_generation != transport_generation_seen;
+  if (transport_changed) {
+    Serial.printf("[Network] Aktiver Transport: %s (generation=%u)\n",
+                  networkTransport.activeName(),
+                  static_cast<unsigned>(current_generation));
+    transport_generation_seen = current_generation;
+
+    // Recreate sockets after a default-route switch. Existing sockets can
+    // otherwise stay bound to the interface that just disappeared.
+    if (mqtt_enabled) {
+      mqtt_reconfig_requested = true;
+    }
+    if (webAdminServer.isRunning()) {
+      webAdminServer.stop();
+    }
+    stopMdns();
+    // Treat a live route switch like a fresh connection edge so services
+    // stopped above are immediately rebound to the new default interface.
+    was_connected = false;
+  }
+
+  bool is_connected = networkTransport.isConnected();
+
+  // Shared connectivity plus WiFi fallback management.
   if (!is_connected) {
     wifi_ps_state_known = false;
 
     // Nicht verbunden - Retry (ausser der Nutzer hat manuell getrennt)
-    if (!wifi_manual_disconnect && (int32_t)(now_ms - wifi_retry_at) >= 0) {
+    const bool fallback_ready =
+        wifi_fallback_at == 0 ||
+        static_cast<int32_t>(now_ms - wifi_fallback_at) >= 0;
+    const bool wired_dhcp_pending =
+        wired_link_up && wired_ip_wait_until != 0 &&
+        static_cast<int32_t>(now_ms - wired_ip_wait_until) < 0;
+    if (!wifi_manual_disconnect && fallback_ready && !wired_dhcp_pending &&
+        (int32_t)(now_ms - wifi_retry_at) >= 0) {
+      wifi_fallback_at = 0;
       connectWifi();
     }
 
@@ -1041,7 +1223,7 @@ void Tab5NetworkManager::update() {
     // Verbunden
 
     if (!was_connected) {
-      logNetworkHeap("WiFi-connected");
+      logNetworkHeap(networkTransport.activeName());
     }
 
     // WebAdmin starten wenn gerade verbunden
@@ -1078,7 +1260,7 @@ void Tab5NetworkManager::update() {
 }
 
 // ========== WiFi Power Management ==========
-void Tab5NetworkManager::setWifiPowerSaving(bool enable) {
+void HomeTilesNetworkManager::setWifiPowerSaving(bool enable) {
   if (!isWifiConnected()) {
     wifi_ps_state_known = false;
     return;
@@ -1117,7 +1299,7 @@ void Tab5NetworkManager::setWifiPowerSaving(bool enable) {
   wifi_ps_enabled = enable;
 }
 
-void Tab5NetworkManager::setSleepWifiProfile(bool enable) {
+void HomeTilesNetworkManager::setSleepWifiProfile(bool enable) {
   if (wifi_sleep_profile == enable) return;
   wifi_sleep_profile = enable;
   // Profilwechsel soll beim naechsten setWifiPowerSaving() sicher angewendet werden.

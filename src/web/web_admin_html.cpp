@@ -7,6 +7,8 @@
 #include <nvs_flash.h>
 #include "src/core/config_manager.h"
 #include "src/network/ha_bridge_config.h"
+#include "src/network/network_transport.h"
+#include "src/network/usb_ethernet_backend.h"
 #include "src/game/game_controls_config.h"
 #include "src/web/web_admin_scripts.h"
 #include "src/web/web_admin_styles.h"
@@ -1111,16 +1113,20 @@ String WebAdminServer::getAdminPage() {
   html += tr.admin_settings_wifi;
   html += R"html(</div>
               <div class="wifi-inline-status"><span class="wifi-inline-dot)html";
-  if (WiFi.status() != WL_CONNECTED) {
+  if (!networkTransport.isConnected()) {
     html += " off";
   }
   html += R"html("></span>)html";
-  html += (WiFi.status() == WL_CONNECTED) ? tr.wifi_connected : tr.wifi_disconnected;
-  if (WiFi.status() == WL_CONNECTED) {
+  html += networkTransport.isConnected() ? tr.wifi_connected : tr.wifi_disconnected;
+  if (networkTransport.isConnected()) {
     html += " \xC2\xB7 ";
-    appendHtmlEscaped(html, WiFi.SSID());
+    if (networkTransport.activeKind() == NetworkTransportKind::Wifi) {
+      appendHtmlEscaped(html, WiFi.SSID());
+    } else {
+      appendHtmlEscaped(html, networkTransport.activeName());
+    }
     html += " \xC2\xB7 ";
-    html += WiFi.localIP().toString();
+    html += networkTransport.localIP().toString();
   }
   html += R"html(</div>
             </div>
@@ -1621,6 +1627,7 @@ String WebAdminServer::getBridgeSuccessPage() {
 
 String WebAdminServer::getStatusJSON() {
   const DeviceConfig& cfg = configManager.getConfig();
+  const UsbEthernetSnapshot usb_ethernet = usbEthernetBackend.snapshot();
   nvs_stats_t stats{};
   bool stats_ok = (nvs_get_stats(nullptr, &stats) == ESP_OK);
 
@@ -1639,9 +1646,25 @@ String WebAdminServer::getStatusJSON() {
 
   String json = "{";
   json += "\"wifi_connected\":";
-  json += (WiFi.status() == WL_CONNECTED) ? "true" : "false";
-  json += ",\"wifi_ssid\":\"" + String(cfg.wifi_ssid) + "\"";
-  json += ",\"wifi_ip\":\"" + WiFi.localIP().toString() + "\"";
+  json += networkTransport.isConnected() ? "true" : "false";
+  json += ",\"wifi_ssid\":\"";
+  json += networkTransport.activeKind() == NetworkTransportKind::Wifi
+              ? String(cfg.wifi_ssid)
+              : String(networkTransport.activeName());
+  json += "\"";
+  json += ",\"wifi_ip\":\"" + networkTransport.localIP().toString() + "\"";
+  json += ",\"network_transport\":\"" +
+          String(networkTransport.activeName()) + "\"";
+  json += ",\"usb_host_ready\":" +
+          String(usb_ethernet.host_ready ? "true" : "false");
+  json += ",\"usb_device_count\":" +
+          String(usb_ethernet.enumerated_devices);
+  json += ",\"usb_ethernet_attached\":" +
+          String(usb_ethernet.adapter_attached ? "true" : "false");
+  json += ",\"usb_ethernet_link\":" +
+          String(usb_ethernet.link_up ? "true" : "false");
+  json += ",\"usb_ethernet_has_ip\":" +
+          String(usb_ethernet.has_ip ? "true" : "false");
   json += ",\"mqtt_host\":\"" + String(cfg.mqtt_host) + "\"";
   json += ",\"mqtt_port\":" + String(cfg.mqtt_port);
   json += ",\"mqtt_client_id\":\"" + String(cfg.mqtt_client_id) + "\"";

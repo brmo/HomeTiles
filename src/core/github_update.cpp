@@ -1,9 +1,10 @@
 #include "src/core/github_update.h"
 
 #include <HTTPClient.h>
+#include <Network.h>
+#include <NetworkClientSecure.h>
 #include <Update.h>
 #include <WiFi.h>
-#include <WiFiClientSecure.h>
 #include <esp_heap_caps.h>
 #include <lwip/sockets.h>
 #include <mbedtls/ssl.h>  // MBEDTLS_ERR_SSL_ALLOC_FAILED
@@ -13,6 +14,7 @@
 #include "src/core/firmware_metadata.h"
 #include "src/core/firmware_version.h"
 #include "src/devices/device.h"
+#include "src/network/network_transport.h"
 
 namespace {
 
@@ -87,7 +89,7 @@ bool parseHttpsUrl(const String& url, ParsedHttpsUrl& out) {
   return out.host.length() && out.path.length();
 }
 
-bool readHttpLine(WiFiClientSecure& client, String& line, uint32_t timeout_ms) {
+bool readHttpLine(NetworkClientSecure& client, String& line, uint32_t timeout_ms) {
   line = "";
   const uint32_t start_ms = millis();
   while (millis() - start_ms < timeout_ms) {
@@ -159,12 +161,17 @@ void logCheckNetworkState(const char* label, const String& url) {
   Serial.printf("[Update/Diag] %s url=%s\n",
                 label ? label : "?",
                 url.c_str());
-  Serial.printf("[Update/Diag] wifi=%d ip=%s gw=%s dns=%s rssi=%ld\n",
-                static_cast<int>(WiFi.status()),
-                WiFi.localIP().toString().c_str(),
-                WiFi.gatewayIP().toString().c_str(),
-                WiFi.dnsIP(0).toString().c_str(),
-                static_cast<long>(WiFi.RSSI()));
+  const long rssi = networkTransport.activeKind() == NetworkTransportKind::Wifi
+                        ? static_cast<long>(WiFi.RSSI())
+                        : 0;
+  Serial.printf(
+      "[Update/Diag] transport=%s connected=%d ip=%s gw=%s dns=%s rssi=%ld\n",
+      networkTransport.activeName(),
+      networkTransport.isConnected() ? 1 : 0,
+      networkTransport.localIP().toString().c_str(),
+      networkTransport.gatewayIP().toString().c_str(),
+      networkTransport.dnsIP(0).toString().c_str(),
+      rssi);
   Serial.printf("[Update/Diag] mem int=%u KB largest=%u KB dma=%u KB dma_largest=%u KB psram=%u KB\n",
                 static_cast<unsigned>(int_free / 1024),
                 static_cast<unsigned>(int_largest / 1024),
@@ -210,12 +217,12 @@ String memSnapshotLine() {
 
 // Gibt den mbedTLS-Fehlercode zurueck (0 = keiner), damit der Aufrufer
 // Speicher-Fehlschlaege (MBEDTLS_ERR_SSL_ALLOC_FAILED) erkennen kann.
-int logCheckFailureDetails(int code, WiFiClientSecure& client, const String& url) {
+int logCheckFailureDetails(int code, NetworkClientSecure& client, const String& url) {
   char tls_error[96] = {};
   const int tls_code = client.lastError(tls_error, sizeof(tls_error));
 
   IPAddress github_ip;
-  const int dns_ok = WiFi.hostByName("github.com", github_ip) ? 1 : 0;
+  const int dns_ok = Network.hostByName("github.com", github_ip) ? 1 : 0;
 
   if (code < 0) {
     Serial.printf("[Update/Diag] http=%d (%s) tls=%d (%s) fd=%d\n",
@@ -257,7 +264,7 @@ bool fetchHttpRange(const String& start_url, size_t from, size_t to,
       return false;
     }
 
-    WiFiClientSecure client;
+    NetworkClientSecure client;
     client.setInsecure();
     client.setTimeout(15000);
     if (!client.connect(parsed.host.c_str(), parsed.port, kConnectTimeoutMs)) {
@@ -489,8 +496,8 @@ namespace GithubUpdate {
 
 CheckResult checkLatest() {
   CheckResult result;
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[Update] Check uebersprungen: kein WLAN");
+  if (!networkTransport.isConnected()) {
+    Serial.println("[Update] Check uebersprungen: kein Netzwerk");
     return result;
   }
 
@@ -498,7 +505,7 @@ CheckResult checkLatest() {
   // CA-Liste waere beim ersten Wechsel tot. Fuer Firmware von der eigenen
   // Release-Seite ist der Verzicht auf die Pruefung der uebliche Kompromiss
   // (Update.end validiert das Image selbst via Magic-Byte + Groesse).
-  WiFiClientSecure client;
+  NetworkClientSecure client;
   client.setInsecure();
 
   // Redirects NICHT pauschal folgen: der Location-Header traegt den Tag.
@@ -582,8 +589,8 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
     error_out = "no tag";
     return false;
   }
-  if (WiFi.status() != WL_CONNECTED) {
-    error_out = "no wifi";
+  if (!networkTransport.isConnected()) {
+    error_out = "no network";
     return false;
   }
   // Evtl. haengengebliebenen Web-OTA-Rest aufraeumen
@@ -595,8 +602,15 @@ bool install(const char* tag, ProgressFn progress, String& error_out) {
 
   g_install_diag = "";
   g_install_retryable = false;
-  installDiagLine(String("Start: Uptime ") + (millis() / 1000) + " s | RSSI " +
-                  WiFi.RSSI() + " dBm | " + memSnapshotLine());
+  String transport_diag =
+      String("Start: Uptime ") + (millis() / 1000) + " s | " +
+      networkTransport.activeName();
+  if (networkTransport.activeKind() == NetworkTransportKind::Wifi) {
+    transport_diag += " RSSI ";
+    transport_diag += WiFi.RSSI();
+    transport_diag += " dBm";
+  }
+  installDiagLine(transport_diag + " | " + memSnapshotLine());
 
   // Netzwerk-Lesepuffer und OTA-Staging liegen im PSRAM. Das VOLLSTAENDIGE
   // Image wird vor Update.begin() heruntergeladen. Erst nachdem TLS beendet

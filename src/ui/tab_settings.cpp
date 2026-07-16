@@ -4,6 +4,7 @@
 #include "src/ui/tab_settings.h"
 #include "src/core/config_manager.h"
 #include "src/core/board_hal.h"
+#include "src/network/network_transport.h"
 #include "src/tiles/mdi_icons.h"
 #include "src/tiles/tile_config.h"
 #include "src/tiles/tile_renderer_shared.h"
@@ -1021,7 +1022,7 @@ static void close_settings_popup() {
     lv_timer_del(ap_btn_cooldown_timer);
     ap_btn_cooldown_timer = nullptr;
   }
-  WiFi.scanDelete();
+  if (networkTransport.isWifiDriverActive()) WiFi.scanDelete();
   if (settings_popup_overlay) {
     lv_obj_del(settings_popup_overlay);
   }
@@ -1145,9 +1146,12 @@ static void wifi_populate_list() {
   if (!wifi_list_container) return;
   lv_obj_clean(wifi_list_container);
 
-  const bool sta_connected = !ap_mode_active && WiFi.status() == WL_CONNECTED;
-  const String current_ssid = sta_connected ? WiFi.SSID()
-                                            : String(configManager.getConfig().wifi_ssid);
+  const bool sta_connected =
+      !ap_mode_active &&
+      networkTransport.activeKind() == NetworkTransportKind::Wifi &&
+      networkTransport.isWifiConnected();
+  const String current_ssid =
+      String(configManager.getConfig().wifi_ssid);
 
   bool current_in_results = false;
   for (size_t i = 0; i < wifi_scan_result_count; ++i) {
@@ -1232,6 +1236,12 @@ static void wifi_start_scan() {
     wifi_show_scan_finished_state();
     return;
   }
+  // Ethernet and STA WiFi are exclusive. Merely opening the WiFi popup must
+  // not restart the hosted P4 WiFi driver behind the transport manager.
+  if (!networkTransport.isWifiDriverActive()) {
+    wifi_show_scan_finished_state();
+    return;
+  }
   // Frisch angestossener (Re-)Connect: Scan wuerde WiFi.begin() stoeren
   if (wifi_scan_block_until != 0 &&
       (int32_t)(millis() - wifi_scan_block_until) < 0) {
@@ -1256,7 +1266,10 @@ static void wifi_update_conn_status_label() {
   // "Verbinden"), die Zeilen neu aufbauen - sonst fehlt das gruene Haekchen
   // am gerade verbundenen Netz, weil waehrend des Verbindens keine Scans
   // laufen, die die Liste auffrischen wuerden.
-  const bool sta_connected = !ap_mode_active && WiFi.status() == WL_CONNECTED;
+  const bool sta_connected =
+      !ap_mode_active &&
+      networkTransport.activeKind() == NetworkTransportKind::Wifi &&
+      networkTransport.isWifiConnected();
   static bool prev_sta_connected = false;
   if (sta_connected != prev_sta_connected) {
     prev_sta_connected = sta_connected;
@@ -1345,11 +1358,14 @@ static void wifi_update_conn_status_label() {
 #endif
   if (wifi_ap_info_rows) lv_obj_add_flag(wifi_ap_info_rows, LV_OBJ_FLAG_HIDDEN);
   lv_obj_set_style_text_font(wifi_conn_status_label, &ui_font_24, 0);
-  if (WiFi.status() == WL_CONNECTED) {
-    String ssid = WiFi.SSID();
-    String ip = WiFi.localIP().toString();
+  if (networkTransport.isConnected()) {
+    const String network_name =
+        networkTransport.activeKind() == NetworkTransportKind::Wifi
+            ? String(configManager.getConfig().wifi_ssid)
+            : String(networkTransport.activeName());
+    String ip = networkTransport.localIP().toString();
     snprintf(buf, sizeof(buf), "%s: %s (%s)", tr().wifi_connected,
-             ssid.length() ? ssid.c_str() : "---", ip.c_str());
+             network_name.length() ? network_name.c_str() : "---", ip.c_str());
     lv_label_set_text(wifi_conn_status_label, buf);
     lv_obj_set_style_text_color(wifi_conn_status_label, lv_color_hex(0x51CF66), 0);
   } else {
@@ -1496,7 +1512,7 @@ static void wifi_do_connect() {
   }
 
   wifi_stop_scan_timer();
-  WiFi.scanDelete();
+  if (networkTransport.isWifiDriverActive()) WiFi.scanDelete();
   // Waehrend der Verbindungsaufbau laeuft, keine neuen Scans anstossen
   wifi_scan_block_until = millis() + 10000UL;
 
@@ -1504,7 +1520,7 @@ static void wifi_do_connect() {
     // AP aus - apply_hotspot_mode im Hauptloop verbindet dann mit den
     // (ggf. gerade gespeicherten) Zugangsdaten
     if (g_hotspot_callback) g_hotspot_callback(false);
-  } else if (creds_changed || WiFi.status() != WL_CONNECTED) {
+  } else if (creds_changed || !networkTransport.isWifiConnected()) {
     if (g_wifi_reconnect_callback) g_wifi_reconnect_callback();
   }
 
@@ -1619,7 +1635,7 @@ static void on_wifi_disconnect_clicked(lv_event_t*) {
   if (!g_wifi_disconnect_callback) return;
   // Laufenden Scan beenden - das Trennen passiert asynchron im Hauptloop.
   wifi_stop_scan_timer();
-  WiFi.scanDelete();
+  if (networkTransport.isWifiDriverActive()) WiFi.scanDelete();
   g_wifi_disconnect_callback();
   // Kein optimistisches UI-Update: Statuszeile und Button-Sichtbarkeit
   // ziehen ueber wifi_update_conn_status_label nach, sobald die Verbindung
@@ -1635,7 +1651,7 @@ static void on_popup_ap_mode_clicked(lv_event_t*) {
   // Laufenden Scan sofort beenden - der eigentliche Moduswechsel passiert
   // asynchron im Hauptloop und darf nicht mit einem Scan kollidieren.
   wifi_stop_scan_timer();
-  WiFi.scanDelete();
+  if (networkTransport.isWifiDriverActive()) WiFi.scanDelete();
   if (g_hotspot_callback) {
     g_hotspot_callback(!ap_mode_active);
   }

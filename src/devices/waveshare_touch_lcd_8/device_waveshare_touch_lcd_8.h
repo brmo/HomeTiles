@@ -21,7 +21,7 @@ inline constexpr Device::Profile kProfile{
     Device::RotationStepMode::FlipOnly,
     0,
     2,
-    Device::Capabilities{false, false, false, false},
+    Device::Capabilities{false, false, false, false, true, false},
 };
 
 bool init();

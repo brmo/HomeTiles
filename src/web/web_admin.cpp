@@ -1,7 +1,7 @@
 #include "src/web/web_admin.h"
 #include "src/web/web_admin_fonts.h"
 #include "src/web/web_admin_utils.h"
-#include <WiFi.h>
+#include "src/network/network_transport.h"
 
 WebAdminServer webAdminServer;
 static volatile uint32_t g_web_admin_last_activity_ms = 0;
@@ -38,8 +38,8 @@ bool WebAdminServer::start() {
     Serial.println("[WebAdmin] Server laeuft bereits");
     return true;
   }
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[WebAdmin] Start abgebrochen - kein WiFi");
+  if (!networkTransport.isConnected()) {
+    Serial.println("[WebAdmin] Start abgebrochen - kein Netzwerk");
     return false;
   }
 
@@ -133,7 +133,7 @@ bool WebAdminServer::start() {
 
   server.begin();
   running = true;
-  IPAddress ip = WiFi.localIP();
+  IPAddress ip = networkTransport.localIP();
   Serial.printf("[WebAdmin] erreichbar unter http://%s\n", ip.toString().c_str());
   return true;
 }

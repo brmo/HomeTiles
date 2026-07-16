@@ -21,7 +21,10 @@ inline constexpr Device::Profile kProfile{
     Device::RotationStepMode::QuarterTurns,
     0,
     2,
-    Device::Capabilities{false, false, false, false},
+    // The same 4-inch firmware family is used by the B4 and the
+    // ESP32-P4-86-Panel-ETH-2RO. The B4 exposes USB-OTG for an external
+    // adapter; the 86-panel variant additionally has the native RMII PHY.
+    Device::Capabilities{false, false, false, false, true, true},
 };
 
 bool init();

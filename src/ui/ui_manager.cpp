@@ -12,8 +12,8 @@
 #include "src/tiles/mdi_icons.h"
 #include "src/tiles/tile_config.h"
 #include "src/network/mqtt_handlers.h"
+#include "src/network/network_transport.h"
 #include "src/fonts/ui_fonts.h"
-#include <WiFi.h>
 
 #include <time.h>
 #include <string.h>
@@ -417,9 +417,9 @@ void UIManager::updateStatusbar() {
 
 
 
-  // NTP-Sync triggern wenn keine Zeit aber WiFi verbunden
+  // Trigger NTP whenever any shared network transport is connected.
 
-  if (!have_time && WiFi.status() == WL_CONNECTED) {
+  if (!have_time && networkTransport.isConnected()) {
 
     scheduleNtpSync(0);
 
@@ -441,7 +441,7 @@ void UIManager::scheduleNtpSync(uint32_t delay_ms) {
 
 void UIManager::serviceNtpSync() {
 
-  if (WiFi.status() != WL_CONNECTED) return;
+  if (!networkTransport.isConnected()) return;
 
 
 

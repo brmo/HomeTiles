@@ -19,7 +19,8 @@
 #include "src/ui/ui_surface_style.h"
 #include <Arduino.h>
 #include <HTTPClient.h>
-#include <WiFiClientSecure.h>
+#include <Network.h>
+#include <NetworkClientSecure.h>
 #include <cstring>
 #include <esp_heap_caps.h>
 #include <ctype.h>
@@ -2780,8 +2781,8 @@ static lv_image_dsc_t* download_media_cover_jpeg(const String& url, bool* deferr
   http.useHTTP10(true);
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
 
-  WiFiClient plain_client;
-  WiFiClientSecure secure_client;
+  NetworkClient plain_client;
+  NetworkClientSecure secure_client;
   bool ok_begin = false;
   if (url.startsWith("https://")) {
     secure_client.setInsecure();
@@ -2821,7 +2822,7 @@ static lv_image_dsc_t* download_media_cover_jpeg(const String& url, bool* deferr
     return nullptr;
   }
 
-  WiFiClient* stream = http.getStreamPtr();
+  NetworkClient* stream = http.getStreamPtr();
   size_t total = 0;
   uint32_t deadline = millis() + 2200;
   while (http.connected() && millis() < deadline) {
