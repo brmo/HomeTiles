@@ -352,6 +352,9 @@ struct OtaUploadState {
   size_t install_total_bytes = 0;
   size_t install_written_bytes = 0;
   size_t next_progress_log = 0;
+  uint8_t* staging_buffer = nullptr;
+  size_t staging_capacity = 0;
+  size_t staged_bytes = 0;
   uint8_t buffered_bytes[firmware_meta::kDeviceDescriptorImageBytes] = {0};
   String error;
 };
@@ -363,6 +366,17 @@ uint32_t g_ota_display_restore_retry_at = 0;
 uint16_t g_ota_display_restore_attempts = 0;
 
 constexpr uint32_t kOtaDisplayRestoreRetryMs = 750;
+#if defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
+// On the P4 WiFi is provided by ESP-Hosted over SDIO. Starting Update while
+// the browser is still sending the image consumes about 75 KB of internal/DMA
+// RAM and makes the remaining RX stream fragile after longer uptime. Receive
+// the complete local image in PSRAM first; only touch flash after HTTP RX is
+// finished.
+constexpr bool kStageWebOtaInPsram = true;
+#else
+constexpr bool kStageWebOtaInPsram = false;
+#endif
+constexpr size_t kOtaFlashWriteChunk = 16 * 1024;
 
 void logOtaMemory(const char* tag) {
   Serial.printf("[OTA/Mem] %s | Int free=%u KB | DMA free=%u KB | DMA largest=%u KB | PSRAM free=%u KB | MQTT buf=%u B\n",
@@ -460,10 +474,54 @@ void restoreDisplayAfterOtaFailure() {
       fast_display_restored ? "after-ota-restore" : "ota-restore-pending");
 }
 
+void releaseOtaStagingBuffer() {
+  if (g_ota_upload_state.staging_buffer) {
+    heap_caps_free(g_ota_upload_state.staging_buffer);
+    g_ota_upload_state.staging_buffer = nullptr;
+  }
+  g_ota_upload_state.staging_capacity = 0;
+  g_ota_upload_state.staged_bytes = 0;
+}
+
+bool allocateOtaStagingBuffer(size_t size) {
+  if (!kStageWebOtaInPsram) return true;
+  if (size == 0) {
+    g_ota_upload_state.error = "Firmware size is missing";
+    return false;
+  }
+  if (g_ota_upload_state.staging_buffer &&
+      g_ota_upload_state.staging_capacity == size) {
+    return true;
+  }
+
+  releaseOtaStagingBuffer();
+  g_ota_upload_state.staging_buffer = static_cast<uint8_t*>(
+      heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!g_ota_upload_state.staging_buffer) {
+    g_ota_upload_state.error =
+        "Not enough contiguous PSRAM for safe firmware upload";
+    Serial.printf(
+        "[OTA] PSRAM staging allocation failed: need=%u KB, largest=%u KB\n",
+        static_cast<unsigned>(size / 1024),
+        static_cast<unsigned>(
+            heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024));
+    return false;
+  }
+
+  g_ota_upload_state.staging_capacity = size;
+  g_ota_upload_state.staged_bytes = 0;
+  Serial.printf(
+      "[OTA] Safe Web-Upload staging ready: %u KB PSRAM "
+      "(flash starts after complete RX)\n",
+      static_cast<unsigned>(size / 1024));
+  return true;
+}
+
 void resetOtaUploadState() {
   if (Update.isRunning()) {
     Update.abort();
   }
+  releaseOtaStagingBuffer();
   g_ota_upload_state.upload_started = false;
   g_ota_upload_state.upload_success = false;
   g_ota_upload_state.upload_prepared = false;
@@ -2813,8 +2871,21 @@ void WebAdminServer::handlePrepareOtaUpload() {
   g_ota_upload_state.upload_total_bytes = parseOtaExpectedSize(server);
   g_ota_upload_state.install_total_bytes = g_ota_upload_state.upload_total_bytes;
 
+  if (kStageWebOtaInPsram && g_ota_upload_state.upload_total_bytes == 0) {
+    resetOtaUploadState();
+    sendJsonError(server, 400, "Firmware size is missing");
+    return;
+  }
+
   Serial.println("[OTA] Preparing receiver before upload");
   prepareDisplayForOtaInstall();
+  if (!allocateOtaStagingBuffer(g_ota_upload_state.upload_total_bytes)) {
+    const String error = g_ota_upload_state.error;
+    restoreDisplayAfterOtaFailure();
+    resetOtaUploadState();
+    sendJsonError(server, 507, error);
+    return;
+  }
 
   String json = "{\"success\":true";
   json += ",\"size\":";
@@ -2861,6 +2932,12 @@ void WebAdminServer::handleOtaUpdate() {
     if (!was_prepared) {
       prepareDisplayForOtaInstall();
     }
+    if (!allocateOtaStagingBuffer(g_ota_upload_state.upload_total_bytes)) {
+      return;
+    }
+    if (g_ota_upload_state.staging_buffer) {
+      g_ota_upload_state.next_progress_log = 512 * 1024;
+    }
     Serial.printf("[OTA] Upload started: %s\n", upload.filename.c_str());
     Serial.flush();
     return;
@@ -2871,6 +2948,71 @@ void WebAdminServer::handleOtaUpdate() {
   }
 
   if (upload.status == UPLOAD_FILE_WRITE) {
+    if (g_ota_upload_state.staging_buffer) {
+      const size_t chunk_len = static_cast<size_t>(upload.currentSize);
+      if (g_ota_upload_state.staged_bytes >
+              g_ota_upload_state.staging_capacity ||
+          chunk_len >
+          g_ota_upload_state.staging_capacity -
+              g_ota_upload_state.staged_bytes) {
+        g_ota_upload_state.error =
+            "Firmware upload exceeds announced size";
+        Serial.printf(
+            "[OTA] Staging overflow: received=%u chunk=%u capacity=%u\n",
+            static_cast<unsigned>(g_ota_upload_state.staged_bytes),
+            static_cast<unsigned>(chunk_len),
+            static_cast<unsigned>(g_ota_upload_state.staging_capacity));
+        return;
+      }
+
+      memcpy(
+          g_ota_upload_state.staging_buffer +
+              g_ota_upload_state.staged_bytes,
+          upload.buf, chunk_len);
+      g_ota_upload_state.staged_bytes += chunk_len;
+
+      if (!g_ota_upload_state.image_validated &&
+          g_ota_upload_state.staged_bytes >=
+              firmware_meta::kDeviceDescriptorImageBytes) {
+        firmware_meta::DeviceDescriptor incoming_desc{};
+        if (!firmware_meta::parseDeviceDescriptorFromImage(
+                g_ota_upload_state.staging_buffer,
+                g_ota_upload_state.staged_bytes, incoming_desc)) {
+          g_ota_upload_state.error =
+              "Firmware metadata missing or invalid";
+          return;
+        }
+        if (!firmware_meta::matchesCurrentDeviceKey(
+                incoming_desc.device_key)) {
+          g_ota_upload_state.error =
+              String("Firmware device mismatch: got ") +
+              incoming_desc.display_name + ", expected " +
+              firmware_meta::expectedDeviceDisplayName();
+          return;
+        }
+        if (strcmp(incoming_desc.project_key,
+                   firmware_meta::currentProjectKey()) != 0) {
+          g_ota_upload_state.error =
+              String("Firmware project mismatch: got ") +
+              incoming_desc.project_key + ", expected " +
+              firmware_meta::currentProjectKey();
+          return;
+        }
+        g_ota_upload_state.image_validated = true;
+      }
+
+      if (g_ota_upload_state.staged_bytes >=
+          g_ota_upload_state.next_progress_log) {
+        Serial.printf("[OTA] Upload RX progress: %u / %u bytes\n",
+                      static_cast<unsigned>(
+                          g_ota_upload_state.staged_bytes),
+                      static_cast<unsigned>(
+                          g_ota_upload_state.staging_capacity));
+        g_ota_upload_state.next_progress_log += 512 * 1024;
+      }
+      return;
+    }
+
     size_t buffered_copy_len = 0;
 
     if (g_ota_upload_state.buffered_len < sizeof(g_ota_upload_state.buffered_bytes)) {
@@ -2933,9 +3075,19 @@ void WebAdminServer::handleOtaUpdate() {
 
   if (upload.status == UPLOAD_FILE_ABORTED) {
     g_ota_upload_state.error = "OTA upload aborted";
+    Serial.printf(
+        "[OTA] Upload aborted: received=%u / %u bytes, flash_written=%u\n",
+        static_cast<unsigned>(
+            g_ota_upload_state.staging_buffer
+                ? g_ota_upload_state.staged_bytes
+                : upload.totalSize),
+        static_cast<unsigned>(g_ota_upload_state.upload_total_bytes),
+        static_cast<unsigned>(
+            g_ota_upload_state.install_written_bytes));
     if (Update.isRunning()) {
       Update.abort();
     }
+    releaseOtaStagingBuffer();
     if (g_ota_upload_state.install_started || g_ota_display_reduced) {
       restoreDisplayAfterOtaFailure();
       g_ota_upload_state.install_started = false;
@@ -2948,6 +3100,77 @@ void WebAdminServer::handleOtaUpdate() {
       g_ota_upload_state.upload_total_bytes = upload.totalSize;
       g_ota_upload_state.install_total_bytes = upload.totalSize;
     }
+
+    if (g_ota_upload_state.staging_buffer) {
+      if (g_ota_upload_state.staged_bytes != upload.totalSize ||
+          g_ota_upload_state.staged_bytes !=
+              g_ota_upload_state.staging_capacity) {
+        g_ota_upload_state.error =
+            "Firmware upload ended before all bytes arrived";
+        Serial.printf(
+            "[OTA] Incomplete staged upload: received=%u parser=%u "
+            "expected=%u\n",
+            static_cast<unsigned>(g_ota_upload_state.staged_bytes),
+            static_cast<unsigned>(upload.totalSize),
+            static_cast<unsigned>(
+                g_ota_upload_state.staging_capacity));
+        return;
+      }
+      if (!g_ota_upload_state.image_validated) {
+        g_ota_upload_state.error =
+            "Firmware metadata missing or incomplete";
+        return;
+      }
+
+      g_ota_upload_state.upload_success = true;
+      Serial.printf("[OTA] Upload RX finished: %s (%u bytes in PSRAM)\n",
+                    upload.filename.c_str(),
+                    static_cast<unsigned>(upload.totalSize));
+      Serial.println(
+          "[OTA] Network receive complete; starting flash install");
+
+      if (!beginDirectOtaInstall()) {
+        releaseOtaStagingBuffer();
+        return;
+      }
+
+      size_t offset = 0;
+      while (offset < g_ota_upload_state.staged_bytes) {
+        const size_t remaining =
+            g_ota_upload_state.staged_bytes - offset;
+        const size_t chunk =
+            std::min(remaining, kOtaFlashWriteChunk);
+        if (!writeDirectOtaChunk(
+                g_ota_upload_state.staging_buffer + offset, chunk)) {
+          releaseOtaStagingBuffer();
+          return;
+        }
+        offset += chunk;
+        delay(0);
+      }
+      releaseOtaStagingBuffer();
+
+      if (!Update.end(true)) {
+        Update.abort();
+        Serial.printf("[OTA] Install failed: Update.end() -> %s\n",
+                      Update.errorString());
+        g_ota_upload_state.error =
+            String("OTA finalize failed: ") + Update.errorString();
+        g_ota_upload_state.install_started = false;
+        restoreDisplayAfterOtaFailure();
+        return;
+      }
+
+      g_ota_upload_state.install_written_bytes =
+          g_ota_upload_state.install_total_bytes;
+      g_ota_upload_state.install_success = true;
+      g_ota_upload_state.restart_pending = true;
+      g_ota_upload_state.restart_at_ms = millis() + 1200;
+      Serial.println(
+          "[OTA] Install finished successfully, restarting device...");
+      return;
+    }
+
     if (!g_ota_upload_state.image_validated) {
       g_ota_upload_state.error = "Firmware metadata missing or incomplete";
       return;
@@ -2987,6 +3210,13 @@ void WebAdminServer::handleOtaUploadDone() {
     String json = "{\"success\":false,\"error\":\"";
     appendJsonEscaped(json, g_ota_upload_state.error);
     json += "\"}";
+    Serial.printf(
+        "[OTA] Request failed: %s (rx=%u/%u, flash=%u)\n",
+        g_ota_upload_state.error.c_str(),
+        static_cast<unsigned>(g_ota_upload_state.staged_bytes),
+        static_cast<unsigned>(g_ota_upload_state.upload_total_bytes),
+        static_cast<unsigned>(
+            g_ota_upload_state.install_written_bytes));
     restoreDisplayAfterOtaFailure();
     resetOtaUploadState();
     server.send(500, "application/json", json);
@@ -2994,6 +3224,15 @@ void WebAdminServer::handleOtaUploadDone() {
   }
 
   if (!g_ota_upload_state.upload_success || !g_ota_upload_state.install_success) {
+    Serial.printf(
+        "[OTA] Request incomplete without updater error "
+        "(upload_success=%u install_success=%u rx=%u/%u flash=%u)\n",
+        g_ota_upload_state.upload_success ? 1U : 0U,
+        g_ota_upload_state.install_success ? 1U : 0U,
+        static_cast<unsigned>(g_ota_upload_state.staged_bytes),
+        static_cast<unsigned>(g_ota_upload_state.upload_total_bytes),
+        static_cast<unsigned>(
+            g_ota_upload_state.install_written_bytes));
     restoreDisplayAfterOtaFailure();
     resetOtaUploadState();
     server.send(500, "application/json", "{\"success\":false,\"error\":\"OTA update failed\"}");

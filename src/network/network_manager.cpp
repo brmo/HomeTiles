@@ -131,6 +131,23 @@ static void initMqttDmaReserve() {
 #endif
 }
 
+static void releaseMqttDmaReserve(const char* reason) {
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+  if (!g_mqtt_dma_reserve) return;
+  heap_caps_free(g_mqtt_dma_reserve);
+  g_mqtt_dma_reserve = nullptr;
+  g_mqtt_dma_reserve_rearm_since = 0;
+  Serial.printf("[MQTT] DMA-Reserve freigegeben (%s), largest=%u KB\n",
+                reason ? reason : "?",
+                static_cast<unsigned>(
+                    heap_caps_get_largest_free_block(
+                        MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) /
+                    1024));
+#else
+  (void)reason;
+#endif
+}
+
 // Gibt bei Druck zuerst den garantierten zusammenhaengenden Reserveblock frei
 // und legt ihn erst wieder an, wenn fuer mehrere Sekunden deutlich mehr als
 // Reserve + Mindestblock verfuegbar war. So entsteht kein Alloc/Free-Pingpong.
@@ -878,6 +895,11 @@ void HomeTilesNetworkManager::serviceMqttWorker() {
       Serial.println("[OTA] MQTT disconnected for OTA");
     }
     setMqttBufferSize(kMqttBufferOta, "ota");
+    // Der Block schuetzt ausschliesslich MQTT-Publishes. Waehrend OTA ist der
+    // Worker suspendiert; die zusammenhaengenden 12 KB gehoeren deshalb dem
+    // ESP-Hosted-/HTTP-RX-Pfad und werden nach der Wiederherstellung
+    // automatisch erneut angelegt.
+    releaseMqttDmaReserve("ota");
     mqtt_connected_flag = false;
     mqtt_suspended = true;  // waehrend OTA weder reconnecten noch loop() pumpen
     mqtt_ota_prep_requested = false;

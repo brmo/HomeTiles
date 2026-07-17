@@ -1346,6 +1346,13 @@ static void tiles_refresh_icons_for_grid(GridType grid_type) {
     String icon_name = tile.icon_name;
     bool icon_disabled = isMdiIconDisabled(icon_name);
     icon_name = normalizeMdiIconName(icon_name);
+    // Climate tiles with an empty icon field own a state-driven icon
+    // (heating/cooling/idle/off). The generic bridge metadata refresh must
+    // neither replace nor hide that label when Home Assistant has no fixed
+    // entity icon.
+    if (tile.type == TILE_CLIMATE && !icon_disabled && !icon_name.length()) {
+      continue;
+    }
     if (!icon_disabled && !icon_name.length()) {
       if (tile.type == TILE_SCENE) {
         if (tile.scene_alias.length()) {
