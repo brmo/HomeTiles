@@ -15,6 +15,7 @@
 #include <Arduino.h>
 #include <cstring>
 #include <deque>
+#include <esp_heap_caps.h>
 
 /* === Layout-Konstanten === */
 static const int GAP = GRID_GAP;
@@ -53,7 +54,7 @@ static FolderCacheEntry* g_active_cache = nullptr;
 // folder grids touches g_folder_cache (a deque) and LVGL (lv_obj_del_async),
 // neither of which is safe to do off the loop thread.
 static volatile bool g_folder_cache_invalidate_requested = false;
-static TileWidgetCache g_cache_build_saved_widgets;
+static TileWidgetCache* g_cache_build_saved_widgets = nullptr;
 static bool g_folder_switch_pending = false;
 static uint16_t g_pending_folder_id = kInvalidFolderId;
 static bool g_visible_cache_refresh_requested = false;
@@ -61,6 +62,32 @@ static bool g_bridge_cache_refresh_requested = false;
 static uint32_t g_bridge_cache_refresh_snapshot_ms = 0;
 static constexpr uint32_t kFolderPreloadMinHeapBytes = 384UL * 1024UL;
 static constexpr uint32_t kFolderPreloadMinPsramBytes = 4UL * 1024UL * 1024UL;
+
+static bool ensure_cache_build_snapshot() {
+  if (g_cache_build_saved_widgets) return true;
+
+  bool internal_fallback = false;
+  g_cache_build_saved_widgets = static_cast<TileWidgetCache*>(heap_caps_calloc(
+      1, sizeof(TileWidgetCache), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!g_cache_build_saved_widgets) {
+    // PSRAM-Ausfall darf die aktive Startseite nicht verhindern. Der
+    // interne Fallback greift nur, wenn externes RAM bereits erschoepft oder
+    // nicht verfuegbar ist.
+    g_cache_build_saved_widgets = static_cast<TileWidgetCache*>(heap_caps_calloc(
+        1, sizeof(TileWidgetCache), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    internal_fallback = g_cache_build_saved_widgets != nullptr;
+  }
+  if (!g_cache_build_saved_widgets) {
+    Serial.printf("[Tiles] ERROR: Kein Speicher fuer Cache-Build-Snapshot (%u Bytes)\n",
+                  static_cast<unsigned>(sizeof(TileWidgetCache)));
+    return false;
+  }
+  if (internal_fallback) {
+    Serial.printf("[Tiles] WARN: Cache-Build-Snapshot nutzt internen RAM (%u Bytes)\n",
+                  static_cast<unsigned>(sizeof(TileWidgetCache)));
+  }
+  return true;
+}
 
 static void log_folder_switch_memory(const char* phase, uint16_t folder_id) {
   Serial.printf("[Tiles] %s folder=%u | heap=%lu KB | heap_min=%lu KB | psram=%lu KB\n",
@@ -462,6 +489,7 @@ static void restore_active_cache(FolderCacheEntry& entry) {
 static void build_folder_cache_entry(FolderCacheEntry& entry, GridType grid_type) {
   const uint8_t idx = static_cast<uint8_t>(grid_type);
   if (!g_tiles_roots[idx]) return;
+  if (!ensure_cache_build_snapshot()) return;
 
   clear_cache_entry(entry);
 
@@ -475,12 +503,12 @@ static void build_folder_cache_entry(FolderCacheEntry& entry, GridType grid_type
   }
   TileGridConfig& config = entry.grid_config;
 
-  g_cache_build_saved_widgets = {};
-  tile_renderer_snapshot_tab0(&g_cache_build_saved_widgets);
+  *g_cache_build_saved_widgets = {};
+  tile_renderer_snapshot_tab0(g_cache_build_saved_widgets);
 
   entry.grid = create_tiles_grid(g_tiles_roots[idx]);
   if (!entry.grid) {
-    tile_renderer_restore_tab0(&g_cache_build_saved_widgets);
+    tile_renderer_restore_tab0(g_cache_build_saved_widgets);
     return;
   }
   lv_obj_add_flag(entry.grid, LV_OBJ_FLAG_HIDDEN);
@@ -497,7 +525,7 @@ static void build_folder_cache_entry(FolderCacheEntry& entry, GridType grid_type
 
   tile_renderer_snapshot_tab0(&entry.widgets);
   entry.widgets_valid = true;
-  tile_renderer_restore_tab0(&g_cache_build_saved_widgets);
+  tile_renderer_restore_tab0(g_cache_build_saved_widgets);
 
   entry.loaded = true;
   entry.dirty = false;

@@ -4,6 +4,13 @@
 #include <IPAddress.h>
 #include <atomic>
 
+// Das 8-Zoll-Geraet hat nur USB-Host-Ethernet. Deshalb muss der RTL8156-Weg
+// auch im CI/Release-Build dieses Targets enthalten sein. Lokale Dev-Builds
+// behalten ihn fuer Hardwaretests auf allen USB-Host-faehigen Profilen.
+#if !defined(HOMETILES_CI_TARGET) || defined(DEVICE_WAVESHARE_TOUCH_LCD_8)
+#define HOMETILES_USB_ETHERNET_DEV 1
+#endif
+
 // Shared network view for every HomeTiles device.
 //
 // Application code must use this facade for connectivity, addressing and
@@ -20,6 +27,15 @@ class NetworkTransportManager {
 public:
   void begin();
   void update();
+
+  // Kann dieser Build auf diesem Geraet ueberhaupt Ethernet? Natives Ethernet
+  // zaehlt immer; beim 8-Zoll-Geraet zaehlt auch USB-Ethernet im Release.
+  // Steuert auch, ob der Modus-Schalter in Settings/Web-Admin erscheint.
+  static bool deviceSupportsEthernet();
+
+  // Fester Netzwerkmodus dieser Boot-Session (in begin() aus der Config
+  // uebernommen): true = Ethernet, WLAN/ESP-Hosted startet nie.
+  bool isEthernetMode() const { return ethernet_mode_; }
 
   bool isConnected() const;
   bool isWifiConnected() const;
@@ -61,6 +77,7 @@ private:
   const EthernetState* activeEthernetState() const;
 
   bool begun_ = false;
+  bool ethernet_mode_ = false;
   uint32_t wifi_poll_at_ = 0;
   uint32_t usb_poll_at_ = 0;
   uint32_t native_poll_at_ = 0;

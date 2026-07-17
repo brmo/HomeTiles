@@ -39,7 +39,12 @@
 // MQTT_MAX_TRANSFER_SIZE : limit how much data is passed to the network client
 //  in each write call. Needed for the Arduino Wifi Shield. Leave undefined to
 //  pass the entire MQTT packet in each write call.
-//#define MQTT_MAX_TRANSFER_SIZE 80
+// ESP32-P4/ESP-Hosted needs a temporary internal/DMA-capable TX copy. Passing
+// a complete 9-32 KB MQTT packet to Client::write() at once can therefore
+// fragment or exhaust the scarce DMA heap even though PubSubClient's own
+// packet buffer lives in PSRAM. Chunk every large write; small commands still
+// use a single transfer.
+#define MQTT_MAX_TRANSFER_SIZE 1024
 
 // Possible values for client.state()
 #define MQTT_CONNECTION_TIMEOUT     -4

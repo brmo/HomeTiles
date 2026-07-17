@@ -281,7 +281,12 @@ static const Strings kStringsDe = {
     "Keine JPEG-Dateien in /images - schwarzer Hintergrund bleibt aktiv.",
     "Screensaver gespeichert!",
     "Screensaver konnte nicht gespeichert werden",
-    "Screensaver konnte nicht geladen werden"};
+    "Screensaver konnte nicht geladen werden",
+
+    "Ethernet-Modus aktivieren",
+    "WLAN-Modus aktivieren",
+    "Netzwerkmodus geändert - gilt nach Neustart",
+    "Ethernet statt WLAN (gilt nach Neustart)"};
 
 static const Strings kStringsEn = {
     "en",
@@ -562,7 +567,12 @@ static const Strings kStringsEn = {
     "No JPEG files in /images - the black background remains active.",
     "Screensaver saved!",
     "Could not save screensaver",
-    "Could not load screensaver"};
+    "Could not load screensaver",
+
+    "Enable Ethernet mode",
+    "Enable WiFi mode",
+    "Network mode changed - applies after restart",
+    "Ethernet instead of WiFi (applies after restart)"};
 
 const char* normalize_language_code(const char* language_code) {
   if (!language_code || !language_code[0]) return kStringsEn.code;

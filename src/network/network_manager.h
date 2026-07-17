@@ -46,8 +46,9 @@ public:
   uint16_t getMqttBufferSize() const { return mqtt_buffer_size; }
 
   // Von JEDEM Task sicher aufrufbar: kopiert Topic+Payload in einen (PSRAM-)
-  // Block und reiht ihn nicht-blockierend in die passende Outbound-Queue ein. Der
-  // Worker fuehrt das Kommando in seiner naechsten Iteration (~2ms) aus.
+  // Block und reiht ihn nicht-blockierend in die passende Outbound-Queue ein.
+  // Normale Bedienbefehle haben eine eigene Lane und werden nicht von
+  // speicherintensiven History-/Energy-/Bridge-Anfragen blockiert.
   bool mqttEnqueuePublish(const char* topic, const char* payload, bool retain);
   bool mqttEnqueuePublish(const char* topic, const uint8_t* payload, size_t length, bool retain);
   // Interaktive kleine Requests duerfen vor einem langen Subscribe-Sturm
@@ -55,8 +56,8 @@ public:
   bool mqttEnqueuePublishPriority(const char* topic, const char* payload,
                                   bool retain);
   // Publish, fuer dessen Versand bzw. erwartete Antwort der grosse MQTT-
-  // Puffer benoetigt wird. Die Anforderung reist mit dem Kommando und wird
-  // erst vom MQTT-Worker unmittelbar vor dem tatsaechlichen Versand aktiv.
+  // Puffer benoetigt wird. Es landet in einer separaten Large-Lane, die bei
+  // knapper DMA-Reserve warten darf, ohne normale Bedienbefehle anzuhalten.
   bool mqttEnqueuePublishWithLargeBuffer(const char* topic,
                                          const char* payload,
                                          bool retain,
@@ -137,13 +138,25 @@ private:
   PubSubClient mqtt_client;  // nach init() NUR noch vom Worker-Task beruehrt
 
   uint32_t wifi_retry_at = 0;
-  uint32_t wifi_fallback_at = 0;
   uint32_t wired_ip_wait_until = 0;
   bool wifi_manual_disconnect = false;  // Loop-Task: setzt/liest, UI liest
   bool wifi_suspended_for_wired = false;
   bool wired_link_was_up = false;
   bool wired_was_connected = false;
+  // Loop-Task: millis() der letzten Link-up-Flanke (0 = Link unten). Solange
+  // der Ethernet-Link steht, darf WiFi fruehestens nach kWiredLinkWifiBlockMs
+  // ohne IP starten - sonst sabotiert der hosted-Start die DMA-Allokation des
+  // Ethernet-Backends (Feldtest 2026-07-16).
+  uint32_t wired_link_up_since = 0;
+  // Loop-Task: STA-Start-Fehlversuche in Folge. Ab kWifiStartWedgeThreshold
+  // gilt der ESP-Hosted-Treiber als tot (C6 antwortet nicht mehr auf RPCs).
+  uint8_t wifi_start_failures = 0;
+  // Loop-Task: WLAN-Treiber fuer tot erklaert. Mit Ethernet-Link laeuft das
+  // Geraet ohne WiFi weiter; faellt auch Ethernet weg, hilft nur noch der
+  // sichere Neustart (setzt den C6 mit zurueck).
+  bool wifi_wedge_latched = false;
   uint32_t mqtt_retry_at = 0;      // worker-only
+  uint8_t mqtt_connect_failures = 0;  // worker-only: Fehlversuche in Folge
   uint32_t last_telemetry = 0;
   bool was_connected = false;
   uint32_t transport_generation_seen = 0;
@@ -166,6 +179,13 @@ private:
   volatile bool mqtt_ota_prep_requested = false;
   volatile bool mqtt_restore_normal_requested = false;
   volatile bool mqtt_suspended = false;  // OTA laeuft: Worker ruehrt nichts mehr an
+  // Worker setzt nach anhaltender DMA-Starvation; der Loop-Task baut daraufhin
+  // nur WLAN/SDIO kontrolliert neu auf. Bis dahin fasst der Worker den
+  // Netzwerkclient nicht mehr an.
+  volatile bool mqtt_transport_recovery_requested = false;
+  // Requests, die den Engpass sichtbar gemacht haben, bleiben ueber den
+  // Recovery-Reconnect erhalten und werden danach erneut abgearbeitet.
+  volatile bool mqtt_preserve_outbound_on_connect = false;
   volatile uint32_t mqtt_reconnect_hold_until = 0;
   volatile uint32_t mqtt_post_connect_ready_at = 0;
   volatile uint32_t mqtt_large_until = 0;
@@ -199,6 +219,12 @@ private:
   bool isWifiStationEnabled() const;
   bool ensureWifiStationStarted();
   void stopWifiForWired();
+  bool recoverWifiFromDmaStarvation();
+
+  // ESP-Hosted-Wedge (C6 antwortet nicht mehr): Bericht nach /crashlog.txt,
+  // dann mit Ethernet weiterlaufen oder - ohne Ethernet-Link - sicherer
+  // Neustart, der den C6 mit zuruecksetzt. Laeuft auf dem Loop-Task.
+  void handleWifiDriverWedge();
 
   // mDNS-Start (Loop-Task, gleiche connect-Flanke wie webAdminServer). Rein
   // additiv fuers Zeroconf-Discovery der HA-Bridge -- beeinflusst weder MQTT

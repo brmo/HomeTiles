@@ -211,4 +211,20 @@ void appendOtaFailureReport(const char* target_tag, const String& error,
   Serial.printf("[CrashLog] OTA-Fehlbericht protokolliert -> %s\n", kLogPath);
 }
 
+void appendNetworkWedgeReport(const String& detail) {
+  rotateLogIfNeeded();
+  File f = LittleFS.open(kLogPath, FILE_APPEND);
+  if (!f) {
+    Serial.println("[CrashLog] crashlog.txt nicht beschreibbar");
+    return;
+  }
+  f.printf("=== WiFi driver wedge | firmware %s ===\n", FW_VERSION);
+  if (detail.length()) {
+    f.print(detail);
+    if (!detail.endsWith("\n")) f.print("\n");
+  }
+  f.close();
+  Serial.printf("[CrashLog] WLAN-Wedge protokolliert -> %s\n", kLogPath);
+}
+
 }  // namespace CrashLog

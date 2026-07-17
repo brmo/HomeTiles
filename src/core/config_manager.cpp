@@ -153,6 +153,7 @@ ConfigManager::ConfigManager() {
   config.auto_sleep_battery_seconds = config.auto_sleep_seconds;
   config.status_time_font_size = 48;
   config.status_date_font_size = 24;
+  config.ethernet_enabled = false;
 }
 
 bool ConfigManager::load() {
@@ -202,6 +203,7 @@ bool ConfigManager::load() {
   // Display & Power Settings laden
   config.display_brightness = prefs.getUChar("disp_bright", 200);
   config.tile_borders = prefs.getBool("tile_border", true);
+  config.ethernet_enabled = prefs.getBool("eth_mode", false);
   bool rot_180 = prefs.getBool("disp_rot180", false);
   uint8_t rot_mode = rot_180 ? kDisplayRotationFlipped : kDisplayRotationNormal;
   if (prefs.isKey("disp_rot_mode")) {
@@ -327,6 +329,7 @@ bool ConfigManager::save(const DeviceConfig& cfg) {
   // Display & Power Settings speichern
   prefs.putUChar("disp_bright", normalized.display_brightness);
   prefs.putBool("tile_border", normalized.tile_borders);
+  prefs.putBool("eth_mode", normalized.ethernet_enabled);
   prefs.putBool("disp_rot180", normalized.display_rotated_180);
   prefs.putUChar("disp_rot_q", normalized.display_rotation_quarters);
   prefs.putUChar("disp_rot_mode", normalized.display_rotation_mode);
@@ -478,6 +481,19 @@ bool ConfigManager::saveTileBorders(bool enabled) {
   prefs.end();
 
   config.tile_borders = enabled;
+  return true;
+}
+
+bool ConfigManager::saveEthernetEnabled(bool enabled) {
+  Preferences prefs;
+  if (!prefs.begin(PREF_NAMESPACE, false)) {
+    Serial.println("ConfigManager: Netzwerkmodus-Preferences oeffnen fehlgeschlagen");
+    return false;
+  }
+  prefs.putBool("eth_mode", enabled);
+  prefs.end();
+
+  config.ethernet_enabled = enabled;
   return true;
 }
 

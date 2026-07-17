@@ -25,6 +25,7 @@
 #include <esp_heap_caps.h>
 #include <ctype.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/idf_additions.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
 #include <libb64/cdecode.h>
@@ -3096,13 +3097,14 @@ static bool ensure_media_cover_worker() {
     return false;
   }
   if (!g_media_cover_task) {
-    BaseType_t ok = xTaskCreate(
+    BaseType_t ok = xTaskCreateWithCaps(
         media_cover_worker_task,
         "media_cover",
         16384,
         nullptr,
         1,
-        &g_media_cover_task);
+        &g_media_cover_task,
+        MALLOC_CAP_SPIRAM);
     if (ok != pdPASS) {
       g_media_cover_task = nullptr;
       return false;
@@ -3118,6 +3120,11 @@ static void queue_media_cover_request(GridType grid_type,
                                       uint32_t hash) {
   if (!ref || !url.length()) return;
   if (ref->requested_url_hash == hash) return;
+  if (!media_cover_download_allowed(url)) {
+    ref->requested_url_hash = 0;
+    log_media_cover_download_blocked();
+    return;
+  }
   if (!ensure_media_cover_worker()) {
     if ((g_media_cover_request_full_count++ % 5) == 0) {
       Serial.println("[MediaCover] Worker konnte nicht gestartet werden");

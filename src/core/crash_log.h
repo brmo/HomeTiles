@@ -40,6 +40,13 @@ String coreDumpSummaryLine();
 void appendOtaFailureReport(const char* target_tag, const String& error,
                             const String& detail);
 
+// Haengt einen Bericht an, wenn der ESP-Hosted-WLAN-Treiber (C6-Coprozessor)
+// nicht mehr antwortet ("Wedge": RPC-Timeouts, STA-Start schlaegt wiederholt
+// fehl). Wie beim OTA-Bericht: Der Zustand endet in einem kontrollierten
+// Weiterlauf oder sicheren Neustart ohne Core-Dump - dieser Eintrag ist die
+// einzige Diagnosespur.
+void appendNetworkWedgeReport(const String& detail);
+
 }  // namespace CrashLog
 
 #endif  // CRASH_LOG_H

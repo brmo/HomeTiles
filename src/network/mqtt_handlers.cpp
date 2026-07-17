@@ -54,8 +54,9 @@ static constexpr uint16_t kExternalTempHistoryPoints =
     static_cast<uint16_t>((kExternalTempHistoryHoursMax * 60U) / kExternalTempHistorySampleMinutes);
 static constexpr uint32_t kExternalTempHistorySampleMs =
     static_cast<uint32_t>(kExternalTempHistorySampleMinutes) * 60UL * 1000UL;
-static float g_external_history_values[kExternalTempHistoryPoints] = {};
-static bool g_external_history_valid[kExternalTempHistoryPoints] = {};
+static uint8_t* g_external_history_storage = nullptr;
+static float* g_external_history_values = nullptr;
+static bool* g_external_history_valid = nullptr;
 static uint16_t g_external_history_head = 0;
 static uint16_t g_external_history_count = 0;
 static uint32_t g_external_history_last_store_ms = 0;
@@ -127,7 +128,34 @@ static bool has_valid_local_time_for_history() {
          (minute >= 0 && minute < 60);
 }
 
+static bool ensure_external_temp_history_storage() {
+  if (g_external_history_storage) return true;
+
+  constexpr size_t kValuesBytes =
+      sizeof(float) * static_cast<size_t>(kExternalTempHistoryPoints);
+  constexpr size_t kValidBytes =
+      sizeof(bool) * static_cast<size_t>(kExternalTempHistoryPoints);
+  g_external_history_storage = static_cast<uint8_t*>(heap_caps_calloc(
+      1, kValuesBytes + kValidBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!g_external_history_storage) {
+    static bool logged = false;
+    if (!logged) {
+      logged = true;
+      Serial.printf("[History] Kein PSRAM fuer lokalen Temperaturverlauf (%u Bytes)\n",
+                    static_cast<unsigned>(kValuesBytes + kValidBytes));
+    }
+    return false;
+  }
+
+  g_external_history_values =
+      reinterpret_cast<float*>(g_external_history_storage);
+  g_external_history_valid =
+      reinterpret_cast<bool*>(g_external_history_storage + kValuesBytes);
+  return true;
+}
+
 static void push_external_temp_history(float value, bool valid) {
+  if (!ensure_external_temp_history_storage()) return;
   g_external_history_values[g_external_history_head] = value;
   g_external_history_valid[g_external_history_head] = valid;
   g_external_history_head = static_cast<uint16_t>((g_external_history_head + 1) % kExternalTempHistoryPoints);
@@ -413,7 +441,12 @@ static void service_pending_history_fallback() {
     g_pending_history[i].points = 288;
 
     if (!entity.length()) continue;
-    queue_history_fallback_for_entity(entity.c_str(), time_valid, "HA Timeout", hours, period_minutes, points);
+    const bool fallback_queued = queue_history_fallback_for_entity(
+        entity.c_str(), time_valid, "HA Timeout", hours, period_minutes, points);
+    if (!fallback_queued) {
+      Serial.printf("[History] HA Timeout fuer %s (kein lokaler Fallback)\n",
+                    entity.c_str());
+    }
   }
 }
 
@@ -584,12 +617,10 @@ static uint32_t g_external_last_mqtt_ms = 0;
 static String g_external_last_payload;
 
 static void service_external_temp_sensor() {
-  static uint32_t last_warn_ms = 0;
-  const uint32_t now_ms = millis();
-  if (last_warn_ms == 0 ||
-      (int32_t)(now_ms - last_warn_ms) >= 10000) {
+  static bool warned = false;
+  if (!warned) {
+    warned = true;
     Serial.println("[OneWire] OneWire/DallasTemperature nicht gefunden, externer DS18x20 Sensor deaktiviert.");
-    last_warn_ms = now_ms;
   }
   g_external_temp_valid = false;
 }
@@ -1323,7 +1354,13 @@ struct MqttInboundMsg {
   unsigned int length;
 };
 
-static constexpr size_t kMqttInboundQueueDepth = 16;
+// Ein kompletter retained Reconnect umfasst aktuell 46 dynamische Topics plus
+// Bridge-/Settings-Nachrichten. 16 Eintraege liefen waehrend des 1,3-s-
+// Route-Reloads nachweislich voll und warfen u.a. Media-State weg. Die
+// eigentlichen Nachrichten liegen im PSRAM; hier wachsen nur die Queue-
+// Pointer, daher kann ein kompletter Burst ohne relevanten SRAM-Verbrauch
+// aufgenommen werden.
+static constexpr size_t kMqttInboundQueueDepth = 64;
 static QueueHandle_t g_mqtt_inbound_queue = nullptr;
 
 static void processMqttMessage(char* topic, uint8_t* payload, unsigned int length);
@@ -1525,6 +1562,10 @@ static void processMqttMessage(char* topic, uint8_t* payload, unsigned int lengt
     if (extract_json_string_field(large_buf, "entity_id", response_entity) && response_entity.length()) {
       clear_pending_history_request(response_entity.c_str());
     }
+    Serial.printf("[History] Antwort empfangen: %s, %u Bytes\n",
+                  response_entity.length() ? response_entity.c_str()
+                                           : "entity unbekannt",
+                  static_cast<unsigned>(copy_len));
     queue_sensor_popup_history(nullptr, large_buf, copy_len);
     queue_tile_graph_history(nullptr, large_buf, copy_len);
     return;

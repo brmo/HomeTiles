@@ -64,6 +64,7 @@ constexpr size_t kMaxEthernetFrame = 1536;
 constexpr uint32_t kLinkPollMs = 500;
 constexpr uint32_t kLinkDhcpDelayMs = 750;
 constexpr uint32_t kUsbDiagnosticsMs = 3000;
+constexpr uint32_t kRxUpgradeRetryMs = 10000;
 
 constexpr uint16_t kByteEnableDword = 0x00ff;
 constexpr uint16_t kByteEnableWord = 0x0033;
@@ -530,6 +531,7 @@ private:
       serviceEndpointRecovery();
       serviceTx();
       serviceDataPath();
+      serviceRxUpgrade();
 
       const uint32_t now = millis();
       if (attached_.load() &&
@@ -704,12 +706,7 @@ private:
         ++rx_count;
         continue;
       }
-      const size_t transfer_size =
-          static_cast<size_t>(usb_round_up_to_mps(
-              static_cast<int>(kRxBufferSize), bulk_in_mps_));
-      const esp_err_t err =
-          usb_host_transfer_alloc(transfer_size, 0, &rx_transfers_[i]);
-      if (err != ESP_OK || !rx_transfers_[i]) {
+      if (!allocateRxSlot(i)) {
         if (rx_count == 0) {
           releaseDataTransfers();
           return false;
@@ -721,19 +718,30 @@ private:
             static_cast<unsigned>(kRxBufferSize / 1024));
         break;
       }
-
-      rx_contexts_[i].owner = this;
-      rx_contexts_[i].index = static_cast<uint8_t>(i);
-      rx_transfers_[i]->device_handle = dev_;
-      rx_transfers_[i]->bEndpointAddress = bulk_in_endpoint_;
-      rx_transfers_[i]->num_bytes = static_cast<int>(transfer_size);
-      rx_transfers_[i]->timeout_ms = 0;
-      rx_transfers_[i]->callback = &Rtl8156UsbDriver::rxTransferCallback;
-      rx_transfers_[i]->context = &rx_contexts_[i];
       ++rx_count;
     }
 
     return rx_count > 0;
+  }
+
+  bool allocateRxSlot(size_t i) {
+    const size_t transfer_size = static_cast<size_t>(
+        usb_round_up_to_mps(static_cast<int>(kRxBufferSize), bulk_in_mps_));
+    const esp_err_t err =
+        usb_host_transfer_alloc(transfer_size, 0, &rx_transfers_[i]);
+    if (err != ESP_OK || !rx_transfers_[i]) {
+      rx_transfers_[i] = nullptr;
+      return false;
+    }
+    rx_contexts_[i].owner = this;
+    rx_contexts_[i].index = static_cast<uint8_t>(i);
+    rx_transfers_[i]->device_handle = dev_;
+    rx_transfers_[i]->bEndpointAddress = bulk_in_endpoint_;
+    rx_transfers_[i]->num_bytes = static_cast<int>(transfer_size);
+    rx_transfers_[i]->timeout_ms = 0;
+    rx_transfers_[i]->callback = &Rtl8156UsbDriver::rxTransferCallback;
+    rx_transfers_[i]->context = &rx_contexts_[i];
+    return true;
   }
 
   static void controlTransferCallback(usb_transfer_t* transfer) {
@@ -1335,6 +1343,43 @@ private:
     }
   }
 
+  // Ruestet den RX-Fallback (1 x 16 KB nach einem WiFi-Rueckwechsel) wieder
+  // auf den vollen Puffersatz hoch. Direkt nach dem Hosted-Abbau ist der
+  // DMA-Heap oft noch zu fragmentiert fuer den zweiten 16-KB-Block; sobald er
+  // sich beruhigt hat, holt dieser periodische Versuch den Transfer nach.
+  void serviceRxUpgrade() {
+    if (!data_path_active_.load() || !attached_.load() || !dev_) return;
+
+    bool missing = false;
+    for (size_t i = 0; i < kRxTransferCount; ++i) {
+      if (!rx_transfers_[i]) {
+        missing = true;
+        break;
+      }
+    }
+    if (!missing) return;
+
+    const uint32_t now = millis();
+    if (static_cast<int32_t>(now - next_rx_upgrade_ms_) < 0) return;
+    next_rx_upgrade_ms_ = now + kRxUpgradeRetryMs;
+
+    for (size_t i = 0; i < kRxTransferCount; ++i) {
+      if (rx_transfers_[i]) continue;
+      if (!allocateRxSlot(i)) continue;
+      if (submitRx(i)) {
+        Serial.printf(
+            "[USB-ETH] RX-Puffer nachgeruestet: wieder %u x %u KB aktiv\n",
+            static_cast<unsigned>(kRxTransferCount),
+            static_cast<unsigned>(kRxBufferSize / 1024));
+      } else {
+        // Nie submittet, also kein Callback unterwegs - Slot wieder freigeben,
+        // damit der naechste Versuch nicht an einem toten Puffer haengt.
+        usb_host_transfer_free(rx_transfers_[i]);
+        rx_transfers_[i] = nullptr;
+      }
+    }
+  }
+
   void serviceEndpointRecovery() {
     if (!attached_.load() || !dev_ || !data_path_active_.load()) return;
 
@@ -1633,6 +1678,7 @@ private:
   uint8_t mac_[6] = {};
   uint8_t link_read_failures_ = 0;
   uint32_t next_link_poll_ms_ = 0;
+  uint32_t next_rx_upgrade_ms_ = 0;
 };
 
 Rtl8156UsbDriver g_rtl8156_driver;

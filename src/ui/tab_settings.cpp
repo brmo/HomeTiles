@@ -155,6 +155,10 @@ static void style_qr_code(lv_obj_t* qr) {
 static lv_obj_t *ap_mode_btn = nullptr;
 static lv_obj_t *ap_mode_btn_label = nullptr;
 static lv_obj_t *wifi_disconnect_btn = nullptr;
+// Netzwerkmodus-Schalter (nur auf Ethernet-faehigen Builds sichtbar)
+static lv_obj_t *net_mode_btn = nullptr;
+static lv_obj_t *net_mode_btn_label = nullptr;
+static lv_obj_t *net_mode_hint_label = nullptr;
 static lv_obj_t *ap_confirm_row = nullptr;
 static lv_obj_t *ap_confirm_yes_btn = nullptr;
 static lv_obj_t *ap_confirm_no_btn = nullptr;
@@ -973,6 +977,9 @@ static void reset_popup_refs() {
   ap_mode_btn = nullptr;
   ap_mode_btn_label = nullptr;
   wifi_disconnect_btn = nullptr;
+  net_mode_btn = nullptr;
+  net_mode_btn_label = nullptr;
+  net_mode_hint_label = nullptr;
 
   wifi_ssid_ta = nullptr;
   wifi_pass_ta = nullptr;
@@ -1372,6 +1379,33 @@ static void wifi_update_conn_status_label() {
     lv_label_set_text(wifi_conn_status_label, tr().wifi_offline);
     lv_obj_set_style_text_color(wifi_conn_status_label, lv_color_hex(0xFF6B6B), 0);
   }
+}
+
+// Button-Text folgt dem GESPEICHERTEN Modus (zeigt die jeweils andere
+// Option als Aktion an); der Hinweis erscheint, sobald gespeicherter und
+// laufender Modus auseinanderliegen - also bis zum naechsten Neustart.
+static void net_mode_update_ui() {
+  if (!net_mode_btn) return;
+  const bool eth_saved = configManager.getConfig().ethernet_enabled;
+  if (net_mode_btn_label) {
+    lv_label_set_text(net_mode_btn_label,
+                      eth_saved ? tr().net_mode_to_wifi : tr().net_mode_to_ethernet);
+  }
+  if (net_mode_hint_label) {
+    if (eth_saved != networkTransport.isEthernetMode()) {
+      lv_obj_clear_flag(net_mode_hint_label, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_add_flag(net_mode_hint_label, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+}
+
+static void on_net_mode_clicked(lv_event_t*) {
+  const bool to_ethernet = !configManager.getConfig().ethernet_enabled;
+  if (!configManager.saveEthernetEnabled(to_ethernet)) return;
+  Serial.printf("[Settings] Netzwerkmodus gespeichert: %s (gilt nach Neustart)\n",
+                to_ethernet ? "Ethernet" : "WLAN");
+  net_mode_update_ui();
 }
 
 // Jeder Aufruf (Erstoeffnen wie auch "Zurueck" aus der Eingabe-Ansicht)
@@ -1971,6 +2005,19 @@ static void build_wifi_popup(lv_obj_t* parent) {
   lv_obj_set_style_text_align(wifi_conn_status_label, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_font(wifi_conn_status_label, &ui_font_24, 0);
 
+  // Nach einem Wechsel steht der Neustart-Hinweis direkt beim aktuellen
+  // Verbindungsstatus in der Infobox statt losgeloest unter den Buttons.
+  if (NetworkTransportManager::deviceSupportsEthernet()) {
+    net_mode_hint_label = lv_label_create(info_box);
+    lv_obj_set_width(net_mode_hint_label, LV_PCT(100));
+    lv_label_set_long_mode(net_mode_hint_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_align(net_mode_hint_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(net_mode_hint_label, &ui_font_20, 0);
+    lv_obj_set_style_text_color(net_mode_hint_label, lv_color_hex(0xFFC04D), 0);
+    lv_label_set_text(net_mode_hint_label, tr().net_mode_restart_note);
+    lv_obj_add_flag(net_mode_hint_label, LV_OBJ_FLAG_HIDDEN);
+  }
+
   // Zugangsdaten im AP-Modus: Beschriftungsspalte fest, Werte dahinter -
   // SSID/Passwort/IP stehen dadurch buendig untereinander. Block selbst ist
   // SIZE_CONTENT und wird von der Infobox mittig gesetzt.
@@ -2021,6 +2068,22 @@ static void build_wifi_popup(lv_obj_t* parent) {
   lv_obj_set_height(ap_mode_btn, 76);
   ap_mode_btn_label = lv_obj_get_child(ap_mode_btn, 0);
   if (ap_mode_btn_label) lv_obj_set_style_text_font(ap_mode_btn_label, &ui_font_28, 0);
+
+  // Netzwerkmodus-Schalter: fester Modus WLAN ODER Ethernet, gilt ab dem
+  // naechsten Boot. Nur auf Builds sichtbar, die Ethernet ueberhaupt koennen
+  // (ETH-2RO: natives Ethernet; 8-Zoll: RTL8156 ueber USB-Host).
+  if (NetworkTransportManager::deviceSupportsEthernet()) {
+    net_mode_btn = create_popup_button(wifi_list_view, "", 0x424242,
+                                       on_net_mode_clicked);
+    lv_obj_set_width(net_mode_btn, LV_PCT(100));
+    lv_obj_set_height(net_mode_btn, 76);
+    net_mode_btn_label = lv_obj_get_child(net_mode_btn, 0);
+    if (net_mode_btn_label) {
+      lv_obj_set_style_text_font(net_mode_btn_label, &ui_font_28, 0);
+    }
+
+    net_mode_update_ui();
+  }
 
   // ===== Eingabe-Ansicht: SSID-/Passwort-Zeilen, Verbinden-Button unten =====
   wifi_entry_view = lv_obj_create(parent);
@@ -2928,6 +2991,9 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   ap_mode_btn = nullptr;
   ap_mode_btn_label = nullptr;
   wifi_disconnect_btn = nullptr;
+  net_mode_btn = nullptr;
+  net_mode_btn_label = nullptr;
+  net_mode_hint_label = nullptr;
   ap_confirm_row = nullptr;
   ap_confirm_yes_btn = nullptr;
   ap_confirm_no_btn = nullptr;

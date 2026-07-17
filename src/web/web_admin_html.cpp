@@ -1208,7 +1208,25 @@ String WebAdminServer::getAdminPage() {
               </div>
               <div class="settings-note settings-full">)html";
   html += tr.wifi_dhcp_hint;
-  html += R"html(</div>
+  html += R"html(</div>)html";
+  // Netzwerkmodus-Schalter nur auf Ethernet-faehigen Builds (ETH-2RO:
+  // natives Ethernet; 8-Zoll: RTL8156 ueber USB-Host).
+  if (NetworkTransportManager::deviceSupportsEthernet()) {
+    html += R"html(
+              <div class="settings-full">
+                <label class="settings-checkbox" for="ethernet_mode">
+                  <input type="checkbox" id="ethernet_mode" name="ethernet_mode" )html";
+    if (cfg.ethernet_enabled) {
+      html += "checked";
+    }
+    html += R"html(>
+                  <span>)html";
+    html += tr.admin_ethernet_mode;
+    html += R"html(</span>
+                </label>
+              </div>)html";
+  }
+  html += R"html(
             </div>
           </div>
 

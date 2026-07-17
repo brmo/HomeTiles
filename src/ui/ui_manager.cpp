@@ -280,6 +280,19 @@ void UIManager::switchToTab(uint8_t index) {
   if (index >= TAB_COUNT) return;
   if (active_tab_index == index) return;
 
+  lv_display_t* disp = displayManager.getDisplay();
+  // The settings page is already built at boot. Suppress the two full-panel
+  // invalidations while swapping tabs; the physical framebuffer is cleared
+  // explicitly below and only the five visible settings controls need LVGL
+  // rasterization. Keeping the synchronous refresh preserves the 8-inch
+  // ghosting protection without redrawing all 1280x800 pixels.
+  const bool partial_settings_switch =
+      index == 3 && active_tab_index != UINT8_MAX && disp &&
+      lv_display_is_invalidation_enabled(disp);
+  if (partial_settings_switch) {
+    lv_display_enable_invalidation(disp, false);
+  }
+
   static constexpr size_t kTilesBufferLines = SCREEN_HEIGHT / GRID_ROWS;
   static constexpr size_t kSettingsBufferLines = kTilesBufferLines;
   if (index == 3) {
@@ -317,8 +330,34 @@ void UIManager::switchToTab(uint8_t index) {
 
   active_tab_index = index;
 
+  if (partial_settings_switch) {
+    lv_display_enable_invalidation(disp, true);
+
+    const uint32_t switch_started_ms = millis();
+    BoardHAL::displayFillScreen(0x0000);
+    const uint32_t cleared_ms = millis();
+
+    const uint32_t child_count = lv_obj_get_child_count(tab_panels[index]);
+    for (uint32_t i = 0; i < child_count; ++i) {
+      lv_obj_t* child = lv_obj_get_child(tab_panels[index], static_cast<int32_t>(i));
+      if (child && !lv_obj_has_flag(child, LV_OBJ_FLAG_HIDDEN)) {
+        lv_obj_invalidate(child);
+      }
+    }
+    lv_refr_now(disp);
+
+    const uint32_t finished_ms = millis();
+    Serial.printf(
+        "[UI] Settings switch: clear=%lu ms draw=%lu ms total=%lu ms children=%lu\n",
+        static_cast<unsigned long>(cleared_ms - switch_started_ms),
+        static_cast<unsigned long>(finished_ms - cleared_ms),
+        static_cast<unsigned long>(finished_ms - switch_started_ms),
+        static_cast<unsigned long>(child_count));
+    return;
+  }
+
   lv_obj_invalidate(lv_scr_act());
-  if (lv_display_t* disp = displayManager.getDisplay()) {
+  if (disp) {
     lv_refr_now(disp);
   }
 }

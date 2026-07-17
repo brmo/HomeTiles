@@ -600,7 +600,6 @@ static void clear_chart(SensorPopupContext* ctx, uint16_t points) {
   ctx->point_count = points;
   lv_chart_set_point_count(ctx->chart, points);
   lv_chart_set_all_value(ctx->chart, ctx->series, LV_CHART_POINT_NONE);
-  lv_chart_refresh(ctx->chart);
   if (ctx->y_max_label) lv_label_set_text(ctx->y_max_label, "");
   if (ctx->y_min_label) lv_label_set_text(ctx->y_min_label, "");
   if (ctx->y_max_line) lv_obj_add_flag(ctx->y_max_line, LV_OBJ_FLAG_HIDDEN);
@@ -614,12 +613,14 @@ static void clear_chart(SensorPopupContext* ctx, uint16_t points) {
 static void apply_history_payload(SensorPopupContext* ctx, const char* payload) {
   if (!ctx || !payload || !*payload) return;
 
+  const uint32_t apply_started_ms = millis();
   DynamicJsonDocument doc(12288);
   DeserializationError err = deserializeJson(doc, payload);
   if (err) {
     Serial.printf("[SensorPopup] History JSON error: %s\n", err.c_str());
     return;
   }
+  const uint32_t parsed_ms = millis();
 
   const char* entity = doc["entity_id"] | "";
   if (!ctx->entity_id.equalsIgnoreCase(entity)) {
@@ -659,7 +660,6 @@ static void apply_history_payload(SensorPopupContext* ctx, const char* payload) 
   }
 
   uint16_t points = static_cast<uint16_t>(count);
-  clear_chart(ctx, points);
 
   std::vector<float> plot_values(count, NAN);
   for (size_t i = 0; i < count; ++i) {
@@ -726,18 +726,26 @@ static void apply_history_payload(SensorPopupContext* ctx, const char* payload) 
     }
   }
 
+  ctx->point_count = points;
+  lv_chart_set_point_count(ctx->chart, points);
+  int32_t* chart_values = lv_chart_get_series_y_array(ctx->chart, ctx->series);
+  if (!chart_values) {
+    Serial.println("[SensorPopup] History chart buffer unavailable");
+    clear_chart(ctx, points);
+    return;
+  }
+  lv_chart_set_x_start_point(ctx->chart, ctx->series, 0);
+
+  // Write the complete LVGL series buffer in one pass. Calling
+  // lv_chart_set_value_by_id() for every sample invalidates and recalculates
+  // a chart area up to 288 times, blocking the UI for roughly half a second.
   for (size_t i = 0; i < count; ++i) {
     float val = plot_values[i];
     if (!isfinite(val)) {
-      lv_chart_set_value_by_id(ctx->chart, ctx->series, static_cast<uint16_t>(i), LV_CHART_POINT_NONE);
+      chart_values[i] = LV_CHART_POINT_NONE;
       continue;
     }
-    lv_chart_set_value_by_id(
-      ctx->chart,
-      ctx->series,
-      static_cast<uint16_t>(i),
-      static_cast<lv_coord_t>(lroundf(val * scale))
-    );
+    chart_values[i] = static_cast<int32_t>(lroundf(val * scale));
   }
 
   // Bei genau einem Messpunkt gibt es noch keine Linie; deshalb Punkt sichtbar machen.
@@ -759,7 +767,7 @@ static void apply_history_payload(SensorPopupContext* ctx, const char* payload) 
       static_cast<lv_coord_t>(ceilf(max_v * scale))
     );
   }
-  lv_chart_refresh(ctx->chart);
+  const uint32_t chart_ready_ms = millis();
 
   // Update Y-axis labels with min/max values
   if (has_range) {
@@ -797,6 +805,23 @@ static void apply_history_payload(SensorPopupContext* ctx, const char* payload) 
       if (ctx->time_lines[i]) lv_obj_add_flag(ctx->time_lines[i], LV_OBJ_FLAG_HIDDEN);
       if (ctx->time_labels[i]) lv_obj_add_flag(ctx->time_labels[i], LV_OBJ_FLAG_HIDDEN);
     }
+  }
+
+  // One refresh is sufficient after the complete buffer, scale and labels
+  // have been prepared.
+  lv_chart_refresh(ctx->chart);
+
+  const uint32_t apply_finished_ms = millis();
+  const uint32_t total_ms = apply_finished_ms - apply_started_ms;
+  if (total_ms >= 20) {
+    Serial.printf(
+      "[SensorPopup] History applied: points=%u parse=%lu ms chart=%lu ms layout=%lu ms total=%lu ms\n",
+      static_cast<unsigned>(points),
+      static_cast<unsigned long>(parsed_ms - apply_started_ms),
+      static_cast<unsigned long>(chart_ready_ms - parsed_ms),
+      static_cast<unsigned long>(apply_finished_ms - chart_ready_ms),
+      static_cast<unsigned long>(total_ms)
+    );
   }
 }
 

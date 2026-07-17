@@ -293,6 +293,13 @@ struct Strings {
   const char* js_screensaver_save_failed;
   const char* js_screensaver_load_failed;
 
+  // Netzwerkmodus-Schalter (WLAN-Popup + Web-Admin): fester Modus WLAN oder
+  // Ethernet, Wechsel gilt erst nach einem Neustart.
+  const char* net_mode_to_ethernet;
+  const char* net_mode_to_wifi;
+  const char* net_mode_restart_note;
+  const char* admin_ethernet_mode;
+
 };
 
 const Strings& strings(const char* language_code);

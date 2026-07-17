@@ -5,6 +5,7 @@
 #include "src/core/device_entities.h"
 #include "src/network/ha_bridge_config.h"
 #include "src/network/network_manager.h"
+#include "src/network/network_transport.h"
 #include "src/network/mqtt_handlers.h"
 #include "src/ui/tab_settings.h"
 #include "src/game/game_controls_config.h"
@@ -350,7 +351,7 @@ struct OtaUploadState {
   size_t install_total_bytes = 0;
   size_t install_written_bytes = 0;
   size_t next_progress_log = 0;
-  uint8_t buffered_bytes[4096] = {0};
+  uint8_t buffered_bytes[firmware_meta::kDeviceDescriptorImageBytes] = {0};
   String error;
 };
 
@@ -1192,6 +1193,11 @@ void WebAdminServer::handleSaveMQTT() {
     cfg.wifi_gateway[0] = '\0';
     cfg.wifi_subnet[0] = '\0';
     cfg.wifi_dns[0] = '\0';
+  }
+  // Checkbox wird nur auf Ethernet-faehigen Builds gerendert; dort heisst
+  // ein fehlendes Arg "abgewaehlt". Gilt erst nach dem naechsten Neustart.
+  if (NetworkTransportManager::deviceSupportsEthernet()) {
+    cfg.ethernet_enabled = server.hasArg("ethernet_mode");
   }
   if (server.hasArg("mqtt_port")) {
     cfg.mqtt_port = server.arg("mqtt_port").toInt();

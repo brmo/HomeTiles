@@ -304,6 +304,14 @@ static bool fw_check_pending = false;
 static bool fw_install_pending = false;
 static bool system_reboot_pending = false;
 static char fw_install_tag[24] = {};
+// Mehrfaches schnelles Tippen bzw. gleichzeitige UI-/Web-Anfragen darf nicht
+// mehrere GitHub-TLS-Handshakes und damit Transport-Last direkt hintereinander
+// erzeugen. Das letzte Ergebnis ist fuer dieses kurze Fenster ausreichend.
+static constexpr uint32_t kFwCheckCacheMs = 15000;
+static bool fw_check_running = false;
+static bool fw_last_check_valid = false;
+static uint32_t fw_last_check_at = 0;
+static GithubUpdate::CheckResult fw_last_check_result;
 
 static void request_fw_check() {
   fw_check_pending = true;
@@ -355,63 +363,37 @@ static void clear_fw_install_auto_retry() {
 }
 
 static GithubUpdate::CheckResult perform_fw_check() {
-  // Auch der reine Versions-Check braucht einen frischen GitHub-TLS-Handshake.
-  // Auf ESP32-P4/SDIO-WiFi ist das stabiler, wenn MQTT kurz ruhig ist und der
-  // interne PubSubClient-Puffer nicht gleichzeitig 16-32 KB SRAM festhaelt.
-  const uint16_t mqtt_buffer_before_check = networkManager.getMqttBufferSize();
-  const bool quiet_mqtt_for_check = mqtt_buffer_before_check > 0;
-  if (quiet_mqtt_for_check) {
-    Serial.printf("[Update] Check: MQTT fuer GitHub-TLS kurz pausieren (Buffer=%u)\n",
-                  static_cast<unsigned>(mqtt_buffer_before_check));
-    networkManager.prepareMqttForOta();
-    delay(50);
+  const uint32_t now_ms = millis();
+  if (fw_last_check_valid &&
+      (uint32_t)(now_ms - fw_last_check_at) < kFwCheckCacheMs) {
+    Serial.println("[Update] Check: letztes Ergebnis wiederverwendet");
+    return fw_last_check_result;
   }
 
-  // mbedTLS alloziert nur internes RAM (~45KB in mehreren Bloecken, groesster
-  // ~17KB) - PSRAM hilft dem Handshake nicht. Nach laengerer Laufzeit ist der
-  // interne Heap dafuer oft zu fragmentiert (8"-Log 2026-07-11: int=74KB,
-  // largest=30KB -> "SSL - Memory allocation failed"). Dann wie beim Install
-  // das SRAM-Draw-Band (bis 72KB) kurz nach PSRAM parken; der Loop-Task
-  // blockiert waehrend des Checks ohnehin, es rendert also niemand aus dem
-  // langsamen Puffer. Nach Boot (int~126KB, largest~53KB) bleibt das Band wo
-  // es ist.
-  bool draw_band_parked = false;
-  const auto park_draw_band = [&draw_band_parked]() {
-    if (draw_band_parked) return;
-    draw_band_parked = true;
-    displayManager.setBufferLines(8);  // unter SRAM-Minimum -> PSRAM-Puffer
-    delay(20);
-  };
-  {
-    const size_t int_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-    const size_t int_largest =
-        heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
-    if (int_free < 96 * 1024 || int_largest < 40 * 1024) {
-      Serial.printf("[Update] Check: int-RAM knapp (frei=%uKB largest=%uKB), Draw-Band -> PSRAM\n",
-                    static_cast<unsigned>(int_free / 1024),
-                    static_cast<unsigned>(int_largest / 1024));
-      park_draw_band();
-    }
+  // Ein zweiter synchroner Aufrufer ist praktisch nicht moeglich (Loop-Task),
+  // der Guard haelt den Vertrag fuer UI und Web-Admin trotzdem eindeutig.
+  if (fw_check_running) {
+    Serial.println("[Update] Check laeuft bereits");
+    return fw_last_check_valid ? fw_last_check_result
+                               : GithubUpdate::CheckResult{};
   }
+  fw_check_running = true;
 
+  // Der reine Versions-Check trennt MQTT NICHT mehr. Seine TLS-Allokationen
+  // landen bevorzugt im PSRAM; ein MQTT-Disconnect hat daher kein schnelles
+  // SRAM freigegeben, aber jedes Mal einen retained Subscribe-/State-Sturm
+  // ausgeloest und den SDIO-DMA-Heap weiter fragmentiert.
+  Serial.println("[Update] Check: MQTT bleibt verbunden (TLS in PSRAM)");
   GithubUpdate::CheckResult res = GithubUpdate::checkLatest();
-  if (!res.ok && res.tls_alloc_failed && !draw_band_parked) {
-    // Heap sah ausreichend aus, der Handshake bekam trotzdem keinen Speicher:
-    // Draw-Band doch parken und einmal neu versuchen.
-    Serial.println("[Update] Check: TLS-Alloc fehlgeschlagen, Draw-Band -> PSRAM und neuer Versuch");
-    park_draw_band();
-    res = GithubUpdate::checkLatest();
+  if (!res.ok && res.tls_alloc_failed) {
+    Serial.println(
+        "[Update] Check: TLS-Speicher trotz PSRAM-Fallback fehlgeschlagen; "
+        "schneller SRAM-Draw-Puffer bleibt aktiv");
   }
-
-  if (draw_band_parked) {
-    displayManager.restoreBufferLinesAfterOta(SCREEN_HEIGHT / Device::kDisplayFlushBands);
-    lv_obj_invalidate(lv_screen_active());
-    lv_refr_now(displayManager.getDisplay());
-  }
-  if (quiet_mqtt_for_check) {
-    networkManager.restoreMqttBufferNormal();
-    Serial.println("[Update] Check: MQTT wieder freigegeben");
-  }
+  fw_last_check_result = res;
+  fw_last_check_at = millis();
+  fw_last_check_valid = true;
+  fw_check_running = false;
   return res;
 }
 

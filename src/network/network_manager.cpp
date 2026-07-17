@@ -8,6 +8,8 @@
 #include "src/ui/ui_manager.h"
 #include "src/ui/tab_settings.h"
 #include "src/devices/device.h"
+#include "src/core/board_hal.h"
+#include "src/core/crash_log.h"
 #include <esp_heap_caps.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -27,20 +29,50 @@ static constexpr uint16_t kMqttBufferNormal = 16 * 1024;
 static constexpr uint16_t kMqttBufferMedia = 24 * 1024;
 static constexpr uint16_t kMqttBufferLarge = 32 * 1024;
 static constexpr uint32_t kMqttPostConnectQuietMs = 3000;
-static constexpr uint32_t kWifiFallbackDelayMs = 4000;
 static constexpr uint32_t kWiredDhcpWaitMs = 10000;
+// Solange der Ethernet-Link steht, WLAN erst nach dieser Frist ohne IP
+// starten. Der hosted-Start frisst genau das DMA-RAM, das das Ethernet-
+// Backend fuer seine Datenpuffer braucht - im Feldtest 2026-07-16 kam
+// Ethernet deshalb nie hoch, waehrend WiFi gegen den toten C6 anrannte.
+// Die Frist deckt zugleich Netze ohne DHCP ab (dann darf WiFi doch ran).
+static constexpr uint32_t kWiredLinkWifiBlockMs = 60000;
+// STA-Start-Fehlversuche in Folge, ab denen der ESP-Hosted-Treiber als
+// tot gilt (RPC-Timeouts zum C6-Coprozessor).
+static constexpr uint8_t kWifiStartWedgeThreshold = 3;
+// Ein gesunder WiFi.begin()/Mode-Aufruf kehrt in Millisekunden zurueck. Nur
+// wenn der C6 nicht mehr antwortet, laeuft er in den 5s-RPC-Timeout - dauert
+// ein Verbindungsversuch laenger als diese Frist, zaehlt er als Wedge-Indiz
+// (auch wenn er formal "erfolgreich" zurueckkehrt).
+static constexpr uint32_t kWifiRpcSlowMs = 3000;
+// Automatischer Neustart wegen Wedge fruehestens nach dieser Laufzeit -
+// verhindert eine enge Reboot-Schleife, falls der C6 dauerhaft defekt ist.
+static constexpr uint32_t kWedgeRestartMinUptimeMs = 2 * 60 * 1000;
 static constexpr uint8_t kMqttOutboundDrainNormal = 12;
 static constexpr uint8_t kMqttOutboundDrainStorm = 1;
 static constexpr size_t kMqttMinDmaLargestBeforeTx = 8 * 1024;
+// Zusammenhaengender Notfallblock fuer ESP-Hosted. Er wird im gesunden
+// Zustand absichtlich belegt gehalten und bei DMA-Druck freigegeben. Damit
+// steht dem SDIO-RX/TX-Pfad sofort wieder ein unfragmentierter Block zur
+// Verfuegung, statt darauf zu hoffen, dass viele kleine Heap-Luecken spaeter
+// zufaellig zusammenwachsen.
+static constexpr size_t kMqttDmaReserveBytes = 12 * 1024;
+static constexpr size_t kMqttDmaReserveRearmLargest =
+    kMqttDmaReserveBytes + kMqttMinDmaLargestBeforeTx + 4 * 1024;
+static constexpr uint32_t kMqttDmaReserveRearmStableMs = 5000;
+// Eine Large-Anfrage darf nie unbegrenzt an der DMA-Schwelle warten. Wenn die
+// Reserve bereits freigegeben ist und der Heap sich trotzdem nicht erholt,
+// wird nur der WLAN/SDIO-Transport kontrolliert neu aufgebaut.
+static constexpr uint32_t kMqttDmaRecoveryWaitMs = 5000;
+static constexpr uint32_t kMqttDmaRecoveryCooldownMs = 30000;
 // Subscribe/Unsubscribe kann sofort ein retained Paket ausloesen. Auf dem P4
 // bekommt der SDIO-RX-Task zwischen diesen Kontrollpaketen Zeit, das Paket bis
 // in die MQTT-Inbound-Queue weiterzureichen und seinen DMA-Puffer freizugeben.
 static constexpr uint32_t kMqttSdioControlQuietMs = 50;
 
 // Waehrend dieses Fensters direkt nach dem Connect bleibt der MQTT-Empfangs-
-// puffer klein (16 KB). Der PubSubClient-Puffer liegt im internen RAM; ihn
-// mitten im retained-Message-Sturm auf 32 KB zu vergroessern nimmt dem
-// C6/SDIO-WLAN genau im RX-Peak das DMA-RAM weg -> Freeze beim Start.
+// puffer klein. Er liegt inzwischen im PSRAM; das Ruhefenster verhindert aber
+// weiterhin, dass eine grosse History-/Bridge-Antwort mit dem retained-
+// Message-Sturm um die SDIO-RX-Puffer konkurriert.
 static constexpr uint32_t kMqttStormWindowMs = 8000;
 
 // ---------------------------------------------------------------------------
@@ -48,9 +80,10 @@ static constexpr uint32_t kMqttStormWindowMs = 8000;
 //
 // Gegenstueck zur Inbound-Queue in mqtt_handlers.cpp: jeder Task darf
 // enqueuen, NUR der Worker-Task nimmt heraus und fasst mqtt_client an.
-// Publishes und SDIO-Kontrollkommandos liegen bewusst getrennt: ein Subscribe,
-// das auf mehr freien DMA-Speicher warten muss, darf keine sicheren Publishes
-// dahinter blockieren (Head-of-line-Blocking).
+// Normale Publishes, Large-Response-Anfragen und SDIO-Kontrollkommandos liegen
+// bewusst getrennt. History-/Energy-/Bridge-Anfragen muessen bei knapper
+// DMA-Reserve warten, duerfen dabei aber niemals Szenen-, Licht- oder andere
+// kleine Bedienbefehle hinter sich blockieren (Head-of-line-Blocking).
 // Ein Allokations-Block pro Kommando, [MqttOutboundCmd][topic\0][payload],
 // PSRAM bevorzugt -- 1:1 das Muster von mqttAllocInbound().
 // ---------------------------------------------------------------------------
@@ -70,12 +103,87 @@ struct MqttOutboundCmd {
 // zusammen ~90 Kommandos) kann aber auflaufen, wenn der Worker gerade in
 // einem grossen readPacket() steckt -- deshalb 128.
 static constexpr size_t kMqttPublishQueueDepth = 128;
+static constexpr size_t kMqttLargePublishQueueDepth = 32;
 static constexpr size_t kMqttControlQueueDepth = 128;
 static QueueHandle_t g_mqtt_publish_queue = nullptr;
+static QueueHandle_t g_mqtt_large_publish_queue = nullptr;
 static QueueHandle_t g_mqtt_control_queue = nullptr;
 static uint32_t g_mqtt_outbound_dropped = 0;
 static uint32_t g_mqtt_last_tx_guard_log_ms = 0;
 static uint32_t g_mqtt_sdio_control_quiet_until = 0;
+static void* g_mqtt_dma_reserve = nullptr;
+static uint32_t g_mqtt_dma_reserve_rearm_since = 0;
+static uint32_t g_mqtt_dma_low_since = 0;
+static uint32_t g_mqtt_dma_recovery_cooldown_until = 0;
+
+static void initMqttDmaReserve() {
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+  if (g_mqtt_dma_reserve || !networkTransport.isSdioWifiActive()) return;
+  g_mqtt_dma_reserve = heap_caps_malloc(
+      kMqttDmaReserveBytes,
+      MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+  if (g_mqtt_dma_reserve) {
+    Serial.printf("[MQTT] DMA-Reserve angelegt: %u KB\n",
+                  static_cast<unsigned>(kMqttDmaReserveBytes / 1024));
+  } else {
+    Serial.println("[MQTT] WARNUNG: DMA-Reserve konnte nicht angelegt werden");
+  }
+#endif
+}
+
+// Gibt bei Druck zuerst den garantierten zusammenhaengenden Reserveblock frei
+// und legt ihn erst wieder an, wenn fuer mehrere Sekunden deutlich mehr als
+// Reserve + Mindestblock verfuegbar war. So entsteht kein Alloc/Free-Pingpong.
+static size_t serviceMqttDmaHeadroom(uint32_t now_ms) {
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+  if (!networkTransport.isSdioWifiActive()) {
+    g_mqtt_dma_reserve_rearm_since = 0;
+    return static_cast<size_t>(-1);
+  }
+
+  size_t largest =
+      heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+  if (largest < kMqttMinDmaLargestBeforeTx && g_mqtt_dma_reserve) {
+    const size_t largest_before_release = largest;
+    heap_caps_free(g_mqtt_dma_reserve);
+    g_mqtt_dma_reserve = nullptr;
+    g_mqtt_dma_reserve_rearm_since = 0;
+    largest =
+        heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+    Serial.printf(
+        "[MQTT] DMA-Reserve freigegeben: largest %u KB -> %u KB\n",
+        static_cast<unsigned>(largest_before_release / 1024),
+        static_cast<unsigned>(largest / 1024));
+  }
+
+  if (!g_mqtt_dma_reserve) {
+    if (largest >= kMqttDmaReserveRearmLargest) {
+      if (g_mqtt_dma_reserve_rearm_since == 0) {
+        g_mqtt_dma_reserve_rearm_since = now_ms;
+      } else if ((uint32_t)(now_ms - g_mqtt_dma_reserve_rearm_since) >=
+                 kMqttDmaReserveRearmStableMs) {
+        void* reserve = heap_caps_malloc(
+            kMqttDmaReserveBytes,
+            MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+        if (reserve) {
+          g_mqtt_dma_reserve = reserve;
+          largest = heap_caps_get_largest_free_block(
+              MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+          Serial.printf("[MQTT] DMA-Reserve wieder angelegt, largest=%u KB\n",
+                        static_cast<unsigned>(largest / 1024));
+        }
+        g_mqtt_dma_reserve_rearm_since = 0;
+      }
+    } else {
+      g_mqtt_dma_reserve_rearm_since = 0;
+    }
+  }
+  return largest;
+#else
+  (void)now_ms;
+  return static_cast<size_t>(-1);
+#endif
+}
 
 static MqttOutboundCmd* mqttAllocOutbound(MqttCmdKind kind,
                                           const char* topic,
@@ -111,8 +219,11 @@ static bool enqueueOutboundCmd(MqttCmdKind kind,
                                bool retain,
                                bool priority = false,
                                uint32_t large_buffer_hold_ms = 0) {
+  const bool large_publish =
+      kind == MqttCmdKind::PUBLISH && large_buffer_hold_ms > 0;
   QueueHandle_t queue = kind == MqttCmdKind::PUBLISH
-                            ? g_mqtt_publish_queue
+                            ? (large_publish ? g_mqtt_large_publish_queue
+                                             : g_mqtt_publish_queue)
                             : g_mqtt_control_queue;
   if (!queue) return false;
   MqttOutboundCmd* cmd = mqttAllocOutbound(
@@ -128,7 +239,9 @@ static bool enqueueOutboundCmd(MqttCmdKind kind,
     heap_caps_free(cmd);
     ++g_mqtt_outbound_dropped;
     Serial.printf("[MQTT] Outbound-%s-Queue voll -> verworfen (#%u)\n",
-                  kind == MqttCmdKind::PUBLISH ? "Publish" : "Control",
+                  kind != MqttCmdKind::PUBLISH
+                      ? "Control"
+                      : (large_publish ? "Large-Publish" : "Publish"),
                   static_cast<unsigned>(g_mqtt_outbound_dropped));
     return false;
   }
@@ -136,7 +249,9 @@ static bool enqueueOutboundCmd(MqttCmdKind kind,
 }
 
 static void purgeOutboundQueue() {
-  QueueHandle_t queues[] = {g_mqtt_publish_queue, g_mqtt_control_queue};
+  QueueHandle_t queues[] = {g_mqtt_publish_queue,
+                            g_mqtt_large_publish_queue,
+                            g_mqtt_control_queue};
   for (QueueHandle_t queue : queues) {
     if (!queue) continue;
     MqttOutboundCmd* cmd = nullptr;
@@ -293,6 +408,65 @@ void HomeTilesNetworkManager::stopWifiForWired() {
   }
 }
 
+bool HomeTilesNetworkManager::recoverWifiFromDmaStarvation() {
+  if (!mqtt_transport_recovery_requested) return false;
+
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+  if (!networkTransport.isSdioWifiActive() ||
+      networkTransport.isEthernetMode()) {
+    mqtt_transport_recovery_requested = false;
+    mqtt_preserve_outbound_on_connect = false;
+    return false;
+  }
+
+  Serial.println(
+      "[Network] MQTT-TX-Recovery: WLAN/SDIO kontrolliert neu aufbauen");
+  if (webAdminServer.isRunning()) webAdminServer.stop();
+  stopMdns();
+  was_connected = false;
+
+  // Wie beim exklusiven Wechsel zu Ethernet zuerst SD sauber aushaengen:
+  // ESP-Hosted und SD verwenden zwar verschiedene Slots, der IDF-Teardown
+  // setzt aber die gemeinsame SDMMC-Host-Queue zurueck.
+  const bool sd_was_mounted = Device::suspendSDCardForNetworkTransition();
+  networkTransport.setWifiDriverActive(false);
+  WiFi.setAutoReconnect(false);
+  const bool stopped = WiFi.mode(WIFI_OFF);
+  if (sd_was_mounted && !Device::resumeSDCardAfterNetworkTransition()) {
+    Serial.println(
+        "[Network] WARNUNG: SD-Karte nach WLAN-Recovery nicht gemountet");
+  }
+
+  wifi_ps_state_known = false;
+  wifi_suspended_for_wired = false;
+  mqtt_retry_at = 0;
+  mqtt_connect_failures = 0;
+
+  if (!stopped) {
+    // Der alte Treiber ist noch aktiv. Den Worker wieder freigeben; sein
+    // normaler Connect-Backoff bleibt funktionsfaehig und ein erneuter
+    // Recovery-Versuch ist durch den Cooldown begrenzt.
+    networkTransport.setWifiDriverActive(true);
+    mqtt_transport_recovery_requested = false;
+    Serial.println("[Network] WLAN/SDIO-Recovery: Treiber-Stopp fehlgeschlagen");
+    return true;
+  }
+
+  // Dem IDF-Teardown Zeit geben, Tasks/Puffer vollstaendig freizugeben. Das
+  // Display und sein schneller SRAM-Draw-Puffer bleiben dabei unangetastet.
+  delay(100);
+  wifi_retry_at = 0;
+  connectWifi();
+  mqtt_transport_recovery_requested = false;
+  Serial.println("[Network] WLAN/SDIO-Recovery: Neuaufbau angestossen");
+  return true;
+#else
+  mqtt_transport_recovery_requested = false;
+  mqtt_preserve_outbound_on_connect = false;
+  return false;
+#endif
+}
+
 // ========== Initialisierung ==========
 void HomeTilesNetworkManager::init() {
   networkTransport.begin();
@@ -307,26 +481,22 @@ void HomeTilesNetworkManager::init() {
 
   const DeviceConfig& cfg = configManager.getConfig();
 
-  const bool has_wired_backend =
-      Device::kCapabilities.supports_usb_host_network ||
-      Device::kCapabilities.supports_native_ethernet;
   wired_was_connected = isWiredConnected();
   wired_link_was_up = isWiredLinkUp();
   if (wired_link_was_up && !wired_was_connected) {
     wired_ip_wait_until = millis() + kWiredDhcpWaitMs;
   }
-  if (wired_was_connected) {
-    stopWifiForWired();
-    Serial.printf("[Network] %s bereits aktiv; WiFi/SDIO bleibt aus\n",
-                  networkTransport.activeName());
-  } else if (has_wired_backend) {
-    // USB enumeration, PHY link and DHCP need a short head start. Starting
-    // hosted WiFi immediately would make both P4 network stacks allocate
-    // their DMA pools during the heaviest boot phase.
-    wifi_fallback_at = millis() + kWifiFallbackDelayMs;
-    Serial.printf("[Network] Warte %u ms auf Ethernet, danach WiFi-Fallback\n",
-                  static_cast<unsigned>(kWifiFallbackDelayMs));
+  if (networkTransport.isEthernetMode()) {
+    // Fester Ethernet-Modus: WLAN/ESP-Hosted startet in dieser Boot-Session
+    // NIE - ohne Kabel/Adapter ist das Geraet bewusst offline statt in den
+    // frueheren WiFi-Fallback zu laufen, der beide Stacks gleichzeitig ins
+    // DMA-RAM gezwungen hat.
+    Serial.printf("[Network] Ethernet-Modus: %s, WLAN bleibt aus\n",
+                  wired_was_connected ? networkTransport.activeName()
+                                      : "warte auf Link/DHCP");
   } else {
+    // WLAN-Modus: kein Ethernet-Backend gestartet, also entfaellt auch die
+    // fruehere Wartefrist vor dem WiFi-Start.
     ensureWifiStationStarted();
     wifi_retry_at = 0;  // Sofortiger Verbindungsversuch
   }
@@ -367,6 +537,16 @@ void HomeTilesNetworkManager::init() {
 void HomeTilesNetworkManager::connectWifi() {
   wifi_retry_at = millis() + 5000UL;  // Retry in 5s
 
+  // Fester Ethernet-Modus: WLAN bleibt aus, egal was Retry-/Reconnect-Logik
+  // oder UI-Aufrufer wollen. Zurueck zu WLAN geht nur ueber den
+  // Netzwerkmodus-Schalter + Neustart.
+  if (networkTransport.isEthernetMode()) return;
+
+  // Treiber als tot markiert (C6 antwortet nicht): keine weiteren Versuche.
+  // Jeder Aufruf in den halbtoten hosted-Stack blockiert den Loop-Task fuer
+  // Sekunden (RPC-Timeout) - den Ausweg regelt update() (Ethernet/Neustart).
+  if (wifi_wedge_latched) return;
+
   // Jeder Verbindungsaufbau (manuell, neue Zugangsdaten, AP-Ende) hebt ein
   // vorheriges manuelles Trennen wieder auf.
   if (wifi_manual_disconnect) {
@@ -382,11 +562,14 @@ void HomeTilesNetworkManager::connectWifi() {
     return;
   }
   if (isWiredLinkUp()) {
-    if (wired_ip_wait_until == 0) {
-      wired_ip_wait_until = millis() + kWiredDhcpWaitMs;
-    }
-    if (static_cast<int32_t>(millis() - wired_ip_wait_until) < 0) {
-      Serial.println("WiFi: nicht gestartet, Ethernet wartet auf DHCP");
+    // Solange der Kabel-Link steht, gehoert das DMA-RAM dem Ethernet-Backend
+    // (Puffer-Allokation + DHCP-Anlauf). WiFi darf erst uebernehmen, wenn
+    // Ethernet nach kWiredLinkWifiBlockMs immer noch keine IP hat (z.B. Netz
+    // ohne DHCP) - nicht schon nach dem kurzen DHCP-Fenster.
+    const uint32_t link_since = wired_link_up_since;
+    if (link_since == 0 ||
+        (uint32_t)(millis() - link_since) < kWiredLinkWifiBlockMs) {
+      Serial.println("WiFi: nicht gestartet, Ethernet-Link aktiv");
       return;
     }
   }
@@ -398,10 +581,90 @@ void HomeTilesNetworkManager::connectWifi() {
 
   const DeviceConfig& cfg = configManager.getConfig();
   if (cfg.wifi_ssid && cfg.wifi_ssid[0]) {
-    if (!ensureWifiStationStarted()) return;
+    const uint32_t attempt_started = millis();
+    if (!ensureWifiStationStarted()) {
+      // STA-Start fehlgeschlagen = RPC zum C6 tot oder Speicher am Limit.
+      // Exponentiell zurueckziehen statt im 5s-Takt je ~5s RPC-Timeout auf
+      // dem Loop-Task zu verbrennen; ab der Schwelle den Wedge behandeln.
+      if (wifi_start_failures < 255) ++wifi_start_failures;
+      const uint32_t shift =
+          wifi_start_failures < 4 ? wifi_start_failures : 4;
+      wifi_retry_at = millis() + (5000UL << shift);  // 10s..80s
+      if (wifi_start_failures >= kWifiStartWedgeThreshold) {
+        handleWifiDriverWedge();
+      }
+      return;
+    }
     Serial.printf("WiFi: Verbinde mit %s\n", cfg.wifi_ssid);
     applyWifiAddressing(cfg);
     WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
+
+    // Wedge-Indiz auch OHNE formalen Fehler: Gesund kehren diese Aufrufe in
+    // Millisekunden zurueck; nur ein toter C6 laesst sie in die 5s-RPC-
+    // Timeouts laufen. Erst der naechste erfolgreich SCHNELLE Versuch (oder
+    // eine stehende Verbindung, siehe update()) setzt den Zaehler zurueck.
+    const uint32_t attempt_ms = millis() - attempt_started;
+    if (attempt_ms >= kWifiRpcSlowMs) {
+      if (wifi_start_failures < 255) ++wifi_start_failures;
+      Serial.printf(
+          "WiFi: Verbindungsversuch blockierte %lu ms (RPC-Timeout-Verdacht %u/%u)\n",
+          static_cast<unsigned long>(attempt_ms),
+          static_cast<unsigned>(wifi_start_failures),
+          static_cast<unsigned>(kWifiStartWedgeThreshold));
+      const uint32_t shift =
+          wifi_start_failures < 4 ? wifi_start_failures : 4;
+      wifi_retry_at = millis() + (5000UL << shift);
+      if (wifi_start_failures >= kWifiStartWedgeThreshold) {
+        handleWifiDriverWedge();
+      }
+    } else {
+      wifi_start_failures = 0;
+    }
+  }
+}
+
+void HomeTilesNetworkManager::handleWifiDriverWedge() {
+  if (wifi_wedge_latched) return;
+  wifi_wedge_latched = true;
+
+  const bool wired = isWiredLinkUp();
+  String detail;
+  detail.reserve(256);
+  detail += "STA-Start ";
+  detail += wifi_start_failures;
+  detail += "x in Folge fehlgeschlagen (ESP-Hosted RPC-Timeouts zum C6)\n";
+  detail += "Uptime ";
+  detail += millis() / 1000;
+  detail += " s | Ethernet-Link ";
+  detail += wired ? "vorhanden" : "fehlt";
+  detail += '\n';
+  char mem[96];
+  snprintf(mem, sizeof(mem), "mem int=%uKB largest=%uKB dma_largest=%uKB\n",
+           static_cast<unsigned>(
+               heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+           static_cast<unsigned>(
+               heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024),
+           static_cast<unsigned>(heap_caps_get_largest_free_block(
+                                     MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) /
+                                 1024));
+  detail += mem;
+  detail += wired
+                ? "Weiterlauf ueber Ethernet, WiFi bis zum Neustart deaktiviert\n"
+                : "Sicherer Neustart folgt (setzt den C6 mit zurueck)\n";
+  CrashLog::appendNetworkWedgeReport(detail);
+
+  Serial.printf("[Network] WLAN-Treiber reagiert nicht mehr - %s\n",
+                wired ? "laufe auf Ethernet weiter (WiFi aus bis Neustart)"
+                      : "sicherer Neustart");
+  if (!wired) {
+    if (millis() >= kWedgeRestartMinUptimeMs) {
+      Serial.flush();
+      BoardHAL::prepareForRestart();
+      delay(500);
+      BoardHAL::restart();
+    }
+    // Zu frueh fuer einen Auto-Neustart: latched lassen; update() startet
+    // neu, sobald die Mindestlaufzeit erreicht ist und kein Link da ist.
   }
 }
 
@@ -459,10 +722,21 @@ void HomeTilesNetworkManager::connectMqtt() {
   }
 
   if (!ok) {
-    Serial.printf("MQTT: Verbindung fehlgeschlagen, State=%d\n", mqtt_client.state());
+    // Exponentiell zurueckziehen: Ein toter Broker oder ein gewedgter WLAN-
+    // Stack wird sonst im 3s-Takt mit blockierenden Connects gehammert, die
+    // den Loop-/Worker-Takt und das interne RAM auffressen (Feldtest
+    // 2026-07-16: Endlos-State=-2-Schleife bis 33 KB Heap-Minimum).
+    if (mqtt_connect_failures < 255) ++mqtt_connect_failures;
+    const uint32_t shift =
+        mqtt_connect_failures < 5 ? mqtt_connect_failures : 5;
+    mqtt_retry_at = millis() + (3000UL << shift);  // 6s..96s
+    Serial.printf("MQTT: Verbindung fehlgeschlagen, State=%d (Retry in %lus)\n",
+                  mqtt_client.state(),
+                  static_cast<unsigned long>((3000UL << shift) / 1000));
     return;
   }
 
+  mqtt_connect_failures = 0;
   Serial.println("✓ MQTT verbunden");
   mqtt_connected_at = millis();
   logNetworkHeap("after-MQTT-connect");
@@ -493,11 +767,17 @@ void HomeTilesNetworkManager::connectMqtt() {
     Serial.printf("[MQTT] Listening for icon updates on %s\n", bridge_icons_topic_.c_str());
   }
 
-  // Veraltete Kommandos aus der Offline-Zeit verwerfen: solange die
-  // Verbindung weg war, hat der isMqttConnected()-Check der Publish-
-  // Funktionen neue Enqueues verhindert -- was hier noch liegt, stammt aus
-  // dem Moment des Abrisses und wuerde sonst verspaetet feuern.
-  purgeOutboundQueue();
+  // Nach einer normalen Unterbrechung sind alte Bedienkommandos nicht mehr
+  // aktuell. Beim gezielten DMA-Recovery bleiben die bereits angenommenen
+  // Requests dagegen erhalten: sie waren nie auf dem Broker und werden direkt
+  // nach dem Wiederaufbau ueber die bereits oben abonnierten Antwort-Topics
+  // abgearbeitet.
+  if (mqtt_preserve_outbound_on_connect) {
+    mqtt_preserve_outbound_on_connect = false;
+    Serial.println("[MQTT] DMA-Recovery: wartende Requests bleiben erhalten");
+  } else {
+    purgeOutboundQueue();
+  }
 
   mqtt_connected_flag = true;
 
@@ -523,6 +803,14 @@ void HomeTilesNetworkManager::beginMqttWorker() {
       Serial.println("[MQTT] Outbound-Publish-Queue konnte nicht erstellt werden");
     }
   }
+  if (!g_mqtt_large_publish_queue) {
+    g_mqtt_large_publish_queue =
+        xQueueCreate(kMqttLargePublishQueueDepth, sizeof(MqttOutboundCmd*));
+    if (!g_mqtt_large_publish_queue) {
+      Serial.println(
+          "[MQTT] Outbound-Large-Publish-Queue konnte nicht erstellt werden");
+    }
+  }
   if (!g_mqtt_control_queue) {
     g_mqtt_control_queue =
         xQueueCreate(kMqttControlQueueDepth, sizeof(MqttOutboundCmd*));
@@ -530,6 +818,7 @@ void HomeTilesNetworkManager::beginMqttWorker() {
       Serial.println("[MQTT] Outbound-Control-Queue konnte nicht erstellt werden");
     }
   }
+  initMqttDmaReserve();
 }
 
 // Worker-Task-Body: die EINZIGE Stelle, die mqtt_client nach init() anfasst.
@@ -568,6 +857,7 @@ void HomeTilesNetworkManager::serviceMqttWorker() {
       mqtt_client.setServer(cfg.mqtt_host, cfg.mqtt_port);
       mqtt_client.setCallback(mqttCallback);
       mqtt_retry_at = 0;  // sofortiger Verbindungsversuch, naechste Iteration
+      mqtt_connect_failures = 0;  // frischer Transport, frischer Backoff
       Serial.println("[MQTT] Reconfigure: neue Einstellungen uebernommen");
     } else {
       Serial.println("[MQTT] Reconfigure: kein Host konfiguriert, bleibe getrennt");
@@ -575,6 +865,7 @@ void HomeTilesNetworkManager::serviceMqttWorker() {
     return;
   }
 
+  if (mqtt_transport_recovery_requested) return;
   if (!mqtt_enabled) return;
 
   // Request-Flags zuerst -- auch im suspendierten Zustand, damit
@@ -678,8 +969,9 @@ void HomeTilesNetworkManager::drainOutboundQueues(uint8_t max_commands) {
         g_mqtt_sdio_control_quiet_until != 0 &&
         static_cast<int32_t>(now_ms - g_mqtt_sdio_control_quiet_until) < 0;
     if (!control_quiet) g_mqtt_sdio_control_quiet_until = 0;
-    dma_largest =
-        heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+    // Auch ohne wartende Large-Anfrage die Reserve bei akutem Druck sofort
+    // freigeben. So bekommt bereits der laufende SDIO-RX-Pfad Headroom.
+    dma_largest = serviceMqttDmaHeadroom(now_ms);
   }
 #endif
 
@@ -698,7 +990,7 @@ void HomeTilesNetworkManager::drainOutboundQueues(uint8_t max_commands) {
   };
 
   // Kontrollkommandos behalten Prioritaet, werden auf dem P4 aber weiterhin
-  // einzeln und mit Abstand gesendet. Wenn eines auf DMA wartet, laufen
+  // einzeln und mit Abstand gesendet. Waehrend des Schutzabstands laufen
   // Publishes aus ihrer getrennten Queue trotzdem weiter.
   MqttOutboundCmd* cmd = nullptr;
   const bool control_waiting =
@@ -731,69 +1023,112 @@ void HomeTilesNetworkManager::drainOutboundQueues(uint8_t max_commands) {
     }
   }
 
-  if (!g_mqtt_publish_queue) return;
-
   // Direkt nach einem Subscribe/Unsubscribe hoechstens ein Publish, danach
   // wird mqtt_client.loop() aufgerufen und kann ein sofortiges retained Paket
   // abholen. So bleibt der bisherige SDIO-Schutz erhalten, ohne die Publish-
   // Lane fuer die gesamten 50 ms komplett anzuhalten.
   const uint8_t publish_limit = control_quiet ? 1 : max_commands;
+  const bool startup_storm =
+      mqtt_connected_at != 0 &&
+      (uint32_t)(millis() - mqtt_connected_at) < kMqttStormWindowMs;
+  MqttOutboundCmd* large_peek = nullptr;
+  const bool large_waiting =
+      !startup_storm && g_mqtt_large_publish_queue &&
+      xQueuePeek(g_mqtt_large_publish_queue, &large_peek, 0) == pdTRUE;
+  // Ausserhalb des Startsturms bleibt bei einem normalen 12er-Drain immer ein
+  // Platz fuer die Large-Lane. Ein dauernder Strom kleiner Statuspublishes darf
+  // History/Energy/Bridge nicht verhungern lassen.
+  const uint8_t normal_limit =
+      large_waiting && publish_limit > 1 ? publish_limit - 1 : publish_limit;
   uint32_t drained = 0;
-  while (drained < publish_limit &&
-         xQueueReceive(g_mqtt_publish_queue, &cmd, 0) == pdTRUE) {
-    if (!cmd) continue;
+  if (g_mqtt_publish_queue) {
+    while (drained < normal_limit &&
+           xQueueReceive(g_mqtt_publish_queue, &cmd, 0) == pdTRUE) {
+      if (!cmd) continue;
 
-    // Der grosse Puffer wird erst jetzt angelegt, nachdem das Kommando einen
-    // echten Queue-Platz hatte und unmittelbar vor dem Versand steht.
-    if (cmd->large_buffer_hold_ms > 0 && mqtt_buffer_size < kMqttBufferLarge) {
-      const bool startup_storm =
-          mqtt_connected_at != 0 &&
-          (uint32_t)(millis() - mqtt_connected_at) < kMqttStormWindowMs;
-      if (startup_storm) {
-        if (xQueueSendToFront(g_mqtt_publish_queue, &cmd, 0) != pdTRUE) {
-          heap_caps_free(cmd);
-          ++g_mqtt_outbound_dropped;
-          Serial.printf("[MQTT] Publish-Requeue fehlgeschlagen (#%u)\n",
-                        static_cast<unsigned>(g_mqtt_outbound_dropped));
+      // Normale, kleine Bedienpublishes brauchen keinen 32-KB-Empfangspuffer
+      // und bleiben auch bei fragmentiertem DMA-RAM sendefaehig. Genau diese
+      // Lane darf durch wartende History-/Energy-/Bridge-Anfragen niemals
+      // angehalten werden.
+      const bool ok = mqtt_client.publish(
+          cmd->topic, cmd->payload, cmd->payload_len, cmd->retain);
+      if (!ok) {
+        Serial.printf("[MQTT] Worker: publish '%s' fehlgeschlagen\n", cmd->topic);
+      }
+      heap_caps_free(cmd);
+
+      // Auch ein grosser Publish-Burst darf den Idle-Task nicht aushungern.
+      if ((++drained & 0x07) == 0) vTaskDelay(1);
+    }
+  }
+
+  if (!large_waiting || drained >= publish_limit) {
+    g_mqtt_dma_low_since = 0;
+    return;
+  }
+
+  // Large-Response-Anfragen erst nach dem Retained-Sturm senden. Sie bleiben
+  // waehrenddessen in ihrer eigenen Queue; normale Bedienbefehle oben laufen
+  // trotzdem weiter.
+  while (drained < publish_limit &&
+         xQueuePeek(g_mqtt_large_publish_queue, &cmd, 0) == pdTRUE) {
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+    // Die DMA-Pruefung MUSS vor der Puffervergroesserung stehen. Bei zu
+    // kleiner Reserve bleibt nur die Large-Lane stehen; die normale Lane
+    // wurde oben bereits abgearbeitet und bleibt damit immer bedienbar.
+    if (networkTransport.isSdioWifiActive()) {
+      dma_largest = serviceMqttDmaHeadroom(now_ms);
+      if (dma_largest < kMqttMinDmaLargestBeforeTx) {
+        log_dma_wait("Large-Publish", dma_largest);
+        if (g_mqtt_dma_low_since == 0) {
+          g_mqtt_dma_low_since = now_ms;
+        }
+        const bool recovery_allowed =
+            g_mqtt_dma_recovery_cooldown_until == 0 ||
+            static_cast<int32_t>(
+                now_ms - g_mqtt_dma_recovery_cooldown_until) >= 0;
+        if (recovery_allowed &&
+            (uint32_t)(now_ms - g_mqtt_dma_low_since) >=
+                kMqttDmaRecoveryWaitMs) {
+          Serial.printf(
+              "[MQTT] DMA-Starvation seit %u ms: WLAN/SDIO-Recovery\n",
+              static_cast<unsigned>(now_ms - g_mqtt_dma_low_since));
+          // Single-Owner-Regel bleibt erhalten: der Worker schliesst seinen
+          // Client selbst, erst danach darf der Loop-Task den Treiber abbauen.
+          if (mqtt_client.connected()) mqtt_client.disconnect();
+          mqtt_connected_flag = false;
+          mqtt_post_connect_pending = false;
+          mqtt_post_connect_ready_at = 0;
+          mqtt_large_until = 0;
+          mqtt_preserve_outbound_on_connect = true;
+          g_mqtt_dma_low_since = 0;
+          g_mqtt_dma_recovery_cooldown_until =
+              now_ms + kMqttDmaRecoveryCooldownMs;
+          mqtt_transport_recovery_requested = true;
         }
         return;
       }
-      if (!setMqttBufferSize(kMqttBufferLarge, "queued-publish")) {
-        ++g_mqtt_outbound_dropped;
-        Serial.printf(
-            "[MQTT] Publish verworfen: Large-Buffer nicht verfuegbar (#%u)\n",
-            static_cast<unsigned>(g_mqtt_outbound_dropped));
-        heap_caps_free(cmd);
-        return;
-      }
-    }
-
-#if defined(CONFIG_IDF_TARGET_ESP32P4)
-    if (networkTransport.isSdioWifiActive()) {
-      dma_largest =
-          heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
-    }
-    if (networkTransport.isSdioWifiActive() &&
-        dma_largest < kMqttMinDmaLargestBeforeTx) {
-      log_dma_wait("Publish", dma_largest);
-      // Der MQTT-Paketpuffer liegt in PSRAM und ist nicht die Ursache einer
-      // niedrigen DMA-Reserve. Das Kommando behalten und nach Erholung der
-      // Transportpuffer erneut versuchen, statt durch Shrink/Grow zu
-      // fragmentieren und History-/Energy-Requests zu verlieren.
-      if (xQueueSendToFront(g_mqtt_publish_queue, &cmd, 0) != pdTRUE) {
-        heap_caps_free(cmd);
-        ++g_mqtt_outbound_dropped;
-        Serial.printf("[MQTT] Publish-Requeue fehlgeschlagen (#%u)\n",
-                      static_cast<unsigned>(g_mqtt_outbound_dropped));
-      }
-      return;
     }
 #endif
+    g_mqtt_dma_low_since = 0;
 
-    if (cmd->large_buffer_hold_ms > 0) {
-      mqtt_large_until = millis() + cmd->large_buffer_hold_ms;
+    cmd = nullptr;
+    if (xQueueReceive(g_mqtt_large_publish_queue, &cmd, 0) != pdTRUE) return;
+    if (!cmd) continue;
+
+    // Der grosse Puffer wird erst jetzt angelegt, nachdem die DMA-Reserve
+    // ausreicht und das Kommando unmittelbar vor dem Versand steht.
+    if (mqtt_buffer_size < kMqttBufferLarge &&
+        !setMqttBufferSize(kMqttBufferLarge, "queued-publish")) {
+      ++g_mqtt_outbound_dropped;
+      Serial.printf(
+          "[MQTT] Large-Publish verworfen: Puffer nicht verfuegbar (#%u)\n",
+          static_cast<unsigned>(g_mqtt_outbound_dropped));
+      heap_caps_free(cmd);
+      return;
     }
 
+    mqtt_large_until = millis() + cmd->large_buffer_hold_ms;
     const bool ok = mqtt_client.publish(
         cmd->topic, cmd->payload, cmd->payload_len, cmd->retain);
     if (!ok) {
@@ -801,7 +1136,6 @@ void HomeTilesNetworkManager::drainOutboundQueues(uint8_t max_commands) {
     }
     heap_caps_free(cmd);
 
-    // Auch ein grosser Publish-Burst darf den Idle-Task nicht aushungern.
     if ((++drained & 0x07) == 0) vTaskDelay(1);
   }
 }
@@ -1143,18 +1477,40 @@ void HomeTilesNetworkManager::update() {
     return;
   }
 
+  if (recoverWifiFromDmaStarvation()) {
+    networkTransport.update();
+    return;
+  }
+
   networkTransport.update();
   uint32_t now_ms = millis();
   const bool wired_connected = isWiredConnected();
   const bool wired_link_up = isWiredLinkUp();
   if (wired_link_up && !wired_link_was_up) {
     wired_ip_wait_until = now_ms + kWiredDhcpWaitMs;
+    wired_link_up_since = now_ms;
     Serial.printf("[Network] Ethernet-Link steht; warte bis zu %u ms auf DHCP\n",
                   static_cast<unsigned>(kWiredDhcpWaitMs));
   } else if (!wired_link_up) {
     wired_ip_wait_until = 0;
+    wired_link_up_since = 0;
   }
   wired_link_was_up = wired_link_up;
+
+  // WLAN-Treiber ist als tot markiert: Mit Ethernet-Link laeuft das Geraet
+  // normal weiter. Faellt auch der Link weg, gibt es keinen Weg mehr zurueck
+  // ins Netz - der sichere Neustart setzt den C6 mit zurueck (Bericht steht
+  // bereits in /crashlog.txt).
+  if (wifi_wedge_latched && !wired_link_up &&
+      now_ms >= kWedgeRestartMinUptimeMs) {
+    Serial.println(
+        "[Network] WLAN-Wedge ohne Ethernet-Link: sicherer Neustart");
+    Serial.flush();
+    BoardHAL::prepareForRestart();
+    delay(500);
+    BoardHAL::restart();
+    return;
+  }
 
   const bool wired_dhcp_pending =
       wired_link_up && !wired_connected && wired_ip_wait_until != 0 &&
@@ -1170,14 +1526,13 @@ void HomeTilesNetworkManager::update() {
   }
 
   if (wired_connected) {
-    wifi_fallback_at = 0;
     wired_ip_wait_until = 0;
     stopWifiForWired();
   } else if (wired_was_connected) {
-    wifi_fallback_at = now_ms + kWifiFallbackDelayMs;
-    wifi_suspended_for_wired = false;
-    Serial.printf("[Network] Ethernet getrennt; WiFi-Fallback in %u ms\n",
-                  static_cast<unsigned>(kWifiFallbackDelayMs));
+    // Fester Ethernet-Modus: kein WLAN-Fallback mehr. Bis Kabel/DHCP
+    // wiederkommen, ist das Geraet bewusst offline.
+    Serial.println(
+        "[Network] Ethernet getrennt; warte auf neuen Link (kein WLAN-Fallback)");
   }
   wired_was_connected = wired_connected;
 
@@ -1210,13 +1565,10 @@ void HomeTilesNetworkManager::update() {
   if (!is_connected) {
     wifi_ps_state_known = false;
 
-    // Nicht verbunden - Retry (ausser der Nutzer hat manuell getrennt)
-    const bool fallback_ready =
-        wifi_fallback_at == 0 ||
-        static_cast<int32_t>(now_ms - wifi_fallback_at) >= 0;
-    if (!wifi_manual_disconnect && fallback_ready && !wired_dhcp_pending &&
+    // Nicht verbunden - Retry (ausser der Nutzer hat manuell getrennt).
+    // connectWifi() selbst blockt im festen Ethernet-Modus.
+    if (!wifi_manual_disconnect && !wired_dhcp_pending &&
         (int32_t)(now_ms - wifi_retry_at) >= 0) {
-      wifi_fallback_at = 0;
       connectWifi();
     }
 
@@ -1229,6 +1581,10 @@ void HomeTilesNetworkManager::update() {
     }
   } else {
     // Verbunden
+
+    // Eine stehende WLAN-Verbindung beweist, dass der hosted-Treiber lebt -
+    // langsame Einzelversuche davor waren dann Last, kein Wedge.
+    if (networkTransport.isWifiConnected()) wifi_start_failures = 0;
 
     if (!was_connected) {
       logNetworkHeap(networkTransport.activeName());

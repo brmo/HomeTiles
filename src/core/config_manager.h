@@ -66,6 +66,11 @@ struct DeviceConfig {
   uint16_t auto_sleep_battery_seconds; // Seconds until auto-sleep (5-3600)
   uint8_t status_time_font_size;      // 24 or 48
   uint8_t status_date_font_size;      // 20 or 24
+
+  // Fester Netzwerkmodus: false = WLAN (Default), true = Ethernet. Wird nur
+  // beim Boot ausgewertet - im Ethernet-Modus startet WLAN/ESP-Hosted nie,
+  // damit sich beide Stacks nicht das interne DMA-RAM streitig machen.
+  bool ethernet_enabled;
 };
 
 class ConfigManager {
@@ -92,6 +97,7 @@ public:
 
   bool saveScreensaverTimeout(bool enabled, uint16_t seconds);
   bool saveTileBorders(bool enabled);
+  bool saveEthernetEnabled(bool enabled);
 
   void setRuntimeDisplayRotation(bool rotate_180);
   void setRuntimeDisplayRotationQuarters(uint8_t rotation_quarters);

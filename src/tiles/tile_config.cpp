@@ -17,6 +17,39 @@ static constexpr uint8_t LEGACY_NAV_KIND_SETTINGS = 1;
 static constexpr uint8_t LEGACY_NAV_KIND_BACK = 2;
 static constexpr uint8_t LEGACY_TAB_SETTINGS = 3;
 
+template <typename T>
+struct HeapCapsDeleter {
+  void operator()(T* ptr) const {
+    if (ptr) heap_caps_free(ptr);
+  }
+};
+
+template <typename T>
+using HeapCapsPtr = std::unique_ptr<T, HeapCapsDeleter<T>>;
+
+template <typename T>
+static HeapCapsPtr<T> allocPackedGridScratch(size_t count, const char* operation) {
+  T* ptr = static_cast<T*>(heap_caps_calloc(
+      count, sizeof(T), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!ptr) {
+    // Keep storage operations functional on a board without usable PSRAM.
+    // This fallback is temporary and released again when the call returns.
+    ptr = static_cast<T*>(heap_caps_calloc(
+        count, sizeof(T), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    if (ptr) {
+      Serial.printf("[TileConfig] WARN: %s-Scratch nutzt temporaer internen RAM (%u Bytes)\n",
+                    operation ? operation : "Grid",
+                    static_cast<unsigned>(count * sizeof(T)));
+    }
+  }
+  if (!ptr) {
+    Serial.printf("[TileConfig] ERROR: Kein Speicher fuer %s-Scratch (%u Bytes)\n",
+                  operation ? operation : "Grid",
+                  static_cast<unsigned>(count * sizeof(T)));
+  }
+  return HeapCapsPtr<T>(ptr);
+}
+
 // Feste Längen für gepackte Strings (inkl. Nullterminator)
 static constexpr size_t TITLE_MAX     = 32;
 static constexpr size_t ICON_MAX      = 32;  // MDI Icon Name (z.B. "thermometer")
@@ -1937,8 +1970,10 @@ bool TileConfig::saveGrid(const char* prefix, const TileGridConfig& grid) {
                 static_cast<unsigned>(QUARTERS_PER_GRID),
                 static_cast<unsigned>(sizeof(PackedQuarterGridV6)));
 
-  static PackedQuarterGridV6 packed[QUARTERS_PER_GRID];
-  memset(packed, 0, sizeof(packed));
+  auto packed_storage =
+      allocPackedGridScratch<PackedQuarterGridV6>(QUARTERS_PER_GRID, "Legacy-Save");
+  PackedQuarterGridV6* packed = packed_storage.get();
+  if (!packed) return false;
   for (size_t q = 0; q < QUARTERS_PER_GRID; ++q) {
     packed[q].version = PACKED_GRID_VERSION;
     packed[q].quarter_index = static_cast<uint8_t>(q);
@@ -2113,8 +2148,10 @@ bool TileConfig::loadFolderGridEntitiesOnly(uint16_t folder_id, TileEntitySlot* 
   if (!folderExists(folder_id)) return false;
   if (count < TILES_PER_GRID) return false;
 
-  static PackedQuarterGridV7 packed_v7[QUARTERS_PER_GRID];
-  memset(packed_v7, 0, sizeof(packed_v7));
+  auto packed_storage =
+      allocPackedGridScratch<PackedQuarterGridV7>(QUARTERS_PER_GRID, "Entity-Load");
+  PackedQuarterGridV7* packed_v7 = packed_storage.get();
+  if (!packed_v7) return false;
   uint32_t t_read0 = millis();
   bool read_ok = readGridSd(folder_id, packed_v7, QUARTERS_PER_GRID);
   uint32_t read_ms = millis() - t_read0;
@@ -2565,8 +2602,10 @@ bool TileConfig::loadGrid(uint16_t folder_id, TileGridConfig& grid,
   bool ok = false;
   bool needs_migration_save = false;
 
-  static PackedQuarterGridV7 packed_v7[QUARTERS_PER_GRID];
-  memset(packed_v7, 0, sizeof(packed_v7));
+  auto packed_v7_storage =
+      allocPackedGridScratch<PackedQuarterGridV7>(QUARTERS_PER_GRID, "Grid-Load-v7");
+  PackedQuarterGridV7* packed_v7 = packed_v7_storage.get();
+  if (!packed_v7) return false;
   if (readGridSd(folder_id, packed_v7, QUARTERS_PER_GRID)) {
     ok = true;
     for (size_t q = 0; q < QUARTERS_PER_GRID; ++q) {
@@ -2582,8 +2621,11 @@ bool TileConfig::loadGrid(uint16_t folder_id, TileGridConfig& grid,
                   static_cast<unsigned>(folder_id),
                   static_cast<unsigned>(packed_v7[0].version));
   } else {
-    static PackedQuarterGridV6 packed_v6[QUARTERS_PER_GRID];
-    memset(packed_v6, 0, sizeof(packed_v6));
+    packed_v7_storage.reset();
+    auto packed_v6_storage =
+        allocPackedGridScratch<PackedQuarterGridV6>(QUARTERS_PER_GRID, "Grid-Load-v6");
+    PackedQuarterGridV6* packed_v6 = packed_v6_storage.get();
+    if (!packed_v6) return false;
     if (readGridSdV6(folder_id, packed_v6, QUARTERS_PER_GRID) ||
         (folder_id == kRootFolderId && storageReady() &&
          readPackedGridFileV6(tileGridFileLegacy("tab0"), packed_v6, QUARTERS_PER_GRID))) {
@@ -2663,8 +2705,10 @@ bool TileConfig::saveGrid(uint16_t folder_id, const TileGridConfig& grid,
                 static_cast<unsigned>(QUARTERS_PER_GRID),
                 static_cast<unsigned>(sizeof(PackedQuarterGridV7)));
 
-  static PackedQuarterGridV7 packed[QUARTERS_PER_GRID];
-  memset(packed, 0, sizeof(packed));
+  auto packed_storage =
+      allocPackedGridScratch<PackedQuarterGridV7>(QUARTERS_PER_GRID, "Grid-Save");
+  PackedQuarterGridV7* packed = packed_storage.get();
+  if (!packed) return false;
   for (size_t q = 0; q < QUARTERS_PER_GRID; ++q) {
     packed[q].version = PACKED_GRID_VERSION;
     packed[q].quarter_index = static_cast<uint8_t>(q);

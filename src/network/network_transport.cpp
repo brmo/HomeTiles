@@ -3,21 +3,43 @@
 #include <Network.h>
 #include <WiFi.h>
 
+#include "src/core/config_manager.h"
 #include "src/devices/device.h"
 #include "src/network/native_ethernet_backend.h"
 #include "src/network/usb_ethernet_backend.h"
 
 NetworkTransportManager networkTransport;
 
+bool NetworkTransportManager::deviceSupportsEthernet() {
+  if (Device::kCapabilities.supports_native_ethernet) return true;
+#if defined(HOMETILES_USB_ETHERNET_DEV)
+  return Device::kCapabilities.supports_usb_host_network;
+#else
+  return false;
+#endif
+}
+
 void NetworkTransportManager::begin() {
   if (begun_) return;
   begun_ = true;
+  // Fester Netzwerkmodus fuer diese Boot-Session: WLAN ODER Ethernet, nie
+  // beide. Zwei Stacks gleichzeitig (USB-Host + ESP-Hosted) haben sich das
+  // knappe interne DMA-RAM zerlegt (Feldtest 2026-07-17, 8-Zoll) - deshalb
+  // starten die Ethernet-Backends nur noch, wenn der Nutzer den Modus
+  // ausdruecklich umgestellt hat.
+  ethernet_mode_ =
+      deviceSupportsEthernet() && configManager.getConfig().ethernet_enabled;
   Network.begin();
-  if (Device::kCapabilities.supports_usb_host_network) {
-    usbEthernetBackend.begin();
-  }
-  if (Device::kCapabilities.supports_native_ethernet) {
-    nativeEthernetBackend.begin();
+  if (ethernet_mode_) {
+#if defined(HOMETILES_USB_ETHERNET_DEV)
+    if (Device::kCapabilities.supports_usb_host_network) {
+      usbEthernetBackend.begin();
+    }
+#endif
+    if (Device::kCapabilities.supports_native_ethernet) {
+      nativeEthernetBackend.begin();
+    }
+    Serial.println("[Network/Transport] Netzwerkmodus: Ethernet");
   }
   refreshActiveTransport();
 }

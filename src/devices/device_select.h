@@ -5,8 +5,8 @@
 // For a quick manual switch, uncomment exactly one target below:
 //
 #if !defined(HOMETILES_CI_TARGET)
-// #define DEVICE_WAVESHARE_4B
-#define DEVICE_WAVESHARE_TOUCH_LCD_8
+#define DEVICE_WAVESHARE_4B
+// #define DEVICE_WAVESHARE_TOUCH_LCD_8
 // #define DEVICE_M5STACKS_TAB5
 #endif
 //
