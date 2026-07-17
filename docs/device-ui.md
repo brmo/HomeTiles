@@ -59,6 +59,13 @@ and a volume slider.
 
 ![Media popup](images/8in-media-popup.png){ width="70%" }
 
+### Climate
+
+Climate tiles show the current room temperature and indicate whether the entity
+is actively heating, cooling, drying, or running its fan. Their popup provides
+a circular target-temperature control, plus/minus buttons, and the HVAC modes
+supported by the selected Home Assistant entity.
+
 ## Settings
 
 The settings tile (gear icon) opens the on-device settings menu:

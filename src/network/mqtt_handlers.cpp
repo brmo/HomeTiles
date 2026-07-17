@@ -1148,7 +1148,8 @@ static void rebuildDynamicRoutes(std::vector<DynamicSensorRoute>& routes) {
     for (size_t i = 0; i < count; ++i) {
       const FolderEntitySlotView& slot = slots[i];
       if ((slot.type == TILE_SENSOR || slot.type == TILE_ENERGY ||
-           slot.type == TILE_SWITCH || slot.type == TILE_MEDIA) &&
+           slot.type == TILE_SWITCH || slot.type == TILE_MEDIA ||
+           slot.type == TILE_CLIMATE) &&
           slot.entity[0]) {
         add_route(String(slot.entity), -1);
         if (slot.type == TILE_MEDIA) {
@@ -1798,6 +1799,57 @@ void mqttPublishMediaMute(const char* entity_id, bool muted) {
   Serial.printf("Media mute -> MQTT '%s' %s (%s, priority)\n",
                 topic, muted ? "on" : "off",
                 queued ? "queued" : "queue-full");
+}
+
+void mqttPublishClimateTemperature(const char* entity_id,
+                                   float temperature,
+                                   bool use_range,
+                                   float target_low,
+                                   float target_high) {
+  if (!entity_id || !*entity_id) return;
+  if (!networkManager.isMqttConnected()) {
+    Serial.printf("Climate temperature skipped (MQTT offline): %s\n", entity_id);
+    return;
+  }
+  const char* topic = mqttTopics.topic(TopicKey::CLIMATE_CMND);
+  if (!topic || !*topic) return;
+
+  char payload[320];
+  if (use_range) {
+    snprintf(payload, sizeof(payload),
+             "{\"entity_id\":\"%s\",\"command\":\"set_temperature\","
+             "\"target_temp_low\":%.2f,\"target_temp_high\":%.2f}",
+             entity_id, target_low, target_high);
+  } else {
+    snprintf(payload, sizeof(payload),
+             "{\"entity_id\":\"%s\",\"command\":\"set_temperature\","
+             "\"temperature\":%.2f}",
+             entity_id, temperature);
+  }
+  const bool queued =
+      networkManager.mqttEnqueuePublishPriority(topic, payload, false);
+  Serial.printf("Climate temperature -> MQTT '%s' (%s, priority)\n",
+                topic, queued ? "queued" : "queue-full");
+}
+
+void mqttPublishClimateHvacMode(const char* entity_id, const char* hvac_mode) {
+  if (!entity_id || !*entity_id || !hvac_mode || !*hvac_mode) return;
+  if (!networkManager.isMqttConnected()) {
+    Serial.printf("Climate mode skipped (MQTT offline): %s\n", entity_id);
+    return;
+  }
+  const char* topic = mqttTopics.topic(TopicKey::CLIMATE_CMND);
+  if (!topic || !*topic) return;
+
+  char payload[256];
+  snprintf(payload, sizeof(payload),
+           "{\"entity_id\":\"%s\",\"command\":\"set_hvac_mode\","
+           "\"hvac_mode\":\"%s\"}",
+           entity_id, hvac_mode);
+  const bool queued =
+      networkManager.mqttEnqueuePublishPriority(topic, payload, false);
+  Serial.printf("Climate mode -> MQTT '%s' (%s, priority)\n",
+                topic, queued ? "queued" : "queue-full");
 }
 
 void mqttPublishLightCommand(const char* entity_id,

@@ -30,6 +30,10 @@ extern SwitchState g_tab1_switch_states[];
 extern SwitchState g_tab2_switch_states[];
 extern SwitchState g_screensaver_switch_states[];
 
+extern ClimateTileWidgets g_tab0_climate[];
+extern ClimateTileWidgets g_tab1_climate[];
+extern ClimateTileWidgets g_tab2_climate[];
+
 void set_label_style(lv_obj_t* lbl, lv_color_t c, const lv_font_t* f);
 void set_tile_grid_cell(lv_obj_t* obj, uint8_t col, uint8_t row, uint8_t span_w, uint8_t span_h);
 
@@ -38,6 +42,8 @@ SwitchTileWidgets* tile_renderer_get_switch_widgets(GridType grid_type);
 WeatherTileWidgets* tile_renderer_get_weather_widgets(GridType grid_type);
 MediaTileWidgets* tile_renderer_get_media_widgets(GridType grid_type);
 SwitchState* tile_renderer_get_switch_states(GridType grid_type);
+ClimateTileWidgets* tile_renderer_get_climate_widgets(GridType grid_type);
+ClimateState* tile_renderer_get_climate_states(GridType grid_type);
 const Tile* tile_renderer_get_tile_config(GridType grid_type, uint8_t index);
 
 bool is_light_entity_id(const String& entity_id);

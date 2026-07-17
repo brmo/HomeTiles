@@ -32,7 +32,8 @@ enum TileType : uint8_t {
   TILE_RADAR = 13,
   TILE_ENERGY = 14,
   TILE_MEDIA = 15,
-  TILE_PIXELANIM = 16
+  TILE_PIXELANIM = 16,
+  TILE_CLIMATE = 17
 };
 
 // A media tile renders its (often long) title as a horizontally scrolling band the
@@ -151,7 +152,8 @@ static inline uint8_t getTilePopupOpenMode(const Tile& tile) {
                ? TILE_POPUP_OPEN_LONG_PRESS
                : TILE_POPUP_OPEN_SHORT_PRESS;
   }
-  if (tile.type != TILE_SENSOR && tile.type != TILE_WEATHER && tile.type != TILE_ENERGY) {
+  if (tile.type != TILE_SENSOR && tile.type != TILE_WEATHER &&
+      tile.type != TILE_ENERGY && tile.type != TILE_CLIMATE) {
     return TILE_POPUP_OPEN_LONG_PRESS;
   }
   return (tile.popup_open_mode == TILE_POPUP_OPEN_SHORT_PRESS)
@@ -175,7 +177,8 @@ static inline void setTilePopupOpenMode(Tile& tile, uint8_t mode) {
     tile.key_modifier = 0;
     return;
   }
-  if (tile.type != TILE_SENSOR && tile.type != TILE_WEATHER && tile.type != TILE_ENERGY) return;
+  if (tile.type != TILE_SENSOR && tile.type != TILE_WEATHER &&
+      tile.type != TILE_ENERGY && tile.type != TILE_CLIMATE) return;
   tile.popup_open_mode = (mode == TILE_POPUP_OPEN_SHORT_PRESS)
                              ? TILE_POPUP_OPEN_SHORT_PRESS
                              : TILE_POPUP_OPEN_LONG_PRESS;

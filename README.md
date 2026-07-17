@@ -215,7 +215,7 @@ More screenshots and how everything works: [Web Admin Panel](docs/web-admin.md) 
 - microSD file manager in the web admin (upload, download, rename, delete, folders)
 - Runtime storage on internal LittleFS; microSD is optional
 - Screenshot export to microSD from the web interface
-- Tile types currently include: sensor, energy, weather, scene, switch, media,
+- Tile types currently include: sensor, energy, weather, scene, switch, climate, media,
   folder, clock, text, counter, key, animation, and empty — see [Tile Types](docs/tiles.md)
 
 ## Installation

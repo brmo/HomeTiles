@@ -83,7 +83,8 @@ static bool tileTypeHasDynamicMqttRoute(TileType type) {
   return type == TILE_SENSOR ||
          type == TILE_SWITCH ||
          type == TILE_MEDIA ||
-         type == TILE_WEATHER;
+         type == TILE_WEATHER ||
+         type == TILE_CLIMATE;
 }
 
 static String dynamicMqttEntityForTile(const Tile& tile) {
@@ -2161,6 +2162,8 @@ void WebAdminServer::handleGetEntityOptions() {
   appendHumanizedList(json, "sensors", parseSensorList(ha.sensors_text));
   json += ",";
   appendHumanizedList(json, "weathers", parseSensorList(ha.weathers_text));
+  json += ",";
+  appendHumanizedList(json, "climates", parseSensorList(ha.climates_text));
   json += ",";
 
   json += "\"energy\":[";

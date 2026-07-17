@@ -1,5 +1,6 @@
 #include "src/ui/weather_popup.h"
 #include "src/ui/light_popup.h"
+#include "src/ui/climate_popup.h"
 #include "src/ui/sensor_popup.h"
 #include "src/ui/media_popup.h"
 #include "src/ui/popup_layout.h"
@@ -3862,6 +3863,7 @@ static void build_popup_ui(WeatherPopupContext* ctx, const WeatherPopupInit& ini
 }  // namespace
 
 void show_weather_popup(const WeatherPopupInit& init) {
+  hide_climate_popup();
   if (!init.entity_id.length()) return;
 
   hide_light_popup();

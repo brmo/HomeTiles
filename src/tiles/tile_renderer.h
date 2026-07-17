@@ -30,6 +30,58 @@ struct SwitchTileWidgets {
   lv_obj_t* switch_obj = nullptr;
 };
 
+struct ClimateState {
+  bool valid = false;
+  bool has_current_temperature = false;
+  bool has_target_temperature = false;
+  bool has_target_range = false;
+  float current_temperature = 0.0f;
+  float target_temperature = 20.0f;
+  float target_temp_low = 18.0f;
+  float target_temp_high = 24.0f;
+  float min_temp = 7.0f;
+  float max_temp = 35.0f;
+  float target_temp_step = 0.5f;
+  char hvac_mode[16] = {};
+  char hvac_action[16] = {};
+  char temperature_unit[8] = {};
+  uint8_t hvac_modes_mask = 0;
+};
+
+enum ClimateHvacModeMask : uint8_t {
+  CLIMATE_MODE_OFF = 1U << 0,
+  CLIMATE_MODE_HEAT = 1U << 1,
+  CLIMATE_MODE_COOL = 1U << 2,
+  CLIMATE_MODE_HEAT_COOL = 1U << 3,
+  CLIMATE_MODE_AUTO = 1U << 4,
+  CLIMATE_MODE_DRY = 1U << 5,
+  CLIMATE_MODE_FAN_ONLY = 1U << 6
+};
+
+inline String climateHvacModesCsv(uint8_t mask) {
+  String modes;
+  auto append = [&](uint8_t bit, const char* name) {
+    if ((mask & bit) == 0) return;
+    if (modes.length()) modes += ',';
+    modes += name;
+  };
+  append(CLIMATE_MODE_OFF, "off");
+  append(CLIMATE_MODE_HEAT, "heat");
+  append(CLIMATE_MODE_COOL, "cool");
+  append(CLIMATE_MODE_HEAT_COOL, "heat_cool");
+  append(CLIMATE_MODE_AUTO, "auto");
+  append(CLIMATE_MODE_DRY, "dry");
+  append(CLIMATE_MODE_FAN_ONLY, "fan_only");
+  return modes;
+}
+
+struct ClimateTileWidgets {
+  lv_obj_t* icon_label = nullptr;
+  lv_obj_t* value_label = nullptr;
+  bool dynamic_icon = true;
+  uint32_t last_payload_hash = 0;
+};
+
 struct WeatherForecastWidgets {
   lv_obj_t* day_label = nullptr;
   lv_obj_t* sep_label = nullptr;
@@ -126,6 +178,8 @@ struct TileWidgetCache {
   SensorTileWidgets sensors[TILES_PER_GRID];
   SwitchTileWidgets switches[TILES_PER_GRID];
   SwitchState switch_states[TILES_PER_GRID];
+  ClimateTileWidgets climate[TILES_PER_GRID];
+  ClimateState climate_states[TILES_PER_GRID];
   WeatherTileWidgets weather[TILES_PER_GRID];
   MediaTileWidgets media[TILES_PER_GRID];
 };
@@ -166,6 +220,11 @@ void reset_switch_widgets(GridType grid_type);
 // THREAD-SAFE: Queue fuer Switch-Updates (MQTT Callback -> Main Loop)
 void queue_switch_tile_update(GridType grid_type, uint8_t grid_index, const char* payload);
 void process_switch_update_queue(uint8_t max_updates = 0);  // 0 = Queue komplett leeren
+
+void reset_climate_widget(GridType grid_type, uint8_t grid_index);
+void reset_climate_widgets(GridType grid_type);
+void queue_climate_tile_update(GridType grid_type, uint8_t grid_index, const char* payload);
+void process_climate_update_queue(uint8_t max_updates = 0);
 
 void reset_weather_widget(GridType grid_type, uint8_t grid_index);
 void reset_weather_widgets(GridType grid_type);

@@ -14,6 +14,7 @@
 #include "src/types/clock/clock_format.h"
 #include "src/types/energy/energy_data.h"
 #include "src/ui/light_popup.h"
+#include "src/ui/climate_popup.h"
 #include "src/ui/sensor_popup.h"
 #include "src/ui/weather_popup.h"
 #include "src/ui/media_popup.h"
@@ -976,6 +977,7 @@ void build_popup_ui(EnergyPopupContext* ctx, const EnergyPopupInit& init) {
 }  // namespace
 
 void show_energy_popup(const EnergyPopupInit& init) {
+  hide_climate_popup();
   if (!init.entity_id.length()) return;
 
   hide_light_popup();

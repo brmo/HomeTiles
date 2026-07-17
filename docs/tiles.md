@@ -86,6 +86,20 @@ directly on the tile.
 
 ![Media popup](images/8in-media-popup.png){ width="65%" }
 
+### Climate
+
+Controls a Home Assistant `climate` entity for heating, cooling, or air
+conditioning. The tile shows the current temperature and changes its icon and
+accent color when the device is actively heating, cooling, drying, or running
+its fan.
+
+**Config:** climate entity and popup trigger.
+
+**Popup:** a circular target-temperature control with plus/minus buttons and
+buttons for every HVAC mode reported by the entity. `heat_cool` entities with a
+low/high target range keep that range while the circular control moves its
+center.
+
 ## Local Tiles
 
 These tiles work without Home Assistant.

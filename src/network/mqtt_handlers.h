@@ -21,6 +21,12 @@ void mqttPublishMediaCommand(const char* entity_id, const char* command);
 void mqttPublishMediaSeek(const char* entity_id, float position_seconds);
 void mqttPublishMediaVolume(const char* entity_id, float volume_level);
 void mqttPublishMediaMute(const char* entity_id, bool muted);
+void mqttPublishClimateTemperature(const char* entity_id,
+                                   float temperature,
+                                   bool use_range = false,
+                                   float target_low = 0.0f,
+                                   float target_high = 0.0f);
+void mqttPublishClimateHvacMode(const char* entity_id, const char* hvac_mode);
 void mqttPublishLightCommand(const char* entity_id,
                              const char* state,
                              int brightness_pct,

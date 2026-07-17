@@ -16,6 +16,7 @@
 #include "src/types/energy/renderer.h"
 #include "src/types/weather/renderer.h"
 #include "src/types/media/renderer.h"
+#include "src/types/climate/renderer.h"
 #include "src/types/pixelanim/renderer.h"
 
 #include "src/types/clock/web_handler.h"
@@ -29,6 +30,7 @@
 #include "src/types/energy/web_handler.h"
 #include "src/types/weather/web_handler.h"
 #include "src/types/media/web_handler.h"
+#include "src/types/climate/web_handler.h"
 #include "src/types/pixelanim/web_handler.h"
 
 #include "src/types/clock/web_html.h"
@@ -42,6 +44,7 @@
 #include "src/types/energy/web_html.h"
 #include "src/types/weather/web_html.h"
 #include "src/types/media/web_html.h"
+#include "src/types/climate/web_html.h"
 #include "src/types/pixelanim/web_html.h"
 
 #include "src/types/clock/web_scripts.h"
@@ -55,6 +58,7 @@
 #include "src/types/energy/web_scripts.h"
 #include "src/types/weather/web_scripts.h"
 #include "src/types/media/web_scripts.h"
+#include "src/types/climate/web_scripts.h"
 #include "src/types/pixelanim/web_scripts.h"
 
 #include "src/types/clock/web_styles.h"
@@ -68,6 +72,7 @@
 #include "src/types/energy/web_styles.h"
 #include "src/types/weather/web_styles.h"
 #include "src/types/media/web_styles.h"
+#include "src/types/climate/web_styles.h"
 #include "src/types/pixelanim/web_styles.h"
 
 #include "src/core/config_manager.h"
@@ -202,6 +207,16 @@ lv_obj_t* render_media_wrapper(lv_obj_t* parent,
   return render_media_tile(parent, col, row, tile, index, grid_type);
 }
 
+lv_obj_t* render_climate_wrapper(lv_obj_t* parent,
+                                 int col,
+                                 int row,
+                                 const Tile& tile,
+                                 uint8_t index,
+                                 GridType grid_type,
+                                 scene_publish_cb_t) {
+  return render_climate_tile(parent, col, row, tile, index, grid_type);
+}
+
 lv_obj_t* render_empty_wrapper(lv_obj_t* parent,
                                int col,
                                int row,
@@ -279,6 +294,11 @@ bool apply_media_wrapper(WebServer& server, Tile& tile, const TileTypeApplyConte
   return true;
 }
 
+bool apply_climate_wrapper(WebServer& server, Tile& tile, const TileTypeApplyContext&) {
+  apply_climate_fields_from_request(server, tile);
+  return true;
+}
+
 bool apply_pixelanim_wrapper(WebServer& server, Tile& tile, const TileTypeApplyContext&) {
   apply_pixelanim_fields_from_request(server, tile);
   return true;
@@ -351,6 +371,11 @@ void append_energy_fields_wrapper(String& html, const TileTypeWebContext& ctx) {
 
 void append_media_fields_wrapper(String& html, const TileTypeWebContext& ctx) {
   append_media_fields_html(html, safeString(ctx.tab_id), safeStrings(ctx.media_options));
+}
+
+void append_climate_fields_wrapper(String& html, const TileTypeWebContext& ctx) {
+  append_climate_fields_html(
+      html, safeString(ctx.tab_id), safeStrings(ctx.climate_options));
 }
 
 void append_pixelanim_fields_wrapper(String& html, const TileTypeWebContext& ctx) {
@@ -519,6 +544,24 @@ const TileTypeDescriptor kTileTypes[] = {
     append_media_fields_wrapper,
     append_media_styles,
     append_media_scripts
+  },
+  {
+    TILE_CLIMATE,
+    "Climate",
+    "climate",
+    "climate",
+    "climate",
+    nullptr,
+    "loadClimateFields",
+    "saveClimateFields",
+    "resetClimateFields",
+    0x2A2A2A,
+    false,
+    render_climate_wrapper,
+    apply_climate_wrapper,
+    append_climate_fields_wrapper,
+    append_climate_styles,
+    append_climate_scripts
   },
   {
     TILE_PIXELANIM,
@@ -697,6 +740,9 @@ void append_tile_type_select_options(String& html) {
       case TILE_FOLDER: label = tr.tile_type_folder; break;
       case TILE_SWITCH: label = tr.tile_type_switch; break;
       case TILE_MEDIA: label = tr.tile_type_media; break;
+      case TILE_CLIMATE:
+        label = strcmp(tr.html_lang, "de") == 0 ? "Klima" : "Climate";
+        break;
       case TILE_CLOCK: label = tr.tile_type_clock; break;
       case TILE_TEXT: label = tr.tile_type_text; break;
       case TILE_COUNTER: label = tr.tile_type_counter; break;
@@ -727,6 +773,9 @@ void append_tile_type_registry_js(String& html) {
       case TILE_FOLDER: label = tr.tile_type_folder; break;
       case TILE_SWITCH: label = tr.tile_type_switch; break;
       case TILE_MEDIA: label = tr.tile_type_media; break;
+      case TILE_CLIMATE:
+        label = strcmp(tr.html_lang, "de") == 0 ? "Klima" : "Climate";
+        break;
       case TILE_CLOCK: label = tr.tile_type_clock; break;
       case TILE_TEXT: label = tr.tile_type_text; break;
       case TILE_COUNTER: label = tr.tile_type_counter; break;

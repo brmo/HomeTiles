@@ -7,6 +7,7 @@
 #include "src/ui/weather_popup.h"
 #include "src/ui/energy_popup.h"
 #include "src/ui/media_popup.h"
+#include "src/ui/climate_popup.h"
 #include "src/core/display_manager.h"
 #include "src/core/config_manager.h"
 #include "src/tiles/mdi_icons.h"
@@ -125,6 +126,7 @@ void UIManager::buildUI(scene_publish_cb_t scene_cb, hotspot_start_cb_t hotspot_
   preload_weather_popup();
   preload_energy_popup();
   preload_media_popup();
+  preload_climate_popup();
   mqttPublishDeviceSettings();
 
   Serial.println("[UI] UI aufgebaut");

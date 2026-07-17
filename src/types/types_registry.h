@@ -16,6 +16,7 @@ struct TileTypeWebContext {
   const std::vector<SceneOption>* scene_options = nullptr;
   const std::vector<String>* switch_options = nullptr;
   const std::vector<String>* media_options = nullptr;
+  const std::vector<String>* climate_options = nullptr;
   const String* navigate_options_html = nullptr;
 };
 

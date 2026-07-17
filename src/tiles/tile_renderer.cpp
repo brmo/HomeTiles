@@ -8,6 +8,7 @@
 #include "src/ui/light_popup.h"
 #include "src/ui/sensor_popup.h"
 #include "src/ui/media_popup.h"
+#include "src/ui/climate_popup.h"
 #include "src/types/types_registry.h"
 #include "src/tiles/tile_renderer_fonts.h"
 #include "src/tiles/tile_renderer_shared.h"
@@ -35,6 +36,7 @@
 #include <soc/soc_caps.h>
 #endif
 #include <math.h>
+#include <new>
 #include <stdlib.h>
 #include <time.h>
 #include <vector>
@@ -69,6 +71,44 @@ SwitchState g_tab0_switch_states[TILES_PER_GRID];
 SwitchState g_tab1_switch_states[TILES_PER_GRID];
 SwitchState g_tab2_switch_states[TILES_PER_GRID];
 SwitchState g_screensaver_switch_states[TILES_PER_GRID];
+
+ClimateTileWidgets g_tab0_climate[TILES_PER_GRID];
+ClimateTileWidgets g_tab1_climate[TILES_PER_GRID];
+ClimateTileWidgets g_tab2_climate[TILES_PER_GRID];
+static ClimateState* g_tab0_climate_states = nullptr;
+static ClimateState* g_tab1_climate_states = nullptr;
+static ClimateState* g_tab2_climate_states = nullptr;
+static ClimateState g_climate_emergency_states[TILES_PER_GRID];
+
+static ClimateState* allocate_climate_states(const char* grid_name) {
+  void* memory = heap_caps_malloc(
+      sizeof(ClimateState) * TILES_PER_GRID,
+      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  bool internal_fallback = false;
+  if (!memory) {
+    memory = heap_caps_malloc(
+        sizeof(ClimateState) * TILES_PER_GRID,
+        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    internal_fallback = memory != nullptr;
+  }
+  if (!memory) {
+    Serial.printf(
+        "[Climate] WARN: Kein State-Speicher fuer %s, nutze Notfallpuffer\n",
+        grid_name ? grid_name : "?");
+    return g_climate_emergency_states;
+  }
+  ClimateState* states = static_cast<ClimateState*>(memory);
+  for (size_t i = 0; i < TILES_PER_GRID; ++i) {
+    new (&states[i]) ClimateState();
+  }
+  if (internal_fallback) {
+    Serial.printf(
+        "[Climate] WARN: %s-State nutzt %u Bytes internen RAM\n",
+        grid_name ? grid_name : "?",
+        static_cast<unsigned>(sizeof(ClimateState) * TILES_PER_GRID));
+  }
+  return states;
+}
 
 SensorTileWidgets* tile_renderer_get_sensor_widgets(GridType grid_type) {
   if (grid_type == GridType::SCREENSAVER) return g_screensaver_sensors;
@@ -117,6 +157,31 @@ SwitchState* tile_renderer_get_switch_states(GridType grid_type) {
   if (grid_type == GridType::TAB1) return g_tab1_switch_states;
   if (grid_type == GridType::TAB2) return g_tab2_switch_states;
   return g_tab0_switch_states;
+}
+
+ClimateTileWidgets* tile_renderer_get_climate_widgets(GridType grid_type) {
+  if (grid_type == GridType::TAB1) return g_tab1_climate;
+  if (grid_type == GridType::TAB2) return g_tab2_climate;
+  return g_tab0_climate;
+}
+
+ClimateState* tile_renderer_get_climate_states(GridType grid_type) {
+  if (grid_type == GridType::TAB1) {
+    if (!g_tab1_climate_states) {
+      g_tab1_climate_states = allocate_climate_states("TAB1");
+    }
+    return g_tab1_climate_states;
+  }
+  if (grid_type == GridType::TAB2) {
+    if (!g_tab2_climate_states) {
+      g_tab2_climate_states = allocate_climate_states("TAB2");
+    }
+    return g_tab2_climate_states;
+  }
+  if (!g_tab0_climate_states) {
+    g_tab0_climate_states = allocate_climate_states("TAB0");
+  }
+  return g_tab0_climate_states;
 }
 
 const Tile* tile_renderer_get_tile_config(GridType grid_type, uint8_t index) {
@@ -202,6 +267,23 @@ void reset_switch_widgets(GridType grid_type) {
   clear_switch_widgets(grid_type);
 }
 
+void reset_climate_widget(GridType grid_type, uint8_t grid_index) {
+  if (grid_index >= TILES_PER_GRID) return;
+  ClimateTileWidgets* widgets = tile_renderer_get_climate_widgets(grid_type);
+  ClimateState* states = tile_renderer_get_climate_states(grid_type);
+  widgets[grid_index] = {};
+  states[grid_index] = {};
+}
+
+void reset_climate_widgets(GridType grid_type) {
+  ClimateTileWidgets* widgets = tile_renderer_get_climate_widgets(grid_type);
+  ClimateState* states = tile_renderer_get_climate_states(grid_type);
+  for (size_t i = 0; i < TILES_PER_GRID; ++i) {
+    widgets[i] = {};
+    states[i] = {};
+  }
+}
+
 static void clear_weather_widgets(GridType grid_type) {
   WeatherTileWidgets* target = g_tab0_weather;
   if (grid_type == GridType::TAB1) target = g_tab1_weather;
@@ -255,18 +337,26 @@ void reset_media_widgets(GridType grid_type) {
 
 void tile_renderer_snapshot_tab0(TileWidgetCache* out) {
   if (!out) return;
+  ClimateState* climate_states =
+      tile_renderer_get_climate_states(GridType::TAB0);
   memcpy(out->sensors, g_tab0_sensors, sizeof(g_tab0_sensors));
   memcpy(out->switches, g_tab0_switches, sizeof(g_tab0_switches));
   memcpy(out->switch_states, g_tab0_switch_states, sizeof(g_tab0_switch_states));
+  memcpy(out->climate, g_tab0_climate, sizeof(g_tab0_climate));
+  memcpy(out->climate_states, climate_states, sizeof(out->climate_states));
   memcpy(out->weather, g_tab0_weather, sizeof(g_tab0_weather));
   memcpy(out->media, g_tab0_media, sizeof(g_tab0_media));
 }
 
 void tile_renderer_restore_tab0(const TileWidgetCache* in) {
   if (!in) return;
+  ClimateState* climate_states =
+      tile_renderer_get_climate_states(GridType::TAB0);
   memcpy(g_tab0_sensors, in->sensors, sizeof(g_tab0_sensors));
   memcpy(g_tab0_switches, in->switches, sizeof(g_tab0_switches));
   memcpy(g_tab0_switch_states, in->switch_states, sizeof(g_tab0_switch_states));
+  memcpy(g_tab0_climate, in->climate, sizeof(g_tab0_climate));
+  memcpy(climate_states, in->climate_states, sizeof(in->climate_states));
   memcpy(g_tab0_weather, in->weather, sizeof(g_tab0_weather));
   memcpy(g_tab0_media, in->media, sizeof(g_tab0_media));
 }
@@ -1582,6 +1672,283 @@ void process_switch_update_queue(uint8_t max_updates) {
       ++processed;
     }
     g_switch_tail = (g_switch_tail + 1) % SWITCH_QUEUE_SIZE;
+  }
+}
+
+static void climate_copy_text(char* dest, size_t dest_size, const String& value) {
+  if (!dest || dest_size == 0) return;
+  size_t len = value.length();
+  if (len >= dest_size) len = dest_size - 1;
+  memcpy(dest, value.c_str(), len);
+  dest[len] = '\0';
+}
+
+static void climate_normalize_modes(String& modes) {
+  modes.replace("[", "");
+  modes.replace("]", "");
+  modes.replace("\"", "");
+  modes.replace("'", "");
+  modes.replace(" ", "");
+  modes.trim();
+  modes.toLowerCase();
+}
+
+static uint8_t climate_modes_mask(const String& normalized_modes) {
+  uint8_t mask = 0;
+  int start = 0;
+  while (start <= normalized_modes.length()) {
+    int comma = normalized_modes.indexOf(',', start);
+    if (comma < 0) comma = normalized_modes.length();
+    const String mode = normalized_modes.substring(start, comma);
+    if (mode == "off") mask |= CLIMATE_MODE_OFF;
+    else if (mode == "heat") mask |= CLIMATE_MODE_HEAT;
+    else if (mode == "cool") mask |= CLIMATE_MODE_COOL;
+    else if (mode == "heat_cool") mask |= CLIMATE_MODE_HEAT_COOL;
+    else if (mode == "auto") mask |= CLIMATE_MODE_AUTO;
+    else if (mode == "dry") mask |= CLIMATE_MODE_DRY;
+    else if (mode == "fan_only") mask |= CLIMATE_MODE_FAN_ONLY;
+    if (comma >= normalized_modes.length()) break;
+    start = comma + 1;
+  }
+  return mask;
+}
+
+static ClimateState parse_climate_payload(const char* payload) {
+  ClimateState out;
+  if (!payload) return out;
+  String json(payload);
+  json.trim();
+  if (!json.startsWith("{")) return out;
+
+  auto parse_source = [&](const String& source) {
+    String text;
+    if (extract_json_string_field(source, "hvac_mode", text) ||
+        extract_json_string_field(source, "state", text)) {
+      text.trim();
+      text.toLowerCase();
+      climate_copy_text(out.hvac_mode, sizeof(out.hvac_mode), text);
+    }
+    if (extract_json_string_field(source, "hvac_action", text)) {
+      text.trim();
+      text.toLowerCase();
+      climate_copy_text(out.hvac_action, sizeof(out.hvac_action), text);
+    }
+    if (extract_json_string_field(source, "temperature_unit", text) ||
+        extract_json_string_field(source, "unit_of_measurement", text)) {
+      text.trim();
+      decode_basic_json_escapes(text);
+      climate_copy_text(out.temperature_unit, sizeof(out.temperature_unit), text);
+    }
+
+    String modes;
+    if (extract_json_array_field(source, "hvac_modes", modes)) {
+      climate_normalize_modes(modes);
+      out.hvac_modes_mask = climate_modes_mask(modes);
+    }
+
+    float number = 0.0f;
+    if (extract_json_number_or_string_field(source, "current_temperature", number)) {
+      out.has_current_temperature = true;
+      out.current_temperature = number;
+    }
+    if (extract_json_number_or_string_field(source, "temperature", number)) {
+      out.has_target_temperature = true;
+      out.target_temperature = number;
+    }
+    if (extract_json_number_or_string_field(source, "target_temp_low", number)) {
+      out.has_target_range = true;
+      out.target_temp_low = number;
+    }
+    if (extract_json_number_or_string_field(source, "target_temp_high", number)) {
+      out.has_target_range = true;
+      out.target_temp_high = number;
+    }
+    if (extract_json_number_or_string_field(source, "min_temp", number)) {
+      out.min_temp = number;
+    }
+    if (extract_json_number_or_string_field(source, "max_temp", number)) {
+      out.max_temp = number;
+    }
+    if (extract_json_number_or_string_field(source, "target_temp_step", number) ||
+        extract_json_number_or_string_field(source, "precision", number)) {
+      out.target_temp_step = number;
+    }
+  };
+
+  parse_source(json);
+  String attributes;
+  if (extract_json_object_field(json, "attributes", attributes)) {
+    parse_source(attributes);
+  }
+
+  if (out.max_temp <= out.min_temp) {
+    out.min_temp = 7.0f;
+    out.max_temp = 35.0f;
+  }
+  if (out.target_temp_step <= 0.0f || out.target_temp_step > 10.0f) {
+    out.target_temp_step = 0.5f;
+  }
+  if (!out.temperature_unit[0]) {
+    climate_copy_text(
+        out.temperature_unit, sizeof(out.temperature_unit),
+        String("\xC2\xB0") + "C");
+  }
+  out.valid = out.hvac_mode[0] || out.hvac_action[0] ||
+              out.has_current_temperature || out.has_target_temperature ||
+              out.has_target_range;
+  return out;
+}
+
+static const char* climate_icon_for_state(const ClimateState& state) {
+  const char* action = state.hvac_action;
+  if (strcmp(action, "heating") == 0) return "radiator";
+  if (strcmp(action, "cooling") == 0) return "snowflake";
+  if (strcmp(action, "drying") == 0) return "water-percent";
+  if (strcmp(action, "fan") == 0) return "fan";
+  if (action[0]) {
+    return strcmp(state.hvac_mode, "off") == 0
+               ? "thermometer-off"
+               : "thermostat";
+  }
+  if (strcmp(state.hvac_mode, "off") == 0) return "thermometer-off";
+  if (strcmp(state.hvac_mode, "heat") == 0) return "radiator";
+  if (strcmp(state.hvac_mode, "cool") == 0) return "snowflake";
+  if (strcmp(state.hvac_mode, "dry") == 0) return "water-percent";
+  if (strcmp(state.hvac_mode, "fan_only") == 0) return "fan";
+  if (strcmp(state.hvac_mode, "auto") == 0 ||
+      strcmp(state.hvac_mode, "heat_cool") == 0) return "thermostat-auto";
+  return "thermostat";
+}
+
+static uint32_t climate_color_for_state(const ClimateState& state) {
+  const char* action = state.hvac_action;
+  if (strcmp(action, "heating") == 0) return 0xFF8A3D;
+  if (strcmp(action, "cooling") == 0) return 0x4FC3F7;
+  if (strcmp(action, "drying") == 0) return 0xFFD54F;
+  if (strcmp(action, "fan") == 0) return 0x4DB6AC;
+  if (strcmp(state.hvac_mode, "off") == 0) return 0x9E9E9E;
+  return 0xFFFFFF;
+}
+
+static ClimatePopupInit build_climate_popup_init(
+    GridType grid_type, uint8_t grid_index, const ClimateState& state) {
+  ClimatePopupInit init;
+  const Tile* tile = tile_renderer_get_tile_config(grid_type, grid_index);
+  if (!tile) return init;
+  init.entity_id = tile->sensor_entity;
+  init.title = tile->title.length()
+                   ? tile->title
+                   : haBridgeConfig.findSensorName(tile->sensor_entity);
+  if (!init.title.length()) init.title = tile->sensor_entity;
+  String configured_icon = normalizeMdiIconName(tile->icon_name);
+  init.icon_name = configured_icon.length()
+                       ? configured_icon
+                       : String(climate_icon_for_state(state));
+  init.hvac_mode = state.hvac_mode;
+  init.hvac_action = state.hvac_action;
+  init.hvac_modes = climateHvacModesCsv(state.hvac_modes_mask);
+  init.temperature_unit = state.temperature_unit;
+  init.current_temperature = state.current_temperature;
+  init.target_temperature = state.target_temperature;
+  init.target_temp_low = state.target_temp_low;
+  init.target_temp_high = state.target_temp_high;
+  init.min_temp = state.min_temp;
+  init.max_temp = state.max_temp;
+  init.target_temp_step = state.target_temp_step;
+  init.has_current_temperature = state.has_current_temperature;
+  init.has_target_temperature = state.has_target_temperature;
+  init.has_target_range = state.has_target_range;
+  return init;
+}
+
+static void update_climate_tile_state(
+    GridType grid_type, uint8_t grid_index, const char* payload) {
+  if (grid_index >= TILES_PER_GRID || !payload) return;
+  ClimateTileWidgets* widgets = tile_renderer_get_climate_widgets(grid_type);
+  ClimateState* states = tile_renderer_get_climate_states(grid_type);
+  ClimateTileWidgets& widget = widgets[grid_index];
+
+  const uint32_t payload_hash = fnv1a_hash(payload);
+  if (widget.last_payload_hash == payload_hash) return;
+
+  ClimateState state = parse_climate_payload(payload);
+  if (!state.valid) return;
+  states[grid_index] = state;
+  widget.last_payload_hash = payload_hash;
+
+  if (widget.value_label) {
+    String value = state.has_current_temperature
+                       ? String(state.current_temperature, 1)
+                       : String("--");
+    value += " ";
+    value += state.temperature_unit[0]
+                 ? state.temperature_unit
+                 : "\xC2\xB0"
+                   "C";
+    lv_label_set_text(widget.value_label, value.c_str());
+  }
+  if (widget.icon_label && widget.dynamic_icon) {
+    const String icon = getMdiChar(climate_icon_for_state(state));
+    lv_label_set_text(widget.icon_label, icon.c_str());
+    lv_obj_set_style_text_color(
+        widget.icon_label, lv_color_hex(climate_color_for_state(state)), 0);
+  }
+
+  ClimatePopupInit init = build_climate_popup_init(grid_type, grid_index, state);
+  update_climate_popup(init);
+}
+
+struct ClimateUpdate {
+  GridType grid_type;
+  uint8_t grid_index = 0;
+  String payload;
+  bool valid = false;
+};
+
+static constexpr uint8_t CLIMATE_QUEUE_SIZE = 16;
+static ClimateUpdate g_climate_queue[CLIMATE_QUEUE_SIZE];
+static volatile uint8_t g_climate_head = 0;
+static volatile uint8_t g_climate_tail = 0;
+
+void queue_climate_tile_update(
+    GridType grid_type, uint8_t grid_index, const char* payload) {
+  if (grid_index >= TILES_PER_GRID || !payload) return;
+  uint8_t idx = g_climate_tail;
+  while (idx != g_climate_head) {
+    ClimateUpdate& pending = g_climate_queue[idx];
+    if (pending.valid && pending.grid_type == grid_type &&
+        pending.grid_index == grid_index) {
+      pending.payload = payload;
+      return;
+    }
+    idx = (idx + 1) % CLIMATE_QUEUE_SIZE;
+  }
+
+  const uint8_t next = (g_climate_head + 1) % CLIMATE_QUEUE_SIZE;
+  if (next == g_climate_tail) {
+    g_climate_tail = (g_climate_tail + 1) % CLIMATE_QUEUE_SIZE;
+    Serial.println("[Queue] Climate voll, aeltestes Update ersetzt");
+  }
+  ClimateUpdate& update = g_climate_queue[g_climate_head];
+  update.grid_type = grid_type;
+  update.grid_index = grid_index;
+  update.payload = payload;
+  update.valid = true;
+  g_climate_head = next;
+}
+
+void process_climate_update_queue(uint8_t max_updates) {
+  uint8_t processed = 0;
+  while (g_climate_tail != g_climate_head &&
+         (max_updates == 0 || processed < max_updates)) {
+    ClimateUpdate& update = g_climate_queue[g_climate_tail];
+    if (update.valid) {
+      update_climate_tile_state(
+          update.grid_type, update.grid_index, update.payload.c_str());
+      update.valid = false;
+      ++processed;
+    }
+    g_climate_tail = (g_climate_tail + 1) % CLIMATE_QUEUE_SIZE;
   }
 }
 

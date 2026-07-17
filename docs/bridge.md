@@ -63,7 +63,7 @@ Select which entities the displays may use:
 
 - **Sensors** — any entity whose state you want on sensor tiles
 - **Weather** — `weather` entities for weather tiles/forecasts
-- **Lights / Switches / Media players** — controllable from the displays
+- **Lights / Switches / Climate / Media players** — controllable from the displays
 - **Scenes & scripts** — each selected entry gets an auto-generated **alias**
   (used by scene tiles); you can also map aliases manually in the text box,
   one `alias=entity_id` per line
@@ -93,6 +93,7 @@ For debugging with an MQTT client (topic layout, `{id}` = panel device id):
 | `<base>/cmnd/light` | Display → HA | Light control commands |
 | `<base>/cmnd/switch` | Display → HA | Switch control commands |
 | `<base>/cmnd/media` | Display → HA | Media player commands |
+| `<base>/cmnd/climate` | Display → HA | Climate target temperature and HVAC mode |
 | `<base>/cmnd/scene` | Display → HA | Scene/script activation |
 
 Entity states are published under `<HA prefix>/<entity>/...` by the bridge itself —

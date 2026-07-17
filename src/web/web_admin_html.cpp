@@ -162,6 +162,7 @@ static void appendTileTabHTML(
     const std::vector<SceneOption>& sceneOptions,
     const std::vector<String>& switchOptions,
     const std::vector<String>& mediaOptions,
+    const std::vector<String>& climateOptions,
     const std::function<String(const String&, uint8_t)>& formatSensorValue,
     const String& navigateOptionsHtml,
     bool screensaver_mode = false
@@ -677,6 +678,7 @@ static void appendTileTabHTML(
             type_ctx.scene_options = &sceneOptions;
             type_ctx.switch_options = &switchOptions;
             type_ctx.media_options = &mediaOptions;
+            type_ctx.climate_options = &climateOptions;
             type_ctx.navigate_options_html = &navigateOptionsHtml;
             append_tile_type_fields_html(html, type_ctx);
 
@@ -753,6 +755,7 @@ bool buildAdminFolderTabFragments(uint16_t folder_id, String& button_html, Strin
   const auto lightOptions = parseSensorList(ha.lights_text);
   const auto switchOptionsRaw = parseSensorList(ha.switches_text);
   const auto mediaOptions = parseSensorList(ha.media_players_text);
+  const auto climateOptions = parseSensorList(ha.climates_text);
   std::vector<String> switchOptions;
   switchOptions.reserve(lightOptions.size() + switchOptionsRaw.size());
   auto addSwitchOption = [&](const String& entry) {
@@ -808,7 +811,8 @@ bool buildAdminFolderTabFragments(uint16_t folder_id, String& button_html, Strin
   button_html = buildFolderTabButtonHtml(*folder);
   tab_html = "";
   appendTileTabHTML(tab_html, folder_id, *folder, grid, sensorOptions, energyOptions, weatherOptions,
-                    sceneOptions, switchOptions, mediaOptions, formatSensorValue, navigateOptionsHtml);
+                    sceneOptions, switchOptions, mediaOptions, climateOptions,
+                    formatSensorValue, navigateOptionsHtml);
   return true;
 }
 
@@ -834,6 +838,7 @@ String WebAdminServer::getAdminPage() {
   const auto lightOptions = parseSensorList(ha.lights_text);
   const auto switchOptionsRaw = parseSensorList(ha.switches_text);
   const auto mediaOptions = parseSensorList(ha.media_players_text);
+  const auto climateOptions = parseSensorList(ha.climates_text);
   std::vector<String> switchOptions;
   switchOptions.reserve(lightOptions.size() + switchOptionsRaw.size());
   auto addSwitchOption = [&](const String& entry) {
@@ -984,7 +989,9 @@ String WebAdminServer::getAdminPage() {
   for (const auto& entry : folders) {
     TileGridConfig grid{};
     tileConfig.loadFolderGrid(entry.id, grid);
-    appendTileTabHTML(html, entry.id, entry, grid, sensorOptions, energyOptions, weatherOptions, sceneOptions, switchOptions, mediaOptions, formatSensorValue, navigateOptionsHtml);
+    appendTileTabHTML(html, entry.id, entry, grid, sensorOptions, energyOptions,
+                      weatherOptions, sceneOptions, switchOptions, mediaOptions,
+                      climateOptions, formatSensorValue, navigateOptionsHtml);
   }
 
   FolderEntry screensaver_folder{};
@@ -997,7 +1004,7 @@ String WebAdminServer::getAdminPage() {
   appendTileTabHTML(html, TileConfig::kScreensaverGridStorageId,
                     screensaver_folder, screensaverConfig.tileGrid(),
                     sensorOptions, energyOptions, weatherOptions, sceneOptions,
-                    switchOptions, mediaOptions, formatSensorValue,
+                    switchOptions, mediaOptions, climateOptions, formatSensorValue,
                     navigateOptionsHtml, true);
 
 #if 0  // Alte separate Slot-Vorschau; ersetzt durch den normalen Tile-Editor oben.
