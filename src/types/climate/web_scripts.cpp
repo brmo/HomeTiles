@@ -27,10 +27,42 @@ void append_climate_scripts(String& html) {
         out.current = Number(current).toFixed(1).replace(/\.0$/, '');
       }
       out.unit = attrs.temperature_unit || attrs.unit_of_measurement || '°C';
-      out.mode = String(obj.hvac_mode || obj.state || attrs.hvac_mode || '');
-      out.action = String(obj.hvac_action || attrs.hvac_action || '');
+      out.mode = String(obj.hvac_mode || obj.state || attrs.hvac_mode || '').toLowerCase();
+      out.action = String(obj.hvac_action || attrs.hvac_action || '').toLowerCase();
     } catch (e) {}
     return out;
+  }
+
+  function climatePreviewIcon(state) {
+    const action = String(state?.action || '').toLowerCase();
+    const mode = String(state?.mode || '').toLowerCase();
+    if (action === 'heating') return 'radiator';
+    if (action === 'cooling') return 'snowflake';
+    if (action === 'drying') return 'water-percent';
+    if (action === 'fan') return 'fan';
+    if (mode === 'off') return 'thermometer-off';
+    if (action === 'idle' || action === 'off') return 'thermostat';
+    if (mode === 'heat') return 'radiator';
+    if (mode === 'cool') return 'snowflake';
+    if (mode === 'dry') return 'water-percent';
+    if (mode === 'fan_only') return 'fan';
+    if (mode === 'auto' || mode === 'heat_cool') return 'thermostat-auto';
+    return 'thermostat';
+  }
+
+  function climatePreviewColor(state) {
+    const action = String(state?.action || '').toLowerCase();
+    const mode = String(state?.mode || '').toLowerCase();
+    if (action === 'heating') return '#ff8a3d';
+    if (action === 'cooling') return '#4fc3f7';
+    if (action === 'drying') return '#ffd54f';
+    if (action === 'fan') return '#4db6ac';
+    if (mode === 'off' || action === 'idle' || action === 'off') return '#9e9e9e';
+    if (!action && mode === 'heat') return '#ff8a3d';
+    if (!action && mode === 'cool') return '#4fc3f7';
+    if (!action && mode === 'dry') return '#ffd54f';
+    if (!action && mode === 'fan_only') return '#4db6ac';
+    return '#ffffff';
   }
 
   function saveClimateFields(tab, formData) {

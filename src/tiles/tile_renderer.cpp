@@ -1805,6 +1805,11 @@ static const char* climate_icon_for_state(const ClimateState& state) {
   if (strcmp(action, "cooling") == 0) return "snowflake";
   if (strcmp(action, "drying") == 0) return "water-percent";
   if (strcmp(action, "fan") == 0) return "fan";
+  if (strcmp(action, "idle") == 0 || strcmp(action, "off") == 0) {
+    return strcmp(state.hvac_mode, "off") == 0
+               ? "thermometer-off"
+               : "thermostat";
+  }
   if (action[0]) {
     return strcmp(state.hvac_mode, "off") == 0
                ? "thermometer-off"
@@ -1826,7 +1831,13 @@ static uint32_t climate_color_for_state(const ClimateState& state) {
   if (strcmp(action, "cooling") == 0) return 0x4FC3F7;
   if (strcmp(action, "drying") == 0) return 0xFFD54F;
   if (strcmp(action, "fan") == 0) return 0x4DB6AC;
-  if (strcmp(state.hvac_mode, "off") == 0) return 0x9E9E9E;
+  if (strcmp(state.hvac_mode, "off") == 0 ||
+      strcmp(action, "idle") == 0 ||
+      strcmp(action, "off") == 0) return 0x9E9E9E;
+  if (!action[0] && strcmp(state.hvac_mode, "heat") == 0) return 0xFF8A3D;
+  if (!action[0] && strcmp(state.hvac_mode, "cool") == 0) return 0x4FC3F7;
+  if (!action[0] && strcmp(state.hvac_mode, "dry") == 0) return 0xFFD54F;
+  if (!action[0] && strcmp(state.hvac_mode, "fan_only") == 0) return 0x4DB6AC;
   return 0xFFFFFF;
 }
 
@@ -1841,9 +1852,11 @@ static ClimatePopupInit build_climate_popup_init(
                    : haBridgeConfig.findSensorName(tile->sensor_entity);
   if (!init.title.length()) init.title = tile->sensor_entity;
   String configured_icon = normalizeMdiIconName(tile->icon_name);
-  init.icon_name = configured_icon.length()
-                       ? configured_icon
-                       : String(climate_icon_for_state(state));
+  init.icon_visible = !isMdiIconDisabled(tile->icon_name);
+  init.dynamic_icon = init.icon_visible && !configured_icon.length();
+  init.icon_name = init.dynamic_icon
+                       ? String(climate_icon_for_state(state))
+                       : configured_icon;
   init.hvac_mode = state.hvac_mode;
   init.hvac_action = state.hvac_action;
   init.hvac_modes = climateHvacModesCsv(state.hvac_modes_mask);
@@ -1887,9 +1900,12 @@ static void update_climate_tile_state(
                    "C";
     lv_label_set_text(widget.value_label, value.c_str());
   }
-  if (widget.icon_label && widget.dynamic_icon) {
-    const String icon = getMdiChar(climate_icon_for_state(state));
-    lv_label_set_text(widget.icon_label, icon.c_str());
+  if (widget.icon_label) {
+    if (widget.dynamic_icon) {
+      String icon = getMdiChar(climate_icon_for_state(state));
+      if (!icon.length()) icon = getMdiChar("thermostat");
+      lv_label_set_text(widget.icon_label, icon.c_str());
+    }
     lv_obj_set_style_text_color(
         widget.icon_label, lv_color_hex(climate_color_for_state(state)), 0);
   }

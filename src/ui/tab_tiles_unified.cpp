@@ -520,6 +520,7 @@ static void build_folder_cache_entry(FolderCacheEntry& entry, GridType grid_type
   apply_cached_states(grid_type, config, false);
   process_sensor_update_queue();
   process_switch_update_queue();
+  process_climate_update_queue();
   process_weather_update_queue();
   lv_obj_update_layout(entry.grid);
 

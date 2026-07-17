@@ -358,6 +358,11 @@ struct OtaUploadState {
 
 OtaUploadState g_ota_upload_state;
 bool g_ota_display_reduced = false;
+bool g_ota_display_restore_pending = false;
+uint32_t g_ota_display_restore_retry_at = 0;
+uint16_t g_ota_display_restore_attempts = 0;
+
+constexpr uint32_t kOtaDisplayRestoreRetryMs = 750;
 
 void logOtaMemory(const char* tag) {
   Serial.printf("[OTA/Mem] %s | Int free=%u KB | DMA free=%u KB | DMA largest=%u KB | PSRAM free=%u KB | MQTT buf=%u B\n",
@@ -384,30 +389,75 @@ void prepareDisplayForOtaInstall() {
   // ~70 KB of internal DMA RAM, exactly the pool esp-hosted needs for RX
   // buffers. During OTA, trade UI redraw speed for transport stability.
   if (!g_ota_display_reduced) {
-    displayManager.setBufferLines(8);  // below SRAM minimum -> PSRAM draw buffers
-    g_ota_display_reduced = true;
+    // Unterhalb des SRAM-Minimums entsteht bewusst ein kleiner PSRAM-Puffer;
+    // der bisherige schnelle SRAM-Block wird dadurch fuer WiFi/SDIO frei.
+    if (displayManager.setBufferLines(8)) {
+      g_ota_display_reduced = true;
+    } else {
+      Serial.println(
+          "[OTA] WARNUNG: Display-Puffer konnte nicht fuer OTA verkleinert werden");
+    }
   }
+  g_ota_display_restore_pending = false;
+  g_ota_display_restore_retry_at = 0;
+  g_ota_display_restore_attempts = 0;
 
   networkManager.prepareMqttForOta();
   logOtaMemory("after-ota-prep");
 }
 
-void restoreDisplayAfterOtaFailure() {
-  networkManager.restoreMqttBufferNormal();
-  BoardHAL::displayPowerSaveOff();
-  if (g_ota_display_reduced) {
-    // Laufzeit-Restore mit kleiner Reserve: die normale setBufferLines-
-    // Verhandlung (Boot-Reserve 150KB) verweigert das SRAM-Band zur
-    // Laufzeit und liesse das Geraet bis zum Reboot im PSRAM-Rendering.
-    displayManager.restoreBufferLinesAfterOta(SCREEN_HEIGHT / Device::kDisplayFlushBands);
+void invalidateDisplayAfterOtaRestore() {
+  lv_display_t* disp = displayManager.getDisplay();
+  if (!disp) return;
+  lv_obj_invalidate(lv_screen_active());
+  lv_refr_now(disp);
+}
+
+bool tryRestoreFastDisplayAfterOta() {
+  if (!g_ota_display_reduced) {
+    g_ota_display_restore_pending = false;
+    return true;
+  }
+
+  ++g_ota_display_restore_attempts;
+  const bool restored = displayManager.restoreBufferLinesAfterOta(
+      SCREEN_HEIGHT / Device::kDisplayFlushBands);
+  if (restored && displayManager.isUsingFastInternalBuffer()) {
     g_ota_display_reduced = false;
+    g_ota_display_restore_pending = false;
+    g_ota_display_restore_retry_at = 0;
+    Serial.printf(
+        "[OTA] Schneller Display-Puffer nach %u Versuch(en) wiederhergestellt\n",
+        static_cast<unsigned>(g_ota_display_restore_attempts));
+    return true;
+  }
+
+  // Der HTTP-Upload-Callback laeuft noch mit aktiven TCP-/RX-Puffern. Den
+  // kleinen PSRAM-Puffer weiterverwenden und erst nach Freigabe der Verbindung
+  // erneut versuchen; niemals einen PSRAM-Fallback als Erfolg markieren.
+  g_ota_display_restore_pending = true;
+  g_ota_display_restore_retry_at = millis() + kOtaDisplayRestoreRetryMs;
+  if (g_ota_display_restore_attempts == 1 ||
+      (g_ota_display_restore_attempts % 8) == 0) {
+    Serial.printf(
+        "[OTA] Schneller Display-Restore vertagt (Versuch %u)\n",
+        static_cast<unsigned>(g_ota_display_restore_attempts));
+  }
+  return false;
+}
+
+void restoreDisplayAfterOtaFailure() {
+  BoardHAL::displayPowerSaveOff();
+  const bool fast_display_restored = tryRestoreFastDisplayAfterOta();
+  if (fast_display_restored) {
+    // MQTT erst wieder vergroessern/reconnecten, nachdem das schnelle
+    // Display-Band seinen zusammenhaengenden DMA-Block sicher besitzt.
+    networkManager.restoreMqttBufferNormal();
   }
   displayManager.setInputEnabled(true);
-  lv_display_t* disp = displayManager.getDisplay();
-  if (disp) {
-    lv_obj_invalidate(lv_screen_active());
-    lv_refr_now(disp);
-  }
+  invalidateDisplayAfterOtaRestore();
+  logOtaMemory(
+      fast_display_restored ? "after-ota-restore" : "ota-restore-pending");
 }
 
 void resetOtaUploadState() {
@@ -3070,13 +3120,24 @@ void WebAdminServer::handleGetGithubUpdateStatus() {
 }
 
 bool webAdminOtaInProgress() {
-  return g_ota_upload_state.error.length() == 0 &&
-         ((g_ota_upload_state.upload_prepared && !g_ota_upload_state.upload_started) ||
-          (g_ota_upload_state.upload_started &&
-           (!g_ota_upload_state.install_success || g_ota_upload_state.restart_pending)));
+  return g_ota_display_restore_pending ||
+         (g_ota_upload_state.error.length() == 0 &&
+          ((g_ota_upload_state.upload_prepared && !g_ota_upload_state.upload_started) ||
+           (g_ota_upload_state.upload_started &&
+            (!g_ota_upload_state.install_success || g_ota_upload_state.restart_pending))));
 }
 
 void webAdminServiceOta() {
+  if (g_ota_display_restore_pending &&
+      !Update.isRunning() &&
+      (int32_t)(millis() - g_ota_display_restore_retry_at) >= 0) {
+    if (tryRestoreFastDisplayAfterOta()) {
+      networkManager.restoreMqttBufferNormal();
+      invalidateDisplayAfterOtaRestore();
+      logOtaMemory("after-deferred-ota-restore");
+    }
+  }
+
   if (g_ota_upload_state.upload_prepared && !g_ota_upload_state.upload_started) {
     const uint32_t prepared_at = g_ota_upload_state.prepared_at_ms;
     if (prepared_at != 0 && static_cast<uint32_t>(millis() - prepared_at) > 120000UL) {

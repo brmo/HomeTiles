@@ -36,6 +36,7 @@ static constexpr uintptr_t kCacheLineSize = 64;
 static bool g_reverse_flush_once = false;
 static volatile uint32_t g_fullscreen_flush_seq = 0;
 static size_t g_requested_buffer_lines = 0;
+static bool g_fast_internal_draw_buffer = false;
 
 #if defined(DEVICE_M5STACKS_TAB5)
 struct Tab5FlushStats {
@@ -208,11 +209,12 @@ void DisplayManager::setReverseFlushOnce() {
 }
 
 bool DisplayManager::allocDrawBuffers(size_t requested_lines, lv_display_render_mode_t mode) {
-  return allocDrawBuffers(requested_lines, mode, kInternalDrawReserveBytes);
+  return allocDrawBuffers(requested_lines, mode, kInternalDrawReserveBytes, false);
 }
 
 bool DisplayManager::allocDrawBuffers(size_t requested_lines, lv_display_render_mode_t mode,
-                                      size_t internal_reserve_bytes) {
+                                      size_t internal_reserve_bytes,
+                                      bool require_fast_internal) {
   if (!disp || requested_lines == 0) return false;
   if (g_bytes_per_pixel == 0) {
     g_bytes_per_pixel = lv_color_format_get_size(lv_display_get_color_format(disp));
@@ -252,6 +254,20 @@ bool DisplayManager::allocDrawBuffers(size_t requested_lines, lv_display_render_
     }
   }
 
+  // Nach einem fehlgeschlagenen OTA darf ein fehlgeschlagener SRAM-Restore
+  // nicht still als erfolgreicher PSRAM-Restore gelten. Den bestehenden
+  // kleinen OTA-Puffer unveraendert lassen und spaeter erneut versuchen, wenn
+  // HTTP-/TCP-Puffer freigegeben und der interne DMA-Heap wieder zusammen-
+  // gefuehrt wurde.
+  if (!nb1 && require_fast_internal) {
+    Serial.printf(
+        "[Display] Schneller SRAM-Restore noch nicht moeglich "
+        "(dma frei=%u KB, largest=%u KB)\n",
+        (unsigned)(free_internal / 1024),
+        (unsigned)(largest_block / 1024));
+    return false;
+  }
+
   // 2) Fallback: PSRAM double buffer at the requested size (previous behaviour).
   if (!nb1) {
     const size_t bytes = line_bytes * requested_lines;
@@ -285,6 +301,7 @@ bool DisplayManager::allocDrawBuffers(size_t requested_lines, lv_display_render_
   g_buffer_lines = use_lines;
   g_requested_buffer_lines = requested_lines;
   g_render_mode = mode;
+  g_fast_internal_draw_buffer = single;
 
   Serial.printf("[Display] Draw-Puffer: %s %s, %u Zeilen, %u Bytes/Puffer | int frei=%u KB | dma frei=%u KB | dma largest=%u KB\n",
                 single ? "1x" : "2x",
@@ -307,7 +324,11 @@ bool DisplayManager::restoreBufferLinesAfterOta(size_t lines) {
   // setBufferLines): der aktuelle Zustand ist der kleine OTA-PSRAM-Puffer,
   // Ziel ist das schnelle SRAM-Band mit Laufzeit-Reserve.
   return allocDrawBuffers(lines, LV_DISPLAY_RENDER_MODE_PARTIAL,
-                          kInternalDrawRestoreReserveBytes);
+                          kInternalDrawRestoreReserveBytes, true);
+}
+
+bool DisplayManager::isUsingFastInternalBuffer() const {
+  return g_fast_internal_draw_buffer;
 }
 
 bool DisplayManager::setBufferLines(size_t lines, lv_display_render_mode_t render_mode) {

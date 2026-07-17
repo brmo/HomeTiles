@@ -27,7 +27,11 @@ ClimatePopupInit popup_init_for(const ClimateEventData* data) {
                    : haBridgeConfig.findSensorName(tile->sensor_entity);
   if (!init.title.length()) init.title = tile->sensor_entity;
   String configured_icon = normalizeMdiIconName(tile->icon_name);
-  if (configured_icon.length()) {
+  init.icon_visible = !isMdiIconDisabled(tile->icon_name);
+  init.dynamic_icon = init.icon_visible && !configured_icon.length();
+  if (!init.icon_visible) {
+    init.icon_name = "";
+  } else if (configured_icon.length()) {
     init.icon_name = configured_icon;
   } else if (strcmp(state.hvac_action, "heating") == 0) {
     init.icon_name = "radiator";
@@ -37,13 +41,26 @@ ClimatePopupInit popup_init_for(const ClimateEventData* data) {
     init.icon_name = "water-percent";
   } else if (strcmp(state.hvac_action, "fan") == 0) {
     init.icon_name = "fan";
+  } else if (strcmp(state.hvac_action, "idle") == 0 ||
+             strcmp(state.hvac_action, "off") == 0) {
+    init.icon_name =
+        strcmp(state.hvac_mode, "off") == 0 ? "thermometer-off" : "thermostat";
   } else if (state.hvac_action[0]) {
     init.icon_name =
         strcmp(state.hvac_mode, "off") == 0 ? "thermometer-off" : "thermostat";
+  } else if (strcmp(state.hvac_mode, "off") == 0) {
+    init.icon_name = "thermometer-off";
   } else if (strcmp(state.hvac_mode, "heat") == 0) {
     init.icon_name = "radiator";
   } else if (strcmp(state.hvac_mode, "cool") == 0) {
     init.icon_name = "snowflake";
+  } else if (strcmp(state.hvac_mode, "dry") == 0) {
+    init.icon_name = "water-percent";
+  } else if (strcmp(state.hvac_mode, "fan_only") == 0) {
+    init.icon_name = "fan";
+  } else if (strcmp(state.hvac_mode, "auto") == 0 ||
+             strcmp(state.hvac_mode, "heat_cool") == 0) {
+    init.icon_name = "thermostat-auto";
   } else {
     init.icon_name = "thermostat";
   }
@@ -98,8 +115,9 @@ lv_obj_t* render_climate_tile(lv_obj_t* parent,
   if (dynamic_icon) icon_name = "thermostat";
 
   lv_obj_t* icon_label = nullptr;
-  const String icon_char = getMdiChar(icon_name);
-  if (!icon_disabled && icon_char.length() && FONT_MDI_ICONS) {
+  String icon_char = getMdiChar(icon_name);
+  if (!icon_char.length()) icon_char = getMdiChar("thermostat");
+  if (!icon_disabled && FONT_MDI_ICONS) {
     icon_label = lv_label_create(card);
     set_label_style(icon_label, lv_color_white(), FONT_MDI_ICONS);
     lv_label_set_text(icon_label, icon_char.c_str());

@@ -2289,7 +2289,19 @@ void appendAdminScripts(String& html) {
           : (previewKind === 'media'
             ? mediaEntity
             : (previewKind === 'climate' ? climateEntity : ''))));
-    const iconName = resolveIconName(iconInput ? iconInput.value : '', iconEntity, sensorMetaCache.icons);
+    const rawIcon = iconInput ? iconInput.value : '';
+    let iconName = resolveIconName(
+      rawIcon,
+      previewKind === 'climate' ? '' : iconEntity,
+      sensorMetaCache.icons);
+    let climatePreviewState = null;
+    if (previewKind === 'climate') {
+      climatePreviewState = parseClimatePreviewPayload(
+        climateEntity ? (sensorMetaCache.values[climateEntity] ?? '') : '');
+      if (!iconName && !isExplicitlyDisabledValue(rawIcon)) {
+        iconName = climatePreviewIcon(climatePreviewState);
+      }
+    }
 
     tileElem.className = 'tile';
     if (meta.css) tileElem.classList.add(meta.css);
@@ -2330,7 +2342,10 @@ void appendAdminScripts(String& html) {
     let html = '';
 
     if (iconName) {
-      html += '<i class="mdi mdi-' + iconName + ' tile-icon"></i>';
+      const iconStyle = previewKind === 'climate'
+        ? ' style="color:' + climatePreviewColor(climatePreviewState) + '"'
+        : '';
+      html += '<i class="mdi mdi-' + iconName + ' tile-icon"' + iconStyle + '></i>';
     }
 
     if (title) {
@@ -2344,10 +2359,9 @@ void appendAdminScripts(String& html) {
       html += '<div class="tile-ghost-icon"><i class="mdi mdi-music"></i></div>';
     }
     if (previewKind === 'climate') {
-      const state = parseClimatePreviewPayload(
-        climateEntity ? (sensorMetaCache.values[climateEntity] ?? '') : '');
       html += '<div class="tile-value" id="' + tileId + '-value">' +
-        state.current + '<span class="tile-unit">' + state.unit + '</span></div>';
+        climatePreviewState.current + '<span class="tile-unit">' +
+        climatePreviewState.unit + '</span></div>';
     }
 
     if (previewKind === 'sensor') {
@@ -3394,12 +3408,27 @@ void appendAdminScripts(String& html) {
                           previewKind === 'climate')
         ? (tile.sensor_entity || '')
         : '';
-      const iconName = resolveIconName(tile.icon_name || '', iconEntity, metaIcons);
+      const rawIcon = tile.icon_name || '';
+      let iconName = resolveIconName(
+        rawIcon,
+        previewKind === 'climate' ? '' : iconEntity,
+        metaIcons);
+      let climatePreviewState = null;
+      if (previewKind === 'climate') {
+        climatePreviewState = parseClimatePreviewPayload(
+          tile.sensor_entity ? (metaValues[tile.sensor_entity] ?? '') : '');
+        if (!iconName && !isExplicitlyDisabledValue(rawIcon)) {
+          iconName = climatePreviewIcon(climatePreviewState);
+        }
+      }
 
       let html = '';
 
       if (iconName) {
-        html += '<i class="mdi mdi-' + iconName + ' tile-icon"></i>';
+        const iconStyle = previewKind === 'climate'
+          ? ' style="color:' + climatePreviewColor(climatePreviewState) + '"'
+          : '';
+        html += '<i class="mdi mdi-' + iconName + ' tile-icon"' + iconStyle + '></i>';
       }
 
       if (tile.title && tile.title.length) {
@@ -3420,11 +3449,9 @@ void appendAdminScripts(String& html) {
         html += '<div class="tile-value ' + sensorValueClass + '" id="' + tab + '-tile-' + index + '-value">' + value + (unit ? '<span class="tile-unit">' + unit + '</span>' : '') + '</div>';
       }
       if (previewKind === 'climate') {
-        const state = parseClimatePreviewPayload(
-          tile.sensor_entity ? (metaValues[tile.sensor_entity] ?? '') : '');
         html += '<div class="tile-value" id="' + tab + '-tile-' + index +
-          '-value">' + state.current + '<span class="tile-unit">' +
-          state.unit + '</span></div>';
+          '-value">' + climatePreviewState.current +
+          '<span class="tile-unit">' + climatePreviewState.unit + '</span></div>';
       }
       if (previewKind === 'clock') {
         const flags = normalizeClockFlags(tile.sensor_decimals);

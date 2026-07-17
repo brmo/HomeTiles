@@ -11,6 +11,8 @@ struct ClimatePopupInit {
   String hvac_action;
   String hvac_modes;
   String temperature_unit;
+  bool icon_visible = true;
+  bool dynamic_icon = true;
   float current_temperature = 0.0f;
   float target_temperature = 20.0f;
   float target_temp_low = 18.0f;

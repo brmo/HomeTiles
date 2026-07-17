@@ -34,6 +34,7 @@ public:
   // RAM zur Laufzeit schon besitzen - sonst faellt der Puffer nach jedem
   // fehlgeschlagenen Update bis zum Reboot ins langsame PSRAM zurueck.
   bool restoreBufferLinesAfterOta(size_t lines);
+  bool isUsingFastInternalBuffer() const;
   size_t getBufferLines() const;
   lv_display_render_mode_t getRenderMode() const;
   uint32_t getFullScreenFlushSeq() const;
@@ -53,7 +54,8 @@ private:
   // falling back to the previous PSRAM double buffer when internal RAM is scarce.
   static bool allocDrawBuffers(size_t requested_lines, lv_display_render_mode_t mode);
   static bool allocDrawBuffers(size_t requested_lines, lv_display_render_mode_t mode,
-                               size_t internal_reserve_bytes);
+                               size_t internal_reserve_bytes,
+                               bool require_fast_internal);
 };
 
 extern DisplayManager displayManager;
