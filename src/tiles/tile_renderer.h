@@ -191,6 +191,7 @@ struct ClimateTileWidgets {
   lv_obj_t* slot_roots[kMaxSlots] = {};
   uint8_t slot_kinds[kMaxSlots] = {};
   uint8_t slot_layouts[kMaxSlots] = {};
+  ClimateTileItemGeometry slot_geometry[kMaxSlots] = {};
   uint8_t active_slot_count = 0;
   bool dynamic_icon = true;
   uint32_t last_payload_hash = 0;

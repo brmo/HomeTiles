@@ -38,21 +38,47 @@ void append_climate_fields_html(String& html,
   html += "</option></select>";
 
   html += "<div class=\"climate-content-config\"><label class=\"climate-content-heading\">";
-  html += german ? "Tile-Inhalt" : "Tile content";
-  html += "</label><div class=\"climate-content-grid\">";
+  html += german ? "Climate-Inhaltsraster" : "Climate content grid";
+  html += "</label><div class=\"field-hint climate-grid-description\">";
+  html += german
+              ? "Die Kopfzeile bleibt frei. Elemente lassen sich im Raster verschieben und an der Ecke vergr\u00F6\u00DFern."
+              : "The header stays free. Drag items inside the grid and resize them from the corner.";
+  html += "</div><input type=\"hidden\" id=\"";
+  html += tab_id;
+  html += "_climate_geometry\" value=\"\"><div class=\"climate-mini-editor-shell\"><div id=\"";
+  html += tab_id;
+  html += "_climate_content_grid\" class=\"climate-content-grid\">";
+  for (uint8_t cell = 0; cell < CLIMATE_TILE_MAX_CONTENT_SLOTS; ++cell) {
+    html += "<button type=\"button\" id=\"";
+    html += tab_id;
+    html += "_climate_cell_";
+    html += String(cell);
+    html += "\" class=\"climate-mini-cell\" data-climate-cell=\"";
+    html += String(cell);
+    html += "\" aria-label=\"";
+    html += german ? "Inhalt hinzuf\u00FCgen" : "Add content";
+    html += "\"><span>+</span></button>";
+  }
   for (uint8_t slot = 0; slot < CLIMATE_TILE_MAX_CONTENT_SLOTS; ++slot) {
     html += "<div id=\"";
     html += tab_id;
     html += "_climate_slot_row_";
     html += String(slot);
-    html += "\" class=\"climate-content-slot\"><label>";
-    html += german ? "Element " : "Item ";
-    html += String(slot + 1);
-    html += "</label><select id=\"";
+    html += "\" class=\"tile climate-mini-tile hidden\" data-climate-item=\"";
+    html += String(slot);
+    html += "\"><div id=\"";
+    html += tab_id;
+    html += "_climate_preview_";
+    html += String(slot);
+    html += "\" class=\"climate-mini-preview\"></div>";
+    html += "<span class=\"tile-resize-handle tile-resize-handle-e\" data-climate-resize=\"e\"></span>";
+    html += "<span class=\"tile-resize-handle tile-resize-handle-s\" data-climate-resize=\"s\"></span>";
+    html += "<span class=\"tile-resize-handle tile-resize-handle-se\" data-climate-resize=\"se\"></span>";
+    html += "</div><select id=\"";
     html += tab_id;
     html += "_climate_slot_";
     html += String(slot);
-    html += "\">";
+    html += "\" class=\"climate-slot-storage\" tabindex=\"-1\" aria-hidden=\"true\">";
 
     auto append_option = [&](uint8_t value,
                              const char* en,
@@ -81,25 +107,55 @@ void append_climate_fields_html(String& html,
                   "Target humidity", "Soll-Luftfeuchtigkeit");
     append_option(CLIMATE_TILE_CONTENT_HVAC_MODE,
                   "Mode", "Modus");
-    html += "</select><div id=\"";
-    html += tab_id;
-    html += "_climate_layout_row_";
-    html += String(slot);
-    html += "\" class=\"climate-target-layout hidden\"><label>";
-    html += german ? "Regler-Ausrichtung" : "Control orientation";
-    html += "</label><select id=\"";
+    html += "</select><select id=\"";
     html += tab_id;
     html += "_climate_layout_";
     html += String(slot);
-    html += "\"><option value=\"0\">";
+    html += "\" class=\"climate-layout-storage\" tabindex=\"-1\" aria-hidden=\"true\"><option value=\"0\">";
     html += german ? "Automatisch" : "Automatic";
     html += "</option><option value=\"1\">";
     html += german ? "Waagerecht" : "Horizontal";
     html += "</option><option value=\"2\">";
     html += german ? "Senkrecht" : "Vertical";
-    html += "</option></select></div></div>";
+    html += "</option></select>";
   }
-  html += "</div><div id=\"";
+  html += "</div></div><div id=\"";
+  html += tab_id;
+  html += "_climate_selected_fields\" class=\"climate-selected-fields\"><label for=\"";
+  html += tab_id;
+  html += "_climate_selected_content\">";
+  html += german ? "Inhalt des ausgew\u00E4hlten Feldes" : "Selected field content";
+  html += "</label><select id=\"";
+  html += tab_id;
+  html += "_climate_selected_content\">";
+  auto append_selected_option = [&](uint8_t value,
+                                    const char* en,
+                                    const char* de) {
+    html += "<option value=\"";
+    html += String(value);
+    html += "\">";
+    html += german ? de : en;
+    html += "</option>";
+  };
+  append_selected_option(CLIMATE_TILE_CONTENT_AUTO,
+                         "Automatic", "Automatisch");
+  append_selected_option(CLIMATE_TILE_CONTENT_EMPTY,
+                         "Empty / remove", "Leer / entfernen");
+  append_selected_option(CLIMATE_TILE_CONTENT_CURRENT_TEMPERATURE,
+                         "Current temperature", "Aktuelle Temperatur");
+  append_selected_option(CLIMATE_TILE_CONTENT_CURRENT_HUMIDITY,
+                         "Current humidity", "Aktuelle Luftfeuchtigkeit");
+  append_selected_option(CLIMATE_TILE_CONTENT_TARGET_TEMPERATURE,
+                         "Target temperature", "Solltemperatur");
+  append_selected_option(CLIMATE_TILE_CONTENT_TARGET_TEMPERATURE_LOW,
+                         "Heating target", "Heiz-Sollwert");
+  append_selected_option(CLIMATE_TILE_CONTENT_TARGET_TEMPERATURE_HIGH,
+                         "Cooling target", "K\u00FChl-Sollwert");
+  append_selected_option(CLIMATE_TILE_CONTENT_TARGET_HUMIDITY,
+                         "Target humidity", "Soll-Luftfeuchtigkeit");
+  append_selected_option(CLIMATE_TILE_CONTENT_HVAC_MODE,
+                         "Mode", "Modus");
+  html += "</select></div><div id=\"";
   html += tab_id;
   html += "_climate_content_hint\" class=\"field-hint climate-content-hint\"></div></div>";
   html += "</div>\n";

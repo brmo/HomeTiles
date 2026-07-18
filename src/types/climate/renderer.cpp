@@ -44,10 +44,6 @@ bool slot_is_adjustable(ClimateTileSlotKind kind) {
          kind == ClimateTileSlotKind::TARGET_HUMIDITY;
 }
 
-uint8_t slot_unit_cost(ClimateTileSlotKind kind) {
-  return slot_is_adjustable(kind) ? 2 : 1;
-}
-
 float clamp_value(float value, float minimum, float maximum) {
   return std::max(minimum, std::min(value, maximum));
 }
@@ -176,12 +172,9 @@ uint8_t build_automatic_slot_kinds(
     ClimateTileSlotKind* out, uint8_t capacity) {
   if (!out || capacity == 0) return 0;
   uint8_t count = 0;
-  uint8_t used_units = 0;
   auto append = [&](ClimateTileSlotKind kind) {
-    const uint8_t cost = slot_unit_cost(kind);
-    if (count < capacity && used_units + cost <= capacity) {
+    if (count < capacity) {
       out[count++] = kind;
-      used_units += cost;
     }
   };
 
@@ -242,11 +235,14 @@ uint8_t build_slot_kinds(
     const Tile& tile, const ClimateState& state,
     ClimateTileSlotKind* out,
     ClimateTileTargetLayout* out_layouts,
+    ClimateTileItemGeometry* out_geometry,
     uint8_t capacity) {
   if (!out || capacity == 0) return 0;
   const uint8_t slot_capacity =
       std::min<uint8_t>(
           capacity, climateTileSlotCapacity(tile));
+  const uint8_t columns = climateTileGridColumns(tile);
+  const uint8_t rows = climateTileGridRows(tile);
   ClimateTileSlotKind automatic[CLIMATE_TILE_MAX_CONTENT_SLOTS] = {};
   const uint8_t automatic_count =
       build_automatic_slot_kinds(
@@ -262,18 +258,22 @@ uint8_t build_slot_kinds(
       continue;
     }
     const ClimateTileSlotKind kind = configured_slot_kind(configured);
-    explicitly_configured[static_cast<uint8_t>(kind)] = true;
+    if (kind != ClimateTileSlotKind::NONE) {
+      explicitly_configured[static_cast<uint8_t>(kind)] = true;
+    }
   }
 
+  bool occupied[3][2] = {};
+  uint64_t stored_geometry = 0;
+  const bool has_stored_geometry =
+      parseClimateTileGeometry(tile, stored_geometry);
   uint8_t count = 0;
-  uint8_t used_units = 0;
   uint8_t automatic_cursor = 0;
   for (uint8_t slot = 0; slot < slot_capacity; ++slot) {
     const ClimateTileContent configured =
         getClimateTileSlotContent(tile, slot);
+    if (configured == CLIMATE_TILE_CONTENT_EMPTY) continue;
     ClimateTileSlotKind kind = ClimateTileSlotKind::NONE;
-    ClimateTileTargetLayout layout =
-        CLIMATE_TILE_TARGET_LAYOUT_AUTO;
     if (configured == CLIMATE_TILE_CONTENT_AUTO) {
       while (automatic_cursor < automatic_count) {
         const ClimateTileSlotKind candidate =
@@ -285,19 +285,71 @@ uint8_t build_slot_kinds(
         kind = candidate;
         break;
       }
-    } else if (configured != CLIMATE_TILE_CONTENT_EMPTY) {
+    } else {
       kind = configured_slot_kind(configured);
-      layout = getClimateTileTargetLayout(tile, slot);
     }
-    if (kind != ClimateTileSlotKind::NONE) {
-      const uint8_t cost = slot_unit_cost(kind);
-      if (used_units + cost <= slot_capacity) {
-        out[count] = kind;
-        if (out_layouts) out_layouts[count] = layout;
-        ++count;
-        used_units += cost;
+    if (kind == ClimateTileSlotKind::NONE) continue;
+
+    ClimateTileItemGeometry geometry =
+        getClimateTileItemGeometry(tile, slot);
+    if (!has_stored_geometry && slot_is_adjustable(kind) &&
+        geometry.span_w == 1 && geometry.span_h == 1) {
+      const ClimateTileTargetLayout requested =
+          configured == CLIMATE_TILE_CONTENT_AUTO
+              ? CLIMATE_TILE_TARGET_LAYOUT_AUTO
+              : getClimateTileTargetLayout(tile, slot);
+      const bool can_horizontal =
+          geometry.col + 1 < columns;
+      const bool can_vertical =
+          geometry.row + 1 < rows;
+      if (requested == CLIMATE_TILE_TARGET_LAYOUT_HORIZONTAL &&
+          can_horizontal) {
+        geometry.span_w = 2;
+      } else if (requested == CLIMATE_TILE_TARGET_LAYOUT_VERTICAL &&
+                 can_vertical) {
+        geometry.span_h = 2;
+      } else if (columns == 1 && can_vertical) {
+        geometry.span_h = 2;
+      } else if (rows == 1 && can_horizontal) {
+        geometry.span_w = 2;
+      } else if (can_vertical) {
+        geometry.span_h = 2;
+      } else if (can_horizontal) {
+        geometry.span_w = 2;
       }
     }
+
+    bool collision = false;
+    for (uint8_t row = geometry.row;
+         row < geometry.row + geometry.span_h && !collision; ++row) {
+      for (uint8_t column = geometry.col;
+           column < geometry.col + geometry.span_w; ++column) {
+        if (occupied[row][column]) {
+          collision = true;
+          break;
+        }
+      }
+    }
+    if (collision) continue;
+    for (uint8_t row = geometry.row;
+         row < geometry.row + geometry.span_h; ++row) {
+      for (uint8_t column = geometry.col;
+           column < geometry.col + geometry.span_w; ++column) {
+        occupied[row][column] = true;
+      }
+    }
+
+    ClimateTileTargetLayout layout =
+        CLIMATE_TILE_TARGET_LAYOUT_AUTO;
+    if (geometry.span_w > 1 && geometry.span_h == 1) {
+      layout = CLIMATE_TILE_TARGET_LAYOUT_HORIZONTAL;
+    } else if (geometry.span_h > 1) {
+      layout = CLIMATE_TILE_TARGET_LAYOUT_VERTICAL;
+    }
+    out[count] = kind;
+    if (out_layouts) out_layouts[count] = layout;
+    if (out_geometry) out_geometry[count] = geometry;
+    ++count;
   }
   return count;
 }
@@ -319,11 +371,13 @@ void layout_climate_slots(
   const lv_coord_t tile_h =
       static_cast<lv_coord_t>(
           span_h * GRID_CELL_H + (span_h - 1) * GRID_GAP);
+  constexpr lv_coord_t kControlOuterMargin = 6;
   // Climate cards retain the original 20/24 px tile padding. Child
   // coordinates therefore address the padded content box, not the full card.
-  // Adjustable controls use the otherwise unused outer 10 px on both sides.
-  const lv_coord_t content_x = -10;
-  const lv_coord_t content_w = tile_w - 20;
+  // Adjustable controls use a uniform 6 px distance to every outer card edge.
+  const lv_coord_t content_x = kControlOuterMargin - 20;
+  const lv_coord_t content_w =
+      tile_w - kControlOuterMargin * 2;
   const lv_coord_t column_gap = 10;
   const lv_coord_t slot_w =
       (content_w - static_cast<lv_coord_t>(columns - 1) * column_gap) /
@@ -331,14 +385,10 @@ void layout_climate_slots(
   const lv_coord_t slot_h = span_h == 1 ? 58 : 62;
   lv_coord_t first_row_y = 0;
   if (span_h == 1) {
-    // Keep every value in a wide 2x1 tile on exactly the same vertical
-    // value line as the unchanged 1x1 tile (LV_ALIGN_CENTER, y = 28).
-    lv_obj_t* card = lv_obj_get_parent(widgets.slot_roots[0]);
-    if (card) {
-      lv_obj_update_layout(card);
-      first_row_y =
-          (lv_obj_get_content_height(card) - slot_h) / 2 + 28;
-    }
+    // A single control row keeps the same 6 px lower edge distance as all
+    // bottom rows in taller cards.
+    first_row_y =
+        tile_h - 24 - kControlOuterMargin - slot_h;
   } else {
     // The first row of every taller climate tile must sit on the exact same
     // center line as the unchanged 1x1 value. Only the following rows extend
@@ -349,9 +399,9 @@ void layout_climate_slots(
     first_row_y = shared_value_center - slot_h / 2;
   }
   const lv_coord_t last_row_y =
-      first_row_y +
-      static_cast<lv_coord_t>(span_h - 1) *
-          (GRID_CELL_H + GRID_GAP);
+      span_h == 1
+          ? first_row_y
+          : tile_h - 24 - kControlOuterMargin - slot_h;
   auto row_y = [&](uint8_t row) -> lv_coord_t {
     if (logical_rows <= 1) return first_row_y;
     return first_row_y +
@@ -361,7 +411,6 @@ void layout_climate_slots(
                (logical_rows - 1));
   };
 
-  bool occupied[3][2] = {};
   for (uint8_t i = 0; i < ClimateTileWidgets::kMaxSlots; ++i) {
     lv_obj_t* root = widgets.slot_roots[i];
     if (!root) continue;
@@ -373,113 +422,39 @@ void layout_climate_slots(
     const ClimateTileSlotKind kind =
         static_cast<ClimateTileSlotKind>(widgets.slot_kinds[i]);
     const bool adjustable = slot_is_adjustable(kind);
-    uint8_t row = 0;
-    uint8_t column = 0;
-    uint8_t row_span = 1;
-    uint8_t column_span = 1;
-    bool placed = false;
-
-    auto try_vertical_target = [&]() {
-      for (uint8_t candidate_row = 0;
-           candidate_row + 1 < logical_rows && !placed;
-           ++candidate_row) {
-        for (uint8_t candidate_column = 0;
-             candidate_column < columns && !placed;
-             ++candidate_column) {
-          if (!occupied[candidate_row][candidate_column] &&
-              !occupied[candidate_row + 1][candidate_column]) {
-            row = candidate_row;
-            column = candidate_column;
-            row_span = 2;
-            column_span = 1;
-            placed = true;
-          }
-        }
-      }
-    };
-    auto try_horizontal_target = [&]() {
-      if (columns < 2) return;
-      for (uint8_t candidate_row = 0;
-           candidate_row < logical_rows && !placed;
-           ++candidate_row) {
-        if (!occupied[candidate_row][0] &&
-            !occupied[candidate_row][1]) {
-          row = candidate_row;
-          column = 0;
-          row_span = 1;
-          column_span = 2;
-          placed = true;
-        }
-      }
-    };
-
-    if (adjustable) {
-      const ClimateTileTargetLayout requested =
-          static_cast<ClimateTileTargetLayout>(
-              widgets.slot_layouts[i]);
-      if (requested == CLIMATE_TILE_TARGET_LAYOUT_HORIZONTAL) {
-        try_horizontal_target();
-        try_vertical_target();
-      } else if (requested == CLIMATE_TILE_TARGET_LAYOUT_VERTICAL) {
-        try_vertical_target();
-        try_horizontal_target();
-      } else if (columns == 1) {
-        try_vertical_target();
-      } else if (logical_rows == 1) {
-        try_horizontal_target();
-      } else {
-        try_vertical_target();
-        try_horizontal_target();
-      }
-    } else {
-      for (uint8_t candidate_row = 0;
-           candidate_row < logical_rows && !placed;
-           ++candidate_row) {
-        for (uint8_t candidate_column = 0;
-             candidate_column < columns && !placed;
-             ++candidate_column) {
-          if (!occupied[candidate_row][candidate_column]) {
-            row = candidate_row;
-            column = candidate_column;
-            placed = true;
-          }
-        }
-      }
-    }
-
-    if (!placed) {
+    const ClimateTileItemGeometry geometry =
+        widgets.slot_geometry[i];
+    if (geometry.col >= columns ||
+        geometry.row >= logical_rows ||
+        geometry.span_w < 1 ||
+        geometry.span_h < 1 ||
+        geometry.col + geometry.span_w > columns ||
+        geometry.row + geometry.span_h > logical_rows) {
       lv_obj_add_flag(root, LV_OBJ_FLAG_HIDDEN);
       continue;
     }
-    for (uint8_t occupied_row = row;
-         occupied_row < row + row_span; ++occupied_row) {
-      for (uint8_t occupied_column = column;
-           occupied_column < column + column_span;
-           ++occupied_column) {
-        occupied[occupied_row][occupied_column] = true;
-      }
-    }
-
     const bool horizontal_target =
-        adjustable && column_span == 2;
+        adjustable && geometry.span_w > 1 &&
+        geometry.span_h == 1;
     const bool vertical_target =
-        adjustable && row_span == 2;
+        adjustable && geometry.span_w == 1 &&
+        geometry.span_h > 1;
+    const bool large_target =
+        adjustable && geometry.span_w > 1 &&
+        geometry.span_h > 1;
 
     lv_coord_t root_x =
-        content_x + column * (slot_w + column_gap);
-    lv_coord_t root_y = row_y(row);
-    lv_coord_t root_w = slot_w;
+        content_x +
+        geometry.col * (slot_w + column_gap);
+    lv_coord_t root_y = row_y(geometry.row);
+    lv_coord_t root_w =
+        slot_w * geometry.span_w +
+        column_gap * (geometry.span_w - 1);
     lv_coord_t root_h = slot_h;
-    if (horizontal_target) {
-      root_x = content_x;
-      root_w = content_w;
-    } else if (vertical_target) {
-      const lv_coord_t second_row_y =
-          row_y(row + 1);
-      root_h = second_row_y - root_y + slot_h;
-    } else if (count == 1) {
-      root_x = content_x;
-      root_w = content_w;
+    if (geometry.span_h > 1) {
+      const lv_coord_t final_row_y =
+          row_y(geometry.row + geometry.span_h - 1);
+      root_h = final_row_y - root_y + slot_h;
     }
 
     lv_obj_clear_flag(root, LV_OBJ_FLAG_HIDDEN);
@@ -492,29 +467,36 @@ void layout_climate_slots(
     lv_obj_t* caption = lv_obj_get_child(root, 3);
 
     if (horizontal_target) {
-      const lv_coord_t caption_w = 108;
-      const lv_coord_t button_w = 32;
+      const lv_coord_t side_padding = 8;
+      const lv_coord_t caption_w = 96;
+      const lv_coord_t button_w = 40;
       if (caption) {
-        lv_obj_set_width(caption, caption_w - 12);
+        lv_obj_set_width(caption, caption_w);
         lv_obj_set_style_text_align(
             caption, LV_TEXT_ALIGN_LEFT, 0);
-        lv_obj_align(caption, LV_ALIGN_LEFT_MID, 12, 0);
+        lv_obj_align(
+            caption, LV_ALIGN_LEFT_MID, side_padding, 0);
       }
       if (minus) {
         lv_obj_set_size(minus, button_w, root_h);
-        lv_obj_align(minus, LV_ALIGN_LEFT_MID, caption_w, 0);
+        lv_obj_align(
+            minus, LV_ALIGN_LEFT_MID,
+            side_padding + caption_w, 0);
       }
       if (plus) {
         lv_obj_set_size(plus, button_w, root_h);
-        lv_obj_align(plus, LV_ALIGN_RIGHT_MID, 0, 0);
+        lv_obj_align(
+            plus, LV_ALIGN_RIGHT_MID, -side_padding, 0);
       }
       if (value) {
         lv_obj_set_width(
-            value, root_w - caption_w - button_w * 2);
+            value,
+            root_w - side_padding * 2 -
+                caption_w - button_w * 2);
         lv_obj_set_style_text_font(value, FONT_VALUE, 0);
         lv_obj_align(
             value, LV_ALIGN_LEFT_MID,
-            caption_w + button_w, 0);
+            side_padding + caption_w + button_w, 0);
       }
     } else if (vertical_target) {
       const lv_coord_t button_h = 40;
@@ -538,17 +520,37 @@ void layout_climate_slots(
             plus, root_w - root_w / 2, button_h);
         lv_obj_align(plus, LV_ALIGN_BOTTOM_RIGHT, 0, -2);
       }
+    } else if (large_target) {
+      const lv_coord_t button_w = 54;
+      const lv_coord_t button_h = 42;
+      if (caption) {
+        lv_obj_set_width(caption, root_w - 24);
+        lv_obj_set_style_text_align(
+            caption, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_align(caption, LV_ALIGN_CENTER, 0, -48);
+      }
+      if (value) {
+        lv_obj_set_width(value, root_w - 24);
+        lv_obj_set_style_text_font(value, FONT_VALUE, 0);
+        lv_obj_align(value, LV_ALIGN_CENTER, 0, -4);
+      }
+      if (minus) {
+        lv_obj_set_size(minus, button_w, button_h);
+        lv_obj_align(minus, LV_ALIGN_CENTER, -36, 44);
+      }
+      if (plus) {
+        lv_obj_set_size(plus, button_w, button_h);
+        lv_obj_align(plus, LV_ALIGN_CENTER, 36, 44);
+      }
     } else {
       if (caption) {
         lv_obj_add_flag(caption, LV_OBJ_FLAG_HIDDEN);
       }
       if (minus) {
-        lv_obj_set_size(minus, 34, root_h);
-        lv_obj_align(minus, LV_ALIGN_LEFT_MID, 0, 0);
+        lv_obj_add_flag(minus, LV_OBJ_FLAG_HIDDEN);
       }
       if (plus) {
-        lv_obj_set_size(plus, 34, root_h);
-        lv_obj_align(plus, LV_ALIGN_RIGHT_MID, 0, 0);
+        lv_obj_add_flag(plus, LV_OBJ_FLAG_HIDDEN);
       }
       if (value) {
         lv_obj_set_width(value, root_w);
@@ -705,11 +707,8 @@ lv_obj_t* create_climate_slot(
       root, lv_color_hex(0x3A3A3A), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(root, LV_OPA_TRANSP, LV_PART_MAIN);
   lv_obj_set_style_border_width(root, 0, 0);
-  lv_obj_set_style_border_color(
-      root, lv_color_hex(0x4A4A4A), LV_PART_MAIN);
-  lv_obj_set_style_border_opa(root, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_shadow_width(root, 0, 0);
-  lv_obj_set_style_radius(root, 12, 0);
+  lv_obj_set_style_radius(root, 14, 0);
   lv_obj_set_style_pad_all(root, 0, 0);
   lv_obj_remove_flag(root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_clear_flag(root, LV_OBJ_FLAG_CLICKABLE);
@@ -787,9 +786,11 @@ void refresh_climate_tile_content(
   ClimateTileSlotKind kinds[ClimateTileWidgets::kMaxSlots] = {};
   ClimateTileTargetLayout layouts[
       ClimateTileWidgets::kMaxSlots] = {};
+  ClimateTileItemGeometry geometry[
+      ClimateTileWidgets::kMaxSlots] = {};
   const uint8_t count =
       build_slot_kinds(
-          *tile, state, kinds, layouts,
+          *tile, state, kinds, layouts, geometry,
           ClimateTileWidgets::kMaxSlots);
 
   if (!has_slot_layout) {
@@ -834,6 +835,7 @@ void refresh_climate_tile_content(
           static_cast<uint8_t>(ClimateTileSlotKind::NONE);
       widget.slot_layouts[i] =
           static_cast<uint8_t>(CLIMATE_TILE_TARGET_LAYOUT_AUTO);
+      widget.slot_geometry[i] = ClimateTileItemGeometry{};
       lv_obj_add_flag(root, LV_OBJ_FLAG_HIDDEN);
       continue;
     }
@@ -841,26 +843,29 @@ void refresh_climate_tile_content(
     const ClimateTileSlotKind kind = kinds[i];
     widget.slot_kinds[i] = static_cast<uint8_t>(kind);
     widget.slot_layouts[i] = static_cast<uint8_t>(layouts[i]);
+    widget.slot_geometry[i] = geometry[i];
     const bool adjustable = slot_is_adjustable(kind);
+    const bool interactive_control =
+        adjustable &&
+        (geometry[i].span_w > 1 || geometry[i].span_h > 1);
     lv_obj_set_style_bg_opa(
-        root, LV_OPA_TRANSP,
+        root, interactive_control ? LV_OPA_COVER : LV_OPA_TRANSP,
         LV_PART_MAIN);
-    lv_obj_set_style_border_width(
-        root, adjustable ? 1 : 0, LV_PART_MAIN);
+    lv_obj_set_style_border_width(root, 0, LV_PART_MAIN);
 
     lv_obj_t* minus = lv_obj_get_child(root, 0);
     lv_obj_t* value = lv_obj_get_child(root, 1);
     lv_obj_t* plus = lv_obj_get_child(root, 2);
     lv_obj_t* caption = lv_obj_get_child(root, 3);
     if (minus) {
-      if (adjustable) {
+      if (interactive_control) {
         lv_obj_clear_flag(minus, LV_OBJ_FLAG_HIDDEN);
       } else {
         lv_obj_add_flag(minus, LV_OBJ_FLAG_HIDDEN);
       }
     }
     if (plus) {
-      if (adjustable) {
+      if (interactive_control) {
         lv_obj_clear_flag(plus, LV_OBJ_FLAG_HIDDEN);
       } else {
         lv_obj_add_flag(plus, LV_OBJ_FLAG_HIDDEN);
@@ -880,7 +885,7 @@ void refresh_climate_tile_content(
           0);
     }
     if (caption) {
-      if (adjustable) {
+      if (interactive_control) {
         const String text = climate_slot_caption(kind, state);
         lv_label_set_text(caption, text.c_str());
         lv_obj_clear_flag(caption, LV_OBJ_FLAG_HIDDEN);

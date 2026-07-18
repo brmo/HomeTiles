@@ -43,4 +43,16 @@ void apply_climate_fields_from_request(WebServer& server, Tile& tile) {
   tile.sensor_gauge_max = static_cast<int32_t>(
       CLIMATE_TILE_LAYOUT_PACKED_MAGIC |
       static_cast<uint32_t>(layout_value));
+
+  if (server.hasArg("climate_geometry")) {
+    const String previous = tile.scene_alias;
+    tile.scene_alias = server.arg("climate_geometry");
+    uint64_t geometry = 0;
+    if (!parseClimateTileGeometry(tile, geometry)) {
+      tile.scene_alias = previous.startsWith(
+                             CLIMATE_TILE_GEOMETRY_PREFIX)
+                             ? previous
+                             : "";
+    }
+  }
 }

@@ -250,6 +250,121 @@ static inline void setClimateTileTargetLayout(
       (packed & CLIMATE_TILE_LAYOUT_PACKED_VALUE_MASK));
 }
 
+// Climate mini-tile geometry is stored as nine hexadecimal digits in the
+// otherwise unused scene_alias field: six items, six bits per item.
+//   bit 0     column (0..1)
+//   bits 1-2  row (0..2)
+//   bit 3     width minus one (0..1)
+//   bits 4-5  height minus one (0..2)
+// This keeps V7 storage compatible while giving every climate item an exact
+// position and size inside the header-free 2 x 3 content grid.
+struct ClimateTileItemGeometry {
+  uint8_t col = 0;
+  uint8_t row = 0;
+  uint8_t span_w = 1;
+  uint8_t span_h = 1;
+};
+
+static constexpr const char* CLIMATE_TILE_GEOMETRY_PREFIX = "CLG1:";
+static constexpr size_t CLIMATE_TILE_GEOMETRY_PREFIX_LENGTH = 5;
+static constexpr uint8_t CLIMATE_TILE_GEOMETRY_HEX_DIGITS = 9;
+
+static inline uint8_t climateTileGridColumns(const Tile& tile) {
+  return tile.span_w >= 2 ? 2 : 1;
+}
+
+static inline uint8_t climateTileGridRows(const Tile& tile) {
+  return tile.span_h >= 2 ? 3 : 1;
+}
+
+static inline bool parseClimateTileGeometry(
+    const Tile& tile, uint64_t& packed) {
+  const String& text = tile.scene_alias;
+  if (!text.startsWith(CLIMATE_TILE_GEOMETRY_PREFIX) ||
+      text.length() <
+          CLIMATE_TILE_GEOMETRY_PREFIX_LENGTH +
+              CLIMATE_TILE_GEOMETRY_HEX_DIGITS) {
+    return false;
+  }
+  packed = 0;
+  const size_t offset = CLIMATE_TILE_GEOMETRY_PREFIX_LENGTH;
+  for (uint8_t i = 0; i < CLIMATE_TILE_GEOMETRY_HEX_DIGITS; ++i) {
+    const char c = text[offset + i];
+    uint8_t nibble = 0;
+    if (c >= '0' && c <= '9') {
+      nibble = static_cast<uint8_t>(c - '0');
+    } else if (c >= 'a' && c <= 'f') {
+      nibble = static_cast<uint8_t>(c - 'a' + 10);
+    } else if (c >= 'A' && c <= 'F') {
+      nibble = static_cast<uint8_t>(c - 'A' + 10);
+    } else {
+      packed = 0;
+      return false;
+    }
+    packed = (packed << 4) | nibble;
+  }
+  return true;
+}
+
+static inline ClimateTileItemGeometry getClimateTileItemGeometry(
+    const Tile& tile, uint8_t item_index) {
+  const uint8_t columns = climateTileGridColumns(tile);
+  const uint8_t rows = climateTileGridRows(tile);
+  ClimateTileItemGeometry geometry;
+  uint64_t packed = 0;
+  if (item_index < CLIMATE_TILE_MAX_CONTENT_SLOTS &&
+      parseClimateTileGeometry(tile, packed)) {
+    const uint8_t raw = static_cast<uint8_t>(
+        (packed >> (item_index * 6u)) & 0x3Fu);
+    geometry.col = raw & 0x01u;
+    geometry.row = (raw >> 1) & 0x03u;
+    geometry.span_w = static_cast<uint8_t>(((raw >> 3) & 0x01u) + 1u);
+    geometry.span_h = static_cast<uint8_t>(((raw >> 4) & 0x03u) + 1u);
+  } else {
+    geometry.col = item_index % columns;
+    geometry.row = item_index / columns;
+    const ClimateTileContent content =
+        getClimateTileSlotContent(tile, item_index);
+    const bool adjustable =
+        content >= CLIMATE_TILE_CONTENT_TARGET_TEMPERATURE &&
+        content <= CLIMATE_TILE_CONTENT_TARGET_HUMIDITY;
+    if (adjustable) {
+      const ClimateTileTargetLayout layout =
+          getClimateTileTargetLayout(tile, item_index);
+      const bool can_horizontal =
+          columns >= 2 && geometry.col + 1 < columns;
+      const bool can_vertical =
+          rows >= 2 && geometry.row + 1 < rows;
+      if (layout == CLIMATE_TILE_TARGET_LAYOUT_HORIZONTAL &&
+          can_horizontal) {
+        geometry.span_w = 2;
+      } else if (layout == CLIMATE_TILE_TARGET_LAYOUT_VERTICAL &&
+                 can_vertical) {
+        geometry.span_h = 2;
+      } else if (columns == 1 && can_vertical) {
+        geometry.span_h = 2;
+      } else if (rows == 1 && can_horizontal) {
+        geometry.span_w = 2;
+      } else if (can_vertical) {
+        geometry.span_h = 2;
+      } else if (can_horizontal) {
+        geometry.span_w = 2;
+      }
+    }
+  }
+  if (geometry.col >= columns) geometry.col = columns - 1;
+  if (geometry.row >= rows) geometry.row = rows - 1;
+  if (geometry.span_w < 1) geometry.span_w = 1;
+  if (geometry.span_h < 1) geometry.span_h = 1;
+  if (geometry.span_w > columns - geometry.col) {
+    geometry.span_w = columns - geometry.col;
+  }
+  if (geometry.span_h > rows - geometry.row) {
+    geometry.span_h = rows - geometry.row;
+  }
+  return geometry;
+}
+
 static inline uint8_t getTilePopupOpenMode(const Tile& tile) {
   if (tile.type == TILE_SWITCH) {
     return (tile.key_code == TILE_SWITCH_POPUP_MODE_LONG)

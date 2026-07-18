@@ -40,23 +40,21 @@ void append_climate_styles(String& html) {
     }
     .tile.climate .climate-slots {
       position:absolute;
-      left:8px;
-      right:8px;
-      /* 1x1 value center: 50 px. A 32 px slot therefore begins at 34 px.
-         This keeps the first row of every tile size on one exact line. */
-      top:34px;
-      /* The last row keeps the same lower edge distance as a 1x1 tile. */
-      bottom:7px;
+      left:var(--climate-margin-x, 5px);
+      right:var(--climate-margin-x, 5px);
+      top:var(--climate-slots-top, 35px);
+      bottom:var(--climate-slots-bottom, 7px);
       display:grid;
       grid-template-columns:repeat(var(--climate-columns, 1), minmax(0, 1fr));
-      grid-auto-rows:32px;
+      grid-auto-rows:var(--climate-slot-h, 31px);
       align-content:space-between;
-      gap:8px;
+      column-gap:var(--climate-column-gap, 5px);
+      row-gap:var(--climate-column-gap, 5px);
       pointer-events:none;
     }
     .tile.climate .climate-slot {
       min-width:0;
-      min-height:32px;
+      min-height:var(--climate-slot-h, 31px);
       display:flex;
       align-items:center;
       justify-content:center;
@@ -78,9 +76,9 @@ void append_climate_styles(String& html) {
     }
     .tile.climate .climate-slot-control {
       display:grid;
-      border:1px solid #4a4a4a;
-      border-radius:10px;
-      background:transparent;
+      border:0;
+      border-radius:var(--climate-control-radius, 7px);
+      background:#3a3a3a;
     }
     .tile.climate .climate-slot-control span {
       font-size:var(--fs24, 12px);
@@ -98,9 +96,13 @@ void append_climate_styles(String& html) {
       white-space:nowrap;
     }
     .tile.climate .climate-slot-control-horizontal {
-      grid-template-columns:108px 32px minmax(0, 1fr) 32px;
+      grid-template-columns:
+        var(--climate-control-caption-w, 48px)
+        var(--climate-control-button-w, 20px)
+        minmax(0, 1fr)
+        var(--climate-control-button-w, 20px);
       grid-template-rows:1fr;
-      padding:0 4px;
+      padding:0 var(--climate-control-side-pad, 4px);
     }
     .tile.climate .climate-slot-control-horizontal small {
       grid-column:1;
@@ -116,9 +118,12 @@ void append_climate_styles(String& html) {
       grid-column:4;
     }
     .tile.climate .climate-slot-control-vertical {
+      width:100%;
       grid-template-columns:1fr 1fr;
       grid-template-rows:repeat(3, minmax(0, 1fr));
-      padding:8px 0 2px;
+      padding:
+        var(--climate-control-v-pad-top, 4px) 0
+        var(--climate-control-v-pad-bottom, 1px);
     }
     .tile.climate .climate-slot-control-vertical small {
       grid-column:1 / span 2;
@@ -139,6 +144,30 @@ void append_climate_styles(String& html) {
       grid-column:2;
       grid-row:3;
     }
+    .tile.climate .climate-slot-control-large {
+      grid-template-columns:1fr 1fr;
+      grid-template-rows:repeat(3, minmax(0, 1fr));
+      padding:12px 18px;
+    }
+    .tile.climate .climate-slot-control-large small {
+      grid-column:1 / span 2;
+      grid-row:1;
+      align-self:end;
+    }
+    .tile.climate .climate-slot-control-large strong {
+      grid-column:1 / span 2;
+      grid-row:2;
+      align-self:center;
+      font-size:var(--fs28, 14px);
+    }
+    .tile.climate .climate-slot-control-large .climate-minus {
+      grid-column:1;
+      grid-row:3;
+    }
+    .tile.climate .climate-slot-control-large .climate-plus {
+      grid-column:2;
+      grid-row:3;
+    }
     .climate-content-config {
       margin-top:14px;
       padding-top:14px;
@@ -148,42 +177,142 @@ void append_climate_styles(String& html) {
       display:block;
       margin:0 0 8px;
     }
+    .climate-grid-description {
+      margin:0 0 10px;
+    }
+    .climate-mini-editor-shell {
+      padding:10px;
+      border:1px solid var(--line);
+      border-radius:18px;
+      background:#000;
+    }
     .climate-content-grid {
+      --climate-editor-cell-w:128px;
+      --climate-editor-cell-h:72px;
+      --climate-editor-gap:7px;
+      position:relative;
       display:grid;
-      grid-template-columns:repeat(2, minmax(0, 1fr));
-      gap:10px;
+      grid-template-columns:
+        repeat(var(--climate-editor-columns, 1),
+          var(--climate-editor-cell-w));
+      grid-template-rows:
+        repeat(var(--climate-editor-rows, 1),
+          var(--climate-editor-cell-h));
+      gap:var(--climate-editor-gap);
+      width:fit-content;
+      min-height:var(--climate-editor-cell-h);
+      margin:0 auto;
+      isolation:isolate;
     }
-    .climate-content-slot {
+    .climate-mini-cell {
+      z-index:1;
       min-width:0;
+      min-height:0;
+      padding:0;
+      border:2px dashed rgba(38,166,154,.35);
+      border-radius:11px;
+      background:rgba(38,166,154,.06);
+      color:rgba(255,255,255,.5);
+      font-size:22px;
+      cursor:pointer;
     }
-    .climate-content-slot label {
-      display:block;
-      margin:0 0 5px;
-      color:#9ca3af;
-      font-size:12px;
+    .climate-mini-cell:hover {
+      border-color:rgba(38,166,154,.75);
+      background:rgba(38,166,154,.12);
+      color:#fff;
     }
-    .climate-content-slot select {
-      width:100%;
-      min-width:0;
+    .climate-mini-cell.occupied {
+      visibility:hidden;
+      pointer-events:none;
     }
-    .climate-target-layout {
-      margin-top:8px;
-      padding:8px;
-      border-radius:8px;
-      background:#191919;
-    }
-    .climate-target-layout label {
-      margin-bottom:5px;
-    }
-    .climate-content-slot.hidden {
+    .climate-mini-cell.hidden {
       display:none;
+    }
+    .climate-mini-tile.tile {
+      z-index:2;
+      position:relative;
+      min-width:0;
+      min-height:0;
+      padding:7px 8px;
+      background:#2a2a2a;
+      cursor:grab;
+      user-select:none;
+      touch-action:none;
+    }
+    .climate-mini-tile.tile.hidden {
+      display:none;
+    }
+    .climate-mini-tile.tile.dragging {
+      opacity:.12;
+    }
+    .climate-mini-tile.tile.invalid-drop {
+      border-color:#ef4444;
+      box-shadow:0 0 0 2px rgba(239,68,68,.18) inset;
+    }
+    .climate-mini-preview {
+      position:absolute;
+      inset:7px 8px;
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      justify-content:center;
+      gap:5px;
+      min-width:0;
+      color:#fff;
+      text-align:center;
+      pointer-events:none;
+    }
+    .climate-mini-preview small,
+    .climate-mini-preview strong {
+      display:block;
+      max-width:100%;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+    .climate-mini-preview small {
+      color:#d8d8d8;
+      font-size:11px;
+      font-weight:400;
+    }
+    .climate-mini-preview strong {
+      font-size:16px;
+      font-weight:400;
+    }
+    .climate-mini-preview .climate-mini-control {
+      width:100%;
+      display:grid;
+      grid-template-columns:24px minmax(0,1fr) 24px;
+      align-items:center;
+      column-gap:4px;
+    }
+    .climate-mini-preview .climate-mini-control span {
+      font-size:16px;
+    }
+    .climate-mini-tile.tile.active {
+      z-index:4;
+    }
+    .climate-mini-tile.tile .tile-resize-handle {
+      z-index:5;
+    }
+    .climate-slot-storage,
+    .climate-layout-storage {
+      display:none !important;
+    }
+    .climate-selected-fields {
+      margin-top:8px;
+    }
+    .climate-selected-fields label {
+      display:block;
+      margin-bottom:6px;
     }
     .climate-content-hint {
       margin-top:8px;
     }
     @media (max-width:1100px) {
       .climate-content-grid {
-        grid-template-columns:1fr;
+        --climate-editor-cell-w:112px;
+        --climate-editor-cell-h:64px;
       }
     }
   </style>

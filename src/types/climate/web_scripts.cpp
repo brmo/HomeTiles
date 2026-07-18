@@ -22,6 +22,7 @@ void append_climate_scripts(String& html) {
   const CLIMATE_LAYOUT_MAGIC = 0x434c0000;
   const CLIMATE_LAYOUT_MAGIC_MASK = 0xffff0000;
   const CLIMATE_LAYOUT_VALUE_MASK = 0x00000fff;
+  const CLIMATE_GEOMETRY_PREFIX = 'CLG1:';
 
   function climateSlotCapacity(spanW, spanH) {
     const w = Math.max(1, Number(spanW) || 1);
@@ -30,6 +31,152 @@ void append_climate_scripts(String& html) {
     if (w >= 2 && h === 1) return 2;
     if (w === 1) return 3;
     return 6;
+  }
+
+  function climateGridDimensions(spanW, spanH) {
+    return {
+      columns: Math.max(1, Number(spanW) || 1) >= 2 ? 2 : 1,
+      rows: Math.max(1, Number(spanH) || 1) >= 2 ? 3 : 1
+    };
+  }
+
+  function clampClimateGeometryItem(item, columns, rows) {
+    const col = Math.max(
+      0, Math.min(columns - 1, Number(item?.col) || 0));
+    const row = Math.max(
+      0, Math.min(rows - 1, Number(item?.row) || 0));
+    const spanW = Math.max(
+      1, Math.min(columns - col, Number(item?.spanW) || 1));
+    const spanH = Math.max(
+      1, Math.min(rows - row, Number(item?.spanH) || 1));
+    return { col, row, spanW, spanH };
+  }
+
+  function sanitizeClimateGeometryItem(item) {
+    return {
+      col: Math.max(0, Math.min(1, Number(item?.col) || 0)),
+      row: Math.max(0, Math.min(2, Number(item?.row) || 0)),
+      spanW: Math.max(
+        1, Math.min(2, Number(item?.spanW) || 1)),
+      spanH: Math.max(
+        1, Math.min(3, Number(item?.spanH) || 1))
+    };
+  }
+
+  function climateGeometryEquals(a, b) {
+    return a.col === b.col &&
+      a.row === b.row &&
+      a.spanW === b.spanW &&
+      a.spanH === b.spanH;
+  }
+
+  function defaultClimateGeometry(
+      spanW, spanH, slotConfig = null,
+      targetLayoutConfig = null) {
+    const { columns, rows } =
+      climateGridDimensions(spanW, spanH);
+    const configured = Array.isArray(slotConfig)
+      ? slotConfig : Array(6).fill(CLIMATE_TILE_CONTENT.AUTO);
+    const layouts = Array.isArray(targetLayoutConfig)
+      ? targetLayoutConfig : Array(6).fill(CLIMATE_TARGET_LAYOUT.AUTO);
+    return Array.from({ length: 6 }, (_, index) => {
+      const item = {
+        col: index % columns,
+        row: Math.min(rows - 1, Math.floor(index / columns)),
+        spanW: 1,
+        spanH: 1
+      };
+      const content = Number(configured[index]) || 0;
+      if (content === CLIMATE_TILE_CONTENT.AUTO) {
+        if (columns === 2 && rows === 1 && index === 0) {
+          item.spanW = 2;
+        } else if (columns === 1 && rows === 3 && index === 1) {
+          item.spanH = 2;
+        } else if (columns === 2 && rows === 3 &&
+                   (index === 2 || index === 3)) {
+          item.spanH = 2;
+        }
+        return item;
+      }
+      const adjustable =
+        content >= CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE &&
+        content <= CLIMATE_TILE_CONTENT.TARGET_HUMIDITY;
+      if (!adjustable) return item;
+      const layout = Number(layouts[index]) || 0;
+      const canHorizontal = item.col + 1 < columns;
+      const canVertical = item.row + 1 < rows;
+      if (layout === CLIMATE_TARGET_LAYOUT.HORIZONTAL &&
+          canHorizontal) {
+        item.spanW = 2;
+      } else if (layout === CLIMATE_TARGET_LAYOUT.VERTICAL &&
+                 canVertical) {
+        item.spanH = 2;
+      } else if (columns === 1 && canVertical) {
+        item.spanH = 2;
+      } else if (rows === 1 && canHorizontal) {
+        item.spanW = 2;
+      } else if (canVertical) {
+        item.spanH = 2;
+      } else if (canHorizontal) {
+        item.spanW = 2;
+      }
+      return item;
+    });
+  }
+
+  function decodeClimateGeometry(
+      value, spanW, spanH, slotConfig = null,
+      targetLayoutConfig = null) {
+    const text = String(value || '').trim();
+    const match = text.match(/^CLG1:([0-9a-fA-F]{9})$/);
+    if (!match) {
+      return defaultClimateGeometry(
+        spanW, spanH, slotConfig, targetLayoutConfig);
+    }
+    let packed = BigInt('0x' + match[1]);
+    return Array.from({ length: 6 }, (_, index) => {
+      const raw = Number((packed >> BigInt(index * 6)) & 0x3fn);
+      return sanitizeClimateGeometryItem({
+        col: raw & 0x01,
+        row: (raw >> 1) & 0x03,
+        spanW: ((raw >> 3) & 0x01) + 1,
+        spanH: ((raw >> 4) & 0x03) + 1
+      });
+    });
+  }
+
+  function encodeClimateGeometry(items) {
+    let packed = 0n;
+    Array.from({ length: 6 }, (_, index) => {
+      const item = items[index] || {};
+      const raw =
+        (Math.max(0, Math.min(1, Number(item.col) || 0))) |
+        (Math.max(0, Math.min(3, Number(item.row) || 0)) << 1) |
+        ((Math.max(1, Math.min(2, Number(item.spanW) || 1)) - 1) << 3) |
+        ((Math.max(1, Math.min(3, Number(item.spanH) || 1)) - 1) << 4);
+      packed |= BigInt(raw & 0x3f) << BigInt(index * 6);
+    });
+    return CLIMATE_GEOMETRY_PREFIX +
+      packed.toString(16).toUpperCase().padStart(9, '0');
+  }
+
+  function currentClimateGeometry(tab) {
+    const spanW = document.getElementById(
+      tab + '_tile_span_w')?.value || 1;
+    const spanH = document.getElementById(
+      tab + '_tile_span_h')?.value || 1;
+    const input = document.getElementById(
+      tab + '_climate_geometry');
+    return decodeClimateGeometry(
+      input?.value || '', spanW, spanH,
+      currentClimateSlotConfig(tab),
+      currentClimateTargetLayouts(tab));
+  }
+
+  function storeClimateGeometry(tab, items) {
+    const input = document.getElementById(
+      tab + '_climate_geometry');
+    if (input) input.value = encodeClimateGeometry(items);
   }
 
   function decodeClimateSlotConfig(packedValue) {
@@ -103,26 +250,517 @@ void append_climate_scripts(String& html) {
     });
   }
 
+  function climateGeometryOverlaps(a, b) {
+    return a.col < b.col + b.spanW &&
+      a.col + a.spanW > b.col &&
+      a.row < b.row + b.spanH &&
+      a.row + a.spanH > b.row;
+  }
+
+  function canPlaceClimateItem(
+      items, configured, index, candidate, capacity) {
+    for (let other = 0; other < capacity; ++other) {
+      if (other === index) continue;
+      if (Number(configured[other]) === CLIMATE_TILE_CONTENT.EMPTY) {
+        continue;
+      }
+      if (climateGeometryOverlaps(candidate, items[other])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function firstFreeClimateCell(
+      items, configured, capacity, columns, rows,
+      ignoreIndex = -1) {
+    for (let row = 0; row < rows; ++row) {
+      for (let col = 0; col < columns; ++col) {
+        const candidate = { col, row, spanW: 1, spanH: 1 };
+        if (canPlaceClimateItem(
+              items, configured, ignoreIndex,
+              candidate, capacity)) {
+          return candidate;
+        }
+      }
+    }
+    return null;
+  }
+
+  function notifyClimateGridChanged(tab) {
+    updateTilePreview(tab);
+    updateDraft(tab);
+    scheduleAutoSave(tab);
+  }
+
+  let climateGridDragState = null;
+
+  function climateGridCellFromPointer(grid, event, columns, rows) {
+    const rect = grid.getBoundingClientRect();
+    const style = getComputedStyle(grid);
+    const padLeft = parseFloat(style.paddingLeft) || 0;
+    const padTop = parseFloat(style.paddingTop) || 0;
+    const padRight = parseFloat(style.paddingRight) || 0;
+    const padBottom = parseFloat(style.paddingBottom) || 0;
+    const columnGap = parseFloat(style.columnGap) || 0;
+    const rowGap = parseFloat(style.rowGap) || 0;
+    const contentW = Math.max(
+      1, rect.width - padLeft - padRight -
+          columnGap * (columns - 1));
+    const contentH = Math.max(
+      1, rect.height - padTop - padBottom -
+          rowGap * (rows - 1));
+    const cellW = contentW / columns;
+    const cellH = contentH / rows;
+    const x = event.clientX - rect.left - padLeft;
+    const y = event.clientY - rect.top - padTop;
+    return {
+      col: Math.max(
+        0, Math.min(
+          columns - 1,
+          Math.floor(x / Math.max(1, cellW + columnGap)))),
+      row: Math.max(
+        0, Math.min(
+          rows - 1,
+          Math.floor(y / Math.max(1, cellH + rowGap))))
+    };
+  }
+
+  const climateSelectedItemByTab = Object.create(null);
+
+  function climateEditorState(tab) {
+    const entity = document.getElementById(
+      tab + '_climate_entity')?.value || '';
+    return parseClimatePreviewPayload(metaValues[entity] ?? '');
+  }
+
+  function climateEditorContentInfo(tab, kind) {
+    const german =
+      String(document.documentElement.lang || '')
+        .toLowerCase().startsWith('de');
+    const state = climateEditorState(tab);
+    const unit = state.unit || '\u00B0C';
+    const temperature = value =>
+      String(value ?? '--') + ' ' + unit;
+    const selected = Number(kind) || 0;
+    switch (selected) {
+      case CLIMATE_TILE_CONTENT.CURRENT_TEMPERATURE:
+        return {
+          label: german ? 'Aktuell' : 'Current',
+          value: temperature(state.current),
+          adjustable: false
+        };
+      case CLIMATE_TILE_CONTENT.CURRENT_HUMIDITY:
+        return {
+          label: german ? 'Luftfeuchtigkeit' : 'Humidity',
+          value: state.currentHumidity !== null
+            ? state.currentHumidity + '%' : '--%',
+          adjustable: false
+        };
+      case CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE:
+        return {
+          label: german ? 'Solltemperatur' : 'Target',
+          value: temperature(state.target),
+          adjustable: true
+        };
+      case CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE_LOW:
+        return {
+          label: german ? 'Heizen' : 'Heating',
+          value: temperature(state.targetLow),
+          adjustable: true
+        };
+      case CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE_HIGH:
+        return {
+          label: german ? 'K\u00FChlen' : 'Cooling',
+          value: temperature(state.targetHigh),
+          adjustable: true
+        };
+      case CLIMATE_TILE_CONTENT.TARGET_HUMIDITY:
+        return {
+          label: german ? 'Soll-Luftfeuchtigkeit' : 'Target humidity',
+          value: state.targetHumidity !== null
+            ? state.targetHumidity + '%' : '--%',
+          adjustable: true
+        };
+      case CLIMATE_TILE_CONTENT.HVAC_MODE:
+        return {
+          label: german ? 'Modus' : 'Mode',
+          value: state.mode
+            ? state.mode.replaceAll('_', '/')
+            : '--',
+          adjustable: false
+        };
+      case CLIMATE_TILE_CONTENT.AUTO:
+      default:
+        return {
+          label: german ? 'Automatisch' : 'Automatic',
+          value: '--',
+          adjustable: false
+        };
+    }
+  }
+
+  function renderClimateEditorItem(tab, index, geometry, kind) {
+    const preview = document.getElementById(
+      tab + '_climate_preview_' + index);
+    if (!preview) return;
+    const info = climateEditorContentInfo(tab, kind);
+    const expanded =
+      geometry.spanW > 1 || geometry.spanH > 1;
+    if (info.adjustable && expanded) {
+      preview.innerHTML =
+        '<small>' + info.label + '</small>' +
+        '<div class="climate-mini-control">' +
+        '<span>-</span><strong>' + info.value +
+        '</strong><span>+</span></div>';
+      return;
+    }
+    preview.innerHTML =
+      (expanded ? '<small>' + info.label + '</small>' : '') +
+      '<strong>' + info.value + '</strong>';
+  }
+
+  function selectClimateEditorItem(tab, index) {
+    climateSelectedItemByTab[tab] = index;
+    for (let candidate = 0; candidate < 6; ++candidate) {
+      const item = document.getElementById(
+        tab + '_climate_slot_row_' + candidate);
+      const selected = candidate === index &&
+        item && !item.classList.contains('hidden');
+      item?.classList.toggle('active', !!selected);
+      if (item) {
+        item.dataset.selected = selected ? '1' : '0';
+      }
+    }
+    const editor = document.getElementById(
+      tab + '_climate_selected_content');
+    const source = document.getElementById(
+      tab + '_climate_slot_' + index);
+    if (editor) {
+      editor.disabled = !source;
+      if (source) editor.value = source.value;
+    }
+  }
+
+  function bindClimateMiniGrid(tab) {
+    const grid = document.getElementById(
+      tab + '_climate_content_grid');
+    if (!grid || grid.dataset.climateBound === '1') return;
+    grid.dataset.climateBound = '1';
+
+    const selectedContent = document.getElementById(
+      tab + '_climate_selected_content');
+    selectedContent?.addEventListener('change', () => {
+      const index = Number(climateSelectedItemByTab[tab]);
+      if (!Number.isFinite(index) || index < 0 || index >= 6) {
+        return;
+      }
+      const source = document.getElementById(
+        tab + '_climate_slot_' + index);
+      if (!source) return;
+      source.value = selectedContent.value;
+      syncClimateSlotFields(tab);
+      notifyClimateGridChanged(tab);
+    });
+
+    for (let cellIndex = 0; cellIndex < 6; ++cellIndex) {
+      const cell = document.getElementById(
+        tab + '_climate_cell_' + cellIndex);
+      cell?.addEventListener('click', event => {
+        event.preventDefault();
+        const spanW = document.getElementById(
+          tab + '_tile_span_w')?.value || 1;
+        const spanH = document.getElementById(
+          tab + '_tile_span_h')?.value || 1;
+        const { columns, rows } =
+          climateGridDimensions(spanW, spanH);
+        const capacity = climateSlotCapacity(spanW, spanH);
+        const configured = currentClimateSlotConfig(tab);
+        const index = configured.findIndex(
+          (value, candidate) =>
+            candidate < capacity &&
+            Number(value) === CLIMATE_TILE_CONTENT.EMPTY);
+        if (index < 0) return;
+        const row = Math.floor(cellIndex / columns);
+        const col = cellIndex % columns;
+        if (row >= rows) return;
+        const stored = currentClimateGeometry(tab);
+        stored[index] = { col, row, spanW: 1, spanH: 1 };
+        const source = document.getElementById(
+          tab + '_climate_slot_' + index);
+        if (source) {
+          source.value = String(CLIMATE_TILE_CONTENT.AUTO);
+        }
+        storeClimateGeometry(tab, stored);
+        climateSelectedItemByTab[tab] = index;
+        syncClimateSlotFields(tab);
+        notifyClimateGridChanged(tab);
+      });
+    }
+
+    for (let index = 0; index < 6; ++index) {
+      const item = document.getElementById(
+        tab + '_climate_slot_row_' + index);
+      if (!item) continue;
+
+      item.addEventListener('pointerdown', event => {
+        if (!event.isPrimary ||
+            event.target.closest('[data-climate-resize]')) {
+          return;
+        }
+        event.preventDefault();
+        selectClimateEditorItem(tab, index);
+        const spanW = document.getElementById(
+          tab + '_tile_span_w')?.value || 1;
+        const spanH = document.getElementById(
+          tab + '_tile_span_h')?.value || 1;
+        const { columns, rows } =
+          climateGridDimensions(spanW, spanH);
+        const capacity = climateSlotCapacity(spanW, spanH);
+        const configured = currentClimateSlotConfig(tab);
+        const stored = currentClimateGeometry(tab);
+        const items = stored.map(entry =>
+          clampClimateGeometryItem(entry, columns, rows));
+        const origin = { ...items[index] };
+        const startCell = climateGridCellFromPointer(
+          grid, event, columns, rows);
+        let changed = false;
+        item.setPointerCapture(event.pointerId);
+        const onMove = moveEvent => {
+          const cell = climateGridCellFromPointer(
+            grid, moveEvent, columns, rows);
+          const candidate = clampClimateGeometryItem({
+            ...origin,
+            col: origin.col + cell.col - startCell.col,
+            row: origin.row + cell.row - startCell.row
+          }, columns, rows);
+          if (climateGeometryEquals(candidate, items[index]) ||
+              !canPlaceClimateItem(
+                items, configured, index,
+                candidate, capacity)) {
+            return;
+          }
+          changed = true;
+          items[index] = candidate;
+          stored[index] = candidate;
+          item.classList.add('dragging');
+          item.style.gridColumn =
+            (candidate.col + 1) + ' / span ' +
+            candidate.spanW;
+          item.style.gridRow =
+            (candidate.row + 1) + ' / span ' +
+            candidate.spanH;
+        };
+        const onEnd = endEvent => {
+          item.removeEventListener('pointermove', onMove);
+          item.removeEventListener('pointerup', onEnd);
+          item.removeEventListener('pointercancel', onEnd);
+          if (item.hasPointerCapture(endEvent.pointerId)) {
+            item.releasePointerCapture(endEvent.pointerId);
+          }
+          item.classList.remove('dragging');
+          if (!changed) return;
+          storeClimateGeometry(tab, stored);
+          syncClimateSlotFields(tab);
+          notifyClimateGridChanged(tab);
+        };
+        item.addEventListener('pointermove', onMove);
+        item.addEventListener('pointerup', onEnd);
+        item.addEventListener('pointercancel', onEnd);
+      });
+
+      item.querySelectorAll('[data-climate-resize]')
+        .forEach(handle => {
+          handle.addEventListener('pointerdown', event => {
+            event.preventDefault();
+            event.stopPropagation();
+            selectClimateEditorItem(tab, index);
+            const spanW = document.getElementById(
+              tab + '_tile_span_w')?.value || 1;
+            const spanH = document.getElementById(
+              tab + '_tile_span_h')?.value || 1;
+            const { columns, rows } =
+              climateGridDimensions(spanW, spanH);
+            const capacity =
+              climateSlotCapacity(spanW, spanH);
+            const configured = currentClimateSlotConfig(tab);
+            const stored = currentClimateGeometry(tab);
+            const items = stored.map(entry =>
+              clampClimateGeometryItem(entry, columns, rows));
+            const origin = { ...items[index] };
+            const direction =
+              String(handle.dataset.climateResize || 'se');
+            item.classList.add('resizing');
+            handle.setPointerCapture(event.pointerId);
+            const onMove = moveEvent => {
+              const cell = climateGridCellFromPointer(
+                grid, moveEvent, columns, rows);
+              const candidate = { ...origin };
+              if (direction.includes('e')) {
+                candidate.spanW =
+                  cell.col - origin.col + 1;
+              }
+              if (direction.includes('s')) {
+                candidate.spanH =
+                  cell.row - origin.row + 1;
+              }
+              const clamped = clampClimateGeometryItem(
+                candidate, columns, rows);
+              if (!canPlaceClimateItem(
+                    items, configured, index,
+                    clamped, capacity)) {
+                item.classList.add('resize-invalid');
+                return;
+              }
+              item.classList.remove('resize-invalid');
+              items[index] = clamped;
+              stored[index] = clamped;
+              item.style.gridColumn =
+                (clamped.col + 1) + ' / span ' +
+                clamped.spanW;
+              item.style.gridRow =
+                (clamped.row + 1) + ' / span ' +
+                clamped.spanH;
+              renderClimateEditorItem(
+                tab, index, clamped, configured[index]);
+            };
+            const onEnd = endEvent => {
+              handle.removeEventListener(
+                'pointermove', onMove);
+              handle.removeEventListener(
+                'pointerup', onEnd);
+              handle.removeEventListener(
+                'pointercancel', onEnd);
+              if (handle.hasPointerCapture(
+                    endEvent.pointerId)) {
+                handle.releasePointerCapture(
+                  endEvent.pointerId);
+              }
+              item.classList.remove(
+                'resizing', 'resize-invalid');
+              storeClimateGeometry(tab, stored);
+              syncClimateSlotFields(tab);
+              notifyClimateGridChanged(tab);
+            };
+            handle.addEventListener('pointermove', onMove);
+            handle.addEventListener('pointerup', onEnd);
+            handle.addEventListener('pointercancel', onEnd);
+          });
+        });
+    }
+  }
+
   function syncClimateSlotFields(tab) {
     const spanW = document.getElementById(
       tab + '_tile_span_w')?.value || 1;
     const spanH = document.getElementById(
       tab + '_tile_span_h')?.value || 1;
     const capacity = climateSlotCapacity(spanW, spanH);
-    for (let index = 0; index < 6; ++index) {
-      const row = document.getElementById(
-        tab + '_climate_slot_row_' + index);
-      row?.classList.toggle('hidden', index >= capacity);
-      const selected = Number(document.getElementById(
-        tab + '_climate_slot_' + index)?.value) || 0;
-      const adjustable =
-        selected >= CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE &&
-        selected <= CLIMATE_TILE_CONTENT.TARGET_HUMIDITY;
-      document.getElementById(
-        tab + '_climate_layout_row_' + index)
-        ?.classList.toggle(
-          'hidden', index >= capacity || !adjustable);
+    const { columns, rows } =
+      climateGridDimensions(spanW, spanH);
+    const configured = currentClimateSlotConfig(tab);
+    const stored = currentClimateGeometry(tab);
+    const items = stored.map(entry =>
+      clampClimateGeometryItem(entry, columns, rows));
+    const grid = document.getElementById(
+      tab + '_climate_content_grid');
+    if (grid) {
+      grid.style.setProperty(
+        '--climate-editor-columns', String(columns));
+      grid.style.setProperty(
+        '--climate-editor-rows', String(rows));
     }
+
+    const occupied = Array(columns * rows).fill(false);
+    const accepted = [];
+    for (let index = 0; index < 6; ++index) {
+      const item = document.getElementById(
+        tab + '_climate_slot_row_' + index);
+      const kind = Number(configured[index]) || 0;
+      const active =
+        index < capacity &&
+        kind !== CLIMATE_TILE_CONTENT.EMPTY;
+      if (!item) continue;
+      item.classList.toggle('hidden', !active);
+      if (!active) continue;
+
+      let geometry = items[index];
+      if (accepted.some(other =>
+            climateGeometryOverlaps(
+              geometry, other.geometry))) {
+        const free = firstFreeClimateCell(
+          items, configured, capacity,
+          columns, rows, index);
+        if (!free) {
+          item.classList.add('hidden');
+          continue;
+        }
+        geometry = free;
+        items[index] = free;
+        stored[index] = free;
+      }
+      accepted.push({ index, geometry });
+      item.style.gridColumn =
+        (geometry.col + 1) + ' / span ' +
+        geometry.spanW;
+      item.style.gridRow =
+        (geometry.row + 1) + ' / span ' +
+        geometry.spanH;
+      renderClimateEditorItem(
+        tab, index, geometry, kind);
+      for (let row = geometry.row;
+           row < geometry.row + geometry.spanH; ++row) {
+        for (let col = geometry.col;
+             col < geometry.col + geometry.spanW; ++col) {
+          occupied[row * columns + col] = true;
+        }
+      }
+
+      const layout = document.getElementById(
+        tab + '_climate_layout_' + index);
+      if (layout) {
+        layout.value = String(
+          geometry.spanW > 1 && geometry.spanH === 1
+            ? CLIMATE_TARGET_LAYOUT.HORIZONTAL
+            : (geometry.spanH > 1
+                ? CLIMATE_TARGET_LAYOUT.VERTICAL
+                : CLIMATE_TARGET_LAYOUT.AUTO));
+      }
+    }
+
+    for (let cellIndex = 0; cellIndex < 6; ++cellIndex) {
+      const cell = document.getElementById(
+        tab + '_climate_cell_' + cellIndex);
+      if (!cell) continue;
+      const row = Math.floor(cellIndex / columns);
+      const col = cellIndex % columns;
+      const visible = row < rows;
+      cell.classList.toggle('hidden', !visible);
+      cell.classList.toggle(
+        'occupied',
+        !visible || !!occupied[cellIndex]);
+      if (visible) {
+        cell.style.gridColumn = String(col + 1);
+        cell.style.gridRow = String(row + 1);
+      }
+    }
+
+    storeClimateGeometry(tab, stored);
+    bindClimateMiniGrid(tab);
+    let selected = Number(climateSelectedItemByTab[tab]);
+    const selectedItem = Number.isFinite(selected)
+      ? document.getElementById(
+          tab + '_climate_slot_row_' + selected)
+      : null;
+    if (!selectedItem ||
+        selectedItem.classList.contains('hidden')) {
+      selected = accepted.length ? accepted[0].index : -1;
+    }
+    selectClimateEditorItem(tab, selected);
+    const selectedFields = document.getElementById(
+      tab + '_climate_selected_fields');
+    selectedFields?.classList.toggle(
+      'hidden', selected < 0);
     const hint = document.getElementById(
       tab + '_climate_content_hint');
     if (hint) {
@@ -130,14 +768,8 @@ void append_climate_scripts(String& html) {
         String(document.documentElement.lang || '')
           .toLowerCase().startsWith('de');
       hint.textContent = german
-        ? (capacity === 1
-            ? 'Diese Tile-Gr\u00F6\u00DFe zeigt ein Element.'
-            : 'Normale Werte belegen einen Rasterplatz. Ein Regler ' +
-              'verbindet automatisch zwei benachbarte Rasterpl\u00E4tze.')
-        : (capacity === 1
-            ? 'This tile size shows one item.'
-            : 'Normal values use one grid cell. A control automatically ' +
-              'joins two adjacent grid cells.');
+        ? 'Freies Feld anklicken, Inhalt ausw\u00E4hlen und das Feld wie ein Tile verschieben oder aufziehen.'
+        : 'Click a free cell, choose its content, then move or resize it like a tile.';
     }
   }
 
@@ -161,6 +793,12 @@ void append_climate_scripts(String& html) {
         tab + '_climate_layout_' + index);
       if (select) select.value = String(value);
     });
+    const geometry = document.getElementById(
+      tab + '_climate_geometry');
+    if (geometry) {
+      geometry.value =
+        data.climate_geometry || data.scene_alias || '';
+    }
     syncClimateSlotFields(tab);
     maybeFillTitleFromEntity(tab, '_climate_entity');
   }
@@ -271,7 +909,7 @@ void append_climate_scripts(String& html) {
 
   function climatePreviewSlots(
       state, spanW, spanH, slotConfig = null,
-      targetLayoutConfig = null) {
+      targetLayoutConfig = null, geometryConfig = null) {
     const w = Math.max(1, Number(spanW) || 1);
     const h = Math.max(1, Number(spanH) || 1);
     const capacity = climateSlotCapacity(w, h);
@@ -288,19 +926,20 @@ void append_climate_scripts(String& html) {
     while (targetLayouts.length < 6) {
       targetLayouts.push(CLIMATE_TARGET_LAYOUT.AUTO);
     }
+    const geometry = Array.isArray(geometryConfig)
+      ? geometryConfig.slice(0, 6)
+      : decodeClimateGeometry(
+          geometryConfig || '', w, h,
+          configured, targetLayouts);
+    while (geometry.length < 6) {
+      geometry.push({ col: 0, row: 0, spanW: 1, spanH: 1 });
+    }
 
     const automatic = [];
-    let automaticUnits = 0;
     const temp = (value) => String(value ?? '--') + ' ' + state.unit;
-    const slotCost = (kind) =>
-      kind >= CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE &&
-      kind <= CLIMATE_TILE_CONTENT.TARGET_HUMIDITY ? 2 : 1;
     const addAutomatic = (kind) => {
-      const cost = slotCost(kind);
-      if (automatic.length < capacity &&
-          automaticUnits + cost <= capacity) {
+      if (automatic.length < capacity) {
         automatic.push(kind);
-        automaticUnits += cost;
       }
     };
 
@@ -452,7 +1091,6 @@ void append_climate_scripts(String& html) {
     });
 
     const slots = [];
-    let usedUnits = 0;
     let automaticCursor = 0;
     for (let index = 0; index < capacity; ++index) {
       const selection = Number(configured[index]) || 0;
@@ -471,14 +1109,14 @@ void append_climate_scripts(String& html) {
       }
       const slot = slotForKind(kind);
       if (!slot) continue;
-      const cost = slotCost(kind);
-      if (usedUnits + cost > capacity) continue;
       slots.push({
         ...slot,
-        unitSpan: cost,
-        targetLayout
+        targetLayout,
+        itemIndex: index,
+        ...clampClimateGeometryItem(
+          geometry[index], columns,
+          Math.max(1, Math.ceil(capacity / columns)))
       });
-      usedUnits += cost;
     }
 
     if (w === 1 && h === 1) {
@@ -496,100 +1134,82 @@ void append_climate_scripts(String& html) {
 
     if (!slots.length) return '';
     const logicalRows = Math.max(1, Math.ceil(capacity / columns));
-    const occupied = Array.from(
-      { length: logicalRows },
-      () => Array(columns).fill(false));
     const placedSlots = [];
-
     slots.forEach(slot => {
-      let placement = null;
-      const tryVertical = () => {
-        for (let row = 0; row + 1 < logicalRows; ++row) {
-          for (let column = 0; column < columns; ++column) {
-            if (!occupied[row][column] &&
-                !occupied[row + 1][column]) {
-              return { row, column, rowSpan: 2, columnSpan: 1 };
-            }
-          }
-        }
-        return null;
+      const candidate = {
+        col: slot.col,
+        row: slot.row,
+        spanW: slot.spanW,
+        spanH: slot.spanH
       };
-      const tryHorizontal = () => {
-        if (columns < 2) return null;
-        for (let row = 0; row < logicalRows; ++row) {
-          if (!occupied[row][0] && !occupied[row][1]) {
-            return { row, column: 0, rowSpan: 1, columnSpan: 2 };
-          }
-        }
-        return null;
-      };
-      const tryValue = () => {
-        for (let row = 0; row < logicalRows; ++row) {
-          for (let column = 0; column < columns; ++column) {
-            if (!occupied[row][column]) {
-              return { row, column, rowSpan: 1, columnSpan: 1 };
-            }
-          }
-        }
-        return null;
-      };
-
-      if (slot.adjustable) {
-        if (slot.targetLayout === CLIMATE_TARGET_LAYOUT.HORIZONTAL) {
-          placement = tryHorizontal() || tryVertical();
-        } else if (
-            slot.targetLayout === CLIMATE_TARGET_LAYOUT.VERTICAL) {
-          placement = tryVertical() || tryHorizontal();
-        } else {
-          placement = columns === 1
-            ? tryVertical()
-            : (logicalRows === 1
-                ? tryHorizontal()
-                : (tryVertical() || tryHorizontal()));
-        }
-      } else {
-        placement = tryValue();
+      if (placedSlots.some(other =>
+            climateGeometryOverlaps(candidate, {
+              col: other.col,
+              row: other.row,
+              spanW: other.spanW,
+              spanH: other.spanH
+            }))) {
+        return;
       }
-      if (!placement) return;
-
-      for (let row = placement.row;
-           row < placement.row + placement.rowSpan; ++row) {
-        for (let column = placement.column;
-             column < placement.column + placement.columnSpan;
-             ++column) {
-          occupied[row][column] = true;
-        }
-      }
-      placedSlots.push({ ...slot, ...placement });
+      placedSlots.push(slot);
     });
 
+    const tallTile = h > 1;
     return '<div class="climate-slots" style="--climate-columns:' +
-      columns + '">' +
+      columns +
+      ';--climate-slot-h:var(' +
+      (tallTile
+        ? '--climate-slot-h-tall'
+        : '--climate-slot-h-wide') +
+      ');--climate-slots-top:var(' +
+      (tallTile
+        ? '--climate-slots-top-tall'
+        : '--climate-slots-top-wide') +
+      ');--climate-slots-bottom:var(' +
+      (tallTile
+        ? '--climate-slots-bottom-tall'
+        : '--climate-slots-bottom-wide') +
+      ')">' +
       placedSlots.map(slot => {
         const row = slot.row + 1;
-        const column = slot.column + 1;
+        const column = slot.col + 1;
         const horizontal =
-          slot.adjustable && slot.columnSpan === 2;
+          slot.adjustable && slot.spanW > 1 &&
+          slot.spanH === 1;
         const vertical =
-          slot.adjustable && slot.rowSpan === 2;
-        const fullWidthValue =
-          !slot.adjustable && columns === 2 && placedSlots.length === 1;
+          slot.adjustable && slot.spanW === 1 &&
+          slot.spanH > 1;
+        const large =
+          slot.adjustable && slot.spanW > 1 &&
+          slot.spanH > 1;
+        const compact =
+          slot.adjustable && slot.spanW === 1 &&
+          slot.spanH === 1;
         const gridStyle =
           'grid-column:' + column + ' / span ' +
-          ((horizontal || fullWidthValue) ? 2 : 1) +
+          slot.spanW +
           ';grid-row:' + row + ' / span ' +
-          (vertical ? 2 : 1);
-        if (!slot.adjustable) {
+          slot.spanH;
+        if (!slot.adjustable || compact) {
           return '<div class="climate-slot climate-slot-value' +
             (slot.kind === CLIMATE_TILE_CONTENT.HVAC_MODE
               ? ' climate-slot-mode' : '') +
+            (compact ? ' climate-slot-target-compact' : '') +
             '" style="' +
             gridStyle + '"><strong>' + slot.value + '</strong></div>';
         }
+        const controlClass = horizontal
+          ? 'climate-slot-control-horizontal'
+          : (large
+              ? 'climate-slot-control-large'
+              : 'climate-slot-control-vertical ' +
+                (columns > 1
+                  ? (slot.col === 0
+                      ? 'climate-slot-column-left'
+                      : 'climate-slot-column-right')
+                  : ''));
         return '<div class="climate-slot climate-slot-control ' +
-          (horizontal
-            ? 'climate-slot-control-horizontal'
-            : 'climate-slot-control-vertical') +
+          controlClass +
           '" style="' + gridStyle + '">' +
           '<small>' + slot.caption + '</small>' +
           '<span class="climate-minus">-</span><strong>' +
@@ -601,12 +1221,16 @@ void append_climate_scripts(String& html) {
   function saveClimateFields(tab, formData) {
     const packed = packClimateSlotConfig(tab);
     const packedLayouts = packClimateTargetLayouts(tab);
+    const geometry = document.getElementById(
+      tab + '_climate_geometry')?.value || '';
     formData.append('climate_entity',
       document.getElementById(tab + '_climate_entity')?.value || '');
     formData.append('popup_open_mode',
       document.getElementById(tab + '_climate_popup_open_mode')?.value || '1');
     formData.append('climate_slots_packed', String(packed));
     formData.append('climate_layouts_packed', String(packedLayouts));
+    formData.append('climate_geometry', geometry);
+    formData.append('scene_alias', geometry);
     // Keep the local tile/draft representation in sync with the V7 storage
     // field used by the firmware.
     formData.append('sensor_gauge_min', String(packed));
@@ -620,6 +1244,9 @@ void append_climate_scripts(String& html) {
     if (entity) entity.value = '';
     const popup = document.getElementById(tab + '_climate_popup_open_mode');
     if (popup) popup.value = '1';
+    const geometry = document.getElementById(
+      tab + '_climate_geometry');
+    if (geometry) geometry.value = '';
     for (let index = 0; index < 6; ++index) {
       const select = document.getElementById(
         tab + '_climate_slot_' + index);

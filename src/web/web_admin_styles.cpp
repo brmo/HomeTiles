@@ -77,6 +77,13 @@ void appendPreviewScaleVars(String& html) {
     html += String(preview_scaled_px(lvgl_px));
     html += "px;";
   };
+  auto emit_exact = [&html](const char* name, int lvgl_px) {
+    html += "--";
+    html += name;
+    html += ":";
+    html += String(preview_scaled_exact_px(lvgl_px));
+    html += "px;";
+  };
   html += "  <style>:root{";
   emit("fs16", 16);
   emit("fs20", 20);
@@ -94,6 +101,24 @@ void appendPreviewScaleVars(String& html) {
   emit("tile-pad-v", 24);     // Kachel pad_ver auf dem Display
   emit("tile-pad-h", 20);     // Kachel pad_hor auf dem Display
   emit("value-dy", 28);       // Sensorwert: LV_ALIGN_CENTER(0, 28)
+  // Climate tile geometry uses the exact same LVGL-to-preview scale as the
+  // device. Keeping these separate from font variables avoids the 6 px
+  // minimum used for readable preview text.
+  emit_exact("climate-margin-x", 6);
+  emit_exact("climate-column-gap", 10);
+  emit_exact("climate-slot-h-wide", 58);
+  emit_exact("climate-slot-h-tall", 62);
+  emit_exact("climate-slots-top-wide", 81);
+  emit_exact("climate-slots-top-tall", 69);
+  emit_exact("climate-slots-bottom-wide", 6);
+  emit_exact("climate-slots-bottom-tall", 6);
+  emit_exact("climate-control-radius", 14);
+  emit_exact("climate-control-side-pad", 8);
+  emit_exact("climate-control-caption-w", 96);
+  emit_exact("climate-control-button-w", 40);
+  emit_exact("climate-control-single-w", GRID_CELL_W - 12);
+  emit_exact("climate-control-v-pad-top", 8);
+  emit_exact("climate-control-v-pad-bottom", 2);
   html += "--settings-panel-width:";
   html += String(settings_panel_target_width_px());
   html += "px;";

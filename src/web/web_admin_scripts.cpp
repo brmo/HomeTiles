@@ -2418,7 +2418,8 @@ void appendAdminScripts(String& html) {
       html += climatePreviewSlots(
         climatePreviewState, climateSpanW, climateSpanH,
         currentClimateSlotConfig(tab),
-        currentClimateTargetLayouts(tab));
+        currentClimateTargetLayouts(tab),
+        currentClimateGeometry(tab));
     }
 
     if (previewKind === 'sensor') {
@@ -3350,6 +3351,9 @@ void appendAdminScripts(String& html) {
       fd.append(
         'climate_layouts_packed',
         getClimateLayoutPayload(tile.sensor_gauge_max));
+      fd.append(
+        'climate_geometry',
+        tile.climate_geometry || tile.scene_alias || '');
       if (tile.popup_open_mode !== undefined && tile.popup_open_mode !== null) {
         fd.append('popup_open_mode', tile.popup_open_mode);
       }
@@ -3523,7 +3527,8 @@ void appendAdminScripts(String& html) {
           tile.span_w || 1,
           tile.span_h || 1,
           decodeClimateSlotConfig(tile.sensor_gauge_min || 0),
-          decodeClimateTargetLayouts(tile.sensor_gauge_max || 0));
+          decodeClimateTargetLayouts(tile.sensor_gauge_max || 0),
+          tile.climate_geometry || tile.scene_alias || '');
       }
       if (previewKind === 'clock') {
         const flags = normalizeClockFlags(tile.sensor_decimals);
