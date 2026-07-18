@@ -778,15 +778,18 @@ bool buildAdminFolderTabFragments(uint16_t folder_id, String& button_html, Strin
     String lower = v;
     lower.toLowerCase();
     if (lower == "unavailable") return String("--");
-    if (decimals == 0xFF) return v;
+    if (decimals == 0xFF) {
+      return i18n::localize_numeric_text(
+          configManager.getConfig().language, v);
+    }
     String normalized = v;
     normalized.replace(",", ".");
     char* end = nullptr;
     float f = strtof(normalized.c_str(), &end);
     if (!end || end == normalized.c_str()) return v;
     if (isnan(f) || isinf(f)) return v;
-    uint8_t d = decimals > 6 ? 6 : decimals;
-    return String(f, static_cast<unsigned int>(d));
+    return i18n::format_number(
+        configManager.getConfig().language, f, decimals);
   };
 
   String navigateOptionsHtml;
@@ -866,15 +869,18 @@ String WebAdminServer::getAdminPage() {
     String lower = v;
     lower.toLowerCase();
     if (lower == "unavailable") return String("--");
-    if (decimals == 0xFF) return v;  // Keine Rundung gewünscht
+    if (decimals == 0xFF) {
+      return i18n::localize_numeric_text(
+          configManager.getConfig().language, v);
+    }
     String normalized = v;
     normalized.replace(",", ".");
     char* end = nullptr;
     float f = strtof(normalized.c_str(), &end);
     if (!end || end == normalized.c_str()) return v;  // Nicht numerisch
     if (isnan(f) || isinf(f)) return v;
-    uint8_t d = decimals > 6 ? 6 : decimals;
-    return String(f, static_cast<unsigned int>(d));
+    return i18n::format_number(
+        configManager.getConfig().language, f, decimals);
   };
 
   const auto& folders = tileConfig.getFolders();

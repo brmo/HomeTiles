@@ -87,7 +87,7 @@ bool is_german() {
 }
 
 const char* today_label() {
-  return is_german() ? "Heute" : "Today";
+  return i18n::weather_today_label(configManager.getConfig().language);
 }
 
 const char* loading_label() {
@@ -95,9 +95,8 @@ const char* loading_label() {
 }
 
 String format_number(float value, uint8_t decimals) {
-  if (!isfinite(value)) return String("--");
-  uint8_t d = decimals > 6 ? 6 : decimals;
-  return String(value, static_cast<unsigned int>(d));
+  return i18n::format_number(
+      configManager.getConfig().language, value, decimals);
 }
 
 String format_value_with_unit(float value, const String& unit, uint8_t decimals) {
@@ -184,7 +183,8 @@ String format_axis_value(float value, const String& unit, uint8_t decimals) {
   if (fabsf(value - roundf(value)) < 0.05f && d > 1) {
     d = 1;
   }
-  String out = String(value, static_cast<unsigned int>(d));
+  String out = i18n::format_number(
+      configManager.getConfig().language, value, d);
   if (unit.length()) {
     out += " ";
     out += unit;

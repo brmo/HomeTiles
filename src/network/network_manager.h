@@ -104,6 +104,13 @@ public:
   // Verbindung herstellen
   void connectWifi();
 
+  // ESP32-P4/ESP-Hosted-Liveness-Probe. WiFi.status() ist bei einem
+  // festgefahrenen C6 nur ein gecachter Zustand und kann weiterhin
+  // "verbunden" melden. getMode() ist dagegen ein echtes RPC: gesund kehrt
+  // es sofort zurueck, beim Wedge nach dem 5s-Timeout. In diesem Fall wird
+  // der bereits vorhandene sichere Recovery-Pfad ausgeloest.
+  bool probeWifiDriverHealth(const char* context);
+
   // Vom Nutzer angefordertes Trennen (WLAN-Popup "Trennen"): trennt und
   // unterdrueckt jeden Auto-Reconnect, bis wieder manuell verbunden wird
   // (connectWifi) oder das Geraet neu startet. Zugangsdaten bleiben
@@ -155,6 +162,12 @@ private:
   // Geraet ohne WiFi weiter; faellt auch Ethernet weg, hilft nur noch der
   // sichere Neustart (setzt den C6 mit zurueck).
   bool wifi_wedge_latched = false;
+  // Solange MQTT offline ist, obwohl der WiFi-Transport weiterhin eine
+  // Verbindung behauptet, nach einer Schonfrist einen echten Hosted-RPC
+  // pruefen. So bleibt ein toter C6 nicht unbegrenzt im gecachten
+  // WL_CONNECTED-Zustand haengen.
+  uint32_t wifi_mqtt_offline_since = 0;
+  uint32_t wifi_health_probe_at = 0;
   uint32_t mqtt_retry_at = 0;      // worker-only
   uint8_t mqtt_connect_failures = 0;  // worker-only: Fehlversuche in Folge
   uint32_t last_telemetry = 0;
@@ -224,7 +237,7 @@ private:
   // ESP-Hosted-Wedge (C6 antwortet nicht mehr): Bericht nach /crashlog.txt,
   // dann mit Ethernet weiterlaufen oder - ohne Ethernet-Link - sicherer
   // Neustart, der den C6 mit zuruecksetzt. Laeuft auf dem Loop-Task.
-  void handleWifiDriverWedge();
+  void handleWifiDriverWedge(const char* context = nullptr);
 
   // mDNS-Start (Loop-Task, gleiche connect-Flanke wie webAdminServer). Rein
   // additiv fuers Zeroconf-Discovery der HA-Bridge -- beeinflusst weder MQTT

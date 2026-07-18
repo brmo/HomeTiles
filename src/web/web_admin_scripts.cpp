@@ -97,6 +97,25 @@ void appendAdminScripts(String& html) {
     });
     return out;
   }
+  const APP_LOCALE = document.documentElement.lang || 'en';
+  function formatLocalizedNumber(value, decimals = 0, trimTrailingZeros = false) {
+    const numeric = Number(String(value ?? '').trim().replace(',', '.'));
+    if (!Number.isFinite(numeric)) return '--';
+    const digits = Math.max(0, Math.min(6, Number.parseInt(decimals, 10) || 0));
+    return new Intl.NumberFormat(APP_LOCALE, {
+      useGrouping: false,
+      minimumFractionDigits: trimTrailingZeros ? 0 : digits,
+      maximumFractionDigits: digits
+    }).format(numeric);
+  }
+  function localizeNumericText(value) {
+    const text = String(value ?? '').trim();
+    if (!text.length) return text;
+    const normalized = text.replace(',', '.');
+    if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(normalized)) return text;
+    const fraction = normalized.includes('.') ? normalized.split('.')[1].length : 0;
+    return formatLocalizedNumber(Number(normalized), fraction, false);
+  }
 
   let normalTileBordersSaveSequence = 0;
   function applyNormalTileBordersPreview(enabled) {
@@ -359,8 +378,11 @@ void appendAdminScripts(String& html) {
     let size = Number(entry.size || 0);
     if (!Number.isFinite(size) || size < 0) size = 0;
     if (size < 1024) return size + ' B';
-    if (size < 1024 * 1024) return (size / 1024).toFixed(size < 10 * 1024 ? 1 : 0) + ' KB';
-    return (size / (1024 * 1024)).toFixed(size < 10 * 1024 * 1024 ? 1 : 0) + ' MB';
+    if (size < 1024 * 1024) {
+      return formatLocalizedNumber(size / 1024, size < 10 * 1024 ? 1 : 0) + ' KB';
+    }
+    return formatLocalizedNumber(
+      size / (1024 * 1024), size < 10 * 1024 * 1024 ? 1 : 0) + ' MB';
   }
 
   function formatFileManagerModified(entry) {
@@ -1126,12 +1148,18 @@ void appendAdminScripts(String& html) {
                     Object.prototype.hasOwnProperty.call(payload, 'icons') ||
                     Object.prototype.hasOwnProperty.call(payload, 'names') ||
                     Object.prototype.hasOwnProperty.call(payload, 'energy_values') ||
-                    Object.prototype.hasOwnProperty.call(payload, 'energy_units');
+                    Object.prototype.hasOwnProperty.call(payload, 'energy_units') ||
+                    Object.prototype.hasOwnProperty.call(payload, 'climate_values');
     if (!hasMeta) {
       return { values: payload || {}, units: {}, icons: {}, names: {}, loaded: true };
     }
     return {
-      values: Object.assign({}, payload.values || {}, payload.energy_values || {}),
+      values: Object.assign(
+        {},
+        payload.values || {},
+        payload.energy_values || {},
+        payload.climate_values || {}
+      ),
       units: Object.assign({}, payload.units || {}, payload.energy_units || {}),
       icons: payload.icons || {},
       names: payload.names || {},
@@ -2110,6 +2138,14 @@ void appendAdminScripts(String& html) {
     const mediaSelect = document.getElementById(prefix + '_media_entity');
     const climateSelect = document.getElementById(prefix + '_climate_entity');
     const climatePopupModeSelect = document.getElementById(prefix + '_climate_popup_open_mode');
+    const climateSlotSelects = Array.from(
+      { length: 6 },
+      (_, index) => document.getElementById(
+        prefix + '_climate_slot_' + index));
+    const climateLayoutSelects = Array.from(
+      { length: 6 },
+      (_, index) => document.getElementById(
+        prefix + '_climate_layout_' + index));
     const animationSelect = document.getElementById(prefix + '_animation_file');
     const animationFpsInput = document.getElementById(prefix + '_animation_fps');
     const animationFitSelect = document.getElementById(prefix + '_animation_fit');
@@ -2130,8 +2166,8 @@ void appendAdminScripts(String& html) {
     bindLive(opacityInput, 'change', 'tileOpacitySave', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(colInput, 'input', 'tileCol', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(rowInput, 'input', 'tileRow', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
-    bindLive(spanWInput, 'input', 'tileSpanW', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
-    bindLive(spanHInput, 'input', 'tileSpanH', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
+    bindLive(spanWInput, 'input', 'tileSpanW', () => { syncClimateSlotFields(tab); updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
+    bindLive(spanHInput, 'input', 'tileSpanH', () => { syncClimateSlotFields(tab); updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(typeSelect, 'change', 'tileType', () => {
       const tileEl = document.getElementById(tab + '-tile-' + currentTileIndex);
       const previousType = Number(tileEl?.dataset.type ?? 0);
@@ -2185,6 +2221,21 @@ void appendAdminScripts(String& html) {
     bindLive(mediaSelect, 'change', 'mediaEntity', () => { maybeFillTitleFromMedia(tab); updateTilePreview(tab); updateMediaValuePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(climateSelect, 'change', 'climateEntity', () => { maybeFillTitleFromEntity(tab, '_climate_entity'); updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(climatePopupModeSelect, 'change', 'climatePopupMode', () => { updateDraft(tab); scheduleAutoSave(tab); });
+    climateSlotSelects.forEach((select, index) => {
+      bindLive(select, 'change', 'climateSlot' + index, () => {
+        syncClimateSlotFields(tab);
+        updateTilePreview(tab);
+        updateDraft(tab);
+        scheduleAutoSave(tab);
+      });
+    });
+    climateLayoutSelects.forEach((select, index) => {
+      bindLive(select, 'change', 'climateLayout' + index, () => {
+        updateTilePreview(tab);
+        updateDraft(tab);
+        scheduleAutoSave(tab);
+      });
+    });
     bindLive(animationSelect, 'change', 'animationFile', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(animationFpsInput, 'input', 'animationFps', () => { updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(animationFitSelect, 'change', 'animationFit', () => { updateDraft(tab); scheduleAutoSave(tab); });
@@ -2292,14 +2343,15 @@ void appendAdminScripts(String& html) {
     const rawIcon = iconInput ? iconInput.value : '';
     let iconName = resolveIconName(
       rawIcon,
-      previewKind === 'climate' ? '' : iconEntity,
+      iconEntity,
       sensorMetaCache.icons);
     let climatePreviewState = null;
     if (previewKind === 'climate') {
       climatePreviewState = parseClimatePreviewPayload(
         climateEntity ? (sensorMetaCache.values[climateEntity] ?? '') : '');
-      if (!iconName && !isExplicitlyDisabledValue(rawIcon)) {
-        iconName = climatePreviewIcon(climatePreviewState);
+      if (!normalizeMdiIconName(rawIcon) &&
+          !isExplicitlyDisabledValue(rawIcon)) {
+        iconName = climatePreviewIcon(climatePreviewState, iconName);
       }
     }
 
@@ -2359,9 +2411,14 @@ void appendAdminScripts(String& html) {
       html += '<div class="tile-ghost-icon"><i class="mdi mdi-music"></i></div>';
     }
     if (previewKind === 'climate') {
-      html += '<div class="tile-value" id="' + tileId + '-value">' +
-        climatePreviewState.current + '<span class="tile-unit">' +
-        climatePreviewState.unit + '</span></div>';
+      const climateSpanW = document.getElementById(
+        prefix + '_tile_span_w')?.value || 1;
+      const climateSpanH = document.getElementById(
+        prefix + '_tile_span_h')?.value || 1;
+      html += climatePreviewSlots(
+        climatePreviewState, climateSpanW, climateSpanH,
+        currentClimateSlotConfig(tab),
+        currentClimateTargetLayouts(tab));
     }
 
     if (previewKind === 'sensor') {
@@ -2548,6 +2605,9 @@ void appendAdminScripts(String& html) {
     }
     if (meta.onSelect) {
       callTypeHandler(meta, 'onSelect', tab);
+    }
+    if (Number(typeValue) === 17) {
+      syncClimateSlotFields(tab);
     }
     syncGaugeUi(tab);
     applySpecialTileUiState(tab);
@@ -3282,6 +3342,14 @@ void appendAdminScripts(String& html) {
       fd.append('media_entity', tile.sensor_entity || tile.media_entity || '');
     } else if (safeType === 17) {
       fd.append('climate_entity', tile.sensor_entity || tile.climate_entity || '');
+      fd.append(
+        'climate_slots_packed',
+        (tile.sensor_gauge_min !== undefined &&
+         tile.sensor_gauge_min !== null)
+          ? tile.sensor_gauge_min : 0);
+      fd.append(
+        'climate_layouts_packed',
+        getClimateLayoutPayload(tile.sensor_gauge_max));
       if (tile.popup_open_mode !== undefined && tile.popup_open_mode !== null) {
         fd.append('popup_open_mode', tile.popup_open_mode);
       }
@@ -3411,14 +3479,15 @@ void appendAdminScripts(String& html) {
       const rawIcon = tile.icon_name || '';
       let iconName = resolveIconName(
         rawIcon,
-        previewKind === 'climate' ? '' : iconEntity,
+        iconEntity,
         metaIcons);
       let climatePreviewState = null;
       if (previewKind === 'climate') {
         climatePreviewState = parseClimatePreviewPayload(
           tile.sensor_entity ? (metaValues[tile.sensor_entity] ?? '') : '');
-        if (!iconName && !isExplicitlyDisabledValue(rawIcon)) {
-          iconName = climatePreviewIcon(climatePreviewState);
+        if (!normalizeMdiIconName(rawIcon) &&
+            !isExplicitlyDisabledValue(rawIcon)) {
+          iconName = climatePreviewIcon(climatePreviewState, iconName);
         }
       }
 
@@ -3449,9 +3518,12 @@ void appendAdminScripts(String& html) {
         html += '<div class="tile-value ' + sensorValueClass + '" id="' + tab + '-tile-' + index + '-value">' + value + (unit ? '<span class="tile-unit">' + unit + '</span>' : '') + '</div>';
       }
       if (previewKind === 'climate') {
-        html += '<div class="tile-value" id="' + tab + '-tile-' + index +
-          '-value">' + climatePreviewState.current +
-          '<span class="tile-unit">' + climatePreviewState.unit + '</span></div>';
+        html += climatePreviewSlots(
+          climatePreviewState,
+          tile.span_w || 1,
+          tile.span_h || 1,
+          decodeClimateSlotConfig(tile.sensor_gauge_min || 0),
+          decodeClimateTargetLayouts(tile.sensor_gauge_max || 0));
       }
       if (previewKind === 'clock') {
         const flags = normalizeClockFlags(tile.sensor_decimals);

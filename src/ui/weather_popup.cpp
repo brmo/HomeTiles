@@ -485,10 +485,8 @@ static bool extract_json_number_or_string_field(const String& src, const char* k
 }
 
 static String format_weather_temp(float temp, const String& unit) {
-  String text = String(temp, 1);
-  if (text.endsWith(".0")) {
-    text.remove(text.length() - 2);
-  }
+  String text = i18n::format_number(
+      configManager.getConfig().language, temp, 1, true);
   if (unit.length()) {
     text += " ";
     text += unit;
@@ -497,21 +495,16 @@ static String format_weather_temp(float temp, const String& unit) {
 }
 
 static String format_precipitation_amount(float amount, const String& unit) {
-  String text = String(amount, 1);
-  if (text.endsWith(".0")) {
-    text.remove(text.length() - 2);
-  }
+  String text = i18n::format_number(
+      configManager.getConfig().language, amount, 1, true);
   text += " ";
   text += unit.length() ? unit : "mm";
   return text;
 }
 
 static String format_precipitation_amount_value(float amount) {
-  String text = String(amount, 1);
-  if (text.endsWith(".0")) {
-    text.remove(text.length() - 2);
-  }
-  return text;
+  return i18n::format_number(
+      configManager.getConfig().language, amount, 1, true);
 }
 
 static String format_precipitation_amount_unit(const String& unit) {
@@ -551,20 +544,15 @@ static void position_value_unit_centered(
 }
 
 static String format_forecast_chart_temp(float temp) {
-  String text = String(temp, 1);
-  if (text.endsWith(".0")) {
-    text.remove(text.length() - 2);
-  }
+  String text = i18n::format_number(
+      configManager.getConfig().language, temp, 1, true);
   text += "\xC2\xB0";
   return text;
 }
 
 static String format_forecast_chart_temp_value(float temp) {
-  String text = String(temp, 1);
-  if (text.endsWith(".0")) {
-    text.remove(text.length() - 2);
-  }
-  return text;
+  return i18n::format_number(
+      configManager.getConfig().language, temp, 1, true);
 }
 
 static int scale_forecast_temp(float temp) {
@@ -1153,23 +1141,13 @@ static String format_localized_short_date_from_iso(const String& iso) {
   }
 }
 
-static const char* weather_month_short_name(int month, bool german) {
-  static const char* kMonthsDe[] = {
-      "Jan.", "Feb.", "M\xC3\xA4r.", "Apr.", "Mai", "Jun.",
-      "Jul.", "Aug.", "Sep.", "Okt.", "Nov.", "Dez."};
-  static const char* kMonthsEn[] = {
-      "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-  if (month < 1 || month > 12) return "";
-  return german ? kMonthsDe[month - 1] : kMonthsEn[month - 1];
-}
-
 static String format_weather_popup_date_from_iso(const String& iso) {
   int y = 0, m = 0, d = 0;
   if (!parse_iso_date(iso, y, m, d)) return format_localized_short_date_from_iso(iso);
 
   const bool is_de = configManager.getConfig().language[0] == 'd';
-  const char* month = weather_month_short_name(m, is_de);
+  const char* month =
+      i18n::weather_month_short(configManager.getConfig().language, m);
   if (!month || !*month) return format_localized_short_date_from_iso(iso);
 
   if (is_de) {
@@ -1179,7 +1157,7 @@ static String format_weather_popup_date_from_iso(const String& iso) {
 }
 
 static const char* weather_today_button_text() {
-  return (configManager.getConfig().language[0] == 'd') ? "Heute" : "Today";
+  return i18n::weather_today_label(configManager.getConfig().language);
 }
 
 static String iso_date_part(const String& text) {

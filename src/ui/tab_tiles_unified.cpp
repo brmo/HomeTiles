@@ -4,6 +4,7 @@
 #include "src/core/lvgl_tick_service.h"
 #include "src/tiles/tile_config.h"
 #include "src/tiles/tile_renderer.h"
+#include "src/tiles/tile_renderer_shared.h"
 #include "src/ui/sensor_popup.h"
 #include "src/ui/weather_popup.h"
 #include "src/ui/ui_surface_style.h"
@@ -1346,12 +1347,17 @@ static void tiles_refresh_icons_for_grid(GridType grid_type) {
     String icon_name = tile.icon_name;
     bool icon_disabled = isMdiIconDisabled(icon_name);
     icon_name = normalizeMdiIconName(icon_name);
-    // Climate tiles with an empty icon field own a state-driven icon
-    // (heating/cooling/idle/off). The generic bridge metadata refresh must
-    // neither replace nor hide that label when Home Assistant has no fixed
-    // entity icon.
+    // Climate tiles with an empty icon field use Home Assistant's entity icon
+    // as their base and only override it for an active HVAC action. Recompute
+    // that visual here as well so a live bridge icon refresh can never hide
+    // the Climate label or replace an active flame/snowflake with stale meta.
     if (tile.type == TILE_CLIMATE && !icon_disabled && !icon_name.length()) {
-      continue;
+      const String base_icon = climate_tile_base_icon(tile);
+      ClimateState* states = tile_renderer_get_climate_states(grid_type);
+      icon_name =
+          states && states[i].valid
+              ? climate_visual_icon(states[i], base_icon)
+              : base_icon;
     }
     if (!icon_disabled && !icon_name.length()) {
       if (tile.type == TILE_SCENE) {

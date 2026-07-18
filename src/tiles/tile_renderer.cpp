@@ -4,6 +4,8 @@
 #include "src/game/game_ws_server.h"
 #include "src/tiles/tile_config.h"
 #include "src/tiles/mdi_icons.h"
+#include "src/types/climate/visuals.h"
+#include "src/types/climate/renderer.h"
 #include "src/ui/ui_manager.h"
 #include "src/ui/light_popup.h"
 #include "src/ui/sensor_popup.h"
@@ -404,7 +406,13 @@ static const lv_font_t* get_sensor_value_font(const Tile& tile) {
 }
 
 static bool apply_decimals(String& value, uint8_t decimals) {
-  if (decimals == 0xFF) return false;  // Keine Rundung gewuenscht
+  const char* language = configManager.getConfig().language;
+  if (decimals == 0xFF) {
+    String localized = i18n::localize_numeric_text(language, value);
+    const bool changed = localized != value;
+    value = localized;
+    return changed;
+  }
   String normalized = value;
   normalized.replace(",", ".");
   char* end = nullptr;
@@ -412,7 +420,7 @@ static bool apply_decimals(String& value, uint8_t decimals) {
   if (!end || end == normalized.c_str()) return false;  // Keine Zahl
   if (isnan(f) || isinf(f)) return false;
   uint8_t d = decimals > 6 ? 6 : decimals;
-  value = String(f, static_cast<unsigned int>(d));
+  value = i18n::format_number(language, f, d);
   return true;
 }
 
@@ -781,10 +789,8 @@ static bool extract_json_number_or_string_field(const String& src, const char* k
 }
 
 static String format_weather_temp(float temp, const String& unit) {
-  String text = String(temp, 1);
-  if (text.endsWith(".0")) {
-    text.remove(text.length() - 2);
-  }
+  String text = i18n::format_number(
+      configManager.getConfig().language, temp, 1, true);
   if (unit.length()) {
     text += " ";
     text += unit;
@@ -793,11 +799,8 @@ static String format_weather_temp(float temp, const String& unit) {
 }
 
 static String format_weather_temp_value(float temp) {
-  String text = String(temp, 1);
-  if (text.endsWith(".0")) {
-    text.remove(text.length() - 2);
-  }
-  return text;
+  return i18n::format_number(
+      configManager.getConfig().language, temp, 1, true);
 }
 
 static String format_weather_temp_unit(const String& unit) {
@@ -1005,7 +1008,7 @@ static String weekday_from_iso(const String& iso) {
 }
 
 static const char* weather_today_tile_label() {
-  return (configManager.getConfig().language[0] == 'd') ? "Heute" : "Today";
+  return i18n::weather_today_label(configManager.getConfig().language);
 }
 
 static bool get_local_today_date(String& date_out) {
@@ -1713,6 +1716,95 @@ static uint8_t climate_modes_mask(const String& normalized_modes) {
   return mask;
 }
 
+static uint8_t climate_preset_id(String preset) {
+  preset.trim();
+  preset.toLowerCase();
+  for (uint8_t id = 0; id < 8; ++id) {
+    if (preset == climatePresetName(id)) return id;
+  }
+  return 0xFF;
+}
+
+static uint8_t climate_preset_modes_mask(const String& normalized_modes) {
+  uint8_t mask = 0;
+  int start = 0;
+  while (start <= normalized_modes.length()) {
+    int comma = normalized_modes.indexOf(',', start);
+    if (comma < 0) comma = normalized_modes.length();
+    const uint8_t id =
+        climate_preset_id(normalized_modes.substring(start, comma));
+    if (id < 8) mask |= (1U << id);
+    if (comma >= normalized_modes.length()) break;
+    start = comma + 1;
+  }
+  return mask;
+}
+
+static uint16_t climate_fan_modes_mask(const String& normalized_modes) {
+  static const char* const names[] = {
+      "auto", "low", "medium", "high", "on",
+      "off", "top", "middle", "focus", "diffuse"};
+  uint16_t mask = 0;
+  int start = 0;
+  while (start <= normalized_modes.length()) {
+    int comma = normalized_modes.indexOf(',', start);
+    if (comma < 0) comma = normalized_modes.length();
+    const String mode = normalized_modes.substring(start, comma);
+    for (uint8_t id = 0; id < 10; ++id) {
+      if (mode == names[id]) {
+        mask |= static_cast<uint16_t>(1U << id);
+        break;
+      }
+    }
+    if (comma >= normalized_modes.length()) break;
+    start = comma + 1;
+  }
+  return mask;
+}
+
+static uint8_t climate_swing_modes_mask(const String& normalized_modes) {
+  static const char* const names[] = {
+      "off", "on", "vertical", "horizontal", "both"};
+  uint8_t mask = 0;
+  int start = 0;
+  while (start <= normalized_modes.length()) {
+    int comma = normalized_modes.indexOf(',', start);
+    if (comma < 0) comma = normalized_modes.length();
+    const String mode = normalized_modes.substring(start, comma);
+    for (uint8_t id = 0; id < 5; ++id) {
+      if (mode == names[id]) {
+        mask |= static_cast<uint8_t>(1U << id);
+        break;
+      }
+    }
+    if (comma >= normalized_modes.length()) break;
+    start = comma + 1;
+  }
+  return mask;
+}
+
+static uint8_t climate_horizontal_swing_modes_mask(
+    const String& normalized_modes) {
+  static const char* const names[] = {
+      "off", "on", "left", "center", "right", "swing", "wide"};
+  uint8_t mask = 0;
+  int start = 0;
+  while (start <= normalized_modes.length()) {
+    int comma = normalized_modes.indexOf(',', start);
+    if (comma < 0) comma = normalized_modes.length();
+    const String mode = normalized_modes.substring(start, comma);
+    for (uint8_t id = 0; id < 7; ++id) {
+      if (mode == names[id]) {
+        mask |= static_cast<uint8_t>(1U << id);
+        break;
+      }
+    }
+    if (comma >= normalized_modes.length()) break;
+    start = comma + 1;
+  }
+  return mask;
+}
+
 static ClimateState parse_climate_payload(const char* payload) {
   ClimateState out;
   if (!payload) return out;
@@ -1733,6 +1825,25 @@ static ClimateState parse_climate_payload(const char* payload) {
       text.toLowerCase();
       climate_copy_text(out.hvac_action, sizeof(out.hvac_action), text);
     }
+    if (extract_json_string_field(source, "preset_mode", text)) {
+      out.preset_mode_id = climate_preset_id(text);
+    }
+    if (extract_json_string_field(source, "fan_mode", text)) {
+      text.trim();
+      text.toLowerCase();
+      climate_copy_text(out.fan_mode, sizeof(out.fan_mode), text);
+    }
+    if (extract_json_string_field(source, "swing_mode", text)) {
+      text.trim();
+      text.toLowerCase();
+      climate_copy_text(out.swing_mode, sizeof(out.swing_mode), text);
+    }
+    if (extract_json_string_field(source, "swing_horizontal_mode", text)) {
+      text.trim();
+      text.toLowerCase();
+      climate_copy_text(
+          out.swing_horizontal_mode, sizeof(out.swing_horizontal_mode), text);
+    }
     if (extract_json_string_field(source, "temperature_unit", text) ||
         extract_json_string_field(source, "unit_of_measurement", text)) {
       text.trim();
@@ -1745,11 +1856,37 @@ static ClimateState parse_climate_payload(const char* payload) {
       climate_normalize_modes(modes);
       out.hvac_modes_mask = climate_modes_mask(modes);
     }
+    if (extract_json_array_field(source, "preset_modes", modes)) {
+      climate_normalize_modes(modes);
+      out.preset_modes_mask = climate_preset_modes_mask(modes);
+    }
+    if (extract_json_array_field(source, "fan_modes", modes)) {
+      climate_normalize_modes(modes);
+      out.fan_modes_mask = climate_fan_modes_mask(modes);
+    }
+    if (extract_json_array_field(source, "swing_modes", modes)) {
+      climate_normalize_modes(modes);
+      out.swing_modes_mask = climate_swing_modes_mask(modes);
+    }
+    if (extract_json_array_field(source, "swing_horizontal_modes", modes)) {
+      climate_normalize_modes(modes);
+      out.swing_horizontal_modes_mask =
+          climate_horizontal_swing_modes_mask(modes);
+    }
 
     float number = 0.0f;
     if (extract_json_number_or_string_field(source, "current_temperature", number)) {
       out.has_current_temperature = true;
       out.current_temperature = number;
+    }
+    if (extract_json_number_or_string_field(source, "current_humidity", number)) {
+      out.has_current_humidity = true;
+      out.current_humidity = number;
+    }
+    if (extract_json_number_or_string_field(source, "target_humidity", number) ||
+        extract_json_number_or_string_field(source, "humidity", number)) {
+      out.has_target_humidity = true;
+      out.target_humidity = number;
     }
     if (extract_json_number_or_string_field(source, "temperature", number)) {
       out.has_target_temperature = true;
@@ -1768,6 +1905,12 @@ static ClimateState parse_climate_payload(const char* payload) {
     }
     if (extract_json_number_or_string_field(source, "max_temp", number)) {
       out.max_temp = number;
+    }
+    if (extract_json_number_or_string_field(source, "min_humidity", number)) {
+      out.min_humidity = number;
+    }
+    if (extract_json_number_or_string_field(source, "max_humidity", number)) {
+      out.max_humidity = number;
     }
     if (extract_json_number_or_string_field(source, "target_temp_step", number) ||
         extract_json_number_or_string_field(source, "precision", number)) {
@@ -1788,6 +1931,10 @@ static ClimateState parse_climate_payload(const char* payload) {
   if (out.target_temp_step <= 0.0f || out.target_temp_step > 10.0f) {
     out.target_temp_step = 0.5f;
   }
+  if (out.max_humidity <= out.min_humidity) {
+    out.min_humidity = 30.0f;
+    out.max_humidity = 99.0f;
+  }
   if (!out.temperature_unit[0]) {
     climate_copy_text(
         out.temperature_unit, sizeof(out.temperature_unit),
@@ -1795,50 +1942,61 @@ static ClimateState parse_climate_payload(const char* payload) {
   }
   out.valid = out.hvac_mode[0] || out.hvac_action[0] ||
               out.has_current_temperature || out.has_target_temperature ||
+              out.has_current_humidity || out.has_target_humidity ||
               out.has_target_range;
   return out;
 }
 
-static const char* climate_icon_for_state(const ClimateState& state) {
+String climate_tile_base_icon(const Tile& tile) {
+  if (isMdiIconDisabled(tile.icon_name)) return "";
+  String icon = normalizeMdiIconName(tile.icon_name);
+  if (!icon.length() && tile.sensor_entity.length()) {
+    icon = normalizeMdiIconName(
+        haBridgeConfig.findEntityIcon(tile.sensor_entity));
+  }
+  if (!icon.length()) icon = "thermostat";
+  return icon;
+}
+
+String climate_visual_icon(
+    const ClimateState& state, const String& base_icon) {
   const char* action = state.hvac_action;
-  if (strcmp(action, "heating") == 0) return "radiator";
+  if (strcmp(action, "heating") == 0 ||
+      strcmp(action, "preheating") == 0) return "fire";
   if (strcmp(action, "cooling") == 0) return "snowflake";
   if (strcmp(action, "drying") == 0) return "water-percent";
   if (strcmp(action, "fan") == 0) return "fan";
-  if (strcmp(action, "idle") == 0 || strcmp(action, "off") == 0) {
-    return strcmp(state.hvac_mode, "off") == 0
-               ? "thermometer-off"
-               : "thermostat";
+  if (strcmp(action, "defrosting") == 0) return "snowflake-melt";
+
+  String fallback = base_icon.length() ? base_icon : String("thermostat");
+  if (strcmp(action, "idle") == 0) {
+    if (strcmp(state.hvac_mode, "heat") == 0) return "fire";
+    if (strcmp(state.hvac_mode, "cool") == 0) return "snowflake";
+    if (strcmp(state.hvac_mode, "dry") == 0) return "water-percent";
+    if (strcmp(state.hvac_mode, "fan_only") == 0) return "fan";
+    if (strcmp(state.hvac_mode, "heat_cool") == 0) {
+      return "sun-snowflake-variant";
+    }
+    if (strcmp(state.hvac_mode, "auto") == 0) return "thermostat-auto";
   }
-  if (action[0]) {
-    return strcmp(state.hvac_mode, "off") == 0
-               ? "thermometer-off"
-               : "thermostat";
+  if (strcmp(action, "off") == 0 ||
+      strcmp(state.hvac_mode, "off") == 0 || action[0]) {
+    return fallback;
   }
-  if (strcmp(state.hvac_mode, "off") == 0) return "thermometer-off";
-  if (strcmp(state.hvac_mode, "heat") == 0) return "radiator";
+  if (strcmp(state.hvac_mode, "heat") == 0) return "fire";
   if (strcmp(state.hvac_mode, "cool") == 0) return "snowflake";
   if (strcmp(state.hvac_mode, "dry") == 0) return "water-percent";
   if (strcmp(state.hvac_mode, "fan_only") == 0) return "fan";
-  if (strcmp(state.hvac_mode, "auto") == 0 ||
-      strcmp(state.hvac_mode, "heat_cool") == 0) return "thermostat-auto";
-  return "thermostat";
+  if (strcmp(state.hvac_mode, "heat_cool") == 0) {
+    return "sun-snowflake-variant";
+  }
+  if (strcmp(state.hvac_mode, "auto") == 0) return "thermostat-auto";
+  return fallback;
 }
 
-static uint32_t climate_color_for_state(const ClimateState& state) {
-  const char* action = state.hvac_action;
-  if (strcmp(action, "heating") == 0) return 0xFF8A3D;
-  if (strcmp(action, "cooling") == 0) return 0x4FC3F7;
-  if (strcmp(action, "drying") == 0) return 0xFFD54F;
-  if (strcmp(action, "fan") == 0) return 0x4DB6AC;
-  if (strcmp(state.hvac_mode, "off") == 0 ||
-      strcmp(action, "idle") == 0 ||
-      strcmp(action, "off") == 0) return 0x9E9E9E;
-  if (!action[0] && strcmp(state.hvac_mode, "heat") == 0) return 0xFF8A3D;
-  if (!action[0] && strcmp(state.hvac_mode, "cool") == 0) return 0x4FC3F7;
-  if (!action[0] && strcmp(state.hvac_mode, "dry") == 0) return 0xFFD54F;
-  if (!action[0] && strcmp(state.hvac_mode, "fan_only") == 0) return 0x4DB6AC;
-  return 0xFFFFFF;
+uint32_t climate_visual_color(const ClimateState& state) {
+  return climate_visuals::state_foreground_color(
+      state.hvac_mode, state.hvac_action);
 }
 
 static ClimatePopupInit build_climate_popup_init(
@@ -1854,22 +2012,35 @@ static ClimatePopupInit build_climate_popup_init(
   String configured_icon = normalizeMdiIconName(tile->icon_name);
   init.icon_visible = !isMdiIconDisabled(tile->icon_name);
   init.dynamic_icon = init.icon_visible && !configured_icon.length();
-  init.icon_name = init.dynamic_icon
-                       ? String(climate_icon_for_state(state))
-                       : configured_icon;
+  init.icon_name = climate_tile_base_icon(*tile);
   init.hvac_mode = state.hvac_mode;
   init.hvac_action = state.hvac_action;
   init.hvac_modes = climateHvacModesCsv(state.hvac_modes_mask);
+  init.preset_mode = climatePresetName(state.preset_mode_id);
+  init.preset_modes = climatePresetModesCsv(state.preset_modes_mask);
+  init.fan_mode = state.fan_mode;
+  init.fan_modes = climateFanModesCsv(state.fan_modes_mask);
+  init.swing_mode = state.swing_mode;
+  init.swing_modes = climateSwingModesCsv(state.swing_modes_mask);
+  init.swing_horizontal_mode = state.swing_horizontal_mode;
+  init.swing_horizontal_modes =
+      climateHorizontalSwingModesCsv(state.swing_horizontal_modes_mask);
   init.temperature_unit = state.temperature_unit;
   init.current_temperature = state.current_temperature;
+  init.current_humidity = state.current_humidity;
   init.target_temperature = state.target_temperature;
+  init.target_humidity = state.target_humidity;
   init.target_temp_low = state.target_temp_low;
   init.target_temp_high = state.target_temp_high;
   init.min_temp = state.min_temp;
   init.max_temp = state.max_temp;
+  init.min_humidity = state.min_humidity;
+  init.max_humidity = state.max_humidity;
   init.target_temp_step = state.target_temp_step;
   init.has_current_temperature = state.has_current_temperature;
+  init.has_current_humidity = state.has_current_humidity;
   init.has_target_temperature = state.has_target_temperature;
+  init.has_target_humidity = state.has_target_humidity;
   init.has_target_range = state.has_target_range;
   return init;
 }
@@ -1882,7 +2053,11 @@ static void update_climate_tile_state(
   ClimateTileWidgets& widget = widgets[grid_index];
 
   const uint32_t payload_hash = fnv1a_hash(payload);
-  if (widget.last_payload_hash == payload_hash) return;
+  if (widget.last_payload_hash == payload_hash) {
+    refresh_climate_tile_content(
+        grid_type, grid_index, states[grid_index]);
+    return;
+  }
 
   ClimateState state = parse_climate_payload(payload);
   if (!state.valid) return;
@@ -1891,7 +2066,10 @@ static void update_climate_tile_state(
 
   if (widget.value_label) {
     String value = state.has_current_temperature
-                       ? String(state.current_temperature, 1)
+                       ? i18n::format_number(
+                             configManager.getConfig().language,
+                             state.current_temperature,
+                             1)
                        : String("--");
     value += " ";
     value += state.temperature_unit[0]
@@ -1900,14 +2078,19 @@ static void update_climate_tile_state(
                    "C";
     lv_label_set_text(widget.value_label, value.c_str());
   }
+  refresh_climate_tile_content(grid_type, grid_index, state);
   if (widget.icon_label) {
     if (widget.dynamic_icon) {
-      String icon = getMdiChar(climate_icon_for_state(state));
+      const Tile* tile =
+          tile_renderer_get_tile_config(grid_type, grid_index);
+      const String base_icon =
+          tile ? climate_tile_base_icon(*tile) : String("thermostat");
+      String icon = getMdiChar(climate_visual_icon(state, base_icon));
       if (!icon.length()) icon = getMdiChar("thermostat");
       lv_label_set_text(widget.icon_label, icon.c_str());
     }
     lv_obj_set_style_text_color(
-        widget.icon_label, lv_color_hex(climate_color_for_state(state)), 0);
+        widget.icon_label, lv_color_hex(climate_visual_color(state)), 0);
   }
 
   ClimatePopupInit init = build_climate_popup_init(grid_type, grid_index, state);

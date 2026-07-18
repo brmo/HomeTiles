@@ -4,6 +4,7 @@
 #include "src/ui/tab_settings.h"
 #include "src/core/config_manager.h"
 #include "src/core/board_hal.h"
+#include "src/network/network_manager.h"
 #include "src/network/network_transport.h"
 #include "src/tiles/mdi_icons.h"
 #include "src/tiles/tile_config.h"
@@ -1252,6 +1253,15 @@ static void wifi_start_scan() {
   // Frisch angestossener (Re-)Connect: Scan wuerde WiFi.begin() stoeren
   if (wifi_scan_block_until != 0 &&
       (int32_t)(millis() - wifi_scan_block_until) < 0) {
+    wifi_show_scan_finished_state();
+    return;
+  }
+  // scanNetworks() fuehrt intern mehrere ESP-Hosted-RPCs aus
+  // (GetMode/GetMode/SetMode/ScanStart). Ist der C6 bereits festgefahren,
+  // blockiert das sonst viermal je etwa 5 s. Ein einzelner echter Mode-RPC
+  // prueft den Kanal vorab und loest bei dessen Timeout die zentrale
+  // Recovery aus.
+  if (!networkManager.probeWifiDriverHealth("WLAN-Scan in Settings")) {
     wifi_show_scan_finished_state();
     return;
   }

@@ -302,12 +302,54 @@ struct Strings {
 
 };
 
+// Sprachabhaengige Darstellungsregeln und kurze Laufzeittexte, die sowohl
+// LVGL als auch das Web-Admin verwenden. Eine weitere Sprache wird als eigenes
+// Profil registriert; Anzeige-Code braucht dadurch keine "is_german"-Zweige.
+struct LocaleProfile {
+  const char* code;
+  const char* native_name;
+  const char* decimal_separator;
+
+  const char* weather_today;
+  const char* weather_tomorrow;
+  const char* weather_weekdays_short[7];
+  const char* weather_months_short[12];
+  const char* weather_conditions[15];
+
+  const char* tile_type_climate;
+  const char* climate_entity;
+  const char* climate_target_temperature;
+  const char* climate_target_humidity;
+  const char* climate_states[15];
+  const char* climate_value_labels[3];
+  const char* climate_control_labels[5];
+  const char* climate_option_labels[26];
+};
+
 const Strings& strings(const char* language_code);
+const LocaleProfile& locale(const char* language_code);
 const char* normalize_language_code(const char* language_code);
 String build_language_options_html(const char* selected_code);
+String localize_numeric_text(const char* language_code, const String& numeric_text);
+String format_number(const char* language_code,
+                     float value,
+                     uint8_t decimals,
+                     bool trim_trailing_zeros = false);
 String weather_condition_label(const char* language_code, const String& condition);
 String weather_weekday_short(const char* language_code, const String& iso);
+const char* weather_month_short(const char* language_code, int month);
+const char* weather_today_label(const char* language_code);
 const char* weather_tomorrow_label(const char* language_code);
+const char* climate_tile_type_label(const char* language_code);
+const char* climate_entity_label(const char* language_code);
+const char* climate_target_temperature_label(const char* language_code);
+const char* climate_target_humidity_label(const char* language_code);
+const char* climate_state_label(const char* language_code,
+                                const String& mode,
+                                const String& action);
+const char* climate_value_label(const char* language_code, uint8_t index);
+const char* climate_control_label(const char* language_code, uint8_t index);
+String climate_option_label(const char* language_code, const String& option);
 
 }  // namespace i18n
 

@@ -13,11 +13,13 @@ void append_sensor_scripts(String& html) {
     if (!text.length) return '--';
     const lower = text.toLowerCase();
     if (lower === 'unavailable' || lower === 'unknown' || lower === 'none') return '--';
-    if (decimals === undefined || decimals === null || decimals === '' || Number(decimals) === -1) return text;
+    if (decimals === undefined || decimals === null || decimals === '' || Number(decimals) === -1) {
+      return localizeNumericText(text);
+    }
     const num = parseFloat(text.replace(',', '.'));
     if (isNaN(num) || !isFinite(num)) return text;
     const d = Math.max(0, Math.min(6, parseInt(decimals, 10) || 0));
-    return num.toFixed(d);
+    return formatLocalizedNumber(num, d, false);
   }
 
   function updateSensorValuePreview(tab) {

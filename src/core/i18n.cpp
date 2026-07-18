@@ -1,5 +1,10 @@
 #include "src/core/i18n.h"
 
+#include <ctype.h>
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
+
 namespace i18n {
 
 static const Strings kStringsDe = {
@@ -574,35 +579,142 @@ static const Strings kStringsEn = {
     "Network mode changed - applies after restart",
     "Ethernet instead of WiFi (applies after restart)"};
 
-const char* normalize_language_code(const char* language_code) {
-  if (!language_code || !language_code[0]) return kStringsEn.code;
-  if ((language_code[0] == 'd' || language_code[0] == 'D') &&
-      (language_code[1] == 'e' || language_code[1] == 'E') &&
-      language_code[2] == '\0') {
-    return kStringsDe.code;
+static const LocaleProfile kLocaleDe = {
+    "de",
+    "Deutsch",
+    ",",
+    "Heute",
+    "Morgen",
+    {"So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"},
+    {"Jan.", "Feb.", "Mär.", "Apr.", "Mai", "Jun.",
+     "Jul.", "Aug.", "Sep.", "Okt.", "Nov.", "Dez."},
+    {"Klare Nacht", "Bewölkt", "Ausnahme", "Nebel", "Hagel",
+     "Gewitter", "Gewitterregen", "Teilw. bewölkt", "Starkregen",
+     "Regen", "Schnee", "Schneeregen", "Sonnig", "Windig", "Böig"},
+    "Klima",
+    "Klima-Entity",
+    "Solltemperatur",
+    "Soll-Luftfeuchtigkeit",
+    {"Heizbetrieb", "Vorheizen", "Kühlbetrieb", "Entfeuchtung", "Lüfter",
+     "Abtauen", "Leerlauf", "Aus", "Heizen", "Kühlen", "Heizen/Kühlen",
+     "Auto", "Entfeuchten", "Lüfter", "Klima"},
+    {"Aktuell", "Soll-Temperatur", "Aktuelle Luftfeuchtigkeit"},
+    {"Modus", "Voreinstellung", "Lüftermodus", "Oszillationsart",
+     "Horizontale Oszillationsart"},
+    {"Ohne", "Eco", "Abwesend", "Boost", "Komfort", "Zuhause", "Schlafen",
+     "Aktivität", "Auto", "Niedrig", "Mittel", "Hoch", "An", "Aus",
+     "Oben", "Mitte", "Fokus", "Verteilt", "Vertikal", "Horizontal",
+     "Beide", "Links", "Mitte", "Rechts", "Schwenken", "Breit"}};
+
+static const LocaleProfile kLocaleEn = {
+    "en",
+    "English",
+    ".",
+    "Today",
+    "Tomorrow",
+    {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"},
+    {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"},
+    {"Clear night", "Cloudy", "Exceptional", "Fog", "Hail",
+     "Lightning", "Lightning rain", "Partly cloudy", "Pouring",
+     "Rain", "Snow", "Sleet", "Sunny", "Windy", "Windy"},
+    "Climate",
+    "Climate Entity",
+    "Target",
+    "Target humidity",
+    {"Heating", "Preheating", "Cooling", "Drying", "Fan", "Defrosting",
+     "Idle", "Off", "Heat", "Cool", "Heat/Cool", "Auto", "Dry",
+     "Fan only", "Climate"},
+    {"Current", "Target temperature", "Current humidity"},
+    {"Mode", "Preset", "Fan mode", "Swing mode",
+     "Horizontal swing mode"},
+    {"None", "Eco", "Away", "Boost", "Comfort", "Home", "Sleep",
+     "Activity", "Auto", "Low", "Medium", "High", "On", "Off",
+     "Top", "Middle", "Focus", "Diffuse", "Vertical", "Horizontal",
+     "Both", "Left", "Center", "Right", "Swing", "Wide"}};
+
+struct LanguageEntry {
+  const Strings* strings;
+  const LocaleProfile* locale;
+};
+
+static const LanguageEntry kLanguages[] = {
+    {&kStringsEn, &kLocaleEn},
+    {&kStringsDe, &kLocaleDe},
+};
+
+static const LanguageEntry& find_language(const char* language_code) {
+  String code = language_code ? String(language_code) : String();
+  code.trim();
+  for (const LanguageEntry& language : kLanguages) {
+    if (code.equalsIgnoreCase(language.locale->code)) return language;
   }
-  return kStringsEn.code;
+  return kLanguages[0];
+}
+
+const char* normalize_language_code(const char* language_code) {
+  return find_language(language_code).locale->code;
 }
 
 const Strings& strings(const char* language_code) {
-  return (normalize_language_code(language_code)[0] == 'd') ? kStringsDe : kStringsEn;
+  return *find_language(language_code).strings;
+}
+
+const LocaleProfile& locale(const char* language_code) {
+  return *find_language(language_code).locale;
 }
 
 String build_language_options_html(const char* selected_code) {
   const char* normalized = normalize_language_code(selected_code);
   String html;
   html.reserve(128);
-  html += "<option value=\"en\"";
-  if (strcmp(normalized, "en") == 0) html += " selected";
-  html += ">";
-  html += "English";
-  html += "</option>";
-  html += "<option value=\"de\"";
-  if (strcmp(normalized, "de") == 0) html += " selected";
-  html += ">";
-  html += "Deutsch";
-  html += "</option>";
+  for (const LanguageEntry& language : kLanguages) {
+    html += "<option value=\"";
+    html += language.locale->code;
+    html += "\"";
+    if (strcmp(normalized, language.locale->code) == 0) html += " selected";
+    html += ">";
+    html += language.locale->native_name;
+    html += "</option>";
+  }
   return html;
+}
+
+String localize_numeric_text(
+    const char* language_code, const String& numeric_text) {
+  String text = numeric_text;
+  text.trim();
+  if (!text.length()) return numeric_text;
+
+  String normalized = text;
+  normalized.replace(",", ".");
+  char* end = nullptr;
+  const float value = strtof(normalized.c_str(), &end);
+  if (end == normalized.c_str() || !isfinite(value)) return numeric_text;
+  while (*end && isspace(static_cast<unsigned char>(*end))) ++end;
+  if (*end) return numeric_text;
+
+  if (locale(language_code).decimal_separator[0] == ',') {
+    text.replace(".", ",");
+  } else {
+    text.replace(",", ".");
+  }
+  return text;
+}
+
+String format_number(
+    const char* language_code,
+    float value,
+    uint8_t decimals,
+    bool trim_trailing_zeros) {
+  if (!isfinite(value)) return "--";
+  const uint8_t digits = decimals > 6 ? 6 : decimals;
+  String text(value, static_cast<unsigned int>(digits));
+  if (trim_trailing_zeros && digits > 0) {
+    while (text.endsWith("0")) text.remove(text.length() - 1);
+    if (text.endsWith(".")) text.remove(text.length() - 1);
+  }
+  return localize_numeric_text(language_code, text);
 }
 
 static bool parse_iso_date_internal(const String& iso, int& y, int& m, int& d) {
@@ -620,23 +732,15 @@ String weather_condition_label(const char* language_code, const String& conditio
   key.toLowerCase();
   if (!key.length()) return "--";
 
-  const bool is_de = normalize_language_code(language_code)[0] == 'd';
-
-  if (key == "clear-night") return is_de ? "Klare Nacht" : "Clear night";
-  if (key == "cloudy") return is_de ? "Bewölkt" : "Cloudy";
-  if (key == "exceptional") return is_de ? "Ausnahme" : "Exceptional";
-  if (key == "fog") return is_de ? "Nebel" : "Fog";
-  if (key == "hail") return is_de ? "Hagel" : "Hail";
-  if (key == "lightning") return is_de ? "Gewitter" : "Lightning";
-  if (key == "lightning-rainy") return is_de ? "Gewitterregen" : "Lightning rain";
-  if (key == "partlycloudy") return is_de ? "Teilw. bewölkt" : "Partly cloudy";
-  if (key == "pouring") return is_de ? "Starkregen" : "Pouring";
-  if (key == "rainy") return is_de ? "Regen" : "Rain";
-  if (key == "snowy") return is_de ? "Schnee" : "Snow";
-  if (key == "snowy-rainy") return is_de ? "Schneeregen" : "Sleet";
-  if (key == "sunny") return is_de ? "Sonnig" : "Sunny";
-  if (key == "windy") return is_de ? "Windig" : "Windy";
-  if (key == "windy-variant") return is_de ? "Böig" : "Windy";
+  static const char* kKeys[] = {
+      "clear-night", "cloudy", "exceptional", "fog", "hail",
+      "lightning", "lightning-rainy", "partlycloudy", "pouring",
+      "rainy", "snowy", "snowy-rainy", "sunny", "windy",
+      "windy-variant"};
+  const LocaleProfile& profile = locale(language_code);
+  for (size_t i = 0; i < sizeof(kKeys) / sizeof(kKeys[0]); ++i) {
+    if (key == kKeys[i]) return profile.weather_conditions[i];
+  }
 
   String text = condition;
   text.replace("-", " ");
@@ -661,14 +765,99 @@ String weather_weekday_short(const char* language_code, const String& iso) {
   int dow = (h + 6) % 7;
   if (dow < 0 || dow > 6) return "";
 
-  static const char* kDaysDe[] = {"So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"};
-  static const char* kDaysEn[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-  const bool is_de = normalize_language_code(language_code)[0] == 'd';
-  return String(is_de ? kDaysDe[dow] : kDaysEn[dow]);
+  return String(locale(language_code).weather_weekdays_short[dow]);
+}
+
+const char* weather_month_short(const char* language_code, int month) {
+  if (month < 1 || month > 12) return "";
+  return locale(language_code).weather_months_short[month - 1];
+}
+
+const char* weather_today_label(const char* language_code) {
+  return locale(language_code).weather_today;
 }
 
 const char* weather_tomorrow_label(const char* language_code) {
-  return (normalize_language_code(language_code)[0] == 'd') ? "Morgen" : "Tomorrow";
+  return locale(language_code).weather_tomorrow;
+}
+
+const char* climate_tile_type_label(const char* language_code) {
+  return locale(language_code).tile_type_climate;
+}
+
+const char* climate_entity_label(const char* language_code) {
+  return locale(language_code).climate_entity;
+}
+
+const char* climate_target_temperature_label(const char* language_code) {
+  return locale(language_code).climate_target_temperature;
+}
+
+const char* climate_target_humidity_label(const char* language_code) {
+  return locale(language_code).climate_target_humidity;
+}
+
+const char* climate_state_label(
+    const char* language_code, const String& mode_value, const String& action_value) {
+  String mode = mode_value;
+  String action = action_value;
+  mode.toLowerCase();
+  action.toLowerCase();
+  const LocaleProfile& profile = locale(language_code);
+  if (action == "heating") return profile.climate_states[0];
+  if (action == "preheating") return profile.climate_states[1];
+  if (action == "cooling") return profile.climate_states[2];
+  if (action == "drying") return profile.climate_states[3];
+  if (action == "fan") return profile.climate_states[4];
+  if (action == "defrosting") return profile.climate_states[5];
+  if (action == "idle") return profile.climate_states[6];
+  if (mode == "off" || action == "off") return profile.climate_states[7];
+  if (mode == "heat") return profile.climate_states[8];
+  if (mode == "cool") return profile.climate_states[9];
+  if (mode == "heat_cool") return profile.climate_states[10];
+  if (mode == "auto") return profile.climate_states[11];
+  if (mode == "dry") return profile.climate_states[12];
+  if (mode == "fan_only") return profile.climate_states[13];
+  return profile.climate_states[14];
+}
+
+const char* climate_value_label(
+    const char* language_code, uint8_t index) {
+  if (index >= 3) return "";
+  return locale(language_code).climate_value_labels[index];
+}
+
+const char* climate_control_label(
+    const char* language_code, uint8_t index) {
+  if (index >= 5) return "";
+  return locale(language_code).climate_control_labels[index];
+}
+
+String climate_option_label(
+    const char* language_code, const String& option_value) {
+  static const char* const kKeys[] = {
+      "none", "eco", "away", "boost", "comfort", "home", "sleep",
+      "activity", "auto", "low", "medium", "high", "on", "off",
+      "top", "middle", "focus", "diffuse", "vertical", "horizontal",
+      "both", "left", "center", "right", "swing", "wide"};
+  String key = option_value;
+  key.trim();
+  key.toLowerCase();
+  if (key == "heat" || key == "cool" || key == "heat_cool" ||
+      key == "dry" || key == "fan_only") {
+    return climate_state_label(language_code, key, "");
+  }
+  const LocaleProfile& profile = locale(language_code);
+  for (uint8_t i = 0; i < 26; ++i) {
+    if (key == kKeys[i]) return profile.climate_option_labels[i];
+  }
+  key.replace("_", " ");
+  key.replace("-", " ");
+  if (key.length()) {
+    key.setCharAt(0, static_cast<char>(
+        toupper(static_cast<unsigned char>(key.charAt(0)))));
+  }
+  return key;
 }
 
 }  // namespace i18n

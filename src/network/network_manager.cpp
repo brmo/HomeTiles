@@ -44,6 +44,12 @@ static constexpr uint8_t kWifiStartWedgeThreshold = 3;
 // ein Verbindungsversuch laenger als diese Frist, zaehlt er als Wedge-Indiz
 // (auch wenn er formal "erfolgreich" zurueckkehrt).
 static constexpr uint32_t kWifiRpcSlowMs = 3000;
+// WiFi.status() ist im ESP-Hosted-Stack gecacht. Wenn MQTT weg ist, obwohl
+// dieser Cache weiter WL_CONNECTED meldet, nach kurzer Schonfrist ein echtes
+// RPC pruefen. Bei gesundem WLAN kostet das nur Millisekunden; bei einem
+// toten C6 entsteht genau ein 5s-Timeout, danach greift die sichere Recovery.
+static constexpr uint32_t kWifiHealthProbeDelayMs = 15000;
+static constexpr uint32_t kWifiHealthProbeIntervalMs = 60000;
 // Automatischer Neustart wegen Wedge fruehestens nach dieser Laufzeit -
 // verhindert eine enge Reboot-Schleife, falls der C6 dauerhaft defekt ist.
 static constexpr uint32_t kWedgeRestartMinUptimeMs = 2 * 60 * 1000;
@@ -640,16 +646,52 @@ void HomeTilesNetworkManager::connectWifi() {
   }
 }
 
-void HomeTilesNetworkManager::handleWifiDriverWedge() {
+bool HomeTilesNetworkManager::probeWifiDriverHealth(const char* context) {
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+  if (wifi_wedge_latched ||
+      networkTransport.isEthernetMode() ||
+      !networkTransport.isWifiDriverActive()) {
+    return !wifi_wedge_latched;
+  }
+
+  const uint32_t started = millis();
+  (void)WiFi.getMode();
+  const uint32_t elapsed = millis() - started;
+  if (elapsed < kWifiRpcSlowMs) return true;
+
+  wifi_start_failures = kWifiStartWedgeThreshold;
+  Serial.printf(
+      "[Network] WLAN-Liveness-Probe blockierte %lu ms (%s): "
+      "ESP-Hosted/C6 antwortet nicht\n",
+      static_cast<unsigned long>(elapsed),
+      context && context[0] ? context : "ohne Kontext");
+  handleWifiDriverWedge(context);
+  return false;
+#else
+  (void)context;
+  return true;
+#endif
+}
+
+void HomeTilesNetworkManager::handleWifiDriverWedge(const char* context) {
   if (wifi_wedge_latched) return;
   wifi_wedge_latched = true;
 
   const bool wired = isWiredLinkUp();
   String detail;
   detail.reserve(256);
-  detail += "STA-Start ";
+  detail += "ESP-Hosted RPC-Timeout zum C6";
+  if (context && context[0]) {
+    detail += " (";
+    detail += context;
+    detail += ')';
+  }
+  detail += '\n';
+  detail += "Wedge-Indizien ";
   detail += wifi_start_failures;
-  detail += "x in Folge fehlgeschlagen (ESP-Hosted RPC-Timeouts zum C6)\n";
+  detail += '/';
+  detail += kWifiStartWedgeThreshold;
+  detail += '\n';
   detail += "Uptime ";
   detail += millis() / 1000;
   detail += " s | Ethernet-Link ";
@@ -1508,6 +1550,30 @@ void HomeTilesNetworkManager::update() {
   uint32_t now_ms = millis();
   const bool wired_connected = isWiredConnected();
   const bool wired_link_up = isWiredLinkUp();
+
+  // Der ESP-Hosted-Status bleibt bei einem abgestuerzten C6 gelegentlich auf
+  // WL_CONNECTED stehen. MQTT und WebAdmin sind dann bereits tot, aber der
+  // normale WiFi-Reconnect-Zweig wird nie betreten. Nach 15 s MQTT-Ausfall
+  // deshalb einen echten, billigen Mode-RPC als Liveness-Probe senden. Ein
+  // Broker-Ausfall laesst den RPC sofort erfolgreich zurueckkehren und darf
+  // das WLAN nicht neu starten; nur der 5s-RPC-Timeout gilt als C6-Wedge.
+  const bool wifi_claims_connected = networkTransport.isWifiConnected();
+  if (mqtt_enabled && !mqtt_suspended && !wifi_manual_disconnect &&
+      wifi_claims_connected && !isMqttConnected() && !wifi_wedge_latched) {
+    if (wifi_mqtt_offline_since == 0) {
+      wifi_mqtt_offline_since = now_ms;
+      wifi_health_probe_at = now_ms + kWifiHealthProbeDelayMs;
+    } else if ((int32_t)(now_ms - wifi_health_probe_at) >= 0) {
+      wifi_health_probe_at = now_ms + kWifiHealthProbeIntervalMs;
+      if (!probeWifiDriverHealth("MQTT offline bei gecachtem WiFi-Link")) {
+        return;
+      }
+    }
+  } else {
+    wifi_mqtt_offline_since = 0;
+    wifi_health_probe_at = 0;
+  }
+
   if (wired_link_up && !wired_link_was_up) {
     wired_ip_wait_until = now_ms + kWiredDhcpWaitMs;
     wired_link_up_since = now_ms;

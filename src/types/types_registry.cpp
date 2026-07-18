@@ -741,7 +741,8 @@ void append_tile_type_select_options(String& html) {
       case TILE_SWITCH: label = tr.tile_type_switch; break;
       case TILE_MEDIA: label = tr.tile_type_media; break;
       case TILE_CLIMATE:
-        label = strcmp(tr.html_lang, "de") == 0 ? "Klima" : "Climate";
+        label = i18n::climate_tile_type_label(
+            configManager.getConfig().language);
         break;
       case TILE_CLOCK: label = tr.tile_type_clock; break;
       case TILE_TEXT: label = tr.tile_type_text; break;
@@ -774,7 +775,8 @@ void append_tile_type_registry_js(String& html) {
       case TILE_SWITCH: label = tr.tile_type_switch; break;
       case TILE_MEDIA: label = tr.tile_type_media; break;
       case TILE_CLIMATE:
-        label = strcmp(tr.html_lang, "de") == 0 ? "Klima" : "Climate";
+        label = i18n::climate_tile_type_label(
+            configManager.getConfig().language);
         break;
       case TILE_CLOCK: label = tr.tile_type_clock; break;
       case TILE_TEXT: label = tr.tile_type_text; break;

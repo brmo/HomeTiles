@@ -146,6 +146,110 @@ struct Tile {
         image_slideshow_sec(10) {}
 };
 
+// Climate tile content is packed into sensor_gauge_min. Climate tiles do not
+// use the sensor gauge range, so this preserves the existing V7 storage layout
+// while allowing six independently configurable 4-bit slots.
+enum ClimateTileContent : uint8_t {
+  CLIMATE_TILE_CONTENT_AUTO = 0,
+  CLIMATE_TILE_CONTENT_EMPTY = 1,
+  CLIMATE_TILE_CONTENT_CURRENT_TEMPERATURE = 2,
+  CLIMATE_TILE_CONTENT_CURRENT_HUMIDITY = 3,
+  CLIMATE_TILE_CONTENT_TARGET_TEMPERATURE = 4,
+  CLIMATE_TILE_CONTENT_TARGET_TEMPERATURE_LOW = 5,
+  CLIMATE_TILE_CONTENT_TARGET_TEMPERATURE_HIGH = 6,
+  CLIMATE_TILE_CONTENT_TARGET_HUMIDITY = 7,
+  CLIMATE_TILE_CONTENT_HVAC_MODE = 8
+};
+
+static constexpr uint8_t CLIMATE_TILE_MAX_CONTENT_SLOTS = 6;
+static constexpr uint32_t CLIMATE_TILE_CONTENT_PACKED_MASK = 0x00FFFFFFu;
+
+// Adjustable climate values consume two cells. Their preferred orientation is
+// packed into sensor_gauge_max (two bits per configured item). A magic prefix
+// distinguishes the climate layout data from the legacy sensor default (100).
+enum ClimateTileTargetLayout : uint8_t {
+  CLIMATE_TILE_TARGET_LAYOUT_AUTO = 0,
+  CLIMATE_TILE_TARGET_LAYOUT_HORIZONTAL = 1,
+  CLIMATE_TILE_TARGET_LAYOUT_VERTICAL = 2
+};
+
+static constexpr uint32_t CLIMATE_TILE_LAYOUT_PACKED_MAGIC = 0x434C0000u;
+static constexpr uint32_t CLIMATE_TILE_LAYOUT_PACKED_MAGIC_MASK = 0xFFFF0000u;
+static constexpr uint32_t CLIMATE_TILE_LAYOUT_PACKED_VALUE_MASK = 0x00000FFFu;
+
+static inline uint8_t climateTileSlotCapacity(const Tile& tile) {
+  const uint8_t span_w = tile.span_w < 1 ? 1 : tile.span_w;
+  const uint8_t span_h = tile.span_h < 1 ? 1 : tile.span_h;
+  if (span_w == 1 && span_h == 1) return 1;
+  if (span_w >= 2 && span_h == 1) return 2;
+  if (span_w == 1) return 3;
+  return CLIMATE_TILE_MAX_CONTENT_SLOTS;
+}
+
+static inline ClimateTileContent getClimateTileSlotContent(
+    const Tile& tile, uint8_t slot_index) {
+  if (slot_index >= CLIMATE_TILE_MAX_CONTENT_SLOTS) {
+    return CLIMATE_TILE_CONTENT_AUTO;
+  }
+  const uint32_t packed =
+      static_cast<uint32_t>(tile.sensor_gauge_min) &
+      CLIMATE_TILE_CONTENT_PACKED_MASK;
+  const uint8_t raw =
+      static_cast<uint8_t>((packed >> (slot_index * 4)) & 0x0Fu);
+  if (raw > CLIMATE_TILE_CONTENT_HVAC_MODE) {
+    return CLIMATE_TILE_CONTENT_AUTO;
+  }
+  return static_cast<ClimateTileContent>(raw);
+}
+
+static inline void setClimateTileSlotContent(
+    Tile& tile, uint8_t slot_index, ClimateTileContent content) {
+  if (slot_index >= CLIMATE_TILE_MAX_CONTENT_SLOTS) return;
+  uint32_t packed =
+      static_cast<uint32_t>(tile.sensor_gauge_min) &
+      CLIMATE_TILE_CONTENT_PACKED_MASK;
+  const uint32_t shift = static_cast<uint32_t>(slot_index) * 4u;
+  packed &= ~(0x0Fu << shift);
+  packed |=
+      (static_cast<uint32_t>(content) & 0x0Fu) << shift;
+  tile.sensor_gauge_min = static_cast<int32_t>(packed);
+}
+
+static inline uint32_t getClimateTileLayoutsPacked(const Tile& tile) {
+  const uint32_t stored = static_cast<uint32_t>(tile.sensor_gauge_max);
+  if ((stored & CLIMATE_TILE_LAYOUT_PACKED_MAGIC_MASK) !=
+      CLIMATE_TILE_LAYOUT_PACKED_MAGIC) {
+    return 0;
+  }
+  return stored & CLIMATE_TILE_LAYOUT_PACKED_VALUE_MASK;
+}
+
+static inline ClimateTileTargetLayout getClimateTileTargetLayout(
+    const Tile& tile, uint8_t slot_index) {
+  if (slot_index >= CLIMATE_TILE_MAX_CONTENT_SLOTS) {
+    return CLIMATE_TILE_TARGET_LAYOUT_AUTO;
+  }
+  const uint32_t packed = getClimateTileLayoutsPacked(tile);
+  const uint8_t raw =
+      static_cast<uint8_t>((packed >> (slot_index * 2)) & 0x03u);
+  if (raw > CLIMATE_TILE_TARGET_LAYOUT_VERTICAL) {
+    return CLIMATE_TILE_TARGET_LAYOUT_AUTO;
+  }
+  return static_cast<ClimateTileTargetLayout>(raw);
+}
+
+static inline void setClimateTileTargetLayout(
+    Tile& tile, uint8_t slot_index, ClimateTileTargetLayout layout) {
+  if (slot_index >= CLIMATE_TILE_MAX_CONTENT_SLOTS) return;
+  uint32_t packed = getClimateTileLayoutsPacked(tile);
+  const uint32_t shift = static_cast<uint32_t>(slot_index) * 2u;
+  packed &= ~(0x03u << shift);
+  packed |= (static_cast<uint32_t>(layout) & 0x03u) << shift;
+  tile.sensor_gauge_max = static_cast<int32_t>(
+      CLIMATE_TILE_LAYOUT_PACKED_MAGIC |
+      (packed & CLIMATE_TILE_LAYOUT_PACKED_VALUE_MASK));
+}
+
 static inline uint8_t getTilePopupOpenMode(const Tile& tile) {
   if (tile.type == TILE_SWITCH) {
     return (tile.key_code == TILE_SWITCH_POPUP_MODE_LONG)

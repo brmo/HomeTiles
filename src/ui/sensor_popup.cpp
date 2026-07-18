@@ -7,6 +7,7 @@
 #include "src/ui/ui_surface_style.h"
 #include "src/core/config_manager.h"
 #include "src/core/display_manager.h"
+#include "src/core/i18n.h"
 #include "src/fonts/ui_fonts.h"
 #include "src/network/mqtt_handlers.h"
 #include "src/tiles/mdi_icons.h"
@@ -110,11 +111,10 @@ static HistoryRangeConfig get_history_range_config(SensorHistoryRange range) {
   }
 }
 
-static const char* get_weekday_abbrev(uint8_t wday, bool german) {
-  static constexpr const char* kWeekdaysEn[7] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-  static constexpr const char* kWeekdaysDe[7] = {"So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"};
+static const char* get_weekday_abbrev(uint8_t wday) {
   if (wday > 6) wday = 0;
-  return german ? kWeekdaysDe[wday] : kWeekdaysEn[wday];
+  return i18n::locale(
+             configManager.getConfig().language).weather_weekdays_short[wday];
 }
 
 static const lv_font_t* get_value_font() {
@@ -135,7 +135,13 @@ static bool is_popup_visible(SensorPopupContext* ctx) {
 }
 
 static bool apply_decimals(String& value, uint8_t decimals) {
-  if (decimals == 0xFF) return false;
+  const char* language = configManager.getConfig().language;
+  if (decimals == 0xFF) {
+    String localized = i18n::localize_numeric_text(language, value);
+    const bool changed = localized != value;
+    value = localized;
+    return changed;
+  }
   String normalized = value;
   normalized.replace(",", ".");
   char* end = nullptr;
@@ -143,7 +149,7 @@ static bool apply_decimals(String& value, uint8_t decimals) {
   if (!end || end == normalized.c_str()) return false;
   if (isnan(f) || isinf(f)) return false;
   uint8_t d = decimals > 6 ? 6 : decimals;
-  value = String(f, static_cast<unsigned int>(d));
+  value = i18n::format_number(language, f, d);
   return true;
 }
 
@@ -340,8 +346,7 @@ static String format_day_axis_label(time_t ts) {
 #else
   localtime_r(&ts, &timeinfo);
 #endif
-  const bool is_de = configManager.getConfig().language[0] == 'd';
-  return String(get_weekday_abbrev(static_cast<uint8_t>(timeinfo.tm_wday), is_de));
+  return String(get_weekday_abbrev(static_cast<uint8_t>(timeinfo.tm_wday)));
 }
 
 static bool get_day7_axis_base(time_t& now_local, time_t& range_start, struct tm& today_midnight_tm) {
@@ -774,14 +779,16 @@ static void apply_history_payload(SensorPopupContext* ctx, const char* payload) 
   if (has_range) {
     auto format_y = [](float val, uint8_t decimals) -> String {
       if (decimals != 0xFF && decimals <= 6) {
-        if (decimals == 0) return String(static_cast<int>(roundf(val)));
-        return String(val, static_cast<unsigned int>(decimals));
+        return i18n::format_number(
+            configManager.getConfig().language, val, decimals);
       }
       // Auto: use integer if close to whole number, else 1 decimal
       if (fabsf(val - roundf(val)) < 0.05f) {
-        return String(static_cast<int>(roundf(val)));
+        return i18n::format_number(
+            configManager.getConfig().language, val, 0);
       }
-      return String(val, 1u);
+      return i18n::format_number(
+          configManager.getConfig().language, val, 1);
     };
     String unit_suffix = "";
     if (ctx->unit.length()) {

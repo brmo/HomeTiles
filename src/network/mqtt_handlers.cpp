@@ -1832,6 +1832,26 @@ void mqttPublishClimateTemperature(const char* entity_id,
                 topic, queued ? "queued" : "queue-full");
 }
 
+void mqttPublishClimateHumidity(const char* entity_id, float humidity) {
+  if (!entity_id || !*entity_id) return;
+  if (!networkManager.isMqttConnected()) {
+    Serial.printf("Climate humidity skipped (MQTT offline): %s\n", entity_id);
+    return;
+  }
+  const char* topic = mqttTopics.topic(TopicKey::CLIMATE_CMND);
+  if (!topic || !*topic) return;
+
+  char payload[256];
+  snprintf(payload, sizeof(payload),
+           "{\"entity_id\":\"%s\",\"command\":\"set_humidity\","
+           "\"humidity\":%.1f}",
+           entity_id, humidity);
+  const bool queued =
+      networkManager.mqttEnqueuePublishPriority(topic, payload, false);
+  Serial.printf("Climate humidity -> MQTT '%s' (%s, priority)\n",
+                topic, queued ? "queued" : "queue-full");
+}
+
 void mqttPublishClimateHvacMode(const char* entity_id, const char* hvac_mode) {
   if (!entity_id || !*entity_id || !hvac_mode || !*hvac_mode) return;
   if (!networkManager.isMqttConnected()) {
@@ -1850,6 +1870,74 @@ void mqttPublishClimateHvacMode(const char* entity_id, const char* hvac_mode) {
       networkManager.mqttEnqueuePublishPriority(topic, payload, false);
   Serial.printf("Climate mode -> MQTT '%s' (%s, priority)\n",
                 topic, queued ? "queued" : "queue-full");
+}
+
+void mqttPublishClimatePresetMode(
+    const char* entity_id, const char* preset_mode) {
+  if (!entity_id || !*entity_id || !preset_mode || !*preset_mode) return;
+  if (!networkManager.isMqttConnected()) {
+    Serial.printf("Climate preset skipped (MQTT offline): %s\n", entity_id);
+    return;
+  }
+  const char* topic = mqttTopics.topic(TopicKey::CLIMATE_CMND);
+  if (!topic || !*topic) return;
+
+  char payload[272];
+  snprintf(payload, sizeof(payload),
+           "{\"entity_id\":\"%s\",\"command\":\"set_preset_mode\","
+           "\"preset_mode\":\"%s\"}",
+           entity_id, preset_mode);
+  const bool queued =
+      networkManager.mqttEnqueuePublishPriority(topic, payload, false);
+  Serial.printf("Climate preset -> MQTT '%s' (%s, priority)\n",
+                topic, queued ? "queued" : "queue-full");
+}
+
+static void mqtt_publish_climate_option(
+    const char* entity_id,
+    const char* command,
+    const char* field,
+    const char* value,
+    const char* log_name) {
+  if (!entity_id || !*entity_id || !command || !*command ||
+      !field || !*field || !value || !*value) {
+    return;
+  }
+  if (!networkManager.isMqttConnected()) {
+    Serial.printf("Climate %s skipped (MQTT offline): %s\n",
+                  log_name, entity_id);
+    return;
+  }
+  const char* topic = mqttTopics.topic(TopicKey::CLIMATE_CMND);
+  if (!topic || !*topic) return;
+
+  char payload[304];
+  snprintf(payload, sizeof(payload),
+           "{\"entity_id\":\"%s\",\"command\":\"%s\",\"%s\":\"%s\"}",
+           entity_id, command, field, value);
+  const bool queued =
+      networkManager.mqttEnqueuePublishPriority(topic, payload, false);
+  Serial.printf("Climate %s -> MQTT '%s' (%s, priority)\n",
+                log_name, topic, queued ? "queued" : "queue-full");
+}
+
+void mqttPublishClimateFanMode(
+    const char* entity_id, const char* fan_mode) {
+  mqtt_publish_climate_option(
+      entity_id, "set_fan_mode", "fan_mode", fan_mode, "fan");
+}
+
+void mqttPublishClimateSwingMode(
+    const char* entity_id, const char* swing_mode) {
+  mqtt_publish_climate_option(
+      entity_id, "set_swing_mode", "swing_mode", swing_mode, "swing");
+}
+
+void mqttPublishClimateHorizontalSwingMode(
+    const char* entity_id, const char* swing_mode) {
+  mqtt_publish_climate_option(
+      entity_id, "set_swing_horizontal_mode",
+      "swing_horizontal_mode", swing_mode, "horizontal swing");
 }
 
 void mqttPublishLightCommand(const char* entity_id,

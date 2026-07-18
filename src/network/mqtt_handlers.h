@@ -26,7 +26,13 @@ void mqttPublishClimateTemperature(const char* entity_id,
                                    bool use_range = false,
                                    float target_low = 0.0f,
                                    float target_high = 0.0f);
+void mqttPublishClimateHumidity(const char* entity_id, float humidity);
 void mqttPublishClimateHvacMode(const char* entity_id, const char* hvac_mode);
+void mqttPublishClimatePresetMode(const char* entity_id, const char* preset_mode);
+void mqttPublishClimateFanMode(const char* entity_id, const char* fan_mode);
+void mqttPublishClimateSwingMode(const char* entity_id, const char* swing_mode);
+void mqttPublishClimateHorizontalSwingMode(
+    const char* entity_id, const char* swing_mode);
 void mqttPublishLightCommand(const char* entity_id,
                              const char* state,
                              int brightness_pct,

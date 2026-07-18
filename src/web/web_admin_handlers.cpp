@@ -2086,6 +2086,30 @@ void WebAdminServer::handleGetSensorValues() {
   json += ",\"names\":";
   appendKeyValueMapJson(json, ha.sensor_names_map);
 
+  // Climate-Zustaende enthalten neben der Ist-Temperatur auch HVAC-Modus,
+  // Aktion und Einheit. Sie liegen im zentralen Entity-Cache als komplettes
+  // JSON-Payload und duerfen nicht auf den einfachen Sensorwert reduziert
+  // werden, weil der Web-Editor daraus auch das dynamische Icon ableitet.
+  json += ",\"climate_values\":{";
+  bool first_climate_value = true;
+  const auto climate_ids = parseSensorList(ha.climates_text);
+  for (const auto& id : climate_ids) {
+    String payload;
+    if (!tiles_get_cached_entity_payload(id.c_str(), payload)) {
+      payload = haBridgeConfig.findSensorInitialValue(id);
+    }
+    payload.trim();
+    if (!payload.length()) continue;
+    if (!first_climate_value) json += ',';
+    first_climate_value = false;
+    json += '"';
+    appendJsonEscaped(json, id);
+    json += "\":\"";
+    appendJsonEscaped(json, payload);
+    json += '"';
+  }
+  json += "}";
+
   // Aggregierte Energy-Quellen (z. B. solar_total) sind keine normalen
   // Home-Assistant-Entities und fehlen daher im allgemeinen Sensor-Cache.
   // Der Web-Editor bekommt ihre aktuellen Tages-Summen separat; der Browser
