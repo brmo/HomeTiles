@@ -211,15 +211,17 @@ jobs:
           restore_sketch_profiles
           trap - EXIT
 
-          # `copy_buff` exists only in the unpatched fatal TX assertion. The RX
-          # identifier `pkt_rxbuff` remains as a normal variable in the patched
-          # object, so it cannot be used as a binary-level patch marker.
+          # Fatal allocation asserts retain their expression text in the
+          # stripped firmware image. The patched RX object still has a normal
+          # `pkt_rxbuff` debug variable, but debug data is not part of the BIN.
           firmware_bin="build/ci/${{ matrix.key }}/HomeTiles.ino.bin"
           test -f "${firmware_bin}"
-          if grep -a -q "copy_buff" "${firmware_bin}"; then
-            echo "Stock ESP-Hosted assert 'copy_buff' found in ${firmware_bin}" >&2
-            exit 1
-          fi
+          for fatal_assert in copy_buff pkt_rxbuff; do
+            if grep -a -q "${fatal_assert}" "${firmware_bin}"; then
+              echo "Stock ESP-Hosted assert '${fatal_assert}' found in ${firmware_bin}" >&2
+              exit 1
+            fi
+          done
 
       - name: Package firmware binaries
         shell: bash
