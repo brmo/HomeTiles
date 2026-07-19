@@ -185,12 +185,25 @@ Home dashboard, folder view, and the settings menu:
   <img src="docs/images/8in-home.png" alt="Home dashboard" width="32%"> <img src="docs/images/8in-folder-lighting.png" alt="Folder view with light tiles and scenes" width="32%"> <img src="docs/images/8in-settings.png" alt="On-device settings menu" width="32%">
 </p>
 
+Configurable Climate mini-tiles for current values and heating/cooling targets:
+
+<p align="center">
+  <img src="docs/images/8in-climate.png" alt="Configurable Climate mini-tile layouts on the Waveshare 8 inch display" width="75%">
+</p>
+
 ### Popups
 
 Light control — brightness, color, and color temperature:
 
 <p align="center">
   <img src="docs/images/8in-light-brightness.png" alt="Light popup brightness view" width="32%"> <img src="docs/images/8in-light-color.png" alt="Light popup color wheel" width="32%"> <img src="docs/images/8in-light-temperature.png" alt="Light popup color temperature view" width="32%">
+</p>
+
+Climate control adapts to each entity — from full HVAC mode, range, humidity,
+preset, fan, and swing controls to a minimal heat-only interface:
+
+<p align="center">
+  <img src="docs/images/8in-climate-popup-1.png" alt="Full Climate popup with HVAC modes, temperature range, humidity, preset, fan, and swing controls" width="49%"> <img src="docs/images/8in-climate-popup-2.png" alt="Capability-aware heat-only Climate popup" width="49%">
 </p>
 
 Energy statistics (day and week) and sensor history:

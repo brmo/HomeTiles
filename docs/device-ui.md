@@ -72,6 +72,12 @@ on the device this includes low/high target ranges, target humidity, HVAC mode,
 presets, fan mode, vertical swing, and horizontal swing. Long option lists are
 touch-scrollable.
 
+The first example exposes the complete control set reported by an air conditioner.
+The second entity only supports heating, so the popup automatically stays compact:
+
+![Full Climate popup with HVAC modes, target range, humidity, preset, fan, and swing controls](images/8in-climate-popup-1.png){ width="49.5%" }
+![Capability-aware heat-only Climate popup](images/8in-climate-popup-2.png){ width="49.5%" }
+
 ## Settings
 
 The settings tile (gear icon) opens the on-device settings menu:

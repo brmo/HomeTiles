@@ -103,11 +103,16 @@ parent Climate tile changes the available slot grid while preserving explicitly
 configured content wherever possible. Unsupported controls are not added by the
 automatic layout.
 
+![Climate tiles with several mini-tile layouts](images/8in-climate.png){ width="80%" }
+
 **Popup:** a circular target-temperature control with plus/minus buttons and
 buttons for every control reported by the entity. Depending on its capabilities,
 this can include HVAC mode, presets, fan mode, vertical swing, horizontal swing,
 and target humidity. `heat_cool` entities expose a low/high target range with
 separate controls.
+
+![Full Climate popup](images/8in-climate-popup-1.png){ width="49.5%" }
+![Heat-only Climate popup](images/8in-climate-popup-2.png){ width="49.5%" }
 
 ## Local Tiles
 
