@@ -22,21 +22,37 @@ void append_climate_scripts(String& html) {
   const CLIMATE_LAYOUT_MAGIC = 0x434c0000;
   const CLIMATE_LAYOUT_MAGIC_MASK = 0xffff0000;
   const CLIMATE_LAYOUT_VALUE_MASK = 0x00000fff;
-  const CLIMATE_GEOMETRY_PREFIX = 'CLG1:';
+  const CLIMATE_GEOMETRY_PREFIX = 'CLG2:';
+  const CLIMATE_GEOMETRY_LEGACY_PREFIX = 'CLG1:';
+
+  function climateMaxGridColumns() {
+    return Math.max(
+      1, Number(
+        typeof GRID_COLS === 'number' ? GRID_COLS : 7) || 7);
+  }
+
+  function climateMaxOuterRows() {
+    return Math.max(
+      1, Number(
+        typeof GRID_ROWS === 'number' ? GRID_ROWS : 5) || 5);
+  }
 
   function climateSlotCapacity(spanW, spanH) {
-    const w = Math.max(1, Number(spanW) || 1);
-    const h = Math.max(1, Number(spanH) || 1);
-    if (w === 1 && h === 1) return 1;
-    if (w >= 2 && h === 1) return 2;
-    if (w === 1) return 3;
-    return 6;
+    const { columns, rows } =
+      climateGridDimensions(spanW, spanH);
+    return Math.min(6, columns * rows);
   }
 
   function climateGridDimensions(spanW, spanH) {
+    const columns = Math.max(
+      1, Math.min(
+        climateMaxGridColumns(), Number(spanW) || 1));
+    const outerRows = Math.max(
+      1, Math.min(
+        climateMaxOuterRows(), Number(spanH) || 1));
     return {
-      columns: Math.max(1, Number(spanW) || 1) >= 2 ? 2 : 1,
-      rows: Math.max(1, Number(spanH) || 1) >= 2 ? 3 : 1
+      columns,
+      rows: outerRows * 2 - 1
     };
   }
 
@@ -53,13 +69,17 @@ void append_climate_scripts(String& html) {
   }
 
   function sanitizeClimateGeometryItem(item) {
+    const maxColumns = climateMaxGridColumns();
+    const maxRows = climateMaxOuterRows() * 2 - 1;
     return {
-      col: Math.max(0, Math.min(1, Number(item?.col) || 0)),
-      row: Math.max(0, Math.min(2, Number(item?.row) || 0)),
+      col: Math.max(
+        0, Math.min(maxColumns - 1, Number(item?.col) || 0)),
+      row: Math.max(
+        0, Math.min(maxRows - 1, Number(item?.row) || 0)),
       spanW: Math.max(
-        1, Math.min(2, Number(item?.spanW) || 1)),
+        1, Math.min(maxColumns, Number(item?.spanW) || 1)),
       spanH: Math.max(
-        1, Math.min(3, Number(item?.spanH) || 1))
+        1, Math.min(maxRows, Number(item?.spanH) || 1))
     };
   }
 
@@ -87,17 +107,6 @@ void append_climate_scripts(String& html) {
         spanH: 1
       };
       const content = Number(configured[index]) || 0;
-      if (content === CLIMATE_TILE_CONTENT.AUTO) {
-        if (columns === 2 && rows === 1 && index === 0) {
-          item.spanW = 2;
-        } else if (columns === 1 && rows === 3 && index === 1) {
-          item.spanH = 2;
-        } else if (columns === 2 && rows === 3 &&
-                   (index === 2 || index === 3)) {
-          item.spanH = 2;
-        }
-        return item;
-      }
       const adjustable =
         content >= CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE &&
         content <= CLIMATE_TILE_CONTENT.TARGET_HUMIDITY;
@@ -128,12 +137,28 @@ void append_climate_scripts(String& html) {
       value, spanW, spanH, slotConfig = null,
       targetLayoutConfig = null) {
     const text = String(value || '').trim();
-    const match = text.match(/^CLG1:([0-9a-fA-F]{9})$/);
-    if (!match) {
+    const currentMatch =
+      text.match(/^CLG2:([0-9a-fA-F]{24})$/);
+    if (currentMatch) {
+      return Array.from({ length: 6 }, (_, index) => {
+        const offset = index * 4;
+        const raw = Number.parseInt(
+          currentMatch[1].slice(offset, offset + 4), 16);
+        return sanitizeClimateGeometryItem({
+          col: raw & 0x07,
+          row: (raw >> 3) & 0x0f,
+          spanW: ((raw >> 7) & 0x07) + 1,
+          spanH: ((raw >> 10) & 0x0f) + 1
+        });
+      });
+    }
+    const legacyMatch =
+      text.match(/^CLG1:([0-9a-fA-F]{9})$/);
+    if (!legacyMatch) {
       return defaultClimateGeometry(
         spanW, spanH, slotConfig, targetLayoutConfig);
     }
-    let packed = BigInt('0x' + match[1]);
+    let packed = BigInt('0x' + legacyMatch[1]);
     return Array.from({ length: 6 }, (_, index) => {
       const raw = Number((packed >> BigInt(index * 6)) & 0x3fn);
       return sanitizeClimateGeometryItem({
@@ -146,18 +171,18 @@ void append_climate_scripts(String& html) {
   }
 
   function encodeClimateGeometry(items) {
-    let packed = 0n;
-    Array.from({ length: 6 }, (_, index) => {
-      const item = items[index] || {};
+    const encoded = Array.from({ length: 6 }, (_, index) => {
+      const item = sanitizeClimateGeometryItem(
+        items[index] || {});
       const raw =
-        (Math.max(0, Math.min(1, Number(item.col) || 0))) |
-        (Math.max(0, Math.min(3, Number(item.row) || 0)) << 1) |
-        ((Math.max(1, Math.min(2, Number(item.spanW) || 1)) - 1) << 3) |
-        ((Math.max(1, Math.min(3, Number(item.spanH) || 1)) - 1) << 4);
-      packed |= BigInt(raw & 0x3f) << BigInt(index * 6);
-    });
-    return CLIMATE_GEOMETRY_PREFIX +
-      packed.toString(16).toUpperCase().padStart(9, '0');
+        item.col |
+        (item.row << 3) |
+        ((item.spanW - 1) << 7) |
+        ((item.spanH - 1) << 10);
+      return (raw & 0x3fff)
+        .toString(16).toUpperCase().padStart(4, '0');
+    }).join('');
+    return CLIMATE_GEOMETRY_PREFIX + encoded;
   }
 
   function currentClimateGeometry(tab) {
@@ -167,9 +192,16 @@ void append_climate_scripts(String& html) {
       tab + '_tile_span_h')?.value || 1;
     const input = document.getElementById(
       tab + '_climate_geometry');
+    const configured = currentClimateSlotConfig(tab);
+    const resolved = climateResolvedEditorKinds(tab);
+    const effectiveConfig = configured.map((value, index) =>
+      Number(value) === CLIMATE_TILE_CONTENT.AUTO &&
+      resolved[index] !== null
+        ? resolved[index]
+        : value);
     return decodeClimateGeometry(
       input?.value || '', spanW, spanH,
-      currentClimateSlotConfig(tab),
+      effectiveConfig,
       currentClimateTargetLayouts(tab));
   }
 
@@ -271,12 +303,20 @@ void append_climate_scripts(String& html) {
     return true;
   }
 
-  function firstFreeClimateCell(
+  function firstFreeClimatePlacement(
       items, configured, capacity, columns, rows,
-      ignoreIndex = -1) {
-    for (let row = 0; row < rows; ++row) {
-      for (let col = 0; col < columns; ++col) {
-        const candidate = { col, row, spanW: 1, spanH: 1 };
+      ignoreIndex = -1, spanW = 1, spanH = 1) {
+    const safeSpanW = Math.max(
+      1, Math.min(columns, Number(spanW) || 1));
+    const safeSpanH = Math.max(
+      1, Math.min(rows, Number(spanH) || 1));
+    for (let row = 0; row + safeSpanH <= rows; ++row) {
+      for (let col = 0; col + safeSpanW <= columns; ++col) {
+        const candidate = {
+          col, row,
+          spanW: safeSpanW,
+          spanH: safeSpanH
+        };
         if (canPlaceClimateItem(
               items, configured, ignoreIndex,
               candidate, capacity)) {
@@ -287,6 +327,14 @@ void append_climate_scripts(String& html) {
     return null;
   }
 
+  function firstFreeClimateCell(
+      items, configured, capacity, columns, rows,
+      ignoreIndex = -1) {
+    return firstFreeClimatePlacement(
+      items, configured, capacity, columns, rows,
+      ignoreIndex, 1, 1);
+  }
+
   function notifyClimateGridChanged(tab) {
     updateTilePreview(tab);
     updateDraft(tab);
@@ -294,44 +342,366 @@ void append_climate_scripts(String& html) {
   }
 
   let climateGridDragState = null;
+  let climateGridDragPreview = null;
 
-  function climateGridCellFromPointer(grid, event, columns, rows) {
-    const rect = grid.getBoundingClientRect();
-    const style = getComputedStyle(grid);
-    const padLeft = parseFloat(style.paddingLeft) || 0;
-    const padTop = parseFloat(style.paddingTop) || 0;
-    const padRight = parseFloat(style.paddingRight) || 0;
-    const padBottom = parseFloat(style.paddingBottom) || 0;
-    const columnGap = parseFloat(style.columnGap) || 0;
-    const rowGap = parseFloat(style.rowGap) || 0;
-    const contentW = Math.max(
-      1, rect.width - padLeft - padRight -
-          columnGap * (columns - 1));
-    const contentH = Math.max(
-      1, rect.height - padTop - padBottom -
-          rowGap * (rows - 1));
-    const cellW = contentW / columns;
-    const cellH = contentH / rows;
-    const x = event.clientX - rect.left - padLeft;
-    const y = event.clientY - rect.top - padTop;
-    return {
-      col: Math.max(
-        0, Math.min(
-          columns - 1,
-          Math.floor(x / Math.max(1, cellW + columnGap)))),
-      row: Math.max(
-        0, Math.min(
-          rows - 1,
-          Math.floor(y / Math.max(1, cellH + rowGap))))
-    };
+  function createClimateMiniDragGhost(item, rect) {
+    // Slot-Styles (Grid-Layout der Regler usw.) sind unter .tile.climate
+    // gescopet; ein nackter Klon in document.body verliert sie und zerfaellt
+    // zu Fliesstext. Der Wrapper stellt den Selektor-Kontext wieder her.
+    const ghost = document.createElement('div');
+    ghost.className =
+      'tile climate climate-content-editing climate-mini-drag-ghost';
+    ghost.style.position = 'absolute';
+    ghost.style.top = '-9999px';
+    ghost.style.left = '-9999px';
+    ghost.style.width = rect.width + 'px';
+    ghost.style.height = rect.height + 'px';
+    ghost.style.padding = '0';
+    ghost.style.border = '0';
+    ghost.style.pointerEvents = 'none';
+    const clone = item.cloneNode(true);
+    clone.classList.remove('active', 'dragging');
+    clone.querySelectorAll('.tile-resize-handle')
+      .forEach(handle => handle.remove());
+    clone.style.position = 'absolute';
+    clone.style.inset = '0';
+    clone.style.gridArea = 'auto';
+    ghost.appendChild(clone);
+    document.body.appendChild(ghost);
+    return ghost;
   }
 
   const climateSelectedItemByTab = Object.create(null);
+  const climateSelectedCellByTab = Object.create(null);
+  const climatePendingEmptyByTab = Object.create(null);
+  const climateEditorSnapshotByTab = Object.create(null);
+  const climatePendingPreviewSelectionByTab =
+    Object.create(null);
+
+  function cloneClimateEditorSnapshot(snapshot) {
+    if (!snapshot) return null;
+    return {
+      tileIndex: snapshot.tileIndex,
+      spanW: snapshot.spanW,
+      spanH: snapshot.spanH,
+      resolvedKinds: Array.isArray(snapshot.resolvedKinds)
+        ? snapshot.resolvedKinds.slice()
+        : []
+    };
+  }
+
+  function captureClimateOuterResizeState(tab) {
+    return {
+      geometry: document.getElementById(
+        tab + '_climate_geometry')?.value || '',
+      slots: currentClimateSlotConfig(tab),
+      layouts: currentClimateTargetLayouts(tab),
+      editorSnapshot: cloneClimateEditorSnapshot(
+        climateEditorSnapshotByTab[tab]),
+      selectedItem: Number(climateSelectedItemByTab[tab]),
+      selectedCell: Number(climateSelectedCellByTab[tab]),
+      pendingEmpty: climatePendingEmptyByTab[tab]
+        ? {
+            index: climatePendingEmptyByTab[tab].index,
+            geometry: {
+              ...climatePendingEmptyByTab[tab].geometry
+            }
+          }
+        : null
+    };
+  }
+
+  function restoreClimateOuterResizeState(tab, state) {
+    if (!state) return;
+    const geometry = document.getElementById(
+      tab + '_climate_geometry');
+    if (geometry) geometry.value = state.geometry || '';
+    for (let index = 0; index < 6; ++index) {
+      const slot = document.getElementById(
+        tab + '_climate_slot_' + index);
+      if (slot) {
+        slot.value = String(
+          state.slots?.[index] ??
+          CLIMATE_TILE_CONTENT.AUTO);
+      }
+      const layout = document.getElementById(
+        tab + '_climate_layout_' + index);
+      if (layout) {
+        layout.value = String(
+          state.layouts?.[index] ??
+          CLIMATE_TARGET_LAYOUT.AUTO);
+      }
+    }
+    if (state.editorSnapshot) {
+      climateEditorSnapshotByTab[tab] =
+        cloneClimateEditorSnapshot(state.editorSnapshot);
+    } else {
+      delete climateEditorSnapshotByTab[tab];
+    }
+    climateSelectedItemByTab[tab] =
+      Number.isFinite(state.selectedItem)
+        ? state.selectedItem : -1;
+    climateSelectedCellByTab[tab] =
+      Number.isFinite(state.selectedCell)
+        ? state.selectedCell : -1;
+    if (state.pendingEmpty) {
+      climatePendingEmptyByTab[tab] = {
+        index: state.pendingEmpty.index,
+        geometry: { ...state.pendingEmpty.geometry }
+      };
+    } else {
+      delete climatePendingEmptyByTab[tab];
+    }
+  }
+
+  function previewClimateOuterResize(tab, state) {
+    restoreClimateOuterResizeState(tab, state);
+    syncClimateSlotFields(tab);
+  }
+
+  function requestClimatePreviewSelection(
+      tab, tileIndex, itemIndex = -1, cellIndex = -1) {
+    const sameTile =
+      currentTileTab === tab &&
+      currentTileIndex === tileIndex;
+    const pendingSelection = {
+      tileIndex,
+      itemIndex,
+      cellIndex
+    };
+    climatePendingPreviewSelectionByTab[tab] =
+      pendingSelection;
+    if (!sameTile && typeof selectTile === 'function') {
+      selectTile(tileIndex, tab);
+      // selectTile parks the previous editor first. Re-apply the requested
+      // mini selection after that cleanup so the async tile load can consume it.
+      climatePendingPreviewSelectionByTab[tab] =
+        pendingSelection;
+    }
+    if (sameTile) {
+      mountClimateMiniEditor(tab);
+      syncClimateSlotFields(tab, true);
+    }
+  }
+
+  function bindClimatePreviewSelection() {
+    if (document.documentElement.dataset
+          .climatePreviewSelectionBound === '1') {
+      return;
+    }
+    document.documentElement.dataset
+      .climatePreviewSelectionBound = '1';
+    const previewTarget = event =>
+      event.target?.closest?.(
+        '[data-climate-preview-item],' +
+        '[data-climate-preview-cell]');
+    document.addEventListener('pointerdown', event => {
+      if (previewTarget(event)) event.stopPropagation();
+    }, true);
+    document.addEventListener('dragstart', event => {
+      if (!previewTarget(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+    }, true);
+    document.addEventListener('click', event => {
+      const target = previewTarget(event);
+      if (!target) return;
+      const tile = target.closest('.tile.climate');
+      const section = tile?.closest('[id^="tab-tiles-"]');
+      const tab = section?.id?.substring(
+        'tab-tiles-'.length);
+      const tileIndex = Number(tile?.dataset.index);
+      if (!tab || !Number.isFinite(tileIndex)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      requestClimatePreviewSelection(
+        tab,
+        tileIndex,
+        Number(target.dataset.climatePreviewItem ?? -1),
+        Number(target.dataset.climatePreviewCell ?? -1));
+    }, true);
+  }
+
+  function parkClimateMiniEditor(tab, preserveSelection = false) {
+    const shell = document.getElementById(
+      tab + '_climate_editor_shell');
+    const stash = document.getElementById(
+      tab + '_climate_editor_stash');
+    if (shell && stash && shell.parentElement !== stash) {
+      stash.appendChild(shell);
+    }
+    document.querySelectorAll(
+      '#tab-tiles-' + tab +
+      ' .tile-grid > .tile.climate.climate-content-editing')
+      .forEach(tile => {
+        tile.classList.remove(
+          'climate-content-editing',
+          'climate-mini-selection-active');
+      });
+    if (!preserveSelection) {
+      climateSelectedItemByTab[tab] = -1;
+      climateSelectedCellByTab[tab] = -1;
+      delete climatePendingEmptyByTab[tab];
+      delete climatePendingPreviewSelectionByTab[tab];
+      delete climateEditorSnapshotByTab[tab];
+      selectClimateEditorItem(tab, -1);
+    }
+  }
+
+  function mountClimateMiniEditor(tab) {
+    const shell = document.getElementById(
+      tab + '_climate_editor_shell');
+    const tile = document.getElementById(
+      tab + '-tile-' + currentTileIndex);
+    if (!shell ||
+        currentTileTab !== tab ||
+        !tile ||
+        String(tile.dataset.type || '') !== '17') {
+      parkClimateMiniEditor(tab);
+      return false;
+    }
+
+    document.querySelectorAll(
+      '#tab-tiles-' + tab +
+      ' .tile-grid > .tile.climate.climate-content-editing')
+      .forEach(candidate => {
+        if (candidate !== tile) {
+          candidate.classList.remove(
+            'climate-content-editing');
+        }
+      });
+
+    tile.classList.add('climate-content-editing');
+    if (shell.parentElement !== tile) {
+      shell.parentElement?.classList?.remove(
+        'climate-mini-selection-active');
+      tile.appendChild(shell);
+    }
+    return true;
+  }
 
   function climateEditorState(tab) {
     const entity = document.getElementById(
       tab + '_climate_entity')?.value || '';
-    return parseClimatePreviewPayload(metaValues[entity] ?? '');
+    return parseClimatePreviewPayload(
+      sensorMetaCache?.values?.[entity] ?? '');
+  }
+
+  function climateAutomaticEditorKinds(tab) {
+    const state = climateEditorState(tab);
+    const spanW = Math.max(1, Number(
+      document.getElementById(
+        tab + '_tile_span_w')?.value) || 1);
+    const spanH = Math.max(1, Number(
+      document.getElementById(
+        tab + '_tile_span_h')?.value) || 1);
+    const capacity = climateSlotCapacity(spanW, spanH);
+    const kinds = [];
+    const add = kind => {
+      if (kinds.length < capacity) kinds.push(kind);
+    };
+
+    if (spanW === 1 && spanH === 1) {
+      add(CLIMATE_TILE_CONTENT.CURRENT_TEMPERATURE);
+    } else if (spanW >= 2 && spanH === 1) {
+      if (state.targetLow !== null &&
+          state.targetHigh !== null) {
+        add(CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE_LOW);
+      } else if (state.target !== null) {
+        add(CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE);
+      } else if (state.targetHumidity !== null) {
+        add(CLIMATE_TILE_CONTENT.TARGET_HUMIDITY);
+      } else {
+        add(CLIMATE_TILE_CONTENT.CURRENT_TEMPERATURE);
+      }
+    } else if (spanW === 1) {
+      add(CLIMATE_TILE_CONTENT.CURRENT_TEMPERATURE);
+      if (state.targetLow !== null &&
+          state.targetHigh !== null) {
+        add(CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE_LOW);
+      } else if (state.target !== null) {
+        add(CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE);
+      }
+      if (state.targetHumidity !== null) {
+        add(CLIMATE_TILE_CONTENT.TARGET_HUMIDITY);
+      }
+    } else {
+      add(CLIMATE_TILE_CONTENT.CURRENT_TEMPERATURE);
+      if (state.currentHumidity !== null) {
+        add(CLIMATE_TILE_CONTENT.CURRENT_HUMIDITY);
+      }
+      if (state.targetLow !== null &&
+          state.targetHigh !== null) {
+        add(CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE_LOW);
+        add(CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE_HIGH);
+      } else if (state.target !== null) {
+        add(CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE);
+      }
+      if (state.targetHumidity !== null) {
+        add(CLIMATE_TILE_CONTENT.TARGET_HUMIDITY);
+      }
+      if (state.mode) add(CLIMATE_TILE_CONTENT.HVAC_MODE);
+    }
+    return kinds;
+  }
+
+  function climateResolvedEditorKinds(tab) {
+    const configured = currentClimateSlotConfig(tab);
+    const automatic = climateAutomaticEditorKinds(tab);
+    const capacity = climateSlotCapacity(
+      document.getElementById(
+        tab + '_tile_span_w')?.value || 1,
+      document.getElementById(
+        tab + '_tile_span_h')?.value || 1);
+    const explicit = new Set();
+    configured.slice(0, capacity).forEach(selection => {
+      const kind = Number(selection) || 0;
+      if (kind !== CLIMATE_TILE_CONTENT.AUTO &&
+          kind !== CLIMATE_TILE_CONTENT.EMPTY) {
+        explicit.add(kind);
+      }
+    });
+    let cursor = 0;
+    return configured.map((selection, index) => {
+      const kind = Number(selection) || 0;
+      if (index >= capacity ||
+          kind === CLIMATE_TILE_CONTENT.EMPTY) {
+        return null;
+      }
+      if (kind !== CLIMATE_TILE_CONTENT.AUTO) return kind;
+      while (cursor < automatic.length) {
+        const candidate = automatic[cursor++];
+        if (!explicit.has(candidate)) return candidate;
+      }
+      return null;
+    });
+  }
+
+  function materializeClimateAutomaticItems(
+      tab, resolvedOverride = null) {
+    const configured = currentClimateSlotConfig(tab);
+    const resolved = Array.isArray(resolvedOverride)
+      ? resolvedOverride : climateResolvedEditorKinds(tab);
+    for (let index = 0; index < 6; ++index) {
+      if (Number(configured[index]) !== CLIMATE_TILE_CONTENT.AUTO) {
+        continue;
+      }
+      const source = document.getElementById(
+        tab + '_climate_slot_' + index);
+      if (!source) continue;
+      const kind = Number(resolved[index]);
+      source.value = Number.isFinite(kind) && kind > 0
+        ? String(kind)
+        : String(CLIMATE_TILE_CONTENT.EMPTY);
+    }
+  }
+
+  function climatePlacementConfig(
+      configured, resolvedKinds) {
+    return configured.map((selection, index) =>
+      resolvedKinds[index] === null
+        ? CLIMATE_TILE_CONTENT.EMPTY
+        : selection);
   }
 
   function climateEditorContentInfo(tab, kind) {
@@ -404,42 +774,159 @@ void append_climate_scripts(String& html) {
     const preview = document.getElementById(
       tab + '_climate_preview_' + index);
     if (!preview) return;
-    const info = climateEditorContentInfo(tab, kind);
+    const resolvedKind =
+      climateResolvedEditorKinds(tab)[index];
+    const info = climateEditorContentInfo(
+      tab, resolvedKind ?? kind);
     const expanded =
       geometry.spanW > 1 || geometry.spanH > 1;
+    const item = document.getElementById(
+      tab + '_climate_slot_row_' + index);
+    item?.classList.toggle(
+      'climate-mini-control-item',
+      info.adjustable && expanded);
     if (info.adjustable && expanded) {
+      const orientation =
+        geometry.spanW > 1 && geometry.spanH === 1
+          ? 'climate-slot-control-horizontal'
+          : (geometry.spanW > 1 && geometry.spanH > 1
+              ? 'climate-slot-control-large'
+              : 'climate-slot-control-vertical');
       preview.innerHTML =
+        '<div class="climate-slot climate-slot-control ' +
+        orientation + '">' +
         '<small>' + info.label + '</small>' +
-        '<div class="climate-mini-control">' +
-        '<span>-</span><strong>' + info.value +
-        '</strong><span>+</span></div>';
+        '<span class="climate-minus">-</span>' +
+        '<strong>' + info.value + '</strong>' +
+        '<span class="climate-plus">+</span></div>';
       return;
     }
     preview.innerHTML =
-      (expanded ? '<small>' + info.label + '</small>' : '') +
-      '<strong>' + info.value + '</strong>';
+      '<div class="climate-slot climate-slot-value' +
+      (resolvedKind === CLIMATE_TILE_CONTENT.HVAC_MODE
+        ? ' climate-slot-mode' : '') + '">' +
+      '<strong>' + info.value + '</strong></div>';
   }
 
-  function selectClimateEditorItem(tab, index) {
-    climateSelectedItemByTab[tab] = index;
+  function selectClimateEditorItem(
+      tab, index, cellIndex = -1, valueOverride = null) {
+    const source = index >= 0
+      ? document.getElementById(
+          tab + '_climate_slot_' + index)
+      : null;
+    const hasSelection = index >= 0 && !!source;
+    climateSelectedItemByTab[tab] =
+      hasSelection ? index : -1;
+    climateSelectedCellByTab[tab] =
+      hasSelection ? cellIndex : -1;
     for (let candidate = 0; candidate < 6; ++candidate) {
       const item = document.getElementById(
         tab + '_climate_slot_row_' + candidate);
-      const selected = candidate === index &&
+      const selected = hasSelection &&
+        candidate === index &&
         item && !item.classList.contains('hidden');
       item?.classList.toggle('active', !!selected);
       if (item) {
         item.dataset.selected = selected ? '1' : '0';
       }
     }
+    document.getElementById(
+      tab + '_climate_content_grid')
+      ?.querySelectorAll('.climate-mini-cell')
+      .forEach(cell => {
+        cell.classList.toggle(
+          'active',
+          Number(cell.dataset.climateCell) === cellIndex);
+      });
+    const shell = document.getElementById(
+      tab + '_climate_editor_shell');
+    const outerTile = shell?.parentElement?.matches(
+      '.tile.climate') ? shell.parentElement : null;
+    outerTile?.classList.toggle(
+      'climate-mini-selection-active',
+      hasSelection);
     const editor = document.getElementById(
       tab + '_climate_selected_content');
-    const source = document.getElementById(
-      tab + '_climate_slot_' + index);
     if (editor) {
-      editor.disabled = !source;
-      if (source) editor.value = source.value;
+      editor.disabled = !hasSelection;
+      if (hasSelection) {
+        editor.value = valueOverride !== null
+          ? String(valueOverride) : source.value;
+      }
     }
+    const selectedFields = document.getElementById(
+      tab + '_climate_selected_fields');
+    selectedFields?.classList.toggle(
+      'hidden', !hasSelection);
+    if (selectedFields) {
+      selectedFields.hidden = !hasSelection;
+      selectedFields.closest('.climate-content-config')
+        ?.classList.toggle('hidden', !hasSelection);
+    }
+  }
+
+  function climateGridLayouts(tab, columns, rows) {
+    return currentClimateGeometry(tab).map(entry => {
+      const geometry =
+        clampClimateGeometryItem(entry, columns, rows);
+      return {
+        col: geometry.col,
+        row: geometry.row,
+        span_w: geometry.spanW,
+        span_h: geometry.spanH
+      };
+    });
+  }
+
+  function climateActiveGridIndices(tab, capacity) {
+    const configured = currentClimateSlotConfig(tab);
+    const resolved = climateResolvedEditorKinds(tab);
+    const active = new Set();
+    for (let index = 0; index < capacity; ++index) {
+      // Nur real platzierte Items zaehlen: syncClimateSlotFields blendet
+      // Slots ohne freien Platz aus; deren gespeicherte Geometrie darf
+      // Drag/Resize nicht als Phantom-Belegung blockieren.
+      const item = document.getElementById(
+        tab + '_climate_slot_row_' + index);
+      if (Number(configured[index]) !== CLIMATE_TILE_CONTENT.EMPTY &&
+          resolved[index] !== null &&
+          item && !item.classList.contains('hidden')) {
+        active.add(index);
+      }
+    }
+    return active;
+  }
+
+  function applyClimateGridLayouts(
+      tab, layouts, activeIndices, baseLayouts = null) {
+    activeIndices.forEach(index => {
+      const item = document.getElementById(
+        tab + '_climate_slot_row_' + index);
+      const layout = layouts[index];
+      if (!item || !layout) return;
+      setGridItemPosition(
+        item, layout.col, layout.row,
+        layout.span_w, layout.span_h);
+      const base = baseLayouts?.[index];
+      item.classList.toggle(
+        'reflow-preview',
+        !!base &&
+        (base.col !== layout.col || base.row !== layout.row));
+    });
+  }
+
+  function storeClimateGridLayouts(tab, layouts) {
+    const stored = currentClimateGeometry(tab);
+    layouts.forEach((layout, index) => {
+      if (!layout) return;
+      stored[index] = {
+        col: layout.col,
+        row: layout.row,
+        spanW: layout.span_w,
+        spanH: layout.span_h
+      };
+    });
+    storeClimateGeometry(tab, stored);
   }
 
   function bindClimateMiniGrid(tab) {
@@ -447,6 +934,64 @@ void append_climate_scripts(String& html) {
       tab + '_climate_content_grid');
     if (!grid || grid.dataset.climateBound === '1') return;
     grid.dataset.climateBound = '1';
+    const setOuterTileDragEnabled = enabled => {
+      const outerTile = grid.closest('.tile.climate');
+      if (!outerTile) return;
+      outerTile.draggable = !!enabled;
+    };
+    const releaseOuterTileDrag = () => {
+      if (!climateGridDragState) {
+        setOuterTileDragEnabled(true);
+      }
+    };
+
+    let dropPlaceholder = null;
+    const ensureDropPlaceholder = () => {
+      if (!dropPlaceholder) {
+        dropPlaceholder = document.createElement('div');
+        dropPlaceholder.className = 'climate-drop-placeholder';
+      }
+      if (dropPlaceholder.parentElement !== grid) {
+        grid.appendChild(dropPlaceholder);
+      }
+      return dropPlaceholder;
+    };
+    const clearDropPlaceholder = () => {
+      if (!dropPlaceholder) return;
+      dropPlaceholder.classList.remove('show', 'invalid');
+      dropPlaceholder.remove();
+    };
+    const showDropPlaceholder = (state, col, row, valid) => {
+      const placeholder = ensureDropPlaceholder();
+      const source = document.getElementById(
+        state.tab + '_climate_slot_row_' + state.index);
+      const sourcePreview =
+        source?.querySelector('.climate-mini-preview');
+      if (sourcePreview) {
+        const preview = sourcePreview.cloneNode(true);
+        preview.querySelectorAll('[id]').forEach(element => {
+          element.removeAttribute('id');
+        });
+        placeholder.replaceChildren(preview);
+      } else {
+        placeholder.replaceChildren();
+      }
+      setGridItemPosition(
+        placeholder, col, row,
+        state.origin.span_w, state.origin.span_h);
+      placeholder.classList.add('show');
+      placeholder.classList.toggle('invalid', !valid);
+    };
+    grid.addEventListener('pointerdown', event => {
+      setOuterTileDragEnabled(false);
+      event.stopPropagation();
+    });
+    grid.addEventListener('click', event => {
+      event.stopPropagation();
+      window.setTimeout(releaseOuterTileDrag, 0);
+    });
+    window.addEventListener('pointerup', releaseOuterTileDrag, true);
+    window.addEventListener('pointercancel', releaseOuterTileDrag, true);
 
     const selectedContent = document.getElementById(
       tab + '_climate_selected_content');
@@ -458,16 +1003,26 @@ void append_climate_scripts(String& html) {
       const source = document.getElementById(
         tab + '_climate_slot_' + index);
       if (!source) return;
+      materializeClimateAutomaticItems(tab);
+      const pending = climatePendingEmptyByTab[tab];
+      if (pending && pending.index === index) {
+        const stored = currentClimateGeometry(tab);
+        stored[index] = pending.geometry;
+        storeClimateGeometry(tab, stored);
+        delete climatePendingEmptyByTab[tab];
+      }
       source.value = selectedContent.value;
+      climateSelectedCellByTab[tab] = -1;
       syncClimateSlotFields(tab);
       notifyClimateGridChanged(tab);
     });
 
-    for (let cellIndex = 0; cellIndex < 6; ++cellIndex) {
-      const cell = document.getElementById(
-        tab + '_climate_cell_' + cellIndex);
-      cell?.addEventListener('click', event => {
+    grid.querySelectorAll('.climate-mini-cell')
+      .forEach(cell => {
+        const cellIndex = Number(cell.dataset.climateCell);
+        cell.addEventListener('click', event => {
         event.preventDefault();
+        event.stopPropagation();
         const spanW = document.getElementById(
           tab + '_tile_span_w')?.value || 1;
         const spanH = document.getElementById(
@@ -476,40 +1031,148 @@ void append_climate_scripts(String& html) {
           climateGridDimensions(spanW, spanH);
         const capacity = climateSlotCapacity(spanW, spanH);
         const configured = currentClimateSlotConfig(tab);
+        const resolvedKinds =
+          climateResolvedEditorKinds(tab);
         const index = configured.findIndex(
           (value, candidate) =>
             candidate < capacity &&
-            Number(value) === CLIMATE_TILE_CONTENT.EMPTY);
+            (Number(value) === CLIMATE_TILE_CONTENT.EMPTY ||
+             (Number(value) === CLIMATE_TILE_CONTENT.AUTO &&
+              resolvedKinds[candidate] === null)));
         if (index < 0) return;
         const row = Math.floor(cellIndex / columns);
         const col = cellIndex % columns;
         if (row >= rows) return;
-        const stored = currentClimateGeometry(tab);
-        stored[index] = { col, row, spanW: 1, spanH: 1 };
-        const source = document.getElementById(
-          tab + '_climate_slot_' + index);
-        if (source) {
-          source.value = String(CLIMATE_TILE_CONTENT.AUTO);
-        }
-        storeClimateGeometry(tab, stored);
-        climateSelectedItemByTab[tab] = index;
-        syncClimateSlotFields(tab);
-        notifyClimateGridChanged(tab);
+        climatePendingEmptyByTab[tab] = {
+          index,
+          geometry: { col, row, spanW: 1, spanH: 1 }
+        };
+        selectClimateEditorItem(
+          tab, index, cellIndex,
+          CLIMATE_TILE_CONTENT.EMPTY);
+        document.getElementById(
+          tab + '_climate_selected_fields')
+          ?.classList.remove('hidden');
       });
-    }
+      });
+
+    const clearDragClasses = state => {
+      if (!state) return;
+      state.activeIndices.forEach(activeIndex => {
+        document.getElementById(
+          state.tab + '_climate_slot_row_' + activeIndex)
+          ?.classList.remove(
+            'dragging', 'drag-preview-positioned',
+            'reflow-preview', 'invalid-drop');
+      });
+    };
+
+    const restoreDragLayouts = state => {
+      if (!state) return;
+      applyClimateGridLayouts(
+        state.tab, state.baseLayouts,
+        state.activeIndices, state.baseLayouts);
+      state.activeIndices.forEach(activeIndex => {
+        document.getElementById(
+          state.tab + '_climate_slot_row_' + activeIndex)
+          ?.classList.remove(
+            'drag-preview-positioned',
+            'reflow-preview', 'invalid-drop');
+      });
+      document.getElementById(
+        state.tab + '_climate_slot_row_' + state.index)
+        ?.classList.add('dragging');
+    };
+
+    grid.addEventListener('dragenter', event => {
+      if (!climateGridDragState ||
+          climateGridDragState.tab !== tab) return;
+      event.preventDefault();
+      event.stopPropagation();
+    });
+
+    grid.addEventListener('dragover', event => {
+      const state = climateGridDragState;
+      if (!state || state.tab !== tab) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = 'move';
+      }
+      const raw = getGridElementCellFromPointer(
+        grid, state.columns, state.rows,
+        event.clientX, event.clientY);
+      if (!raw) return;
+      const targetCol = Math.max(
+        0, Math.min(
+          state.columns - state.origin.span_w,
+          raw.col - state.anchorCol));
+      const targetRow = Math.max(
+        0, Math.min(
+          state.rows - state.origin.span_h,
+          raw.row - state.anchorRow));
+      const previewKey = targetCol + ':' + targetRow;
+      if (state.previewKey === previewKey) return;
+      state.previewKey = previewKey;
+      const preview = simulateGridReorderLayouts(
+        state.baseLayouts, state.activeIndices,
+        state.index, targetCol, targetRow,
+        state.columns, state.rows, 0);
+      state.preview = preview;
+      showDropPlaceholder(
+        state, targetCol, targetRow, !!preview);
+      if (!preview) {
+        restoreDragLayouts(state);
+        return;
+      }
+      applyClimateGridLayouts(
+        tab, preview.layouts,
+        state.activeIndices, state.baseLayouts);
+    });
+
+    grid.addEventListener('drop', event => {
+      const state = climateGridDragState;
+      if (!state || state.tab !== tab) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!state.preview) return;
+      state.committed = true;
+      clearDropPlaceholder();
+      storeClimateGridLayouts(tab, state.preview.layouts);
+      syncClimateSlotFields(tab);
+      notifyClimateGridChanged(tab);
+    });
 
     for (let index = 0; index < 6; ++index) {
       const item = document.getElementById(
         tab + '_climate_slot_row_' + index);
       if (!item) continue;
 
+      item.draggable = true;
       item.addEventListener('pointerdown', event => {
-        if (!event.isPrimary ||
-            event.target.closest('[data-climate-resize]')) {
+        if (event.target.closest('[data-climate-resize]')) {
           return;
         }
-        event.preventDefault();
+        event.stopPropagation();
         selectClimateEditorItem(tab, index);
+        delete climatePendingEmptyByTab[tab];
+      });
+      item.addEventListener('click', event => {
+        event.stopPropagation();
+        selectClimateEditorItem(tab, index);
+        delete climatePendingEmptyByTab[tab];
+      });
+
+      item.addEventListener('dragstart', event => {
+        if (event.target.closest('[data-climate-resize]')) {
+          event.preventDefault();
+          return;
+        }
+        event.stopPropagation();
+        setOuterTileDragEnabled(false);
+        selectClimateEditorItem(tab, index);
+        delete climatePendingEmptyByTab[tab];
+        materializeClimateAutomaticItems(tab);
         const spanW = document.getElementById(
           tab + '_tile_span_w')?.value || 1;
         const spanH = document.getElementById(
@@ -517,56 +1180,90 @@ void append_climate_scripts(String& html) {
         const { columns, rows } =
           climateGridDimensions(spanW, spanH);
         const capacity = climateSlotCapacity(spanW, spanH);
-        const configured = currentClimateSlotConfig(tab);
-        const stored = currentClimateGeometry(tab);
-        const items = stored.map(entry =>
-          clampClimateGeometryItem(entry, columns, rows));
-        const origin = { ...items[index] };
-        const startCell = climateGridCellFromPointer(
-          grid, event, columns, rows);
-        let changed = false;
-        item.setPointerCapture(event.pointerId);
-        const onMove = moveEvent => {
-          const cell = climateGridCellFromPointer(
-            grid, moveEvent, columns, rows);
-          const candidate = clampClimateGeometryItem({
-            ...origin,
-            col: origin.col + cell.col - startCell.col,
-            row: origin.row + cell.row - startCell.row
-          }, columns, rows);
-          if (climateGeometryEquals(candidate, items[index]) ||
-              !canPlaceClimateItem(
-                items, configured, index,
-                candidate, capacity)) {
-            return;
-          }
-          changed = true;
-          items[index] = candidate;
-          stored[index] = candidate;
-          item.classList.add('dragging');
-          item.style.gridColumn =
-            (candidate.col + 1) + ' / span ' +
-            candidate.spanW;
-          item.style.gridRow =
-            (candidate.row + 1) + ' / span ' +
-            candidate.spanH;
+        const activeIndices =
+          climateActiveGridIndices(tab, capacity);
+        const baseLayouts =
+          climateGridLayouts(tab, columns, rows);
+        const origin = cloneLayout(baseLayouts[index]);
+        if (!origin || !activeIndices.has(index)) {
+          event.preventDefault();
+          return;
+        }
+        const metrics = getGridElementMetrics(
+          grid, columns, rows);
+        const itemRect = item.getBoundingClientRect();
+        const stepX = metrics
+          ? metrics.cellW + metrics.gapX : itemRect.width;
+        const stepY = metrics
+          ? metrics.cellH + metrics.gapY : itemRect.height;
+        const localX = Math.max(
+          0, event.clientX - itemRect.left);
+        const localY = Math.max(
+          0, event.clientY - itemRect.top);
+        const anchorCol = Math.max(
+          0, Math.min(
+            origin.span_w - 1,
+            Math.floor(localX / Math.max(1, stepX))));
+        const anchorRow = Math.max(
+          0, Math.min(
+            origin.span_h - 1,
+            Math.floor(localY / Math.max(1, stepY))));
+        climateGridDragState = {
+          tab,
+          index,
+          columns,
+          rows,
+          activeIndices,
+          baseLayouts,
+          origin,
+          anchorCol,
+          anchorRow,
+          preview: null,
+          previewKey: '',
+          committed: false
         };
-        const onEnd = endEvent => {
-          item.removeEventListener('pointermove', onMove);
-          item.removeEventListener('pointerup', onEnd);
-          item.removeEventListener('pointercancel', onEnd);
-          if (item.hasPointerCapture(endEvent.pointerId)) {
-            item.releasePointerCapture(endEvent.pointerId);
-          }
-          item.classList.remove('dragging');
-          if (!changed) return;
-          storeClimateGeometry(tab, stored);
-          syncClimateSlotFields(tab);
-          notifyClimateGridChanged(tab);
-        };
-        item.addEventListener('pointermove', onMove);
-        item.addEventListener('pointerup', onEnd);
-        item.addEventListener('pointercancel', onEnd);
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData(
+            'text/plain',
+            'climate:' + tab + ':' + index);
+          const rect = item.getBoundingClientRect();
+          climateGridDragPreview =
+            createClimateMiniDragGhost(item, rect);
+          event.dataTransfer.setDragImage(
+            climateGridDragPreview,
+            Math.max(
+              0, Math.min(
+                rect.width,
+                event.clientX - rect.left)),
+            Math.max(
+              0, Math.min(
+                rect.height,
+                event.clientY - rect.top)));
+        }
+        showDropPlaceholder(
+          climateGridDragState, origin.col, origin.row, true);
+        item.classList.add('dragging');
+      });
+
+      item.addEventListener('dragend', event => {
+        event.stopPropagation();
+        clearDropPlaceholder();
+        const state = climateGridDragState;
+        if (!state ||
+            state.tab !== tab ||
+            state.index !== index) {
+          climateGridDragPreview?.remove();
+          climateGridDragPreview = null;
+          setOuterTileDragEnabled(true);
+          return;
+        }
+        if (!state.committed) restoreDragLayouts(state);
+        clearDragClasses(state);
+        climateGridDragState = null;
+        climateGridDragPreview?.remove();
+        climateGridDragPreview = null;
+        setOuterTileDragEnabled(true);
       });
 
       item.querySelectorAll('[data-climate-resize]')
@@ -575,6 +1272,7 @@ void append_climate_scripts(String& html) {
             event.preventDefault();
             event.stopPropagation();
             selectClimateEditorItem(tab, index);
+            materializeClimateAutomaticItems(tab);
             const spanW = document.getElementById(
               tab + '_tile_span_w')?.value || 1;
             const spanH = document.getElementById(
@@ -588,77 +1286,114 @@ void append_climate_scripts(String& html) {
             const items = stored.map(entry =>
               clampClimateGeometryItem(entry, columns, rows));
             const origin = { ...items[index] };
+            const layouts =
+              climateGridLayouts(tab, columns, rows);
+            const activeIndices =
+              climateActiveGridIndices(tab, capacity);
             const direction =
               String(handle.dataset.climateResize || 'se');
             item.classList.add('resizing');
-            handle.setPointerCapture(event.pointerId);
             const onMove = moveEvent => {
-              const cell = climateGridCellFromPointer(
-                grid, moveEvent, columns, rows);
-              const candidate = { ...origin };
+              const cell = getGridElementCellFromPointer(
+                grid, columns, rows,
+                moveEvent.clientX, moveEvent.clientY);
+              if (!cell) return;
+              const candidate = {
+                col: origin.col,
+                row: origin.row,
+                span_w: origin.spanW,
+                span_h: origin.spanH
+              };
               if (direction.includes('e')) {
-                candidate.spanW =
+                candidate.span_w =
                   cell.col - origin.col + 1;
               }
               if (direction.includes('s')) {
-                candidate.spanH =
+                candidate.span_h =
                   cell.row - origin.row + 1;
               }
-              const clamped = clampClimateGeometryItem(
-                candidate, columns, rows);
-              if (!canPlaceClimateItem(
-                    items, configured, index,
-                    clamped, capacity)) {
+              candidate.span_w = Math.max(
+                1, Math.min(
+                  columns - candidate.col,
+                  candidate.span_w));
+              candidate.span_h = Math.max(
+                1, Math.min(
+                  rows - candidate.row,
+                  candidate.span_h));
+              if (!canPlaceGridLayout(
+                    layouts, activeIndices, index,
+                    candidate, columns, rows, 0)) {
                 item.classList.add('resize-invalid');
                 return;
               }
               item.classList.remove('resize-invalid');
-              items[index] = clamped;
-              stored[index] = clamped;
-              item.style.gridColumn =
-                (clamped.col + 1) + ' / span ' +
-                clamped.spanW;
-              item.style.gridRow =
-                (clamped.row + 1) + ' / span ' +
-                clamped.spanH;
+              layouts[index] = candidate;
+              stored[index] = {
+                col: candidate.col,
+                row: candidate.row,
+                spanW: candidate.span_w,
+                spanH: candidate.span_h
+              };
+              setGridItemPosition(
+                item, candidate.col, candidate.row,
+                candidate.span_w, candidate.span_h);
               renderClimateEditorItem(
-                tab, index, clamped, configured[index]);
+                tab, index, stored[index],
+                configured[index]);
             };
             const onEnd = endEvent => {
-              handle.removeEventListener(
-                'pointermove', onMove);
-              handle.removeEventListener(
-                'pointerup', onEnd);
-              handle.removeEventListener(
-                'pointercancel', onEnd);
-              if (handle.hasPointerCapture(
-                    endEvent.pointerId)) {
-                handle.releasePointerCapture(
-                  endEvent.pointerId);
-              }
+              window.removeEventListener(
+                'pointermove', onMove, true);
+              window.removeEventListener(
+                'pointerup', onEnd, true);
+              window.removeEventListener(
+                'pointercancel', onEnd, true);
               item.classList.remove(
                 'resizing', 'resize-invalid');
               storeClimateGeometry(tab, stored);
               syncClimateSlotFields(tab);
               notifyClimateGridChanged(tab);
+              setOuterTileDragEnabled(true);
             };
-            handle.addEventListener('pointermove', onMove);
-            handle.addEventListener('pointerup', onEnd);
-            handle.addEventListener('pointercancel', onEnd);
+            window.addEventListener(
+              'pointermove', onMove, true);
+            window.addEventListener(
+              'pointerup', onEnd, true);
+            window.addEventListener(
+              'pointercancel', onEnd, true);
           });
         });
     }
   }
 
-  function syncClimateSlotFields(tab) {
-    const spanW = document.getElementById(
-      tab + '_tile_span_w')?.value || 1;
-    const spanH = document.getElementById(
-      tab + '_tile_span_h')?.value || 1;
+  function syncClimateSlotFields(
+      tab, finalizePreviewSelection = false) {
+    mountClimateMiniEditor(tab);
+    const spanW = Math.max(1, Number(document.getElementById(
+      tab + '_tile_span_w')?.value) || 1);
+    const spanH = Math.max(1, Number(document.getElementById(
+      tab + '_tile_span_h')?.value) || 1);
     const capacity = climateSlotCapacity(spanW, spanH);
     const { columns, rows } =
       climateGridDimensions(spanW, spanH);
-    const configured = currentClimateSlotConfig(tab);
+    let configured = currentClimateSlotConfig(tab);
+    let resolvedKinds = climateResolvedEditorKinds(tab);
+    const previousSnapshot = climateEditorSnapshotByTab[tab];
+    if (previousSnapshot &&
+        previousSnapshot.tileIndex === currentTileIndex &&
+        (previousSnapshot.spanW !== spanW ||
+         previousSnapshot.spanH !== spanH)) {
+      // Sobald der Nutzer die aeussere Climate-Kachel vergroessert oder
+      // verkleinert, bleibt der bisher sichtbare Inhalt erhalten. Ungenutzte
+      // Automatic-Slots werden zu Leer, statt durch den zusaetzlichen Platz
+      // ploetzlich neue Mini-Tiles zu erzeugen.
+      materializeClimateAutomaticItems(
+        tab, previousSnapshot.resolvedKinds);
+      configured = currentClimateSlotConfig(tab);
+      resolvedKinds = climateResolvedEditorKinds(tab);
+    }
+    const placementConfig = climatePlacementConfig(
+      configured, resolvedKinds);
     const stored = currentClimateGeometry(tab);
     const items = stored.map(entry =>
       clampClimateGeometryItem(entry, columns, rows));
@@ -679,7 +1414,8 @@ void append_climate_scripts(String& html) {
       const kind = Number(configured[index]) || 0;
       const active =
         index < capacity &&
-        kind !== CLIMATE_TILE_CONTENT.EMPTY;
+        kind !== CLIMATE_TILE_CONTENT.EMPTY &&
+        resolvedKinds[index] !== null;
       if (!item) continue;
       item.classList.toggle('hidden', !active);
       if (!active) continue;
@@ -688,9 +1424,10 @@ void append_climate_scripts(String& html) {
       if (accepted.some(other =>
             climateGeometryOverlaps(
               geometry, other.geometry))) {
-        const free = firstFreeClimateCell(
-          items, configured, capacity,
-          columns, rows, index);
+        const free = firstFreeClimatePlacement(
+          items, placementConfig, capacity,
+          columns, rows, index,
+          geometry.spanW, geometry.spanH);
         if (!free) {
           item.classList.add('hidden');
           continue;
@@ -700,12 +1437,9 @@ void append_climate_scripts(String& html) {
         stored[index] = free;
       }
       accepted.push({ index, geometry });
-      item.style.gridColumn =
-        (geometry.col + 1) + ' / span ' +
-        geometry.spanW;
-      item.style.gridRow =
-        (geometry.row + 1) + ' / span ' +
-        geometry.spanH;
+      setGridItemPosition(
+        item, geometry.col, geometry.row,
+        geometry.spanW, geometry.spanH);
       renderClimateEditorItem(
         tab, index, geometry, kind);
       for (let row = geometry.row;
@@ -728,13 +1462,15 @@ void append_climate_scripts(String& html) {
       }
     }
 
-    for (let cellIndex = 0; cellIndex < 6; ++cellIndex) {
-      const cell = document.getElementById(
-        tab + '_climate_cell_' + cellIndex);
-      if (!cell) continue;
+    grid?.querySelectorAll('.climate-mini-cell')
+      .forEach(cell => {
+      const cellIndex = Number(cell.dataset.climateCell);
       const row = Math.floor(cellIndex / columns);
       const col = cellIndex % columns;
-      const visible = row < rows;
+      const visible =
+        Number.isFinite(cellIndex) &&
+        cellIndex >= 0 &&
+        cellIndex < columns * rows;
       cell.classList.toggle('hidden', !visible);
       cell.classList.toggle(
         'occupied',
@@ -743,34 +1479,99 @@ void append_climate_scripts(String& html) {
         cell.style.gridColumn = String(col + 1);
         cell.style.gridRow = String(row + 1);
       }
-    }
+      });
 
     storeClimateGeometry(tab, stored);
     bindClimateMiniGrid(tab);
+    const directSelection =
+      climatePendingPreviewSelectionByTab[tab];
+    if (directSelection &&
+        directSelection.tileIndex === currentTileIndex) {
+      const directItem = Number(directSelection.itemIndex);
+      const directCell = Number(directSelection.cellIndex);
+      if (Number.isFinite(directItem) &&
+          directItem >= 0 && directItem < 6) {
+        const item = document.getElementById(
+          tab + '_climate_slot_row_' + directItem);
+        if (item && !item.classList.contains('hidden')) {
+          climateSelectedItemByTab[tab] = directItem;
+          climateSelectedCellByTab[tab] = -1;
+          delete climatePendingEmptyByTab[tab];
+          if (finalizePreviewSelection) {
+            delete climatePendingPreviewSelectionByTab[tab];
+          }
+        }
+      } else if (Number.isFinite(directCell) &&
+                 directCell >= 0 &&
+                 directCell < columns * rows) {
+        const cell = document.getElementById(
+          tab + '_climate_cell_' + directCell);
+        const index = configured.findIndex(
+          (value, candidate) =>
+            candidate < capacity &&
+            (Number(value) === CLIMATE_TILE_CONTENT.EMPTY ||
+             (Number(value) === CLIMATE_TILE_CONTENT.AUTO &&
+              resolvedKinds[candidate] === null)));
+        if (cell &&
+            !cell.classList.contains('hidden') &&
+            !cell.classList.contains('occupied') &&
+            index >= 0) {
+          const row = Math.floor(directCell / columns);
+          const col = directCell % columns;
+          climatePendingEmptyByTab[tab] = {
+            index,
+            geometry: { col, row, spanW: 1, spanH: 1 }
+          };
+          climateSelectedItemByTab[tab] = index;
+          climateSelectedCellByTab[tab] = directCell;
+          if (finalizePreviewSelection) {
+            delete climatePendingPreviewSelectionByTab[tab];
+          }
+        }
+      }
+    }
     let selected = Number(climateSelectedItemByTab[tab]);
+    let selectedCell = Number(climateSelectedCellByTab[tab]);
     const selectedItem = Number.isFinite(selected)
       ? document.getElementById(
           tab + '_climate_slot_row_' + selected)
       : null;
-    if (!selectedItem ||
-        selectedItem.classList.contains('hidden')) {
-      selected = accepted.length ? accepted[0].index : -1;
+    const selectedItemVisible =
+      !!selectedItem &&
+      !selectedItem.classList.contains('hidden');
+    const selectedCellElement =
+      Number.isFinite(selectedCell) && selectedCell >= 0
+        ? document.getElementById(
+            tab + '_climate_cell_' + selectedCell)
+        : null;
+    const selectedEmptyVisible =
+      !!selectedCellElement &&
+      !selectedCellElement.classList.contains('hidden') &&
+      !selectedCellElement.classList.contains('occupied') &&
+      climatePendingEmptyByTab[tab]?.index === selected;
+    if (selectedItemVisible) {
+      selectedCell = -1;
+      selectClimateEditorItem(tab, selected);
+    } else if (selectedEmptyVisible) {
+      selectClimateEditorItem(
+        tab, selected, selectedCell,
+        CLIMATE_TILE_CONTENT.EMPTY);
+    } else {
+      selected = -1;
+      selectedCell = -1;
+      delete climatePendingEmptyByTab[tab];
+      selectClimateEditorItem(tab, -1);
     }
-    selectClimateEditorItem(tab, selected);
     const selectedFields = document.getElementById(
       tab + '_climate_selected_fields');
     selectedFields?.classList.toggle(
       'hidden', selected < 0);
-    const hint = document.getElementById(
-      tab + '_climate_content_hint');
-    if (hint) {
-      const german =
-        String(document.documentElement.lang || '')
-          .toLowerCase().startsWith('de');
-      hint.textContent = german
-        ? 'Freies Feld anklicken, Inhalt ausw\u00E4hlen und das Feld wie ein Tile verschieben oder aufziehen.'
-        : 'Click a free cell, choose its content, then move or resize it like a tile.';
-    }
+    climateEditorSnapshotByTab[tab] = {
+      tileIndex: currentTileIndex,
+      spanW,
+      spanH,
+      resolvedKinds: resolvedKinds.slice()
+    };
   }
 
   function loadClimateFields(tab, data) {
@@ -799,7 +1600,7 @@ void append_climate_scripts(String& html) {
       geometry.value =
         data.climate_geometry || data.scene_alias || '';
     }
-    syncClimateSlotFields(tab);
+    syncClimateSlotFields(tab, true);
     maybeFillTitleFromEntity(tab, '_climate_entity');
   }
 
@@ -913,7 +1714,8 @@ void append_climate_scripts(String& html) {
     const w = Math.max(1, Number(spanW) || 1);
     const h = Math.max(1, Number(spanH) || 1);
     const capacity = climateSlotCapacity(w, h);
-    const columns = w >= 2 ? 2 : 1;
+    const { columns, rows } =
+      climateGridDimensions(w, h);
     const configured = Array.isArray(slotConfig)
       ? slotConfig.slice(0, 6)
       : decodeClimateSlotConfig(slotConfig || 0);
@@ -1114,62 +1916,88 @@ void append_climate_scripts(String& html) {
         targetLayout,
         itemIndex: index,
         ...clampClimateGeometryItem(
-          geometry[index], columns,
-          Math.max(1, Math.ceil(capacity / columns)))
+          geometry[index], columns, rows)
       });
     }
 
-    if (w === 1 && h === 1) {
-      if (!slots.length) return '';
-      const value = slots[0].value;
-      const unitSuffix = value.endsWith(state.unit)
-        ? '<span class="tile-unit">' + state.unit + '</span>'
-        : '';
-      const plainValue = unitSuffix
-        ? value.slice(0, -String(state.unit).length).trim()
-        : value;
-      return '<div class="tile-value climate-legacy-value">' +
-        plainValue + unitSuffix + '</div>';
-    }
-
-    if (!slots.length) return '';
-    const logicalRows = Math.max(1, Math.ceil(capacity / columns));
+    const logicalRows = rows;
     const placedSlots = [];
     slots.forEach(slot => {
-      const candidate = {
+      let candidate = {
         col: slot.col,
         row: slot.row,
         spanW: slot.spanW,
         spanH: slot.spanH
       };
-      if (placedSlots.some(other =>
-            climateGeometryOverlaps(candidate, {
+      const overlaps = value =>
+        placedSlots.some(other =>
+            climateGeometryOverlaps(value, {
               col: other.col,
               row: other.row,
               spanW: other.spanW,
               spanH: other.spanH
-            }))) {
-        return;
+            }));
+      if (overlaps(candidate)) {
+        let free = null;
+        for (let row = 0;
+             row + candidate.spanH <= logicalRows && !free;
+             ++row) {
+          for (let col = 0;
+               col + candidate.spanW <= columns;
+               ++col) {
+            const next = {
+              col, row,
+              spanW: candidate.spanW,
+              spanH: candidate.spanH
+            };
+            if (!placedSlots.some(other =>
+                  climateGeometryOverlaps(next, {
+                    col: other.col,
+                    row: other.row,
+                    spanW: other.spanW,
+                    spanH: other.spanH
+                  }))) {
+              free = next;
+              break;
+            }
+          }
+        }
+        if (!free) return;
+        candidate = free;
       }
-      placedSlots.push(slot);
+      placedSlots.push({ ...slot, ...candidate });
     });
 
-    const tallTile = h > 1;
+    const occupiedCells =
+      Array(columns * logicalRows).fill(false);
+    placedSlots.forEach(slot => {
+      for (let row = slot.row;
+           row < slot.row + slot.spanH; ++row) {
+        for (let col = slot.col;
+             col < slot.col + slot.spanW; ++col) {
+          occupiedCells[row * columns + col] = true;
+        }
+      }
+    });
+    const emptyCellLabel =
+      german ? 'Leeres Feld' : 'Empty field';
+    const previewCells = occupiedCells.map(
+      (occupied, cellIndex) => {
+        if (occupied) return '';
+        const row = Math.floor(cellIndex / columns) + 1;
+        const column = cellIndex % columns + 1;
+        return '<button type="button" ' +
+          'class="climate-preview-cell" ' +
+          'data-climate-preview-cell="' + cellIndex + '" ' +
+          'aria-label="' + emptyCellLabel + '" ' +
+          'style="grid-column:' + column +
+          ';grid-row:' + row + '"></button>';
+      }).join('');
+
     return '<div class="climate-slots" style="--climate-columns:' +
       columns +
-      ';--climate-slot-h:var(' +
-      (tallTile
-        ? '--climate-slot-h-tall'
-        : '--climate-slot-h-wide') +
-      ');--climate-slots-top:var(' +
-      (tallTile
-        ? '--climate-slots-top-tall'
-        : '--climate-slots-top-wide') +
-      ');--climate-slots-bottom:var(' +
-      (tallTile
-        ? '--climate-slots-bottom-tall'
-        : '--climate-slots-bottom-wide') +
-      ')">' +
+      ';--climate-rows:' + logicalRows + '">' +
+      previewCells +
       placedSlots.map(slot => {
         const row = slot.row + 1;
         const column = slot.col + 1;
@@ -1195,7 +2023,8 @@ void append_climate_scripts(String& html) {
             (slot.kind === CLIMATE_TILE_CONTENT.HVAC_MODE
               ? ' climate-slot-mode' : '') +
             (compact ? ' climate-slot-target-compact' : '') +
-            '" style="' +
+            '" data-climate-preview-item="' +
+            slot.itemIndex + '" style="' +
             gridStyle + '"><strong>' + slot.value + '</strong></div>';
         }
         const controlClass = horizontal
@@ -1210,7 +2039,8 @@ void append_climate_scripts(String& html) {
                   : ''));
         return '<div class="climate-slot climate-slot-control ' +
           controlClass +
-          '" style="' + gridStyle + '">' +
+          '" data-climate-preview-item="' +
+          slot.itemIndex + '" style="' + gridStyle + '">' +
           '<small>' + slot.caption + '</small>' +
           '<span class="climate-minus">-</span><strong>' +
           slot.value + '</strong><span class="climate-plus">+</span></div>';
@@ -1259,6 +2089,7 @@ void append_climate_scripts(String& html) {
     }
     syncClimateSlotFields(tab);
   }
+  bindClimatePreviewSelection();
   </script>
 )html";
 }

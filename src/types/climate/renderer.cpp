@@ -10,6 +10,7 @@
 #include "src/tiles/mdi_icons.h"
 #include "src/tiles/tile_renderer_fonts.h"
 #include "src/tiles/tile_renderer_shared.h"
+#include "src/types/climate/layout.h"
 #include "src/ui/climate_popup.h"
 
 namespace {
@@ -263,7 +264,9 @@ uint8_t build_slot_kinds(
     }
   }
 
-  bool occupied[3][2] = {};
+  bool occupied[
+      CLIMATE_TILE_MAX_GRID_ROWS][
+      CLIMATE_TILE_MAX_GRID_COLUMNS] = {};
   uint64_t stored_geometry = 0;
   const bool has_stored_geometry =
       parseClimateTileGeometry(tile, stored_geometry);
@@ -319,18 +322,37 @@ uint8_t build_slot_kinds(
       }
     }
 
-    bool collision = false;
-    for (uint8_t row = geometry.row;
-         row < geometry.row + geometry.span_h && !collision; ++row) {
-      for (uint8_t column = geometry.col;
-           column < geometry.col + geometry.span_w; ++column) {
-        if (occupied[row][column]) {
-          collision = true;
+    auto can_place = [&](const ClimateTileItemGeometry& candidate) {
+      if (candidate.col + candidate.span_w > columns ||
+          candidate.row + candidate.span_h > rows) {
+        return false;
+      }
+      for (uint8_t row = candidate.row;
+           row < candidate.row + candidate.span_h; ++row) {
+        for (uint8_t column = candidate.col;
+             column < candidate.col + candidate.span_w; ++column) {
+          if (occupied[row][column]) return false;
+        }
+      }
+      return true;
+    };
+    if (!can_place(geometry)) {
+      bool found = false;
+      for (uint8_t row = 0;
+           row + geometry.span_h <= rows && !found; ++row) {
+        for (uint8_t column = 0;
+             column + geometry.span_w <= columns; ++column) {
+          ClimateTileItemGeometry candidate = geometry;
+          candidate.col = column;
+          candidate.row = row;
+          if (!can_place(candidate)) continue;
+          geometry = candidate;
+          found = true;
           break;
         }
       }
+      if (!found) continue;
     }
-    if (collision) continue;
     for (uint8_t row = geometry.row;
          row < geometry.row + geometry.span_h; ++row) {
       for (uint8_t column = geometry.col;
@@ -361,54 +383,56 @@ void layout_climate_slots(
 
   const uint8_t span_w = std::max<uint8_t>(1, tile.span_w);
   const uint8_t span_h = std::max<uint8_t>(1, tile.span_h);
-  const uint8_t columns = span_w >= 2 ? 2 : 1;
-  const uint8_t capacity = climateTileSlotCapacity(tile);
-  const uint8_t logical_rows =
-      std::max<uint8_t>(1, (capacity + columns - 1) / columns);
+  const uint8_t columns = climateTileGridColumns(tile);
+  const uint8_t logical_rows = climateTileGridRows(tile);
   const lv_coord_t tile_w =
       static_cast<lv_coord_t>(
           span_w * GRID_CELL_W + (span_w - 1) * GRID_GAP);
   const lv_coord_t tile_h =
       static_cast<lv_coord_t>(
           span_h * GRID_CELL_H + (span_h - 1) * GRID_GAP);
-  constexpr lv_coord_t kControlOuterMargin = 6;
   // Climate cards retain the original 20/24 px tile padding. Child
   // coordinates therefore address the padded content box, not the full card.
-  // Adjustable controls use a uniform 6 px distance to every outer card edge.
-  const lv_coord_t content_x = kControlOuterMargin - 20;
+  const lv_coord_t content_x =
+      climate_layout::kOuterInset -
+      climate_layout::kCardPaddingHorizontal;
   const lv_coord_t content_w =
-      tile_w - kControlOuterMargin * 2;
-  const lv_coord_t column_gap = 10;
-  const lv_coord_t slot_w =
-      (content_w - static_cast<lv_coord_t>(columns - 1) * column_gap) /
-      columns;
-  const lv_coord_t slot_h = span_h == 1 ? 58 : 62;
-  lv_coord_t first_row_y = 0;
-  if (span_h == 1) {
-    // A single control row keeps the same 6 px lower edge distance as all
-    // bottom rows in taller cards.
-    first_row_y =
-        tile_h - 24 - kControlOuterMargin - slot_h;
-  } else {
-    // The first row of every taller climate tile must sit on the exact same
-    // center line as the unchanged 1x1 value. Only the following rows extend
-    // downwards into the additional tile height.
-    const lv_coord_t one_by_one_content_h = GRID_CELL_H - 48;
-    const lv_coord_t shared_value_center =
-        one_by_one_content_h / 2 + 28;
-    first_row_y = shared_value_center - slot_h / 2;
-  }
-  const lv_coord_t last_row_y =
-      span_h == 1
-          ? first_row_y
-          : tile_h - 24 - kControlOuterMargin - slot_h;
-  auto row_y = [&](uint8_t row) -> lv_coord_t {
-    if (logical_rows <= 1) return first_row_y;
-    return first_row_y +
+      tile_w - climate_layout::kOuterInset * 2;
+  const lv_coord_t grid_top =
+      climate_layout::kContentTopInPaddedCard;
+  const lv_coord_t grid_bottom =
+      tile_h - climate_layout::kCardPaddingVertical -
+      climate_layout::kOuterInset;
+  const lv_coord_t grid_h =
+      std::max<lv_coord_t>(1, grid_bottom - grid_top);
+
+  auto track_start = [](
+      lv_coord_t origin, lv_coord_t extent, uint8_t tracks,
+      uint8_t track) -> lv_coord_t {
+    const lv_coord_t total_gap =
+        static_cast<lv_coord_t>(tracks - 1) *
+        climate_layout::kGap;
+    const lv_coord_t track_space =
+        std::max<lv_coord_t>(tracks, extent - total_gap);
+    return origin +
            static_cast<lv_coord_t>(
-               (static_cast<int32_t>(last_row_y - first_row_y) * row +
-                (logical_rows - 1) / 2) /
-               (logical_rows - 1));
+               static_cast<int32_t>(track_space) * track / tracks) +
+           static_cast<lv_coord_t>(track) * climate_layout::kGap;
+  };
+  auto track_end = [](
+      lv_coord_t origin, lv_coord_t extent, uint8_t tracks,
+      uint8_t track_exclusive) -> lv_coord_t {
+    const lv_coord_t total_gap =
+        static_cast<lv_coord_t>(tracks - 1) *
+        climate_layout::kGap;
+    const lv_coord_t track_space =
+        std::max<lv_coord_t>(tracks, extent - total_gap);
+    return origin +
+           static_cast<lv_coord_t>(
+               static_cast<int32_t>(track_space) *
+               track_exclusive / tracks) +
+           static_cast<lv_coord_t>(track_exclusive - 1) *
+               climate_layout::kGap;
   };
 
   for (uint8_t i = 0; i < ClimateTileWidgets::kMaxSlots; ++i) {
@@ -443,19 +467,22 @@ void layout_climate_slots(
         adjustable && geometry.span_w > 1 &&
         geometry.span_h > 1;
 
-    lv_coord_t root_x =
-        content_x +
-        geometry.col * (slot_w + column_gap);
-    lv_coord_t root_y = row_y(geometry.row);
-    lv_coord_t root_w =
-        slot_w * geometry.span_w +
-        column_gap * (geometry.span_w - 1);
-    lv_coord_t root_h = slot_h;
-    if (geometry.span_h > 1) {
-      const lv_coord_t final_row_y =
-          row_y(geometry.row + geometry.span_h - 1);
-      root_h = final_row_y - root_y + slot_h;
-    }
+    const lv_coord_t root_x =
+        track_start(
+            content_x, content_w, columns, geometry.col);
+    const lv_coord_t root_right =
+        track_end(
+            content_x, content_w, columns,
+            geometry.col + geometry.span_w);
+    const lv_coord_t root_y =
+        track_start(
+            grid_top, grid_h, logical_rows, geometry.row);
+    const lv_coord_t root_bottom =
+        track_end(
+            grid_top, grid_h, logical_rows,
+            geometry.row + geometry.span_h);
+    const lv_coord_t root_w = root_right - root_x;
+    const lv_coord_t root_h = root_bottom - root_y;
 
     lv_obj_clear_flag(root, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_pos(root, root_x, root_y);
@@ -509,7 +536,7 @@ void layout_climate_slots(
       if (value) {
         lv_obj_set_width(value, root_w - 12);
         lv_obj_set_style_text_font(value, FONT_VALUE, 0);
-        lv_obj_align(value, LV_ALIGN_CENTER, 0, -2);
+        lv_obj_align(value, LV_ALIGN_CENTER, 0, 0);
       }
       if (minus) {
         lv_obj_set_size(minus, root_w / 2, button_h);
@@ -527,12 +554,12 @@ void layout_climate_slots(
         lv_obj_set_width(caption, root_w - 24);
         lv_obj_set_style_text_align(
             caption, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_align(caption, LV_ALIGN_CENTER, 0, -48);
+        lv_obj_align(caption, LV_ALIGN_CENTER, 0, -44);
       }
       if (value) {
         lv_obj_set_width(value, root_w - 24);
         lv_obj_set_style_text_font(value, FONT_VALUE, 0);
-        lv_obj_align(value, LV_ALIGN_CENTER, 0, -4);
+        lv_obj_align(value, LV_ALIGN_CENTER, 0, 0);
       }
       if (minus) {
         lv_obj_set_size(minus, button_w, button_h);
@@ -708,7 +735,9 @@ lv_obj_t* create_climate_slot(
   lv_obj_set_style_bg_opa(root, LV_OPA_TRANSP, LV_PART_MAIN);
   lv_obj_set_style_border_width(root, 0, 0);
   lv_obj_set_style_shadow_width(root, 0, 0);
-  lv_obj_set_style_radius(root, 14, 0);
+  // Card radius 22 with a 6 px inset -> 16 px keeps both arcs concentric.
+  lv_obj_set_style_radius(
+      root, climate_layout::kControlRadius, 0);
   lv_obj_set_style_pad_all(root, 0, 0);
   lv_obj_remove_flag(root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_clear_flag(root, LV_OBJ_FLAG_CLICKABLE);
@@ -917,10 +946,10 @@ lv_obj_t* render_climate_tile(lv_obj_t* parent,
   lv_obj_set_style_radius(card, 22, 0);
   lv_obj_set_style_border_width(card, 0, 0);
   lv_obj_set_style_shadow_width(card, 0, 0);
-  const bool legacy_one_by_one =
-      tile.span_w == 1 && tile.span_h == 1;
-  lv_obj_set_style_pad_hor(card, 20, 0);
-  lv_obj_set_style_pad_ver(card, 24, 0);
+  lv_obj_set_style_pad_hor(
+      card, climate_layout::kCardPaddingHorizontal, 0);
+  lv_obj_set_style_pad_ver(
+      card, climate_layout::kCardPaddingVertical, 0);
   lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
   disable_pressed_button_animation(card);
   set_tile_grid_cell(card, col, row, tile.span_w, tile.span_h);
@@ -957,6 +986,11 @@ lv_obj_t* render_climate_tile(lv_obj_t* parent,
   ClimateTileWidgets* widgets = tile_renderer_get_climate_widgets(grid_type);
   if (widgets && index < TILES_PER_GRID) {
     ClimateTileWidgets& widget = widgets[index];
+    // A rebuilt tile must not inherit LVGL pointers from the previous card at
+    // the same grid index. This is especially important after resizing to
+    // 1x1, where an old multi-slot card otherwise hides the value as if its
+    // stale mini-slot layout still existed.
+    widget = ClimateTileWidgets{};
     widget.icon_label = icon_label;
     widget.dynamic_icon = dynamic_icon;
     // A newly created card must accept the next state payload even when the
@@ -973,13 +1007,17 @@ lv_obj_t* render_climate_tile(lv_obj_t* parent,
     lv_obj_align(value, LV_ALIGN_CENTER, 0, 28);
     widget.value_label = value;
 
-    if (!legacy_one_by_one) {
-      for (uint8_t slot = 0;
-           slot < ClimateTileWidgets::kMaxSlots; ++slot) {
-        widget.slot_roots[slot] =
-            create_climate_slot(
-                card, grid_type, index, slot);
-      }
+    // Every climate size, including 1x1, renders its configured mini content
+    // through the same slot path. A 1x1 slot remains visually identical to
+    // the former centered value label, but now matches the Web UI semantics.
+    const uint8_t slot_count =
+        std::min<uint8_t>(
+            ClimateTileWidgets::kMaxSlots,
+            climateTileSlotCapacity(tile));
+    for (uint8_t slot = 0; slot < slot_count; ++slot) {
+      widget.slot_roots[slot] =
+          create_climate_slot(
+              card, grid_type, index, slot);
     }
     ClimateState* states =
         tile_renderer_get_climate_states(grid_type);

@@ -1699,7 +1699,7 @@ void appendAdminScripts(String& html) {
       normalizeLayoutForTileType(tile?.type, col, row, spanW, spanH), tab);
   }
 
-  function setTileGridPosition(el, col, row, spanW, spanH) {
+  function setGridItemPosition(el, col, row, spanW, spanH) {
     if (!el) return;
     el.style.gridColumn = (col + 1) + ' / span ' + spanW;
     el.style.gridRow = (row + 1) + ' / span ' + spanH;
@@ -1707,6 +1707,10 @@ void appendAdminScripts(String& html) {
     el.dataset.row = String(row);
     el.dataset.spanW = String(spanW);
     el.dataset.spanH = String(spanH);
+  }
+
+  function setTileGridPosition(el, col, row, spanW, spanH) {
+    setGridItemPosition(el, col, row, spanW, spanH);
   }
 
   function getTileElementLayout(tab, index) {
@@ -2024,11 +2028,21 @@ void appendAdminScripts(String& html) {
   }
 
   function selectTile(index, tab) {
+    if (currentTileTab &&
+        typeof parkClimateMiniEditor === 'function') {
+      parkClimateMiniEditor(currentTileTab);
+    }
     currentTileIndex = index;
     currentTileTab = tab;
     persistSelectedTileState();
-    document.querySelectorAll('#tab-tiles-' + tab + ' .tile').forEach(t => delete t.dataset.selected);
-    document.querySelectorAll('.tile').forEach(t => t.classList.remove('active', 'drop-target', 'dragging'));
+    document.querySelectorAll(
+      '#tab-tiles-' + tab + ' .tile-grid > .tile')
+      .forEach(t => delete t.dataset.selected);
+    document.querySelectorAll(
+      '.tile-grid > .tile, .screensaver-tile-grid > .tile')
+      .forEach(t =>
+        t.classList.remove(
+          'active', 'drop-target', 'dragging'));
     const tileId = tab + '-tile-' + index;
     const selectedTile = document.getElementById(tileId);
     if (selectedTile) {
@@ -2175,6 +2189,7 @@ void appendAdminScripts(String& html) {
           Number(typeSelect.value) !== 0 && opacityInput) {
         opacityInput.value = String(SCREENSAVER_TILE_DEFAULT_OPACITY);
       }
+      updateTileType(tab);
       normalizeLayoutInputs(tab);
       updateLayoutFromInputs(tab);
       updateTilePreview(tab);
@@ -2306,6 +2321,11 @@ void appendAdminScripts(String& html) {
 
   function updateTilePreview(tab) {
     if (currentTileIndex === -1) return;
+    if (typeof parkClimateMiniEditor === 'function') {
+      // Eine Live-Aenderung baut den Preview-Inhalt neu auf. Die Auswahl
+      // des bearbeiteten Mini-Tiles muss diesen Render-Zyklus ueberleben.
+      parkClimateMiniEditor(tab, true);
+    }
     const prefix = tab;
     const tileId = tab + '-tile-' + currentTileIndex;
     const tileElem = document.getElementById(tileId);
@@ -2477,6 +2497,11 @@ void appendAdminScripts(String& html) {
     }
     if (type === '5') updateSwitchValuePreview(tab);
     updateLayoutFromInputs(tab);
+    if (previewKind === 'climate' &&
+        typeof mountClimateMiniEditor === 'function') {
+      mountClimateMiniEditor(tab);
+      syncClimateSlotFields(tab);
+    }
   }
 
   function loadTileData(index, tab) {
@@ -3446,6 +3471,13 @@ void appendAdminScripts(String& html) {
     el.dataset.index = index.toString();
     const typeValue = String(tile?.type ?? '0');
     const meta = getTileTypeMeta(typeValue);
+    if (typeValue === '17' &&
+        currentTileTab === tab &&
+        currentTileIndex === index &&
+        el.classList.contains('climate-content-editing')) {
+      syncClimateSlotFields(tab);
+      return;
+    }
     let cls = ['tile'];
     if (meta.css) cls.push(meta.css);
     if (typeValue === '5' && tile.switch_style === 1) cls.push('switch-toggle');
@@ -3663,8 +3695,7 @@ void appendAdminScripts(String& html) {
       .filter(part => !isNaN(part) && part > 0);
   }
 
-  function getTileGridMetrics(tab) {
-    const grid = getTileGrid(tab);
+  function getGridElementMetrics(grid, columns, rows) {
     if (!grid) return null;
     const style = window.getComputedStyle(grid);
     const rect = grid.getBoundingClientRect();
@@ -3675,10 +3706,63 @@ void appendAdminScripts(String& html) {
     const padRight = parseFloat(style.paddingRight || '0') || 0;
     const padBottom = parseFloat(style.paddingBottom || '0') || 0;
     const cols = parseGridTrackSizes(style.gridTemplateColumns);
-    const rows = parseGridTrackSizes(style.gridTemplateRows);
-    const cellW = cols.length ? cols[0] : ((rect.width - padLeft - padRight - (gapX * (GRID_COLS - 1))) / GRID_COLS);
-    const cellH = rows.length ? rows[0] : ((rect.height - padTop - padBottom - (gapY * (GRID_ROWS - 1))) / GRID_ROWS);
-    return { rect, gapX, gapY, padLeft, padTop, cellW, cellH };
+    const gridRows = parseGridTrackSizes(style.gridTemplateRows);
+    const columnCount = Math.max(1, Number(columns) || cols.length || 1);
+    const rowCount = Math.max(1, Number(rows) || gridRows.length || 1);
+    const cellW = cols.length
+      ? cols[0]
+      : ((rect.width - padLeft - padRight -
+          (gapX * (columnCount - 1))) / columnCount);
+    const cellH = gridRows.length
+      ? gridRows[0]
+      : ((rect.height - padTop - padBottom -
+          (gapY * (rowCount - 1))) / rowCount);
+    // Bei align-content:space-between (Klima-Slots) liegt der wirksame
+    // Reihenabstand ueber dem nominalen gap; aus der Restflaeche ableiten,
+    // damit Pointer->Zelle auch dort stimmt. Fuer 1fr-Grids identisch.
+    let effGapX = gapX;
+    let effGapY = gapY;
+    if (columnCount > 1 && isFinite(cellW)) {
+      effGapX = Math.max(gapX,
+        (rect.width - padLeft - padRight - (columnCount * cellW)) /
+        (columnCount - 1));
+    }
+    if (rowCount > 1 && isFinite(cellH)) {
+      effGapY = Math.max(gapY,
+        (rect.height - padTop - padBottom - (rowCount * cellH)) /
+        (rowCount - 1));
+    }
+    return {
+      rect, gapX: effGapX, gapY: effGapY, padLeft, padTop,
+      cellW, cellH, columns: columnCount, rows: rowCount
+    };
+  }
+
+  function getGridElementCellFromPointer(
+      grid, columns, rows, clientX, clientY) {
+    const metrics = getGridElementMetrics(grid, columns, rows);
+    if (!metrics) return null;
+    const stepX = metrics.cellW + metrics.gapX;
+    const stepY = metrics.cellH + metrics.gapY;
+    let relX = clientX - metrics.rect.left - metrics.padLeft;
+    let relY = clientY - metrics.rect.top - metrics.padTop;
+    if (!isFinite(relX) || !isFinite(relY)) return null;
+    relX = Math.max(0, relX);
+    relY = Math.max(0, relY);
+    const col = Math.max(
+      0, Math.min(
+        metrics.columns - 1,
+        Math.floor((relX + (metrics.gapX / 2)) / stepX)));
+    const row = Math.max(
+      0, Math.min(
+        metrics.rows - 1,
+        Math.floor((relY + (metrics.gapY / 2)) / stepY)));
+    return { col, row };
+  }
+
+  function getTileGridMetrics(tab) {
+    const grid = getTileGrid(tab);
+    return getGridElementMetrics(grid, GRID_COLS, GRID_ROWS);
   }
 
   function getRawGridCellFromPointer(tab, clientX, clientY) {
@@ -3848,38 +3932,57 @@ void appendAdminScripts(String& html) {
              b.row + b.span_h <= a.row);
   }
 
-  function canPlaceTileLayout(tab, index, candidateLayout) {
+  function canPlaceGridLayout(
+      layouts, activeIndices, index, candidateLayout,
+      columns, rows, firstRow = 0) {
     if (!candidateLayout) return false;
-    if (candidateLayout.col < 0 || candidateLayout.row < 0) return false;
-    if (candidateLayout.row < firstAllowedGridRow(tab)) return false;
-    if (candidateLayout.span_w < 1 || candidateLayout.span_h < 1) return false;
-    if ((candidateLayout.col + candidateLayout.span_w) > GRID_COLS) return false;
-    if ((candidateLayout.row + candidateLayout.span_h) > GRID_ROWS) return false;
-
-    const tiles = getTilesData(tab);
-    if (!Array.isArray(tiles)) return true;
-
-    for (let i = 0; i < tiles.length; i++) {
-      if (i === index) continue;
-      const tile = tiles[i];
-      if (!tile || Number(tile.type || 0) === 0) continue;
-      const otherLayout = getTileElementLayout(tab, i) || getTileLayoutFromData(tab, i);
-      if (!otherLayout) continue;
-      if (rectsOverlap(candidateLayout, otherLayout)) return false;
+    if (candidateLayout.col < 0 ||
+        candidateLayout.row < firstRow ||
+        candidateLayout.span_w < 1 ||
+        candidateLayout.span_h < 1 ||
+        candidateLayout.col + candidateLayout.span_w > columns ||
+        candidateLayout.row + candidateLayout.span_h > rows) {
+      return false;
+    }
+    const active = activeIndices instanceof Set
+      ? activeIndices : new Set(activeIndices || []);
+    for (const otherIndex of active) {
+      if (otherIndex === index) continue;
+      const otherLayout = layouts?.[otherIndex];
+      if (otherLayout && rectsOverlap(candidateLayout, otherLayout)) {
+        return false;
+      }
     }
     return true;
+  }
+
+  function canPlaceTileLayout(tab, index, candidateLayout) {
+    const tiles = getTilesData(tab);
+    if (!Array.isArray(tiles)) return false;
+    const layouts = tiles.map((tile, tileIndex) =>
+      getTileElementLayout(tab, tileIndex) ||
+      getTileLayoutFromData(tab, tileIndex));
+    const active = new Set();
+    tiles.forEach((tile, tileIndex) => {
+      if (tile && Number(tile.type || 0) !== 0) active.add(tileIndex);
+    });
+    return canPlaceGridLayout(
+      layouts, active, index, candidateLayout,
+      GRID_COLS, GRID_ROWS, firstAllowedGridRow(tab));
   }
 
   function manhattanDistance(colA, rowA, colB, rowB) {
     return Math.abs(colA - colB) + Math.abs(rowA - rowB);
   }
 
-  function buildPlacementCandidates(tab, spanW, spanH, preferredCol, preferredRow) {
+  function buildGridPlacementCandidates(
+      columns, rows, firstRow,
+      spanW, spanH, preferredCol, preferredRow) {
     const candidates = [];
-    for (let row = firstAllowedGridRow(tab); row < GRID_ROWS; row++) {
-      for (let col = 0; col < GRID_COLS; col++) {
-        if ((col + spanW) > GRID_COLS || (row + spanH) > GRID_ROWS) continue;
-        let distance = (row * GRID_COLS) + col;
+    for (let row = firstRow; row < rows; row++) {
+      for (let col = 0; col < columns; col++) {
+        if ((col + spanW) > columns || (row + spanH) > rows) continue;
+        let distance = (row * columns) + col;
         if (preferredCol >= 0 && preferredRow >= 0) {
           distance = manhattanDistance(col, row, preferredCol, preferredRow);
         }
@@ -3894,37 +3997,45 @@ void appendAdminScripts(String& html) {
     return candidates;
   }
 
-  function simulateSmartReorderLayouts(tab, fromIdx, targetCol, targetRow) {
-    const tiles = getTilesData(tab);
-    if (!Array.isArray(tiles) || fromIdx < 0 || fromIdx >= tiles.length) return null;
+  function buildPlacementCandidates(
+      tab, spanW, spanH, preferredCol, preferredRow) {
+    return buildGridPlacementCandidates(
+      GRID_COLS, GRID_ROWS, firstAllowedGridRow(tab),
+      spanW, spanH, preferredCol, preferredRow);
+  }
 
-    const baseLayouts = (dragSource && dragSource.tab === tab && Array.isArray(dragSource.baseLayouts))
-      ? dragSource.baseLayouts
-      : captureLayoutSnapshot(tab);
+  function simulateGridReorderLayouts(
+      baseLayouts, activeIndices, fromIdx,
+      targetCol, targetRow, columns, rows, firstRow = 0) {
+    const active = activeIndices instanceof Set
+      ? new Set(activeIndices) : new Set(activeIndices || []);
+    if (!active.has(fromIdx)) return null;
+    const movingBase = baseLayouts?.[fromIdx]
+      ? cloneLayout(baseLayouts[fromIdx]) : null;
+    if (!movingBase ||
+        targetRow < firstRow ||
+        targetCol < 0 ||
+        targetCol + movingBase.span_w > columns ||
+        targetRow + movingBase.span_h > rows) {
+      return null;
+    }
 
-    const movingTile = tiles[fromIdx];
-    const movingBase = baseLayouts[fromIdx] ? cloneLayout(baseLayouts[fromIdx]) : null;
-    if (!movingTile || Number(movingTile.type || 0) === 0 || !movingBase) return null;
-    if (targetRow < firstAllowedGridRow(tab)) return null;
-    if ((targetCol + movingBase.span_w) > GRID_COLS || (targetRow + movingBase.span_h) > GRID_ROWS) return null;
-
-    const workingLayouts = baseLayouts.map(layout => cloneLayout(layout));
+    const workingLayouts = (baseLayouts || [])
+      .map(layout => cloneLayout(layout));
     const targetLayout = {
       col: targetCol,
       row: targetRow,
       span_w: movingBase.span_w,
       span_h: movingBase.span_h
     };
-
     const displacedIndices = [];
-    for (let i = 0; i < tiles.length; i++) {
-      if (i === fromIdx) continue;
-      const tile = tiles[i];
-      const layout = baseLayouts[i];
-      if (!tile || Number(tile.type || 0) === 0 || !layout) continue;
-      if (rectsOverlap(targetLayout, layout)) displacedIndices.push(i);
-    }
-
+    active.forEach(index => {
+      if (index === fromIdx) return;
+      const layout = baseLayouts[index];
+      if (layout && rectsOverlap(targetLayout, layout)) {
+        displacedIndices.push(index);
+      }
+    });
     displacedIndices.sort((a, b) => {
       const layoutA = baseLayouts[a];
       const layoutB = baseLayouts[b];
@@ -3935,17 +4046,17 @@ void appendAdminScripts(String& html) {
 
     workingLayouts[fromIdx] = targetLayout;
     const floating = new Set(displacedIndices);
-
-    for (let order = 0; order < displacedIndices.length; order++) {
+    for (let order = 0; order < displacedIndices.length; ++order) {
       const displacedIndex = displacedIndices[order];
       const layout = baseLayouts[displacedIndex];
       if (!layout) return null;
       floating.delete(displacedIndex);
-
       const preferredCol = order === 0 ? movingBase.col : layout.col;
       const preferredRow = order === 0 ? movingBase.row : layout.row;
-      const candidates = buildPlacementCandidates(tab, layout.span_w, layout.span_h, preferredCol, preferredRow);
-
+      const candidates = buildGridPlacementCandidates(
+        columns, rows, firstRow,
+        layout.span_w, layout.span_h,
+        preferredCol, preferredRow);
       let placed = false;
       for (const candidate of candidates) {
         const nextLayout = {
@@ -3955,12 +4066,14 @@ void appendAdminScripts(String& html) {
           span_h: layout.span_h
         };
         let blocked = false;
-        for (let i = 0; i < tiles.length; i++) {
-          if (i === displacedIndex || floating.has(i)) continue;
-          const tile = tiles[i];
-          const otherLayout = workingLayouts[i];
-          if (!tile || Number(tile.type || 0) === 0 || !otherLayout) continue;
-          if (rectsOverlap(nextLayout, otherLayout)) {
+        for (const otherIndex of active) {
+          if (otherIndex === displacedIndex ||
+              floating.has(otherIndex)) {
+            continue;
+          }
+          const otherLayout = workingLayouts[otherIndex];
+          if (otherLayout &&
+              rectsOverlap(nextLayout, otherLayout)) {
             blocked = true;
             break;
           }
@@ -3970,15 +4083,31 @@ void appendAdminScripts(String& html) {
         placed = true;
         break;
       }
-
       if (!placed) return null;
     }
-
     return {
       targetCol,
       targetRow,
       layouts: workingLayouts
     };
+  }
+
+  function simulateSmartReorderLayouts(tab, fromIdx, targetCol, targetRow) {
+    const tiles = getTilesData(tab);
+    if (!Array.isArray(tiles) || fromIdx < 0 || fromIdx >= tiles.length) return null;
+
+    const baseLayouts = (dragSource && dragSource.tab === tab && Array.isArray(dragSource.baseLayouts))
+      ? dragSource.baseLayouts
+      : captureLayoutSnapshot(tab);
+
+    const active = new Set();
+    tiles.forEach((tile, index) => {
+      if (tile && Number(tile.type || 0) !== 0) active.add(index);
+    });
+    return simulateGridReorderLayouts(
+      baseLayouts, active, fromIdx,
+      targetCol, targetRow,
+      GRID_COLS, GRID_ROWS, firstAllowedGridRow(tab));
   }
 
   function clearDragPlaceholder() {
@@ -4088,6 +4217,11 @@ void appendAdminScripts(String& html) {
 
     const finalLayout = commit ? (state.lastValidLayout || state.originalLayout) : state.originalLayout;
     if (state.tab === currentTileTab && state.index === currentTileIndex && finalLayout) {
+      if (!commit && state.climateState &&
+          typeof restoreClimateOuterResizeState === 'function') {
+        restoreClimateOuterResizeState(
+          state.tab, state.climateState);
+      }
       applyLayoutInputsFromLayout(state.tab, finalLayout, false);
       updateLayoutFromInputs(state.tab);
       updateTilePreview(state.tab);
@@ -4120,8 +4254,23 @@ void appendAdminScripts(String& html) {
 
     resizeState.lastValidLayout = cloneLayout(candidate);
     if (resizeState.tab === currentTileTab && resizeState.index === currentTileIndex) {
+      if (resizeState.lastAppliedLayout &&
+          layoutsEqual(
+            resizeState.lastAppliedLayout, candidate)) {
+        return;
+      }
       applyLayoutInputsFromLayout(resizeState.tab, candidate, false);
+      if (resizeState.climateState &&
+          typeof previewClimateOuterResize === 'function') {
+        // Parent-Geometrie und Mini-Raster werden im selben Pointer-Schritt
+        // umgestellt. Vor jedem Schritt beginnt die Vorschau wieder mit der
+        // gespeicherten Ausgangsgeometrie, damit Verkleinern und anschliessend
+        // Vergroessern keine Mini-Tiles dauerhaft zusammenquetscht.
+        previewClimateOuterResize(
+          resizeState.tab, resizeState.climateState);
+      }
       updateLayoutFromInputs(resizeState.tab);
+      resizeState.lastAppliedLayout = cloneLayout(candidate);
     }
   }
 
@@ -4152,7 +4301,13 @@ void appendAdminScripts(String& html) {
       tileId: tile.id,
       direction,
       originalLayout: cloneLayout(layout),
-      lastValidLayout: cloneLayout(layout)
+      lastValidLayout: cloneLayout(layout),
+      lastAppliedLayout: cloneLayout(layout),
+      climateState:
+        String(tile.dataset.type || '') === '17' &&
+        typeof captureClimateOuterResizeState === 'function'
+          ? captureClimateOuterResizeState(tab)
+          : null
     };
 
     tile.classList.add('resizing');

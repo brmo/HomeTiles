@@ -163,6 +163,27 @@ enum ClimateTileContent : uint8_t {
 
 static constexpr uint8_t CLIMATE_TILE_MAX_CONTENT_SLOTS = 6;
 static constexpr uint32_t CLIMATE_TILE_CONTENT_PACKED_MASK = 0x00FFFFFFu;
+static constexpr uint8_t CLIMATE_TILE_MAX_GRID_COLUMNS = GRID_COLS;
+static constexpr uint8_t CLIMATE_TILE_MAX_GRID_ROWS =
+    static_cast<uint8_t>(GRID_ROWS * 2u - 1u);
+static constexpr uint8_t CLIMATE_TILE_MAX_GRID_CELLS =
+    static_cast<uint8_t>(
+        CLIMATE_TILE_MAX_GRID_COLUMNS * CLIMATE_TILE_MAX_GRID_ROWS);
+
+static inline uint8_t climateTileGridColumns(const Tile& tile) {
+  const uint8_t span_w = tile.span_w < 1 ? 1 : tile.span_w;
+  return span_w > CLIMATE_TILE_MAX_GRID_COLUMNS
+             ? CLIMATE_TILE_MAX_GRID_COLUMNS
+             : span_w;
+}
+
+static inline uint8_t climateTileGridRows(const Tile& tile) {
+  const uint8_t span_h =
+      tile.span_h < 1
+          ? 1
+          : (tile.span_h > GRID_ROWS ? GRID_ROWS : tile.span_h);
+  return static_cast<uint8_t>(span_h * 2u - 1u);
+}
 
 // Adjustable climate values consume two cells. Their preferred orientation is
 // packed into sensor_gauge_max (two bits per configured item). A magic prefix
@@ -178,12 +199,11 @@ static constexpr uint32_t CLIMATE_TILE_LAYOUT_PACKED_MAGIC_MASK = 0xFFFF0000u;
 static constexpr uint32_t CLIMATE_TILE_LAYOUT_PACKED_VALUE_MASK = 0x00000FFFu;
 
 static inline uint8_t climateTileSlotCapacity(const Tile& tile) {
-  const uint8_t span_w = tile.span_w < 1 ? 1 : tile.span_w;
-  const uint8_t span_h = tile.span_h < 1 ? 1 : tile.span_h;
-  if (span_w == 1 && span_h == 1) return 1;
-  if (span_w >= 2 && span_h == 1) return 2;
-  if (span_w == 1) return 3;
-  return CLIMATE_TILE_MAX_CONTENT_SLOTS;
+  const uint8_t grid_cells = static_cast<uint8_t>(
+      climateTileGridColumns(tile) * climateTileGridRows(tile));
+  return grid_cells < CLIMATE_TILE_MAX_CONTENT_SLOTS
+             ? grid_cells
+             : CLIMATE_TILE_MAX_CONTENT_SLOTS;
 }
 
 static inline ClimateTileContent getClimateTileSlotContent(
@@ -250,14 +270,14 @@ static inline void setClimateTileTargetLayout(
       (packed & CLIMATE_TILE_LAYOUT_PACKED_VALUE_MASK));
 }
 
-// Climate mini-tile geometry is stored as nine hexadecimal digits in the
-// otherwise unused scene_alias field: six items, six bits per item.
-//   bit 0     column (0..1)
-//   bits 1-2  row (0..2)
-//   bit 3     width minus one (0..1)
-//   bits 4-5  height minus one (0..2)
-// This keeps V7 storage compatible while giving every climate item an exact
-// position and size inside the header-free 2 x 3 content grid.
+// Climate mini-tile geometry is stored in the otherwise unused scene_alias
+// field. CLG2 stores four hexadecimal digits per configured item:
+//   bits 0-2   column (0..7)
+//   bits 3-6   row (0..15)
+//   bits 7-9   width minus one (0..7)
+//   bits 10-13 height minus one (0..15)
+// Six items therefore need 24 digits and still fit in the existing 32-byte
+// storage field. The former CLG1 2 x 3 format remains readable.
 struct ClimateTileItemGeometry {
   uint8_t col = 0;
   uint8_t row = 0;
@@ -265,43 +285,65 @@ struct ClimateTileItemGeometry {
   uint8_t span_h = 1;
 };
 
-static constexpr const char* CLIMATE_TILE_GEOMETRY_PREFIX = "CLG1:";
+static constexpr const char* CLIMATE_TILE_GEOMETRY_PREFIX = "CLG2:";
 static constexpr size_t CLIMATE_TILE_GEOMETRY_PREFIX_LENGTH = 5;
-static constexpr uint8_t CLIMATE_TILE_GEOMETRY_HEX_DIGITS = 9;
+static constexpr uint8_t CLIMATE_TILE_GEOMETRY_HEX_DIGITS =
+    CLIMATE_TILE_MAX_CONTENT_SLOTS * 4;
+static constexpr const char* CLIMATE_TILE_GEOMETRY_LEGACY_PREFIX = "CLG1:";
+static constexpr uint8_t CLIMATE_TILE_GEOMETRY_LEGACY_HEX_DIGITS = 9;
 
-static inline uint8_t climateTileGridColumns(const Tile& tile) {
-  return tile.span_w >= 2 ? 2 : 1;
+static inline bool climateTileHexNibble(char c, uint8_t& nibble) {
+  if (c >= '0' && c <= '9') {
+    nibble = static_cast<uint8_t>(c - '0');
+    return true;
+  }
+  if (c >= 'a' && c <= 'f') {
+    nibble = static_cast<uint8_t>(c - 'a' + 10);
+    return true;
+  }
+  if (c >= 'A' && c <= 'F') {
+    nibble = static_cast<uint8_t>(c - 'A' + 10);
+    return true;
+  }
+  nibble = 0;
+  return false;
 }
 
-static inline uint8_t climateTileGridRows(const Tile& tile) {
-  return tile.span_h >= 2 ? 3 : 1;
+static inline bool climateTileGeometryHasPrefix(const String& text) {
+  return text.startsWith(CLIMATE_TILE_GEOMETRY_PREFIX) ||
+         text.startsWith(CLIMATE_TILE_GEOMETRY_LEGACY_PREFIX);
 }
 
 static inline bool parseClimateTileGeometry(
     const Tile& tile, uint64_t& packed) {
   const String& text = tile.scene_alias;
-  if (!text.startsWith(CLIMATE_TILE_GEOMETRY_PREFIX) ||
+  const bool current =
+      text.startsWith(CLIMATE_TILE_GEOMETRY_PREFIX);
+  const bool legacy =
+      text.startsWith(CLIMATE_TILE_GEOMETRY_LEGACY_PREFIX);
+  const uint8_t digits =
+      current
+          ? CLIMATE_TILE_GEOMETRY_HEX_DIGITS
+          : (legacy
+                 ? CLIMATE_TILE_GEOMETRY_LEGACY_HEX_DIGITS
+                 : 0);
+  if (digits == 0 ||
       text.length() <
-          CLIMATE_TILE_GEOMETRY_PREFIX_LENGTH +
-              CLIMATE_TILE_GEOMETRY_HEX_DIGITS) {
+          CLIMATE_TILE_GEOMETRY_PREFIX_LENGTH + digits) {
     return false;
   }
   packed = 0;
   const size_t offset = CLIMATE_TILE_GEOMETRY_PREFIX_LENGTH;
-  for (uint8_t i = 0; i < CLIMATE_TILE_GEOMETRY_HEX_DIGITS; ++i) {
+  for (uint8_t i = 0; i < digits; ++i) {
     const char c = text[offset + i];
     uint8_t nibble = 0;
-    if (c >= '0' && c <= '9') {
-      nibble = static_cast<uint8_t>(c - '0');
-    } else if (c >= 'a' && c <= 'f') {
-      nibble = static_cast<uint8_t>(c - 'a' + 10);
-    } else if (c >= 'A' && c <= 'F') {
-      nibble = static_cast<uint8_t>(c - 'A' + 10);
-    } else {
+    if (!climateTileHexNibble(c, nibble)) {
       packed = 0;
       return false;
     }
-    packed = (packed << 4) | nibble;
+    // Only the legacy format fits in uint64_t. Current callers use the
+    // returned value merely as a validity flag for CLG2.
+    if (legacy) packed = (packed << 4) | nibble;
   }
   return true;
 }
@@ -314,12 +356,32 @@ static inline ClimateTileItemGeometry getClimateTileItemGeometry(
   uint64_t packed = 0;
   if (item_index < CLIMATE_TILE_MAX_CONTENT_SLOTS &&
       parseClimateTileGeometry(tile, packed)) {
-    const uint8_t raw = static_cast<uint8_t>(
-        (packed >> (item_index * 6u)) & 0x3Fu);
-    geometry.col = raw & 0x01u;
-    geometry.row = (raw >> 1) & 0x03u;
-    geometry.span_w = static_cast<uint8_t>(((raw >> 3) & 0x01u) + 1u);
-    geometry.span_h = static_cast<uint8_t>(((raw >> 4) & 0x03u) + 1u);
+    if (tile.scene_alias.startsWith(CLIMATE_TILE_GEOMETRY_PREFIX)) {
+      uint16_t raw = 0;
+      const size_t offset =
+          CLIMATE_TILE_GEOMETRY_PREFIX_LENGTH +
+          static_cast<size_t>(item_index) * 4u;
+      for (uint8_t digit = 0; digit < 4; ++digit) {
+        uint8_t nibble = 0;
+        climateTileHexNibble(tile.scene_alias[offset + digit], nibble);
+        raw = static_cast<uint16_t>((raw << 4) | nibble);
+      }
+      geometry.col = raw & 0x07u;
+      geometry.row = (raw >> 3) & 0x0Fu;
+      geometry.span_w =
+          static_cast<uint8_t>(((raw >> 7) & 0x07u) + 1u);
+      geometry.span_h =
+          static_cast<uint8_t>(((raw >> 10) & 0x0Fu) + 1u);
+    } else {
+      const uint8_t raw = static_cast<uint8_t>(
+          (packed >> (item_index * 6u)) & 0x3Fu);
+      geometry.col = raw & 0x01u;
+      geometry.row = (raw >> 1) & 0x03u;
+      geometry.span_w =
+          static_cast<uint8_t>(((raw >> 3) & 0x01u) + 1u);
+      geometry.span_h =
+          static_cast<uint8_t>(((raw >> 4) & 0x03u) + 1u);
+    }
   } else {
     geometry.col = item_index % columns;
     geometry.row = item_index / columns;

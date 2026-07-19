@@ -1,4 +1,4 @@
-﻿#include "src/ui/media_popup.h"
+#include "src/ui/media_popup.h"
 
 #include <esp_heap_caps.h>
 #include <stdio.h>

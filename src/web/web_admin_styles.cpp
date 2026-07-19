@@ -1,6 +1,7 @@
 #include "src/web/web_admin_styles.h"
 #include "src/web/web_admin_fonts.h"
 #include "src/types/types_registry.h"
+#include "src/types/climate/layout.h"
 #include "src/tiles/tile_config.h"
 
 namespace {
@@ -98,27 +99,28 @@ void appendPreviewScaleVars(String& html) {
   emit("fs80", 80);
   emit("fs96", 96);
   emit("icon-size", 48);      // FONT_MDI_ICONS = mdi_icons_48
-  emit("tile-pad-v", 24);     // Kachel pad_ver auf dem Display
-  emit("tile-pad-h", 20);     // Kachel pad_hor auf dem Display
+  emit("tile-pad-v", climate_layout::kCardPaddingVertical);
+  emit("tile-pad-h", climate_layout::kCardPaddingHorizontal);
   emit("value-dy", 28);       // Sensorwert: LV_ALIGN_CENTER(0, 28)
+  emit_exact("tile-radius", 22);
   // Climate tile geometry uses the exact same LVGL-to-preview scale as the
   // device. Keeping these separate from font variables avoids the 6 px
   // minimum used for readable preview text.
-  emit_exact("climate-margin-x", 6);
-  emit_exact("climate-column-gap", 10);
-  emit_exact("climate-slot-h-wide", 58);
-  emit_exact("climate-slot-h-tall", 62);
-  emit_exact("climate-slots-top-wide", 81);
-  emit_exact("climate-slots-top-tall", 69);
-  emit_exact("climate-slots-bottom-wide", 6);
-  emit_exact("climate-slots-bottom-tall", 6);
-  emit_exact("climate-control-radius", 14);
+  emit_exact("climate-margin-x", climate_layout::kOuterInset);
+  emit_exact("climate-grid-gap", climate_layout::kGap);
+  emit_exact("climate-slots-top", climate_layout::kContentTop);
+  emit_exact("climate-slots-bottom", climate_layout::kOuterInset);
+  emit_exact(
+      "climate-control-radius",
+      climate_layout::kControlRadius);
   emit_exact("climate-control-side-pad", 8);
   emit_exact("climate-control-caption-w", 96);
   emit_exact("climate-control-button-w", 40);
-  emit_exact("climate-control-single-w", GRID_CELL_W - 12);
-  emit_exact("climate-control-v-pad-top", 8);
-  emit_exact("climate-control-v-pad-bottom", 2);
+  emit_exact(
+      "climate-control-single-w",
+      GRID_CELL_W - climate_layout::kOuterInset * 2);
+  emit_exact("climate-control-v-pad-top", 5);
+  emit_exact("climate-control-v-pad-bottom", 5);
   html += "--settings-panel-width:";
   html += String(settings_panel_target_width_px());
   html += "px;";
@@ -724,7 +726,7 @@ void appendAdminStyles(String& html) {
     /* Display: Title=TOP_LEFT, Value=CENTER(-30,18), Unit=RIGHT_MID */
     .tile {
       background:#2A2A2A;
-      border-radius:11px;
+      border-radius:var(--tile-radius, 11px);
       cursor:pointer;
       border:3px solid transparent;
       padding:var(--tile-pad-v, 12px) var(--tile-pad-h, 10px);
@@ -732,14 +734,14 @@ void appendAdminStyles(String& html) {
       box-sizing:border-box;
       overflow:hidden;
       background-clip:padding-box;
-      clip-path: inset(0 round 11px);
+      clip-path:inset(0 round var(--tile-radius, 11px));
     }
     .tile:hover:not(.active) {
       border:3px dashed rgba(38,166,154,0.6);
       box-shadow:0 0 0 2px rgba(38,166,154,0.12) inset;
-      border-radius:11px;
+      border-radius:var(--tile-radius, 11px);
       background-clip:padding-box;
-      clip-path: inset(0 round 11px);
+      clip-path:inset(0 round var(--tile-radius, 11px));
     }
     /* Die Auswahl ist pro Ordner in data-selected gespeichert. Die active-
        Klasse kann bei asynchronen Vorschau-Updates wechseln, die sichtbare
@@ -748,17 +750,17 @@ void appendAdminStyles(String& html) {
     .tile[data-selected="1"] {
       border:3px solid #26a69a;
       box-shadow:0 0 12px rgba(38,166,154,0.55);
-      border-radius:11px;
+      border-radius:var(--tile-radius, 11px);
       background-clip:padding-box;
-      clip-path: inset(0 round 11px);
+      clip-path:inset(0 round var(--tile-radius, 11px));
     }
     .tile.dragging {
       opacity:0.02;
       border:3px solid transparent;
       box-shadow:none;
-      border-radius:11px;
+      border-radius:var(--tile-radius, 11px);
       background-clip:padding-box;
-      clip-path: inset(0 round 11px);
+      clip-path:inset(0 round var(--tile-radius, 11px));
     }
     .tile.resizing {
       z-index:24;
@@ -776,9 +778,9 @@ void appendAdminStyles(String& html) {
        border:3px dashed #26a69a;
        background:rgba(38,166,154,0.12);
        box-shadow:0 0 0 2px rgba(38,166,154,0.2) inset;
-       border-radius:11px;
+       border-radius:var(--tile-radius, 11px);
        background-clip:padding-box;
-       clip-path: inset(0 round 11px);
+       clip-path:inset(0 round var(--tile-radius, 11px));
     }
     .tile.empty.drop-target {
        border:3px dashed #26a69a;
@@ -789,11 +791,11 @@ void appendAdminStyles(String& html) {
       border:3px dashed #26a69a;
       background:rgba(38,166,154,0.18);
       box-shadow:0 0 0 2px rgba(38,166,154,0.2) inset;
-      border-radius:11px;
+      border-radius:var(--tile-radius, 11px);
       box-sizing:border-box;
       pointer-events:none;
       z-index:20;
-      clip-path: inset(0 round 11px);
+      clip-path:inset(0 round var(--tile-radius, 11px));
     }
     .tile-drop-placeholder.show { display:block; }
     .tile-drop-placeholder.invalid {
@@ -806,11 +808,11 @@ void appendAdminStyles(String& html) {
       border:3px dashed #ef4444;
       background:rgba(239,68,68,0.14);
       box-shadow:0 0 0 2px rgba(239,68,68,0.18) inset;
-      border-radius:11px;
+      border-radius:var(--tile-radius, 11px);
       box-sizing:border-box;
       pointer-events:none;
       z-index:22;
-      clip-path: inset(0 round 11px);
+      clip-path:inset(0 round var(--tile-radius, 11px));
     }
     .tile-resize-placeholder.show { display:block; }
     .tile-resize-placeholder.invalid {

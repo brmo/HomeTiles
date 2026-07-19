@@ -37,18 +37,16 @@ void append_climate_fields_html(String& html,
   html += tr.long_press;
   html += "</option></select>";
 
-  html += "<div class=\"climate-content-config\"><label class=\"climate-content-heading\">";
-  html += german ? "Climate-Inhaltsraster" : "Climate content grid";
-  html += "</label><div class=\"field-hint climate-grid-description\">";
-  html += german
-              ? "Die Kopfzeile bleibt frei. Elemente lassen sich im Raster verschieben und an der Ecke vergr\u00F6\u00DFern."
-              : "The header stays free. Drag items inside the grid and resize them from the corner.";
-  html += "</div><input type=\"hidden\" id=\"";
+  html += "<div class=\"climate-content-config hidden\"><input type=\"hidden\" id=\"";
   html += tab_id;
-  html += "_climate_geometry\" value=\"\"><div class=\"climate-mini-editor-shell\"><div id=\"";
+  html += "_climate_geometry\" value=\"\"><div id=\"";
+  html += tab_id;
+  html += "_climate_editor_stash\" class=\"climate-editor-stash\"><div id=\"";
+  html += tab_id;
+  html += "_climate_editor_shell\" class=\"climate-mini-editor-shell\"><div id=\"";
   html += tab_id;
   html += "_climate_content_grid\" class=\"climate-content-grid\">";
-  for (uint8_t cell = 0; cell < CLIMATE_TILE_MAX_CONTENT_SLOTS; ++cell) {
+  for (uint8_t cell = 0; cell < CLIMATE_TILE_MAX_GRID_CELLS; ++cell) {
     html += "<button type=\"button\" id=\"";
     html += tab_id;
     html += "_climate_cell_";
@@ -56,15 +54,15 @@ void append_climate_fields_html(String& html,
     html += "\" class=\"climate-mini-cell\" data-climate-cell=\"";
     html += String(cell);
     html += "\" aria-label=\"";
-    html += german ? "Inhalt hinzuf\u00FCgen" : "Add content";
-    html += "\"><span>+</span></button>";
+    html += german ? "Leeres Feld" : "Empty field";
+    html += "\"></button>";
   }
   for (uint8_t slot = 0; slot < CLIMATE_TILE_MAX_CONTENT_SLOTS; ++slot) {
     html += "<div id=\"";
     html += tab_id;
     html += "_climate_slot_row_";
     html += String(slot);
-    html += "\" class=\"tile climate-mini-tile hidden\" data-climate-item=\"";
+    html += "\" class=\"climate-mini-tile hidden\" data-climate-item=\"";
     html += String(slot);
     html += "\"><div id=\"";
     html += tab_id;
@@ -119,7 +117,7 @@ void append_climate_fields_html(String& html,
     html += german ? "Senkrecht" : "Vertical";
     html += "</option></select>";
   }
-  html += "</div></div><div id=\"";
+  html += "</div></div></div><div id=\"";
   html += tab_id;
   html += "_climate_selected_fields\" class=\"climate-selected-fields\"><label for=\"";
   html += tab_id;
@@ -155,8 +153,6 @@ void append_climate_fields_html(String& html,
                          "Target humidity", "Soll-Luftfeuchtigkeit");
   append_selected_option(CLIMATE_TILE_CONTENT_HVAC_MODE,
                          "Mode", "Modus");
-  html += "</select></div><div id=\"";
-  html += tab_id;
-  html += "_climate_content_hint\" class=\"field-hint climate-content-hint\"></div></div>";
+  html += "</select></div></div>";
   html += "</div>\n";
 }

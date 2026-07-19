@@ -40,27 +40,59 @@ void append_climate_styles(String& html) {
     }
     .tile.climate .climate-slots {
       position:absolute;
-      left:var(--climate-margin-x, 5px);
-      right:var(--climate-margin-x, 5px);
-      top:var(--climate-slots-top, 35px);
-      bottom:var(--climate-slots-bottom, 7px);
+      /* Every Web tile already owns a permanent transparent 3 px selection
+         border. Compensate it here so the visible climate geometry uses the
+         same scaled insets as LVGL instead of adding the border a second
+         time. */
+      left:calc(var(--climate-margin-x, 5px) - 3px);
+      right:calc(var(--climate-margin-x, 5px) - 3px);
+      top:calc(var(--climate-slots-top, 35px) - 3px);
+      bottom:calc(var(--climate-slots-bottom, 3px) - 3px);
       display:grid;
       grid-template-columns:repeat(var(--climate-columns, 1), minmax(0, 1fr));
-      grid-auto-rows:var(--climate-slot-h, 31px);
-      align-content:space-between;
-      column-gap:var(--climate-column-gap, 5px);
-      row-gap:var(--climate-column-gap, 5px);
-      pointer-events:none;
+      grid-template-rows:
+        repeat(var(--climate-rows, 1), minmax(0, 1fr));
+      align-content:stretch;
+      gap:var(--climate-grid-gap, 5px);
+      pointer-events:auto;
     }
     .tile.climate .climate-slot {
+      position:relative;
+      z-index:2;
+      box-sizing:border-box;
       min-width:0;
-      min-height:var(--climate-slot-h, 31px);
+      min-height:0;
       display:flex;
       align-items:center;
       justify-content:center;
       color:#fff;
       line-height:1;
       overflow:hidden;
+      cursor:pointer;
+      pointer-events:auto;
+    }
+    .tile.climate:not(.climate-content-editing)
+      .climate-slot[data-climate-preview-item]:hover {
+      outline:2px dashed rgba(38,166,154,.72);
+      outline-offset:-2px;
+      border-radius:var(--climate-control-radius, 8px);
+    }
+    .climate-preview-cell {
+      position:relative;
+      z-index:1;
+      min-width:0;
+      min-height:0;
+      padding:0;
+      box-sizing:border-box;
+      border:1px solid transparent;
+      border-radius:var(--climate-control-radius, 8px);
+      background:transparent;
+      color:transparent;
+      cursor:pointer;
+    }
+    .climate-preview-cell:hover {
+      border:2px dashed rgba(38,166,154,.72);
+      background:rgba(38,166,154,.06);
     }
     .tile.climate .climate-slot strong {
       min-width:0;
@@ -76,8 +108,11 @@ void append_climate_styles(String& html) {
     }
     .tile.climate .climate-slot-control {
       display:grid;
+      align-items:center;
+      justify-items:center;
       border:0;
-      border-radius:var(--climate-control-radius, 7px);
+      /* 11 px outer radius - 3 px effective inset = 8 px. */
+      border-radius:var(--climate-control-radius, 8px);
       background:#3a3a3a;
     }
     .tile.climate .climate-slot-control span {
@@ -90,7 +125,7 @@ void append_climate_styles(String& html) {
       color:#e0e0e0;
       font-size:var(--fs20, 10px);
       font-weight:400;
-      line-height:1;
+      line-height:1.2;
       text-align:center;
       text-overflow:ellipsis;
       white-space:nowrap;
@@ -128,7 +163,7 @@ void append_climate_styles(String& html) {
     .tile.climate .climate-slot-control-vertical small {
       grid-column:1 / span 2;
       grid-row:1;
-      align-self:start;
+      align-self:center;
     }
     .tile.climate .climate-slot-control-vertical strong {
       grid-column:1 / span 2;
@@ -173,12 +208,8 @@ void append_climate_styles(String& html) {
       padding-top:14px;
       border-top:1px solid #2d2d2d;
     }
-    .climate-content-heading {
-      display:block;
-      margin:0 0 8px;
-    }
-    .climate-grid-description {
-      margin:0 0 10px;
+    .climate-editor-stash {
+      display:none;
     }
     .climate-mini-editor-shell {
       padding:10px;
@@ -209,17 +240,21 @@ void append_climate_styles(String& html) {
       min-width:0;
       min-height:0;
       padding:0;
-      border:2px dashed rgba(38,166,154,.35);
-      border-radius:11px;
-      background:rgba(38,166,154,.06);
-      color:rgba(255,255,255,.5);
-      font-size:22px;
+      box-sizing:border-box;
+      border:1px solid transparent;
+      border-radius:var(--climate-control-radius, 8px);
+      background:transparent;
+      color:transparent;
       cursor:pointer;
     }
     .climate-mini-cell:hover {
-      border-color:rgba(38,166,154,.75);
-      background:rgba(38,166,154,.12);
-      color:#fff;
+      border:2px dashed rgba(38,166,154,.72);
+      background:rgba(38,166,154,.06);
+    }
+    .climate-mini-cell.active {
+      z-index:3;
+      border-color:#26a69a;
+      box-shadow:0 0 0 2px rgba(38,166,154,.3) inset;
     }
     .climate-mini-cell.occupied {
       visibility:hidden;
@@ -228,72 +263,171 @@ void append_climate_styles(String& html) {
     .climate-mini-cell.hidden {
       display:none;
     }
-    .climate-mini-tile.tile {
+    .climate-mini-tile {
       z-index:2;
       position:relative;
       min-width:0;
       min-height:0;
       padding:7px 8px;
-      background:#2a2a2a;
+      box-sizing:border-box;
+      overflow:hidden;
+      border:0;
+      border-radius:var(--climate-control-radius, 8px);
+      background:transparent;
+      color:#fff;
       cursor:grab;
       user-select:none;
-      touch-action:none;
+      touch-action:auto;
     }
-    .climate-mini-tile.tile.hidden {
+    .climate-mini-tile::after {
+      content:"";
+      position:absolute;
+      z-index:4;
+      inset:0;
+      box-sizing:border-box;
+      border:1px solid transparent;
+      border-radius:var(--climate-control-radius, 8px);
+      pointer-events:none;
+    }
+    .climate-mini-tile.hidden {
       display:none;
     }
-    .climate-mini-tile.tile.dragging {
-      opacity:.12;
+    .climate-mini-tile:hover:not(.active):not(.dragging) {
+      background:rgba(38,166,154,.08);
     }
-    .climate-mini-tile.tile.invalid-drop {
+    .climate-mini-tile:hover:not(.active):not(.dragging)::after {
+      border:2px dashed rgba(38,166,154,.72);
+      box-shadow:0 0 0 1px rgba(38,166,154,.18) inset;
+    }
+    .climate-mini-tile.dragging {
+      opacity:.02;
+      box-shadow:none;
+    }
+    /* Gestricheltes Drop-Ziel analog .tile-drop-placeholder des grossen
+       Grids, nur in Mini-Masstab. Wird per JS im Grid positioniert. */
+    .climate-drop-placeholder {
+      z-index:6;
+      position:relative;
+      display:none;
+      min-width:0;
+      min-height:0;
+      overflow:hidden;
+      border:2px dashed #26a69a;
+      border-radius:var(--climate-control-radius, 8px);
+      background:rgba(38,166,154,0.18);
+      color:#fff;
+      box-shadow:0 0 0 1px rgba(38,166,154,0.2) inset;
+      pointer-events:none;
+    }
+    .climate-drop-placeholder > .climate-mini-preview {
+      inset:0;
+    }
+    .climate-drop-placeholder.show { display:block; }
+    .climate-drop-placeholder.invalid {
       border-color:#ef4444;
+      background:rgba(239,68,68,0.16);
+      box-shadow:0 0 0 1px rgba(239,68,68,0.18) inset;
+    }
+    /* Drag-Geist: Wrapper traegt .tile.climate, damit die darunter
+       gescopten Slot-Styles auch ausserhalb der Kachel greifen. */
+    .climate-mini-drag-ghost {
+      border-radius:var(--climate-control-radius, 8px);
+      clip-path:inset(
+        0 round var(--climate-control-radius, 8px));
+    }
+    .climate-mini-tile.reflow-preview {
+      filter:brightness(1.06);
+    }
+    .climate-mini-tile.reflow-preview::after {
+      border:2px solid rgba(100,216,203,.72);
+      box-shadow:
+        0 0 0 1px rgba(100,216,203,.34) inset,
+        0 0 8px rgba(38,166,154,.22);
+    }
+    .climate-mini-tile.invalid-drop::after,
+    .climate-mini-tile.resize-invalid::after {
+      border:2px dashed #ef4444;
       box-shadow:0 0 0 2px rgba(239,68,68,.18) inset;
     }
     .climate-mini-preview {
       position:absolute;
-      inset:7px 8px;
+      inset:0;
       display:flex;
-      flex-direction:column;
       align-items:center;
       justify-content:center;
-      gap:5px;
       min-width:0;
       color:#fff;
       text-align:center;
       pointer-events:none;
     }
-    .climate-mini-preview small,
-    .climate-mini-preview strong {
-      display:block;
-      max-width:100%;
-      overflow:hidden;
-      text-overflow:ellipsis;
-      white-space:nowrap;
-    }
-    .climate-mini-preview small {
-      color:#d8d8d8;
-      font-size:11px;
-      font-weight:400;
-    }
-    .climate-mini-preview strong {
-      font-size:16px;
-      font-weight:400;
-    }
-    .climate-mini-preview .climate-mini-control {
+    .climate-mini-preview > .climate-slot {
       width:100%;
-      display:grid;
-      grid-template-columns:24px minmax(0,1fr) 24px;
-      align-items:center;
-      column-gap:4px;
+      height:100%;
+      min-height:0;
     }
-    .climate-mini-preview .climate-mini-control span {
-      font-size:16px;
-    }
-    .climate-mini-tile.tile.active {
+    .climate-mini-tile.active {
       z-index:4;
     }
-    .climate-mini-tile.tile .tile-resize-handle {
+    .climate-mini-tile.active::after {
+      border:2px solid #26a69a;
+      box-shadow:0 0 0 2px rgba(38,166,154,.42) inset;
+    }
+    .climate-mini-tile > .tile-resize-handle {
       z-index:5;
+    }
+    .tile.active .climate-mini-tile:not(.active) >
+      .tile-resize-handle,
+    .tile[data-selected="1"] .climate-mini-tile:not(.active) >
+      .tile-resize-handle {
+      opacity:0 !important;
+      pointer-events:none !important;
+    }
+    .climate-mini-tile.active > .tile-resize-handle {
+      opacity:.46 !important;
+      pointer-events:auto !important;
+    }
+    .tile.climate.climate-content-editing >
+      .climate-slots {
+      visibility:hidden;
+    }
+    .tile.climate.climate-content-editing >
+      .climate-mini-editor-shell {
+      position:absolute;
+      z-index:12;
+      left:calc(var(--climate-margin-x, 5px) - 3px);
+      right:calc(var(--climate-margin-x, 5px) - 3px);
+      top:calc(var(--climate-slots-top, 35px) - 3px);
+      bottom:calc(var(--climate-slots-bottom, 3px) - 3px);
+      padding:0;
+      border:0;
+      border-radius:0;
+      background:transparent;
+      overflow:visible;
+    }
+    .tile.climate.climate-content-editing >
+      .climate-mini-editor-shell >
+      .climate-content-grid {
+      --climate-editor-cell-w:auto;
+      --climate-editor-cell-h:auto;
+      --climate-editor-gap:var(--climate-grid-gap, 5px);
+      grid-template-columns:
+        repeat(var(--climate-editor-columns, 1), minmax(0, 1fr));
+      grid-template-rows:
+        repeat(var(--climate-editor-rows, 1), minmax(0, 1fr));
+      align-content:stretch;
+      width:100%;
+      height:100%;
+      min-height:0;
+      margin:0;
+    }
+    .tile.climate.climate-content-editing
+      .climate-mini-tile {
+      padding:0;
+      border-radius:var(--climate-control-radius, 8px);
+    }
+    .tile.climate.climate-content-editing
+      .climate-mini-preview {
+      inset:0;
     }
     .climate-slot-storage,
     .climate-layout-storage {
@@ -305,9 +439,6 @@ void append_climate_styles(String& html) {
     .climate-selected-fields label {
       display:block;
       margin-bottom:6px;
-    }
-    .climate-content-hint {
-      margin-top:8px;
     }
     @media (max-width:1100px) {
       .climate-content-grid {
