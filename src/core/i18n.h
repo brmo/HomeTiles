@@ -320,10 +320,13 @@ struct LocaleProfile {
   const char* climate_entity;
   const char* climate_target_temperature;
   const char* climate_target_humidity;
+  const char* climate_heating_target;
+  const char* climate_cooling_target;
   const char* climate_states[15];
   const char* climate_value_labels[3];
   const char* climate_control_labels[5];
   const char* climate_option_labels[26];
+  const char* climate_mini_labels[7];
 };
 
 const Strings& strings(const char* language_code);
@@ -344,12 +347,17 @@ const char* climate_tile_type_label(const char* language_code);
 const char* climate_entity_label(const char* language_code);
 const char* climate_target_temperature_label(const char* language_code);
 const char* climate_target_humidity_label(const char* language_code);
+const char* climate_heating_target_label(const char* language_code);
+const char* climate_cooling_target_label(const char* language_code);
+const char* climate_target_heat_label(const char* language_code);
+const char* climate_target_cool_label(const char* language_code);
 const char* climate_state_label(const char* language_code,
                                 const String& mode,
                                 const String& action);
 const char* climate_value_label(const char* language_code, uint8_t index);
 const char* climate_control_label(const char* language_code, uint8_t index);
 String climate_option_label(const char* language_code, const String& option);
+const char* climate_mini_label(const char* language_code, uint8_t index);
 
 }  // namespace i18n
 

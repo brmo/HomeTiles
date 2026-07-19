@@ -472,6 +472,55 @@ void refresh_step_buttons(ClimatePopupContext* ctx) {
   apply_pressed(ctx->plus_button);
 }
 
+void refresh_current_marker(ClimatePopupContext* ctx) {
+  if (!ctx || !ctx->current_marker) return;
+  const bool has_current =
+      ctx->humidity_control_active ? ctx->has_humidity : ctx->has_current;
+  if (!has_current) {
+    lv_obj_add_flag(ctx->current_marker, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+
+  const bool range =
+      !ctx->humidity_control_active && ctx->has_range;
+  const int current_angle =
+      active_angle(ctx, active_current(ctx));
+  bool current_on_colored_ring = false;
+  if (ctx->hvac_mode != "off") {
+    if (range) {
+      const int low_angle =
+          active_angle(ctx, ctx->target_temp_low);
+      const int high_angle =
+          active_angle(ctx, ctx->target_temp_high);
+      current_on_colored_ring =
+          current_angle <= low_angle || current_angle >= high_angle;
+    } else {
+      const int target_angle =
+          active_angle(ctx, active_target(ctx));
+      if (ctx->humidity_control_active ||
+          ctx->hvac_mode == "heat") {
+        current_on_colored_ring =
+            current_angle <= target_angle;
+      } else if (ctx->hvac_mode == "cool") {
+        current_on_colored_ring =
+            current_angle >= target_angle;
+      } else {
+        current_on_colored_ring = true;
+      }
+    }
+  }
+
+  lv_obj_set_style_bg_color(
+      ctx->current_marker,
+      lv_color_hex(
+          current_on_colored_ring ? kTrackColor : 0xA8A8A8),
+      0);
+  lv_obj_clear_flag(ctx->current_marker, LV_OBJ_FLAG_HIDDEN);
+  align_marker_to_value(
+      ctx, ctx->current_marker, active_current(ctx));
+  lv_obj_move_foreground(ctx->current_marker);
+}
+
 void refresh_ring(ClimatePopupContext* ctx) {
   if (!ctx || !ctx->body) return;
   const bool range =
@@ -514,21 +563,6 @@ void refresh_ring(ClimatePopupContext* ctx) {
       ctx->humidity_control_active
           ? humidity_control_available(ctx)
           : (ctx->has_target || ctx->has_range);
-  bool current_on_colored_ring = false;
-  if (!off && has_current) {
-    if (range) {
-      current_on_colored_ring =
-          current_angle <= low_angle || current_angle >= high_angle;
-    } else if (ctx->humidity_control_active ||
-               ctx->hvac_mode == "heat") {
-      current_on_colored_ring = current_angle <= target_angle;
-    } else if (ctx->hvac_mode == "cool") {
-      current_on_colored_ring = current_angle >= target_angle;
-    } else {
-      current_on_colored_ring = true;
-    }
-  }
-
   if (ctx->color_arc) {
     lv_obj_set_style_arc_color(
         ctx->color_arc,
@@ -650,23 +684,7 @@ void refresh_ring(ClimatePopupContext* ctx) {
     }
   }
 
-  if (!has_current) {
-    if (ctx->current_marker) {
-      lv_obj_add_flag(ctx->current_marker, LV_OBJ_FLAG_HIDDEN);
-    }
-  } else {
-    if (ctx->current_marker) {
-      lv_obj_set_style_bg_color(
-          ctx->current_marker,
-          lv_color_hex(
-              current_on_colored_ring ? kTrackColor : 0xA8A8A8),
-          0);
-      lv_obj_clear_flag(ctx->current_marker, LV_OBJ_FLAG_HIDDEN);
-      align_marker_to_value(
-          ctx, ctx->current_marker, active_current(ctx));
-      lv_obj_move_foreground(ctx->current_marker);
-    }
-  }
+  refresh_current_marker(ctx);
   if (ctx->target_marker) {
     if (!has_target || !range ||
         (!off && !ctx->range_drag_high)) {
@@ -1415,7 +1433,9 @@ void on_arc_event(lv_event_t* event) {
         lv_arc_set_value(
             ctx->input_arc, input_arc_value_for(ctx, tapped_value));
         ctx->suppress_events = false;
-        apply_active_target_value(ctx, tapped_value);
+        if (apply_active_target_value(ctx, tapped_value)) {
+          refresh_current_marker(ctx);
+        }
       } else {
         ctx->dragging = false;
       }
@@ -1432,7 +1452,9 @@ void on_arc_event(lv_event_t* event) {
     lv_arc_set_value(
         ctx->input_arc, input_arc_value_for(ctx, value));
     ctx->suppress_events = false;
-    apply_active_target_value(ctx, value);
+    if (apply_active_target_value(ctx, value)) {
+      refresh_current_marker(ctx);
+    }
     return;
   }
   if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
@@ -1744,12 +1766,14 @@ void open_control_menu(ClimatePopupContext* ctx, uint8_t control_index) {
     lv_obj_add_flag(
         choices_viewport,
         static_cast<lv_obj_flag_t>(
-            LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_MOMENTUM));
+            LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_ELASTIC |
+            LV_OBJ_FLAG_SCROLL_MOMENTUM));
   } else {
     lv_obj_clear_flag(
         choices_viewport,
         static_cast<lv_obj_flag_t>(
-            LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_MOMENTUM));
+            LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_ELASTIC |
+            LV_OBJ_FLAG_SCROLL_MOMENTUM));
   }
 
   const char* language = configManager.getConfig().language;
@@ -1795,7 +1819,12 @@ void open_control_menu(ClimatePopupContext* ctx, uint8_t control_index) {
         option,
         static_cast<lv_obj_flag_t>(
             LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_ELASTIC |
-            LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLL_CHAIN));
+            LV_OBJ_FLAG_SCROLL_MOMENTUM |
+            LV_OBJ_FLAG_SCROLL_CHAIN_HOR));
+    // Keep vertical scroll chaining enabled. A swipe usually starts on an
+    // option button (or its label), and LVGL must be allowed to continue
+    // searching up to the scrollable choices viewport.
+    lv_obj_add_flag(option, LV_OBJ_FLAG_SCROLL_CHAIN_VER);
     lv_obj_add_event_cb(
         option, on_control_option_click, LV_EVENT_CLICKED, ctx);
 
@@ -1936,7 +1965,15 @@ void open_control_menu(ClimatePopupContext* ctx, uint8_t control_index) {
   lv_obj_set_pos(ctx->control_menu, menu_x, menu_y);
   lv_obj_set_style_opa(control.dropdown, LV_OPA_TRANSP, 0);
   lv_obj_move_foreground(ctx->control_menu);
-  if (choices_scrollable && selected_option_button) {
+  const int selected_label_bottom =
+      selected_index >= 0
+          ? selected_index * kMenuOptionHeight +
+                (kMenuOptionHeight + kPillLabelHeight) / 2
+          : 0;
+  const bool selected_label_clipped =
+      selected_label_bottom > visible_choices_height;
+  if (choices_scrollable && selected_option_button &&
+      selected_label_clipped) {
     lv_obj_update_layout(choices_viewport);
     lv_obj_scroll_to_view(selected_option_button, LV_ANIM_OFF);
   }
@@ -2179,6 +2216,9 @@ void show_climate_popup(const ClimatePopupInit& init) {
   lv_obj_set_style_text_font(ctx->top_caption_label, &ui_font_24, 0);
   lv_obj_set_style_text_color(
       ctx->top_caption_label, lv_color_white(), 0);
+  lv_obj_set_style_translate_y(
+      ctx->top_caption_label,
+      popup_layout::kLargeValueTextOffsetY, 0);
   lv_label_set_long_mode(
       ctx->top_caption_label, LV_LABEL_LONG_CLIP);
   lv_obj_clear_flag(

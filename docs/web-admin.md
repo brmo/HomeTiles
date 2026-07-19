@@ -39,6 +39,23 @@ Home Assistant entity, unit, decimals, value size, and an optional gauge display
 An overview of all tile types and what each one needs is on the
 [Tile Types](tiles.md) page.
 
+### Editing Climate Mini-Tiles
+
+A Climate tile contains its own slot grid. Click a mini-tile directly in the
+preview to edit its content, or drag it to another slot. Empty slots remain
+selectable, and dashed hover outlines show whether the next click or drag targets
+the parent tile or a mini-tile.
+
+Available content includes current temperature, current humidity, target
+temperature, separate heating and cooling targets, target humidity, and mode.
+**Automatic** picks content supported by the selected entity. The web admin does
+not invent unavailable controls, and its preview uses the same layout rules as
+the on-device renderer.
+
+When the parent tile is resized, the slot grid adapts immediately and shows the
+new layout during the drag. Explicitly placed mini-tiles are preserved wherever
+they still fit.
+
 ## Moving, Resizing, Copying
 
 - **Move** — drag a tile to another cell; a placeholder shows where it will land.

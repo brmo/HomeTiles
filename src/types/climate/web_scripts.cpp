@@ -1,8 +1,74 @@
 #include "src/types/climate/web_scripts.h"
 
+#include "src/core/config_manager.h"
+#include "src/core/i18n.h"
+
+namespace {
+
+void append_climate_js_string(String& html, const String& value) {
+  html += "'";
+  for (size_t index = 0; index < value.length(); ++index) {
+    const char c = value[index];
+    switch (c) {
+      case '\\': html += "\\\\"; break;
+      case '\'': html += "\\'"; break;
+      case '\r': break;
+      case '\n': html += "\\n"; break;
+      case '<': html += "\\x3c"; break;
+      default: html += c; break;
+    }
+  }
+  html += "'";
+}
+
+}  // namespace
+
 void append_climate_scripts(String& html) {
   html += R"html(
   <script>
+)html";
+
+  const char* language = configManager.getConfig().language;
+  html += "  const CLIMATE_I18N = Object.freeze({\n";
+  auto append_i18n = [&](const char* key, const String& value) {
+    html += "    ";
+    html += key;
+    html += ": ";
+    append_climate_js_string(html, value);
+    html += ",\n";
+  };
+  append_i18n("automatic", i18n::climate_mini_label(language, 0));
+  append_i18n("empty", i18n::climate_mini_label(language, 1));
+  append_i18n("emptyRemove", i18n::climate_mini_label(language, 2));
+  append_i18n("emptyField", i18n::climate_mini_label(language, 3));
+  append_i18n("selectedField", i18n::climate_mini_label(language, 4));
+  append_i18n("horizontal", i18n::climate_mini_label(language, 5));
+  append_i18n("vertical", i18n::climate_mini_label(language, 6));
+  append_i18n("currentTemperature", i18n::climate_value_label(language, 0));
+  append_i18n("currentHumidity", i18n::climate_value_label(language, 2));
+  append_i18n(
+      "targetTemperature",
+      i18n::climate_target_temperature_label(language));
+  append_i18n(
+      "targetHumidity",
+      i18n::climate_target_humidity_label(language));
+  append_i18n("mode", i18n::climate_control_label(language, 0));
+  append_i18n("off", i18n::climate_state_label(language, "off", ""));
+  append_i18n("heat", i18n::climate_state_label(language, "heat", ""));
+  append_i18n("cool", i18n::climate_state_label(language, "cool", ""));
+  append_i18n(
+      "heatCool",
+      i18n::climate_state_label(language, "heat_cool", ""));
+  append_i18n("autoMode", i18n::climate_state_label(language, "auto", ""));
+  append_i18n("dry", i18n::climate_state_label(language, "dry", ""));
+  append_i18n(
+      "fanOnly",
+      i18n::climate_state_label(language, "fan_only", ""));
+  append_i18n(
+      "genericClimate",
+      i18n::climate_state_label(language, "", ""));
+  html += R"html(  });
+
   const CLIMATE_TILE_CONTENT = Object.freeze({
     AUTO: 0,
     EMPTY: 1,
@@ -531,6 +597,7 @@ void append_climate_scripts(String& html) {
         '[data-climate-preview-cell]');
     let hoveredPreview = null;
     let hoveredEditorItem = null;
+    let hoveredChildTile = null;
     let hoveredParent = null;
     const setHoverTarget = (previous, next, className) => {
       if (previous === next) return previous;
@@ -545,6 +612,9 @@ void append_climate_scripts(String& html) {
       hoveredEditorItem =
         setHoverTarget(
           hoveredEditorItem, null, 'climate-mini-hover');
+      hoveredChildTile =
+        setHoverTarget(
+          hoveredChildTile, null, 'climate-child-hover');
       hoveredParent =
         setHoverTarget(
           hoveredParent, null, 'climate-parent-hover');
@@ -566,12 +636,16 @@ void append_climate_scripts(String& html) {
         !overMini
           ? tile
           : null;
+      const childTile = tile && overMini ? tile : null;
       hoveredPreview =
         setHoverTarget(
           hoveredPreview, preview, 'climate-preview-hover');
       hoveredEditorItem =
         setHoverTarget(
           hoveredEditorItem, editorItem, 'climate-mini-hover');
+      hoveredChildTile =
+        setHoverTarget(
+          hoveredChildTile, childTile, 'climate-child-hover');
       hoveredParent =
         setHoverTarget(
           hoveredParent, parent, 'climate-parent-hover');
@@ -676,6 +750,74 @@ void append_climate_scripts(String& html) {
       sensorMetaCache?.values?.[entity] ?? '');
   }
 
+  function climateAvailableContentKinds(tab) {
+    const entity = document.getElementById(
+      tab + '_climate_entity')?.value || '';
+    const state = climateEditorState(tab);
+    if (!entity || !state.valid) {
+      // Without a selected entity or a loaded state the capabilities are not
+      // known yet. Keep the editor usable until real metadata arrives.
+      return null;
+    }
+
+    const available = new Set([
+      CLIMATE_TILE_CONTENT.AUTO,
+      CLIMATE_TILE_CONTENT.EMPTY
+    ]);
+    if (state.current !== '--') {
+      available.add(
+        CLIMATE_TILE_CONTENT.CURRENT_TEMPERATURE);
+    }
+    if (state.currentHumidity !== null) {
+      available.add(
+        CLIMATE_TILE_CONTENT.CURRENT_HUMIDITY);
+    }
+    if (state.target !== null) {
+      available.add(
+        CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE);
+    }
+    if (state.targetLow !== null) {
+      available.add(
+        CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE_LOW);
+    }
+    if (state.targetHigh !== null) {
+      available.add(
+        CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE_HIGH);
+    }
+    if (state.targetHumidity !== null) {
+      available.add(
+        CLIMATE_TILE_CONTENT.TARGET_HUMIDITY);
+    }
+    if (state.mode) {
+      available.add(CLIMATE_TILE_CONTENT.HVAC_MODE);
+    }
+    return available;
+  }
+
+  function syncClimateContentOptions(tab) {
+    const editor = document.getElementById(
+      tab + '_climate_selected_content');
+    if (!editor) return;
+    const available = climateAvailableContentKinds(tab);
+    const selectedKind = Number(editor.value);
+    Array.from(editor.options).forEach(option => {
+      const kind = Number(option.value);
+      // Never silently discard an explicitly stored legacy/custom choice.
+      // Keep that one visible so the user can change or remove it.
+      const selectedExplicit =
+        kind === selectedKind &&
+        kind !== CLIMATE_TILE_CONTENT.AUTO &&
+        kind !== CLIMATE_TILE_CONTENT.EMPTY;
+      const visible =
+        !available ||
+        available.has(kind) ||
+        selectedExplicit;
+      option.hidden = !visible;
+      option.disabled = !visible;
+      option.style.display = visible ? '' : 'none';
+    });
+  }
+
   function climateAutomaticEditorKinds(tab) {
     const state = climateEditorState(tab);
     const spanW = Math.max(1, Number(
@@ -690,9 +832,7 @@ void append_climate_scripts(String& html) {
       if (kinds.length < capacity) kinds.push(kind);
     };
 
-    if (spanW === 1 && spanH === 1) {
-      add(CLIMATE_TILE_CONTENT.CURRENT_TEMPERATURE);
-    } else if (spanW >= 2 && spanH === 1) {
+    const addPrimaryTarget = () => {
       if (state.targetLow !== null &&
           state.targetHigh !== null) {
         add(CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE_LOW);
@@ -700,22 +840,38 @@ void append_climate_scripts(String& html) {
         add(CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE);
       } else if (state.targetHumidity !== null) {
         add(CLIMATE_TILE_CONTENT.TARGET_HUMIDITY);
-      } else {
-        add(CLIMATE_TILE_CONTENT.CURRENT_TEMPERATURE);
-      }
-    } else if (spanW === 1) {
-      add(CLIMATE_TILE_CONTENT.CURRENT_TEMPERATURE);
-      if (state.targetLow !== null &&
-          state.targetHigh !== null) {
-        add(CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE_LOW);
-      } else if (state.target !== null) {
+      } else if (!state.valid) {
         add(CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE);
       }
-      if (state.targetHumidity !== null) {
+    };
+
+    if (spanW === 1 && spanH === 1) {
+      if (!state.valid || state.current !== '--') {
+        add(CLIMATE_TILE_CONTENT.CURRENT_TEMPERATURE);
+      } else {
+        addPrimaryTarget();
+      }
+    } else if (spanW >= 2 && spanH === 1) {
+      if (!state.valid || state.current !== '--') {
+        add(CLIMATE_TILE_CONTENT.CURRENT_TEMPERATURE);
+      }
+      addPrimaryTarget();
+    } else if (spanW === 1) {
+      if (!state.valid || state.current !== '--') {
+        add(CLIMATE_TILE_CONTENT.CURRENT_TEMPERATURE);
+      }
+      addPrimaryTarget();
+      if (spanH === 2) return kinds;
+      if (state.targetHumidity !== null &&
+          (state.targetLow !== null ||
+           state.targetHigh !== null ||
+           state.target !== null)) {
         add(CLIMATE_TILE_CONTENT.TARGET_HUMIDITY);
       }
     } else {
-      add(CLIMATE_TILE_CONTENT.CURRENT_TEMPERATURE);
+      if (!state.valid || state.current !== '--') {
+        add(CLIMATE_TILE_CONTENT.CURRENT_TEMPERATURE);
+      }
       if (state.currentHumidity !== null) {
         add(CLIMATE_TILE_CONTENT.CURRENT_HUMIDITY);
       }
@@ -793,10 +949,58 @@ void append_climate_scripts(String& html) {
         : selection);
   }
 
+  function climateTargetCaption(state, kind) {
+    if (kind === CLIMATE_TILE_CONTENT.TARGET_HUMIDITY) {
+      return CLIMATE_I18N.targetHumidity;
+    }
+    if (kind === CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE_LOW) {
+      return CLIMATE_I18N.heat;
+    }
+    if (kind === CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE_HIGH) {
+      return CLIMATE_I18N.cool;
+    }
+
+    const action = String(state?.action || '').toLowerCase();
+    const mode = String(state?.mode || '').toLowerCase();
+    const actionLabels = {
+      heating: CLIMATE_I18N.heat,
+      preheating: CLIMATE_I18N.heat,
+      cooling: CLIMATE_I18N.cool
+    };
+    if (actionLabels[action]) return actionLabels[action];
+
+    const modeLabels = {
+      off: CLIMATE_I18N.off,
+      heat: CLIMATE_I18N.heat,
+      cool: CLIMATE_I18N.cool,
+      heat_cool: CLIMATE_I18N.heatCool,
+      auto: CLIMATE_I18N.autoMode,
+      dry: CLIMATE_I18N.dry,
+      fan_only: CLIMATE_I18N.fanOnly
+    };
+    if (modeLabels[mode]) return modeLabels[mode];
+    if (mode) return CLIMATE_I18N.genericClimate;
+    return CLIMATE_I18N.targetTemperature;
+  }
+
+  function climateModeText(state) {
+    const raw = String(state?.mode || '').toLowerCase();
+    if (!raw) return '--';
+    const labels = {
+      off: CLIMATE_I18N.off,
+      heat: CLIMATE_I18N.heat,
+      cool: CLIMATE_I18N.cool,
+      auto: CLIMATE_I18N.autoMode,
+      dry: CLIMATE_I18N.dry,
+      fan_only: CLIMATE_I18N.fanOnly,
+      heat_cool: CLIMATE_I18N.heatCool
+    };
+    if (labels[raw]) return labels[raw];
+    const fallback = raw.replaceAll('_', ' ');
+    return fallback.charAt(0).toUpperCase() + fallback.slice(1);
+  }
+
   function climateEditorContentInfo(tab, kind) {
-    const german =
-      String(document.documentElement.lang || '')
-        .toLowerCase().startsWith('de');
     const state = climateEditorState(tab);
     const unit = state.unit || '\u00B0C';
     const temperature = value =>
@@ -805,54 +1009,52 @@ void append_climate_scripts(String& html) {
     switch (selected) {
       case CLIMATE_TILE_CONTENT.CURRENT_TEMPERATURE:
         return {
-          label: german ? 'Aktuell' : 'Current',
+          label: CLIMATE_I18N.currentTemperature,
           value: temperature(state.current),
           adjustable: false
         };
       case CLIMATE_TILE_CONTENT.CURRENT_HUMIDITY:
         return {
-          label: german ? 'Luftfeuchtigkeit' : 'Humidity',
+          label: CLIMATE_I18N.currentHumidity,
           value: state.currentHumidity !== null
             ? state.currentHumidity + '%' : '--%',
           adjustable: false
         };
       case CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE:
         return {
-          label: german ? 'Solltemperatur' : 'Target',
+          label: climateTargetCaption(state, selected),
           value: temperature(state.target),
           adjustable: true
         };
       case CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE_LOW:
         return {
-          label: german ? 'Heizen' : 'Heating',
+          label: climateTargetCaption(state, selected),
           value: temperature(state.targetLow),
           adjustable: true
         };
       case CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE_HIGH:
         return {
-          label: german ? 'K\u00FChlen' : 'Cooling',
+          label: climateTargetCaption(state, selected),
           value: temperature(state.targetHigh),
           adjustable: true
         };
       case CLIMATE_TILE_CONTENT.TARGET_HUMIDITY:
         return {
-          label: german ? 'Soll-Luftfeuchtigkeit' : 'Target humidity',
+          label: climateTargetCaption(state, selected),
           value: state.targetHumidity !== null
             ? state.targetHumidity + '%' : '--%',
           adjustable: true
         };
       case CLIMATE_TILE_CONTENT.HVAC_MODE:
         return {
-          label: german ? 'Modus' : 'Mode',
-          value: state.mode
-            ? state.mode.replaceAll('_', '/')
-            : '--',
+          label: CLIMATE_I18N.mode,
+          value: climateModeText(state),
           adjustable: false
         };
       case CLIMATE_TILE_CONTENT.AUTO:
       default:
         return {
-          label: german ? 'Automatisch' : 'Automatic',
+          label: CLIMATE_I18N.automatic,
           value: '--',
           adjustable: false
         };
@@ -955,6 +1157,7 @@ void append_climate_scripts(String& html) {
           ? String(valueOverride) : source.value;
       }
     }
+    syncClimateContentOptions(tab);
     const selectedFields = document.getElementById(
       tab + '_climate_selected_fields');
     selectedFields?.classList.toggle(
@@ -1578,14 +1781,24 @@ void append_climate_scripts(String& html) {
         previousSnapshot.tileIndex === currentTileIndex &&
         (previousSnapshot.spanW !== spanW ||
          previousSnapshot.spanH !== spanH)) {
-      // Sobald der Nutzer die aeussere Climate-Kachel vergroessert oder
-      // verkleinert, bleibt der bisher sichtbare Inhalt erhalten. Ungenutzte
-      // Automatic-Slots werden zu Leer, statt durch den zusaetzlichen Platz
-      // ploetzlich neue Mini-Tiles zu erzeugen.
-      materializeClimateAutomaticItems(
-        tab, previousSnapshot.resolvedKinds);
-      configured = currentClimateSlotConfig(tab);
-      resolvedKinds = climateResolvedEditorKinds(tab);
+      const automaticOnly = configured.every(
+        value =>
+          Number(value) === CLIMATE_TILE_CONTENT.AUTO);
+      if (automaticOnly) {
+        // A pristine Climate tile follows the standard layout of its new
+        // outer size. Clear the old-size geometry so 2x1 becomes
+        // Current + compact target and 1x2 becomes Current + 1x2 target.
+        const geometryInput = document.getElementById(
+          tab + '_climate_geometry');
+        if (geometryInput) geometryInput.value = '';
+      } else {
+        // Once the user has customized mini-tiles, resizing keeps that
+        // explicit content instead of silently adding further items.
+        materializeClimateAutomaticItems(
+          tab, previousSnapshot.resolvedKinds);
+        configured = currentClimateSlotConfig(tab);
+        resolvedKinds = climateResolvedEditorKinds(tab);
+      }
     }
     const placementConfig = climatePlacementConfig(
       configured, resolvedKinds);
@@ -1771,7 +1984,21 @@ void append_climate_scripts(String& html) {
 
   function loadClimateFields(tab, data) {
     const entity = document.getElementById(tab + '_climate_entity');
-    if (entity) entity.value = data.sensor_entity || data.climate_entity || '';
+    if (entity) {
+      const configuredEntity =
+        Object.prototype.hasOwnProperty.call(data, 'sensor_entity')
+          ? (data.sensor_entity || '')
+          : (data.climate_entity || '');
+      entity.value = configuredEntity;
+      if (configuredEntity) {
+        entity.dataset.configuredValue = configuredEntity;
+      } else {
+        // The option list is rebuilt asynchronously. Do not let a value from
+        // the previously edited climate tile come back when this tile
+        // explicitly has no entity configured.
+        delete entity.dataset.configuredValue;
+      }
+    }
     const popup = document.getElementById(tab + '_climate_popup_open_mode');
     if (popup) popup.value = (data.popup_open_mode !== undefined)
       ? String(data.popup_open_mode) : '1';
@@ -1801,6 +2028,7 @@ void append_climate_scripts(String& html) {
 
   function parseClimatePreviewPayload(value) {
     const out = {
+      valid: false,
       current: '--',
       currentHumidity: null,
       target: null,
@@ -1818,6 +2046,7 @@ void append_climate_scripts(String& html) {
     if (!text.startsWith('{')) {
       const numeric = Number(text.replace(',', '.'));
       if (Number.isFinite(numeric)) {
+        out.valid = true;
         out.current = formatLocalizedNumber(numeric, 1, false);
       }
       return out;
@@ -1862,6 +2091,15 @@ void append_climate_scripts(String& html) {
       out.mode = String(obj.hvac_mode || obj.state || attrs.hvac_mode || '').toLowerCase();
       out.action = String(obj.hvac_action || attrs.hvac_action || '').toLowerCase();
       out.preset = String(obj.preset_mode || attrs.preset_mode || '').toLowerCase();
+      out.valid =
+        out.current !== '--' ||
+        out.currentHumidity !== null ||
+        out.target !== null ||
+        out.targetHumidity !== null ||
+        out.targetLow !== null ||
+        out.targetHigh !== null ||
+        !!out.mode ||
+        !!out.action;
     } catch (e) {}
     return out;
   }
@@ -1940,30 +2178,45 @@ void append_climate_scripts(String& html) {
       }
     };
 
-    if (w === 1 && h === 1) {
-      addAutomatic(CLIMATE_TILE_CONTENT.CURRENT_TEMPERATURE);
-    } else if (w >= 2 && h === 1) {
+    const addPrimaryTarget = () => {
       if (state.targetLow !== null && state.targetHigh !== null) {
         addAutomatic(CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE_LOW);
       } else if (state.target !== null) {
         addAutomatic(CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE);
       } else if (state.targetHumidity !== null) {
         addAutomatic(CLIMATE_TILE_CONTENT.TARGET_HUMIDITY);
-      } else {
-        addAutomatic(CLIMATE_TILE_CONTENT.CURRENT_TEMPERATURE);
-      }
-    } else if (w === 1) {
-      addAutomatic(CLIMATE_TILE_CONTENT.CURRENT_TEMPERATURE);
-      if (state.targetLow !== null && state.targetHigh !== null) {
-        addAutomatic(CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE_LOW);
-      } else if (state.target !== null) {
+      } else if (!state.valid) {
         addAutomatic(CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE);
       }
-      if (state.targetHumidity !== null) {
+    };
+
+    if (w === 1 && h === 1) {
+      if (!state.valid || state.current !== '--') {
+        addAutomatic(CLIMATE_TILE_CONTENT.CURRENT_TEMPERATURE);
+      } else {
+        addPrimaryTarget();
+      }
+    } else if (w >= 2 && h === 1) {
+      if (!state.valid || state.current !== '--') {
+        addAutomatic(CLIMATE_TILE_CONTENT.CURRENT_TEMPERATURE);
+      }
+      addPrimaryTarget();
+    } else if (w === 1) {
+      if (!state.valid || state.current !== '--') {
+        addAutomatic(CLIMATE_TILE_CONTENT.CURRENT_TEMPERATURE);
+      }
+      addPrimaryTarget();
+      if (h > 2 &&
+          state.targetHumidity !== null &&
+          (state.targetLow !== null ||
+           state.targetHigh !== null ||
+           state.target !== null)) {
         addAutomatic(CLIMATE_TILE_CONTENT.TARGET_HUMIDITY);
       }
     } else {
-      addAutomatic(CLIMATE_TILE_CONTENT.CURRENT_TEMPERATURE);
+      if (!state.valid || state.current !== '--') {
+        addAutomatic(CLIMATE_TILE_CONTENT.CURRENT_TEMPERATURE);
+      }
       if (state.currentHumidity !== null) {
         addAutomatic(CLIMATE_TILE_CONTENT.CURRENT_HUMIDITY);
       }
@@ -1981,54 +2234,6 @@ void append_climate_scripts(String& html) {
       }
     }
 
-    const modeText = () => {
-      const raw = String(state.mode || '').toLowerCase();
-      if (!raw) return '--';
-      const german =
-        String(document.documentElement.lang || '')
-          .toLowerCase().startsWith('de');
-      const labels = german
-        ? {
-            off: 'Aus', heat: 'Heizen', cool: 'K\u00FChlen',
-            auto: 'Auto', dry: 'Entfeuchten',
-            fan_only: 'L\u00FCfter', heat_cool: 'Heizen/K\u00FChlen'
-          }
-        : {
-            off: 'Off', heat: 'Heat', cool: 'Cool',
-            auto: 'Auto', dry: 'Dry',
-            fan_only: 'Fan only', heat_cool: 'Heat/Cool'
-          };
-      return labels[raw] || raw.replaceAll('_', ' ');
-    };
-
-    const german =
-      String(document.documentElement.lang || '')
-        .toLowerCase().startsWith('de');
-    const targetCaption = (kind) => {
-      if (kind === CLIMATE_TILE_CONTENT.TARGET_HUMIDITY) {
-        return german ? 'Soll-Luftfeuchtigkeit' : 'Target humidity';
-      }
-      if (kind === CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE_LOW) {
-        return german ? 'Heizbetrieb' : 'Heating';
-      }
-      if (kind === CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE_HIGH) {
-        return german ? 'K\u00FChlbetrieb' : 'Cooling';
-      }
-      const action = String(state.action || '').toLowerCase();
-      const mode = String(state.mode || '').toLowerCase();
-      if (action === 'heating' || action === 'preheating' ||
-          mode === 'heat') {
-        return german ? 'Heizbetrieb' : 'Heating';
-      }
-      if (action === 'cooling' || mode === 'cool') {
-        return german ? 'K\u00FChlbetrieb' : 'Cooling';
-      }
-      if (mode === 'heat_cool') {
-        return german ? 'Heizen/K\u00FChlen' : 'Heat/Cool';
-      }
-      return german ? 'Solltemperatur' : 'Target temperature';
-    };
-
     const slotForKind = (kind) => {
       switch (kind) {
         case CLIMATE_TILE_CONTENT.CURRENT_TEMPERATURE:
@@ -2045,21 +2250,21 @@ void append_climate_scripts(String& html) {
             kind,
             value: temp(state.target),
             adjustable: true,
-            caption: targetCaption(kind)
+            caption: climateTargetCaption(state, kind)
           };
         case CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE_LOW:
           return {
             kind,
             value: temp(state.targetLow),
             adjustable: true,
-            caption: targetCaption(kind)
+            caption: climateTargetCaption(state, kind)
           };
         case CLIMATE_TILE_CONTENT.TARGET_TEMPERATURE_HIGH:
           return {
             kind,
             value: temp(state.targetHigh),
             adjustable: true,
-            caption: targetCaption(kind)
+            caption: climateTargetCaption(state, kind)
           };
         case CLIMATE_TILE_CONTENT.TARGET_HUMIDITY:
           return {
@@ -2067,11 +2272,13 @@ void append_climate_scripts(String& html) {
             value: state.targetHumidity !== null
               ? state.targetHumidity + '%' : '--%',
             adjustable: true,
-            caption: targetCaption(kind)
+            caption: climateTargetCaption(state, kind)
           };
         case CLIMATE_TILE_CONTENT.HVAC_MODE:
           return {
-            kind, value: modeText(), adjustable: false
+            kind,
+            value: climateModeText(state),
+            adjustable: false
           };
         default:
           return null;
@@ -2116,6 +2323,9 @@ void append_climate_scripts(String& html) {
     }
 
     const logicalRows = rows;
+    const hasStoredGeometry =
+      Array.isArray(geometryConfig) ||
+      /^CLG[12]:/i.test(String(geometryConfig || '').trim());
     const placedSlots = [];
     slots.forEach(slot => {
       let candidate = {
@@ -2124,6 +2334,30 @@ void append_climate_scripts(String& html) {
         spanW: slot.spanW,
         spanH: slot.spanH
       };
+      if (!hasStoredGeometry && slot.adjustable &&
+          candidate.spanW === 1 && candidate.spanH === 1) {
+        const canHorizontal =
+          candidate.col + 1 < columns;
+        const canVertical =
+          candidate.row + 1 < logicalRows;
+        if (slot.targetLayout ===
+              CLIMATE_TARGET_LAYOUT.HORIZONTAL &&
+            canHorizontal) {
+          candidate.spanW = 2;
+        } else if (slot.targetLayout ===
+                     CLIMATE_TARGET_LAYOUT.VERTICAL &&
+                   canVertical) {
+          candidate.spanH = 2;
+        } else if (columns === 1 && canVertical) {
+          candidate.spanH = 2;
+        } else if (logicalRows === 1 && canHorizontal) {
+          candidate.spanW = 2;
+        } else if (canVertical) {
+          candidate.spanH = 2;
+        } else if (canHorizontal) {
+          candidate.spanW = 2;
+        }
+      }
       const overlaps = value =>
         placedSlots.some(other =>
             climateGeometryOverlaps(value, {
@@ -2174,8 +2408,7 @@ void append_climate_scripts(String& html) {
         }
       }
     });
-    const emptyCellLabel =
-      german ? 'Leeres Feld' : 'Empty field';
+    const emptyCellLabel = CLIMATE_I18N.emptyField;
     const previewCells = occupiedCells.map(
       (occupied, cellIndex) => {
         if (occupied) return '';
@@ -2274,7 +2507,10 @@ void append_climate_scripts(String& html) {
 
   function resetClimateFields(tab) {
     const entity = document.getElementById(tab + '_climate_entity');
-    if (entity) entity.value = '';
+    if (entity) {
+      entity.value = '';
+      delete entity.dataset.configuredValue;
+    }
     const popup = document.getElementById(tab + '_climate_popup_open_mode');
     if (popup) popup.value = '1';
     const geometry = document.getElementById(

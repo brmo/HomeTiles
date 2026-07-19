@@ -134,26 +134,60 @@ void append_climate_styles(String& html) {
       white-space:nowrap;
     }
     .tile.climate .climate-slot-control-horizontal {
+      position:relative;
+      display:grid;
       grid-template-columns:
-        50%
-        var(--climate-control-button-w, 20px)
         minmax(0, 1fr)
-        var(--climate-control-button-w, 20px);
+        var(--climate-grid-gap, 5px)
+        minmax(0, 1fr);
       grid-template-rows:1fr;
       padding:0;
     }
     .tile.climate .climate-slot-control-horizontal small {
       grid-column:1;
+      grid-row:1;
+      width:100%;
+      display:flex;
+      align-items:center;
+      justify-content:center;
     }
     .tile.climate .climate-slot-control-horizontal .climate-minus {
-      grid-column:2;
+      grid-column:3;
+      grid-row:1;
+      width:50%;
+      height:100%;
+      justify-self:start;
+      box-sizing:border-box;
+      display:flex;
+      align-items:center;
+      justify-content:flex-start;
+      padding-left:var(--climate-control-side-pad, 4px);
+      font-size:var(--fs20, 10px);
     }
     .tile.climate .climate-slot-control-horizontal strong {
       grid-column:3;
+      grid-row:1;
+      z-index:2;
+      width:100%;
+      height:100%;
+      display:flex;
+      align-items:center;
+      justify-content:center;
       font-size:var(--fs28, 14px);
+      pointer-events:none;
     }
     .tile.climate .climate-slot-control-horizontal .climate-plus {
-      grid-column:4;
+      grid-column:3;
+      grid-row:1;
+      width:50%;
+      height:100%;
+      justify-self:end;
+      box-sizing:border-box;
+      display:flex;
+      align-items:center;
+      justify-content:flex-end;
+      padding-right:var(--climate-control-side-pad, 4px);
+      font-size:var(--fs20, 10px);
     }
     .tile.climate .climate-slot-control-compact {
       position:relative;
@@ -180,7 +214,7 @@ void append_climate_styles(String& html) {
       display:flex;
       align-items:center;
       color:#fff;
-      font-size:var(--fs24, 12px);
+      font-size:var(--fs20, 10px);
       pointer-events:none;
     }
     .tile.climate .climate-slot-control-compact .climate-minus {
@@ -213,12 +247,12 @@ void append_climate_styles(String& html) {
       font-size:var(--fs28, 14px);
     }
     .tile.climate .climate-slot-control-vertical .climate-minus {
-      grid-column:2 / span 2;
+      grid-column:1 / span 3;
       grid-row:3;
       transform:translateY(-2px);
     }
     .tile.climate .climate-slot-control-vertical .climate-plus {
-      grid-column:4 / span 2;
+      grid-column:4 / span 3;
       grid-row:3;
       transform:translateY(-2px);
     }
@@ -430,6 +464,10 @@ void append_climate_styles(String& html) {
     }
     .tile.climate.climate-mini-selection-active.active,
     .tile.climate.climate-mini-selection-active[data-selected="1"] {
+      border:3px solid transparent;
+      box-shadow:none;
+    }
+    .tile.climate.climate-child-hover:hover:not(.active):not([data-selected="1"]) {
       border:3px solid transparent;
       box-shadow:none;
     }

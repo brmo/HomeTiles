@@ -2061,8 +2061,15 @@ static void update_climate_tile_state(
 
   ClimateState state = parse_climate_payload(payload);
   if (!state.valid) return;
+  const bool kept_optimistic_target =
+      reconcile_climate_mini_target_state(
+          grid_type, grid_index, state);
   states[grid_index] = state;
-  widget.last_payload_hash = payload_hash;
+  // Do not cache a stale payload whose target fields were replaced by the
+  // local optimistic value. It must be parsed again after the protection
+  // window if Home Assistant did not acknowledge the command.
+  widget.last_payload_hash =
+      kept_optimistic_target ? 0 : payload_hash;
 
   if (widget.value_label) {
     String value = state.has_current_temperature

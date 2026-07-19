@@ -2234,7 +2234,17 @@ void appendAdminScripts(String& html) {
     bindLive(switchStyleSelect, 'change', 'switchStyle', () => { updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(switchPopupModeSelect, 'change', 'switchPopupMode', () => { updateDraft(tab); scheduleAutoSave(tab); });
     bindLive(mediaSelect, 'change', 'mediaEntity', () => { maybeFillTitleFromMedia(tab); updateTilePreview(tab); updateMediaValuePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
-    bindLive(climateSelect, 'change', 'climateEntity', () => { maybeFillTitleFromEntity(tab, '_climate_entity'); updateTilePreview(tab); updateDraft(tab); scheduleAutoSave(tab); });
+    bindLive(climateSelect, 'change', 'climateEntity', () => {
+      if (climateSelect.value) {
+        climateSelect.dataset.configuredValue = climateSelect.value;
+      } else {
+        delete climateSelect.dataset.configuredValue;
+      }
+      maybeFillTitleFromEntity(tab, '_climate_entity');
+      updateTilePreview(tab);
+      updateDraft(tab);
+      scheduleAutoSave(tab);
+    });
     bindLive(climatePopupModeSelect, 'change', 'climatePopupMode', () => { updateDraft(tab); scheduleAutoSave(tab); });
     climateSlotSelects.forEach((select, index) => {
       bindLive(select, 'change', 'climateSlot' + index, () => {

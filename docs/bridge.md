@@ -93,7 +93,7 @@ For debugging with an MQTT client (topic layout, `{id}` = panel device id):
 | `<base>/cmnd/light` | Display → HA | Light control commands |
 | `<base>/cmnd/switch` | Display → HA | Switch control commands |
 | `<base>/cmnd/media` | Display → HA | Media player commands |
-| `<base>/cmnd/climate` | Display → HA | Climate target temperature and HVAC mode |
+| `<base>/cmnd/climate` | Display → HA | Climate temperature/range, humidity, mode, preset, fan, and swing controls |
 | `<base>/cmnd/scene` | Display → HA | Scene/script activation |
 
 Entity states are published under `<HA prefix>/<entity>/...` by the bridge itself —

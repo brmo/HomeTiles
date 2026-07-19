@@ -58,6 +58,19 @@ Looking for something specific? [Tile Types](tiles.md) ·
 [FAQ & Troubleshooting](faq.md) ·
 [GitHub](https://github.com/GalusPeres/HomeTiles)
 
+## New In v0.6.0
+
+Climate controls are now a first-class part of the dashboard. Climate tiles have
+a configurable mini-tile grid for current values, targets, humidity, and mode,
+while the on-device popup exposes the temperature, preset, fan, and swing controls
+that the selected Home Assistant entity actually supports.
+
+The web preview and device renderer share the same layout rules across the
+M5Stack Tab5, Waveshare 4B, and Waveshare 8-inch display. This release also
+improves network transport recovery and hardens the ESP-Hosted SDIO path.
+
+[Read the v0.6.0 release notes :octicons-arrow-right-24:](releases/v0.6.0.md)
+
 ## Supported Devices
 
 ![HomeTiles running on all three supported ESP32-P4 displays](images/hometiles-supported-devices.png){ width="100%" .ht-hero }

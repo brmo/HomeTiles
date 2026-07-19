@@ -595,6 +595,8 @@ static const LocaleProfile kLocaleDe = {
     "Klima-Entity",
     "Solltemperatur",
     "Soll-Luftfeuchtigkeit",
+    "Heiz-Sollwert",
+    "Kühl-Sollwert",
     {"Heizbetrieb", "Vorheizen", "Kühlbetrieb", "Entfeuchtung", "Lüfter",
      "Abtauen", "Leerlauf", "Aus", "Heizen", "Kühlen", "Heizen/Kühlen",
      "Auto", "Entfeuchten", "Lüfter", "Klima"},
@@ -604,7 +606,9 @@ static const LocaleProfile kLocaleDe = {
     {"Ohne", "Eco", "Abwesend", "Boost", "Komfort", "Zuhause", "Schlafen",
      "Aktivität", "Auto", "Niedrig", "Mittel", "Hoch", "An", "Aus",
      "Oben", "Mitte", "Fokus", "Verteilt", "Vertikal", "Horizontal",
-     "Beide", "Links", "Mitte", "Rechts", "Schwenken", "Breit"}};
+     "Beide", "Links", "Mitte", "Rechts", "Schwenken", "Breit"},
+    {"Automatisch", "Leer", "Leer / entfernen", "Leeres Feld",
+     "Inhalt des ausgewählten Feldes", "Waagerecht", "Senkrecht"}};
 
 static const LocaleProfile kLocaleEn = {
     "en",
@@ -622,6 +626,8 @@ static const LocaleProfile kLocaleEn = {
     "Climate Entity",
     "Target",
     "Target humidity",
+    "Heating target",
+    "Cooling target",
     {"Heating", "Preheating", "Cooling", "Drying", "Fan", "Defrosting",
      "Idle", "Off", "Heat", "Cool", "Heat/Cool", "Auto", "Dry",
      "Fan only", "Climate"},
@@ -631,7 +637,9 @@ static const LocaleProfile kLocaleEn = {
     {"None", "Eco", "Away", "Boost", "Comfort", "Home", "Sleep",
      "Activity", "Auto", "Low", "Medium", "High", "On", "Off",
      "Top", "Middle", "Focus", "Diffuse", "Vertical", "Horizontal",
-     "Both", "Left", "Center", "Right", "Swing", "Wide"}};
+     "Both", "Left", "Center", "Right", "Swing", "Wide"},
+    {"Automatic", "Empty", "Empty / remove", "Empty field",
+     "Selected field content", "Horizontal", "Vertical"}};
 
 struct LanguageEntry {
   const Strings* strings;
@@ -797,6 +805,22 @@ const char* climate_target_humidity_label(const char* language_code) {
   return locale(language_code).climate_target_humidity;
 }
 
+const char* climate_heating_target_label(const char* language_code) {
+  return locale(language_code).climate_heating_target;
+}
+
+const char* climate_cooling_target_label(const char* language_code) {
+  return locale(language_code).climate_cooling_target;
+}
+
+const char* climate_target_heat_label(const char* language_code) {
+  return locale(language_code).climate_states[8];
+}
+
+const char* climate_target_cool_label(const char* language_code) {
+  return locale(language_code).climate_states[9];
+}
+
 const char* climate_state_label(
     const char* language_code, const String& mode_value, const String& action_value) {
   String mode = mode_value;
@@ -858,6 +882,12 @@ String climate_option_label(
         toupper(static_cast<unsigned char>(key.charAt(0)))));
   }
   return key;
+}
+
+const char* climate_mini_label(
+    const char* language_code, uint8_t index) {
+  if (index >= 7) return "";
+  return locale(language_code).climate_mini_labels[index];
 }
 
 }  // namespace i18n

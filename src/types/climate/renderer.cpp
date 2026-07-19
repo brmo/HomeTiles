@@ -38,6 +38,31 @@ struct ClimateAdjustEventData {
   int8_t direction = 0;
 };
 
+constexpr uint32_t kMiniTargetRemoteBlockMs = 2200;
+constexpr uint32_t kMiniTargetDebounceMs = 220;
+
+enum class ClimateMiniTargetCommand : uint8_t {
+  NONE = 0,
+  TEMPERATURE,
+  RANGE,
+  HUMIDITY
+};
+
+struct ClimateMiniTargetContext {
+  GridType grid_type = GridType::TAB0;
+  uint8_t index = 0;
+  String entity_id;
+  ClimateMiniTargetCommand command = ClimateMiniTargetCommand::NONE;
+  float target_temperature = 20.0f;
+  float target_temp_low = 18.0f;
+  float target_temp_high = 24.0f;
+  float target_humidity = 50.0f;
+  uint32_t block_remote_until_ms = 0;
+  lv_timer_t* publish_timer = nullptr;
+};
+
+ClimateMiniTargetContext g_mini_target;
+
 bool slot_is_adjustable(ClimateTileSlotKind kind) {
   return kind == ClimateTileSlotKind::TARGET_TEMPERATURE ||
          kind == ClimateTileSlotKind::TARGET_TEMPERATURE_LOW ||
@@ -52,6 +77,107 @@ float clamp_value(float value, float minimum, float maximum) {
 float snap_value(float value, float step) {
   if (step <= 0.0f) return value;
   return roundf(value / step) * step;
+}
+
+bool mini_target_block_active(
+    const ClimateMiniTargetContext& context, uint32_t now) {
+  return static_cast<int32_t>(
+             context.block_remote_until_ms - now) > 0;
+}
+
+ClimateMiniTargetCommand mini_target_command_for(
+    ClimateTileSlotKind kind) {
+  switch (kind) {
+    case ClimateTileSlotKind::TARGET_TEMPERATURE:
+      return ClimateMiniTargetCommand::TEMPERATURE;
+    case ClimateTileSlotKind::TARGET_TEMPERATURE_LOW:
+    case ClimateTileSlotKind::TARGET_TEMPERATURE_HIGH:
+      return ClimateMiniTargetCommand::RANGE;
+    case ClimateTileSlotKind::TARGET_HUMIDITY:
+      return ClimateMiniTargetCommand::HUMIDITY;
+    default:
+      return ClimateMiniTargetCommand::NONE;
+  }
+}
+
+void publish_pending_mini_target() {
+  if (!g_mini_target.entity_id.length()) return;
+  switch (g_mini_target.command) {
+    case ClimateMiniTargetCommand::TEMPERATURE:
+      mqttPublishClimateTemperature(
+          g_mini_target.entity_id.c_str(),
+          g_mini_target.target_temperature);
+      break;
+    case ClimateMiniTargetCommand::RANGE:
+      mqttPublishClimateTemperature(
+          g_mini_target.entity_id.c_str(), 0.0f, true,
+          g_mini_target.target_temp_low,
+          g_mini_target.target_temp_high);
+      break;
+    case ClimateMiniTargetCommand::HUMIDITY:
+      mqttPublishClimateHumidity(
+          g_mini_target.entity_id.c_str(),
+          g_mini_target.target_humidity);
+      break;
+    default:
+      return;
+  }
+  g_mini_target.block_remote_until_ms =
+      millis() + kMiniTargetRemoteBlockMs;
+}
+
+void mini_target_publish_timer_cb(lv_timer_t* timer) {
+  if (g_mini_target.publish_timer != timer) return;
+  g_mini_target.publish_timer = nullptr;
+  publish_pending_mini_target();
+}
+
+void schedule_mini_target_publish(
+    GridType grid_type, uint8_t index, const String& entity_id,
+    ClimateTileSlotKind kind, const ClimateState& state) {
+  const ClimateMiniTargetCommand command =
+      mini_target_command_for(kind);
+  if (command == ClimateMiniTargetCommand::NONE ||
+      !entity_id.length()) {
+    return;
+  }
+
+  const bool same_target =
+      g_mini_target.command == command &&
+      g_mini_target.grid_type == grid_type &&
+      g_mini_target.index == index &&
+      g_mini_target.entity_id.equalsIgnoreCase(entity_id);
+  if (g_mini_target.publish_timer && !same_target) {
+    lv_timer_t* previous_timer = g_mini_target.publish_timer;
+    g_mini_target.publish_timer = nullptr;
+    lv_timer_delete(previous_timer);
+    publish_pending_mini_target();
+  }
+
+  g_mini_target.grid_type = grid_type;
+  g_mini_target.index = index;
+  g_mini_target.entity_id = entity_id;
+  g_mini_target.command = command;
+  g_mini_target.target_temperature = state.target_temperature;
+  g_mini_target.target_temp_low = state.target_temp_low;
+  g_mini_target.target_temp_high = state.target_temp_high;
+  g_mini_target.target_humidity = state.target_humidity;
+  g_mini_target.block_remote_until_ms =
+      millis() + kMiniTargetRemoteBlockMs;
+
+  if (g_mini_target.publish_timer) {
+    lv_timer_reset(g_mini_target.publish_timer);
+    return;
+  }
+  g_mini_target.publish_timer =
+      lv_timer_create(
+          mini_target_publish_timer_cb,
+          kMiniTargetDebounceMs, nullptr);
+  if (g_mini_target.publish_timer) {
+    lv_timer_set_repeat_count(g_mini_target.publish_timer, 1);
+  } else {
+    publish_pending_mini_target();
+  }
 }
 
 String climate_temperature_text(const ClimateState& state, float value) {
@@ -118,26 +244,27 @@ String climate_slot_caption(
     return i18n::climate_target_humidity_label(language);
   }
   if (kind == ClimateTileSlotKind::TARGET_TEMPERATURE_LOW) {
-    return i18n::climate_state_label(language, "", "heating");
+    return i18n::climate_target_heat_label(language);
   }
   if (kind == ClimateTileSlotKind::TARGET_TEMPERATURE_HIGH) {
-    return i18n::climate_state_label(language, "", "cooling");
+    return i18n::climate_target_cool_label(language);
   }
   if (kind == ClimateTileSlotKind::TARGET_TEMPERATURE) {
     String action = state.hvac_action;
     action.toLowerCase();
     if (action == "heating" || action == "preheating" ||
         action == "cooling") {
-      return i18n::climate_state_label(
-          language, state.hvac_mode, state.hvac_action);
+      return action == "cooling"
+                 ? i18n::climate_target_cool_label(language)
+                 : i18n::climate_target_heat_label(language);
     }
     String mode = state.hvac_mode;
     mode.toLowerCase();
     if (mode == "heat") {
-      return i18n::climate_state_label(language, "", "heating");
+      return i18n::climate_target_heat_label(language);
     }
     if (mode == "cool") {
-      return i18n::climate_state_label(language, "", "cooling");
+      return i18n::climate_target_cool_label(language);
     }
     if (mode.length()) {
       return i18n::climate_state_label(language, mode, "");
@@ -182,38 +309,57 @@ uint8_t build_automatic_slot_kinds(
   const uint8_t span_w = std::max<uint8_t>(1, tile.span_w);
   const uint8_t span_h = std::max<uint8_t>(1, tile.span_h);
 
-  if (span_w == 1 && span_h == 1) {
-    append(ClimateTileSlotKind::CURRENT_TEMPERATURE);
-    return count;
-  }
-
-  if (span_w >= 2 && span_h == 1) {
+  auto append_primary_target = [&]() {
     if (state.has_target_range) {
       append(ClimateTileSlotKind::TARGET_TEMPERATURE_LOW);
     } else if (state.has_target_temperature) {
       append(ClimateTileSlotKind::TARGET_TEMPERATURE);
     } else if (state.has_target_humidity) {
       append(ClimateTileSlotKind::TARGET_HUMIDITY);
-    } else {
+    } else if (!state.valid) {
+      // Keep the standard layout stable even before the first HA state has
+      // arrived. A valid state without any target capability deliberately
+      // leaves this slot empty.
+      append(ClimateTileSlotKind::TARGET_TEMPERATURE);
+    }
+  };
+
+  if (span_w == 1 && span_h == 1) {
+    if (!state.valid || state.has_current_temperature) {
       append(ClimateTileSlotKind::CURRENT_TEMPERATURE);
+    } else {
+      // A climate entity without a current-temperature sensor can still
+      // expose a real adjustable target.
+      append_primary_target();
     }
     return count;
   }
 
-  if (span_w == 1) {
-    append(ClimateTileSlotKind::CURRENT_TEMPERATURE);
-    if (state.has_target_range) {
-      append(ClimateTileSlotKind::TARGET_TEMPERATURE_LOW);
-    } else if (state.has_target_temperature) {
-      append(ClimateTileSlotKind::TARGET_TEMPERATURE);
+  if (span_w >= 2 && span_h == 1) {
+    if (!state.valid || state.has_current_temperature) {
+      append(ClimateTileSlotKind::CURRENT_TEMPERATURE);
     }
-    if (state.has_target_humidity) {
+    append_primary_target();
+    return count;
+  }
+
+  if (span_w == 1) {
+    if (!state.valid || state.has_current_temperature) {
+      append(ClimateTileSlotKind::CURRENT_TEMPERATURE);
+    }
+    append_primary_target();
+    if (span_h == 2) return count;
+    if (state.has_target_humidity &&
+        (state.has_target_range ||
+         state.has_target_temperature)) {
       append(ClimateTileSlotKind::TARGET_HUMIDITY);
     }
     return count;
   }
 
-  append(ClimateTileSlotKind::CURRENT_TEMPERATURE);
+  if (!state.valid || state.has_current_temperature) {
+    append(ClimateTileSlotKind::CURRENT_TEMPERATURE);
+  }
   if (state.has_current_humidity) {
     append(ClimateTileSlotKind::CURRENT_HUMIDITY);
   }
@@ -495,22 +641,28 @@ void layout_climate_slots(
     lv_obj_t* value = lv_obj_get_child(root, 1);
     lv_obj_t* plus = lv_obj_get_child(root, 2);
     lv_obj_t* caption = lv_obj_get_child(root, 3);
-    auto set_pressed_feedback = [compact_target](lv_obj_t* button) {
+    auto set_pressed_feedback = [
+        compact_target, horizontal_target,
+        vertical_target](lv_obj_t* button) {
       if (!button) return;
       lv_obj_set_style_bg_opa(
           button,
-          compact_target ? LV_OPA_TRANSP : LV_OPA_50,
+          (compact_target || horizontal_target ||
+           vertical_target)
+              ? LV_OPA_TRANSP
+              : LV_OPA_50,
           LV_PART_MAIN | LV_STATE_PRESSED);
     };
     auto layout_adjust_symbol = [
-        compact_target, vertical_target, root_w](
+        compact_target, horizontal_target,
+        vertical_target, root_w](
         lv_obj_t* button, bool left) {
       if (!button) return;
       lv_obj_t* label = lv_obj_get_child(button, 0);
       if (!label) return;
       lv_obj_set_style_text_font(
           label,
-          compact_target
+          (compact_target || horizontal_target)
               ? (root_w < 130 ? &ui_font_16 : &ui_font_20)
               : &ui_font_24,
           0);
@@ -519,12 +671,13 @@ void layout_climate_slots(
             label,
             left ? LV_ALIGN_LEFT_MID : LV_ALIGN_RIGHT_MID,
             left ? 8 : -8, 0);
-      } else if (vertical_target) {
-        const lv_coord_t inward =
-            std::max<lv_coord_t>(4, root_w / 12);
+      } else if (horizontal_target) {
         lv_obj_align(
-            label, LV_ALIGN_CENTER,
-            left ? inward : -inward, -4);
+            label,
+            left ? LV_ALIGN_LEFT_MID : LV_ALIGN_RIGHT_MID,
+            left ? 8 : -8, 0);
+      } else if (vertical_target) {
+        lv_obj_align(label, LV_ALIGN_CENTER, 0, -4);
       } else {
         lv_obj_center(label);
       }
@@ -559,9 +712,22 @@ void layout_climate_slots(
         lv_obj_align(value, LV_ALIGN_CENTER, 0, 0);
       }
     } else if (horizontal_target) {
-      const lv_coord_t caption_w = root_w / 2;
-      const lv_coord_t control_w = root_w - caption_w;
-      const lv_coord_t button_w = 40;
+      // A horizontal target spans two real mini-grid columns. Keep the
+      // internal caption/control split on those same tracks instead of a
+      // plain 50/50 split, otherwise both centers move by half a grid gap.
+      const lv_coord_t internal_gap =
+          std::min<lv_coord_t>(
+              climate_layout::kGap,
+              std::max<lv_coord_t>(0, root_w - 2));
+      const lv_coord_t caption_w =
+          std::max<lv_coord_t>(1, (root_w - internal_gap) / 2);
+      const lv_coord_t control_x = caption_w + internal_gap;
+      const lv_coord_t control_w =
+          std::max<lv_coord_t>(1, root_w - control_x);
+      const lv_coord_t minus_w = control_w / 2;
+      const lv_coord_t plus_w = control_w - minus_w;
+      const lv_coord_t value_w =
+          std::max<lv_coord_t>(1, control_w - 32);
       if (caption) {
         lv_obj_set_width(caption, caption_w);
         lv_obj_set_style_text_align(
@@ -569,23 +735,20 @@ void layout_climate_slots(
         lv_obj_align(caption, LV_ALIGN_LEFT_MID, 0, 0);
       }
       if (minus) {
-        lv_obj_set_size(minus, button_w, root_h);
+        lv_obj_set_size(minus, minus_w, root_h);
         lv_obj_align(
-            minus, LV_ALIGN_LEFT_MID, caption_w, 0);
+            minus, LV_ALIGN_LEFT_MID, control_x, 0);
       }
       if (plus) {
-        lv_obj_set_size(plus, button_w, root_h);
+        lv_obj_set_size(plus, plus_w, root_h);
         lv_obj_align(plus, LV_ALIGN_RIGHT_MID, 0, 0);
       }
       if (value) {
-        lv_obj_set_width(
-            value,
-            std::max<lv_coord_t>(
-                1, control_w - button_w * 2));
+        lv_obj_set_width(value, value_w);
         lv_obj_set_style_text_font(value, FONT_VALUE, 0);
         lv_obj_align(
             value, LV_ALIGN_LEFT_MID,
-            caption_w + button_w, 0);
+            control_x + (control_w - value_w) / 2, 0);
       }
     } else if (vertical_target) {
       const lv_coord_t button_h = 40;
@@ -701,7 +864,7 @@ ClimatePopupInit popup_init_for(const ClimateEventData* data) {
 }
 
 void climate_adjust_event_cb(lv_event_t* event) {
-  if (lv_event_get_code(event) != LV_EVENT_SHORT_CLICKED) return;
+  if (lv_event_get_code(event) != LV_EVENT_CLICKED) return;
   ClimateAdjustEventData* data =
       static_cast<ClimateAdjustEventData*>(
           lv_event_get_user_data(event));
@@ -739,8 +902,6 @@ void climate_adjust_event_cb(lv_event_t* event) {
                   direction * temperature_step,
               temperature_step),
           state.min_temp, state.max_temp);
-      mqttPublishClimateTemperature(
-          tile->sensor_entity.c_str(), state.target_temperature);
       break;
     case ClimateTileSlotKind::TARGET_TEMPERATURE_LOW:
       if (!state.has_target_range) return;
@@ -750,9 +911,6 @@ void climate_adjust_event_cb(lv_event_t* event) {
                   direction * temperature_step,
               temperature_step),
           state.min_temp, state.target_temp_high);
-      mqttPublishClimateTemperature(
-          tile->sensor_entity.c_str(), 0.0f, true,
-          state.target_temp_low, state.target_temp_high);
       break;
     case ClimateTileSlotKind::TARGET_TEMPERATURE_HIGH:
       if (!state.has_target_range) return;
@@ -762,22 +920,24 @@ void climate_adjust_event_cb(lv_event_t* event) {
                   direction * temperature_step,
               temperature_step),
           state.target_temp_low, state.max_temp);
-      mqttPublishClimateTemperature(
-          tile->sensor_entity.c_str(), 0.0f, true,
-          state.target_temp_low, state.target_temp_high);
       break;
     case ClimateTileSlotKind::TARGET_HUMIDITY:
       if (!state.has_target_humidity) return;
       state.target_humidity = clamp_value(
           roundf(state.target_humidity + direction),
           state.min_humidity, state.max_humidity);
-      mqttPublishClimateHumidity(
-          tile->sensor_entity.c_str(), state.target_humidity);
       break;
     default:
       return;
   }
 
+  // Match the popup controls: show every tap immediately, publish only the
+  // final value of a short burst, and invalidate the old MQTT payload hash so
+  // delayed states can be reconciled instead of restoring an older target.
+  widgets[data->index].last_payload_hash = 0;
+  schedule_mini_target_publish(
+      data->grid_type, data->index, tile->sensor_entity,
+      kind, state);
   refresh_climate_tile_content(
       data->grid_type, data->index, state);
   const ClimateEventData popup_data{data->grid_type, data->index};
@@ -834,7 +994,7 @@ lv_obj_t* create_climate_slot(
             grid_type, index, slot_index, direction};
     lv_obj_add_event_cb(
         button, climate_adjust_event_cb,
-        LV_EVENT_SHORT_CLICKED, data);
+        LV_EVENT_CLICKED, data);
     lv_obj_add_event_cb(
         button, climate_adjust_event_data_delete_cb,
         LV_EVENT_DELETE, data);
@@ -863,6 +1023,92 @@ lv_obj_t* create_climate_slot(
 }
 
 }  // namespace
+
+bool reconcile_climate_mini_target_state(
+    GridType grid_type, uint8_t index, ClimateState& state) {
+  if (g_mini_target.command == ClimateMiniTargetCommand::NONE ||
+      g_mini_target.grid_type != grid_type ||
+      g_mini_target.index != index) {
+    return false;
+  }
+  const Tile* tile =
+      tile_renderer_get_tile_config(grid_type, index);
+  if (!tile ||
+      !tile->sensor_entity.equalsIgnoreCase(
+          g_mini_target.entity_id)) {
+    g_mini_target.entity_id = "";
+    g_mini_target.command = ClimateMiniTargetCommand::NONE;
+    g_mini_target.block_remote_until_ms = 0;
+    return false;
+  }
+
+  bool confirmed = false;
+  switch (g_mini_target.command) {
+    case ClimateMiniTargetCommand::TEMPERATURE:
+      confirmed =
+          state.has_target_temperature &&
+          fabsf(
+              state.target_temperature -
+              g_mini_target.target_temperature) < 0.01f;
+      break;
+    case ClimateMiniTargetCommand::RANGE:
+      confirmed =
+          state.has_target_range &&
+          fabsf(
+              state.target_temp_low -
+              g_mini_target.target_temp_low) < 0.01f &&
+          fabsf(
+              state.target_temp_high -
+              g_mini_target.target_temp_high) < 0.01f;
+      break;
+    case ClimateMiniTargetCommand::HUMIDITY:
+      confirmed =
+          state.has_target_humidity &&
+          fabsf(
+              state.target_humidity -
+              g_mini_target.target_humidity) < 0.01f;
+      break;
+    default:
+      return false;
+  }
+
+  // A matching state after the debounced publish is the acknowledgement.
+  if (!g_mini_target.publish_timer && confirmed) {
+    g_mini_target.entity_id = "";
+    g_mini_target.command = ClimateMiniTargetCommand::NONE;
+    g_mini_target.block_remote_until_ms = 0;
+    return false;
+  }
+
+  const bool protect_local_value =
+      g_mini_target.publish_timer ||
+      mini_target_block_active(g_mini_target, millis());
+  if (!protect_local_value) {
+    g_mini_target.entity_id = "";
+    g_mini_target.command = ClimateMiniTargetCommand::NONE;
+    g_mini_target.block_remote_until_ms = 0;
+    return false;
+  }
+
+  switch (g_mini_target.command) {
+    case ClimateMiniTargetCommand::TEMPERATURE:
+      state.has_target_temperature = true;
+      state.target_temperature = g_mini_target.target_temperature;
+      break;
+    case ClimateMiniTargetCommand::RANGE:
+      state.has_target_range = true;
+      state.target_temp_low = g_mini_target.target_temp_low;
+      state.target_temp_high = g_mini_target.target_temp_high;
+      break;
+    case ClimateMiniTargetCommand::HUMIDITY:
+      state.has_target_humidity = true;
+      state.target_humidity = g_mini_target.target_humidity;
+      break;
+    default:
+      return false;
+  }
+  return true;
+}
 
 void refresh_climate_tile_content(
     GridType grid_type, uint8_t index,
@@ -899,23 +1145,11 @@ void refresh_climate_tile_content(
     return;
   }
 
+  // Slot geometry is also the empty/unavailable placeholder geometry. Falling
+  // back to the former single centered value here made an empty 2x1 tile look
+  // completely different on LVGL than in the Web UI.
   if (widget.value_label) {
-    if (!state.valid) {
-      lv_obj_clear_flag(widget.value_label, LV_OBJ_FLAG_HIDDEN);
-    } else {
-      lv_obj_add_flag(widget.value_label, LV_OBJ_FLAG_HIDDEN);
-    }
-  }
-  if (!state.valid && has_slot_layout) {
-    widget.active_slot_count = 0;
-    for (uint8_t i = 0;
-         i < ClimateTileWidgets::kMaxSlots; ++i) {
-      if (widget.slot_roots[i]) {
-        lv_obj_add_flag(
-            widget.slot_roots[i], LV_OBJ_FLAG_HIDDEN);
-      }
-    }
-    return;
+    lv_obj_add_flag(widget.value_label, LV_OBJ_FLAG_HIDDEN);
   }
 
   widget.active_slot_count = count;

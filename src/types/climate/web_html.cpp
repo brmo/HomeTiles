@@ -9,8 +9,7 @@ void append_climate_fields_html(String& html,
                                 const String& tab_id,
                                 const std::vector<String>& climate_options) {
   const auto& tr = i18n::strings(configManager.getConfig().language);
-  const bool german =
-      String(configManager.getConfig().language).startsWith("de");
+  const char* language = configManager.getConfig().language;
   html += "<div id=\"";
   html += tab_id;
   html += "_climate_fields\" class=\"type-fields\"><label>";
@@ -54,7 +53,8 @@ void append_climate_fields_html(String& html,
     html += "\" class=\"climate-mini-cell\" data-climate-cell=\"";
     html += String(cell);
     html += "\" aria-label=\"";
-    html += german ? "Leeres Feld" : "Empty field";
+    appendHtmlEscaped(
+        html, i18n::climate_mini_label(language, 3));
     html += "\"></button>";
   }
   for (uint8_t slot = 0; slot < CLIMATE_TILE_MAX_CONTENT_SLOTS; ++slot) {
@@ -79,42 +79,41 @@ void append_climate_fields_html(String& html,
     html += "\" class=\"climate-slot-storage\" tabindex=\"-1\" aria-hidden=\"true\">";
 
     auto append_option = [&](uint8_t value,
-                             const char* en,
-                             const char* de) {
+                             const String& label) {
       html += "<option value=\"";
       html += String(value);
       html += "\">";
-      html += german ? de : en;
+      appendHtmlEscaped(html, label);
       html += "</option>";
     };
     append_option(CLIMATE_TILE_CONTENT_AUTO,
-                  "Automatic", "Automatisch");
+                  i18n::climate_mini_label(language, 0));
     append_option(CLIMATE_TILE_CONTENT_EMPTY,
-                  "Empty", "Leer");
+                  i18n::climate_mini_label(language, 1));
     append_option(CLIMATE_TILE_CONTENT_CURRENT_TEMPERATURE,
-                  "Current temperature", "Aktuelle Temperatur");
+                  i18n::climate_value_label(language, 0));
     append_option(CLIMATE_TILE_CONTENT_CURRENT_HUMIDITY,
-                  "Current humidity", "Aktuelle Luftfeuchtigkeit");
+                  i18n::climate_value_label(language, 2));
     append_option(CLIMATE_TILE_CONTENT_TARGET_TEMPERATURE,
-                  "Target temperature", "Solltemperatur");
+                  i18n::climate_target_temperature_label(language));
     append_option(CLIMATE_TILE_CONTENT_TARGET_TEMPERATURE_LOW,
-                  "Heating target", "Heiz-Sollwert");
+                  i18n::climate_heating_target_label(language));
     append_option(CLIMATE_TILE_CONTENT_TARGET_TEMPERATURE_HIGH,
-                  "Cooling target", "K\u00FChl-Sollwert");
+                  i18n::climate_cooling_target_label(language));
     append_option(CLIMATE_TILE_CONTENT_TARGET_HUMIDITY,
-                  "Target humidity", "Soll-Luftfeuchtigkeit");
+                  i18n::climate_target_humidity_label(language));
     append_option(CLIMATE_TILE_CONTENT_HVAC_MODE,
-                  "Mode", "Modus");
+                  i18n::climate_control_label(language, 0));
     html += "</select><select id=\"";
     html += tab_id;
     html += "_climate_layout_";
     html += String(slot);
     html += "\" class=\"climate-layout-storage\" tabindex=\"-1\" aria-hidden=\"true\"><option value=\"0\">";
-    html += german ? "Automatisch" : "Automatic";
+    html += i18n::climate_mini_label(language, 0);
     html += "</option><option value=\"1\">";
-    html += german ? "Waagerecht" : "Horizontal";
+    html += i18n::climate_mini_label(language, 5);
     html += "</option><option value=\"2\">";
-    html += german ? "Senkrecht" : "Vertical";
+    html += i18n::climate_mini_label(language, 6);
     html += "</option></select>";
   }
   html += "</div></div></div><div id=\"";
@@ -122,37 +121,36 @@ void append_climate_fields_html(String& html,
   html += "_climate_selected_fields\" class=\"climate-selected-fields\"><label for=\"";
   html += tab_id;
   html += "_climate_selected_content\">";
-  html += german ? "Inhalt des ausgew\u00E4hlten Feldes" : "Selected field content";
+  html += i18n::climate_mini_label(language, 4);
   html += "</label><select id=\"";
   html += tab_id;
   html += "_climate_selected_content\">";
   auto append_selected_option = [&](uint8_t value,
-                                    const char* en,
-                                    const char* de) {
+                                    const String& label) {
     html += "<option value=\"";
     html += String(value);
     html += "\">";
-    html += german ? de : en;
+    appendHtmlEscaped(html, label);
     html += "</option>";
   };
   append_selected_option(CLIMATE_TILE_CONTENT_AUTO,
-                         "Automatic", "Automatisch");
+                         i18n::climate_mini_label(language, 0));
   append_selected_option(CLIMATE_TILE_CONTENT_EMPTY,
-                         "Empty / remove", "Leer / entfernen");
+                         i18n::climate_mini_label(language, 2));
   append_selected_option(CLIMATE_TILE_CONTENT_CURRENT_TEMPERATURE,
-                         "Current temperature", "Aktuelle Temperatur");
+                         i18n::climate_value_label(language, 0));
   append_selected_option(CLIMATE_TILE_CONTENT_CURRENT_HUMIDITY,
-                         "Current humidity", "Aktuelle Luftfeuchtigkeit");
+                         i18n::climate_value_label(language, 2));
   append_selected_option(CLIMATE_TILE_CONTENT_TARGET_TEMPERATURE,
-                         "Target temperature", "Solltemperatur");
+                         i18n::climate_target_temperature_label(language));
   append_selected_option(CLIMATE_TILE_CONTENT_TARGET_TEMPERATURE_LOW,
-                         "Heating target", "Heiz-Sollwert");
+                         i18n::climate_heating_target_label(language));
   append_selected_option(CLIMATE_TILE_CONTENT_TARGET_TEMPERATURE_HIGH,
-                         "Cooling target", "K\u00FChl-Sollwert");
+                         i18n::climate_cooling_target_label(language));
   append_selected_option(CLIMATE_TILE_CONTENT_TARGET_HUMIDITY,
-                         "Target humidity", "Soll-Luftfeuchtigkeit");
+                         i18n::climate_target_humidity_label(language));
   append_selected_option(CLIMATE_TILE_CONTENT_HVAC_MODE,
-                         "Mode", "Modus");
+                         i18n::climate_control_label(language, 0));
   html += "</select></div></div>";
   html += "</div>\n";
 }

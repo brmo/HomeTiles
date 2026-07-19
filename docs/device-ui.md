@@ -62,9 +62,15 @@ and a volume slider.
 ### Climate
 
 Climate tiles show the current room temperature and indicate whether the entity
-is actively heating, cooling, drying, or running its fan. Their popup provides
-a circular target-temperature control, plus/minus buttons, and the HVAC modes
-supported by the selected Home Assistant entity.
+is actively heating, cooling, drying, or running its fan. Their configurable
+mini-tiles can also place humidity, heating/cooling targets, target humidity,
+and HVAC mode directly on the dashboard.
+
+The popup provides a circular target-temperature control, plus/minus buttons,
+and only the controls supported by the selected Home Assistant entity. Depending
+on the device this includes low/high target ranges, target humidity, HVAC mode,
+presets, fan mode, vertical swing, and horizontal swing. Long option lists are
+touch-scrollable.
 
 ## Settings
 
