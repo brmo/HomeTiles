@@ -502,7 +502,8 @@ void layout_climate_slots(
           compact_target ? LV_OPA_TRANSP : LV_OPA_50,
           LV_PART_MAIN | LV_STATE_PRESSED);
     };
-    auto layout_adjust_symbol = [compact_target, root_w](
+    auto layout_adjust_symbol = [
+        compact_target, vertical_target, root_w](
         lv_obj_t* button, bool left) {
       if (!button) return;
       lv_obj_t* label = lv_obj_get_child(button, 0);
@@ -518,6 +519,12 @@ void layout_climate_slots(
             label,
             left ? LV_ALIGN_LEFT_MID : LV_ALIGN_RIGHT_MID,
             left ? 8 : -8, 0);
+      } else if (vertical_target) {
+        const lv_coord_t inward =
+            std::max<lv_coord_t>(4, root_w / 12);
+        lv_obj_align(
+            label, LV_ALIGN_CENTER,
+            left ? inward : -inward, -4);
       } else {
         lv_obj_center(label);
       }
@@ -543,41 +550,42 @@ void layout_climate_slots(
             value, std::max<lv_coord_t>(1, root_w - 32));
         lv_obj_set_style_text_font(
             value,
-            root_w < 130 ? &ui_font_20 : &ui_font_24,
+            root_w < 110
+                ? &ui_font_20
+                : (root_w < 130
+                       ? &ui_font_24
+                       : FONT_VALUE),
             0);
         lv_obj_align(value, LV_ALIGN_CENTER, 0, 0);
       }
     } else if (horizontal_target) {
-      const lv_coord_t side_padding = 8;
-      const lv_coord_t caption_w = 96;
+      const lv_coord_t caption_w = root_w / 2;
+      const lv_coord_t control_w = root_w - caption_w;
       const lv_coord_t button_w = 40;
       if (caption) {
         lv_obj_set_width(caption, caption_w);
         lv_obj_set_style_text_align(
-            caption, LV_TEXT_ALIGN_LEFT, 0);
-        lv_obj_align(
-            caption, LV_ALIGN_LEFT_MID, side_padding, 0);
+            caption, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_align(caption, LV_ALIGN_LEFT_MID, 0, 0);
       }
       if (minus) {
         lv_obj_set_size(minus, button_w, root_h);
         lv_obj_align(
-            minus, LV_ALIGN_LEFT_MID,
-            side_padding + caption_w, 0);
+            minus, LV_ALIGN_LEFT_MID, caption_w, 0);
       }
       if (plus) {
         lv_obj_set_size(plus, button_w, root_h);
-        lv_obj_align(
-            plus, LV_ALIGN_RIGHT_MID, -side_padding, 0);
+        lv_obj_align(plus, LV_ALIGN_RIGHT_MID, 0, 0);
       }
       if (value) {
         lv_obj_set_width(
             value,
-            root_w - side_padding * 2 -
-                caption_w - button_w * 2);
+            std::max<lv_coord_t>(
+                1, control_w - button_w * 2));
         lv_obj_set_style_text_font(value, FONT_VALUE, 0);
         lv_obj_align(
             value, LV_ALIGN_LEFT_MID,
-            side_padding + caption_w + button_w, 0);
+            caption_w + button_w, 0);
       }
     } else if (vertical_target) {
       const lv_coord_t button_h = 40;
@@ -594,12 +602,12 @@ void layout_climate_slots(
       }
       if (minus) {
         lv_obj_set_size(minus, root_w / 2, button_h);
-        lv_obj_align(minus, LV_ALIGN_BOTTOM_LEFT, 0, -2);
+        lv_obj_align(minus, LV_ALIGN_BOTTOM_LEFT, 0, -8);
       }
       if (plus) {
         lv_obj_set_size(
             plus, root_w - root_w / 2, button_h);
-        lv_obj_align(plus, LV_ALIGN_BOTTOM_RIGHT, 0, -2);
+        lv_obj_align(plus, LV_ALIGN_BOTTOM_RIGHT, 0, -8);
       }
     } else if (large_target) {
       const lv_coord_t button_w = 54;

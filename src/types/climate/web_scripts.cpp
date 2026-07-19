@@ -1818,7 +1818,7 @@ void append_climate_scripts(String& html) {
     if (!text.startsWith('{')) {
       const numeric = Number(text.replace(',', '.'));
       if (Number.isFinite(numeric)) {
-        out.current = formatLocalizedNumber(numeric, 1, true);
+        out.current = formatLocalizedNumber(numeric, 1, false);
       }
       return out;
     }
@@ -1829,7 +1829,7 @@ void append_climate_scripts(String& html) {
         ? obj.attributes : obj;
       const current = attrs.current_temperature;
       if (current !== undefined && current !== null && Number.isFinite(Number(current))) {
-        out.current = formatLocalizedNumber(Number(current), 1, true);
+        out.current = formatLocalizedNumber(Number(current), 1, false);
       }
       const currentHumidity = attrs.current_humidity;
       if (currentHumidity !== undefined && currentHumidity !== null &&
@@ -1840,7 +1840,7 @@ void append_climate_scripts(String& html) {
       const target = attrs.temperature;
       if (target !== undefined && target !== null &&
           Number.isFinite(Number(target))) {
-        out.target = formatLocalizedNumber(Number(target), 1, true);
+        out.target = formatLocalizedNumber(Number(target), 1, false);
       }
       const targetHumidity = attrs.humidity;
       if (targetHumidity !== undefined && targetHumidity !== null &&
@@ -1851,12 +1851,12 @@ void append_climate_scripts(String& html) {
       const targetLow = attrs.target_temp_low;
       if (targetLow !== undefined && targetLow !== null &&
           Number.isFinite(Number(targetLow))) {
-        out.targetLow = formatLocalizedNumber(Number(targetLow), 1, true);
+        out.targetLow = formatLocalizedNumber(Number(targetLow), 1, false);
       }
       const targetHigh = attrs.target_temp_high;
       if (targetHigh !== undefined && targetHigh !== null &&
           Number.isFinite(Number(targetHigh))) {
-        out.targetHigh = formatLocalizedNumber(Number(targetHigh), 1, true);
+        out.targetHigh = formatLocalizedNumber(Number(targetHigh), 1, false);
       }
       out.unit = attrs.temperature_unit || attrs.unit_of_measurement || '\u00B0C';
       out.mode = String(obj.hvac_mode || obj.state || attrs.hvac_mode || '').toLowerCase();

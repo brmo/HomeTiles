@@ -135,12 +135,12 @@ void append_climate_styles(String& html) {
     }
     .tile.climate .climate-slot-control-horizontal {
       grid-template-columns:
-        var(--climate-control-caption-w, 48px)
+        50%
         var(--climate-control-button-w, 20px)
         minmax(0, 1fr)
         var(--climate-control-button-w, 20px);
       grid-template-rows:1fr;
-      padding:0 var(--climate-control-side-pad, 4px);
+      padding:0;
     }
     .tile.climate .climate-slot-control-horizontal small {
       grid-column:1;
@@ -186,39 +186,41 @@ void append_climate_styles(String& html) {
     .tile.climate .climate-slot-control-compact .climate-minus {
       left:0;
       justify-content:flex-start;
-      padding-left:12%;
+      padding-left:var(--climate-control-side-pad, 4px);
     }
     .tile.climate .climate-slot-control-compact .climate-plus {
       right:0;
       justify-content:flex-end;
-      padding-right:12%;
+      padding-right:var(--climate-control-side-pad, 4px);
     }
     .tile.climate .climate-slot-control-vertical {
       width:100%;
-      grid-template-columns:1fr 1fr;
+      grid-template-columns:repeat(6, minmax(0, 1fr));
       grid-template-rows:repeat(3, minmax(0, 1fr));
       padding:
         var(--climate-control-v-pad-top, 4px) 0
         var(--climate-control-v-pad-bottom, 1px);
     }
     .tile.climate .climate-slot-control-vertical small {
-      grid-column:1 / span 2;
+      grid-column:1 / span 6;
       grid-row:1;
       align-self:center;
     }
     .tile.climate .climate-slot-control-vertical strong {
-      grid-column:1 / span 2;
+      grid-column:1 / span 6;
       grid-row:2;
       align-self:center;
       font-size:var(--fs28, 14px);
     }
     .tile.climate .climate-slot-control-vertical .climate-minus {
-      grid-column:1;
+      grid-column:2 / span 2;
       grid-row:3;
+      transform:translateY(-2px);
     }
     .tile.climate .climate-slot-control-vertical .climate-plus {
-      grid-column:2;
+      grid-column:4 / span 2;
       grid-row:3;
+      transform:translateY(-2px);
     }
     .tile.climate .climate-slot-control-large {
       grid-template-columns:1fr 1fr;
