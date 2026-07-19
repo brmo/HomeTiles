@@ -360,7 +360,8 @@ void append_climate_scripts(String& html) {
     ghost.style.border = '0';
     ghost.style.pointerEvents = 'none';
     const clone = item.cloneNode(true);
-    clone.classList.remove('active', 'dragging');
+    clone.classList.remove(
+      'active', 'dragging', 'climate-mini-hover');
     clone.querySelectorAll('.tile-resize-handle')
       .forEach(handle => handle.remove());
     clone.style.position = 'absolute';
@@ -552,10 +553,12 @@ void append_climate_scripts(String& html) {
       const preview = previewTarget(event);
       const editorItem =
         event.target?.closest?.('.climate-mini-tile') || null;
+      const editorCell =
+        event.target?.closest?.('.climate-mini-cell') || null;
       const tile =
         event.target?.closest?.('.tile.climate') || null;
       const overMini =
-        !!preview || !!editorItem ||
+        !!preview || !!editorItem || !!editorCell ||
         !!event.target?.closest?.('.tile-resize-handle');
       const parent =
         tile?.classList.contains(
@@ -608,6 +611,11 @@ void append_climate_scripts(String& html) {
       tab + '_climate_editor_shell');
     const stash = document.getElementById(
       tab + '_climate_editor_stash');
+    const mountedTile = shell?.parentElement?.matches(
+      '.tile.climate') ? shell.parentElement : null;
+    if (mountedTile) {
+      mountedTile.draggable = true;
+    }
     if (shell && stash && shell.parentElement !== stash) {
       stash.appendChild(shell);
     }
@@ -866,7 +874,16 @@ void append_climate_scripts(String& html) {
     item?.classList.toggle(
       'climate-mini-control-item',
       info.adjustable && expanded);
-    if (info.adjustable && expanded) {
+    if (info.adjustable && !expanded) {
+      preview.innerHTML =
+        '<div class="climate-slot climate-slot-control ' +
+        'climate-slot-control-compact">' +
+        '<span class="climate-minus" aria-hidden="true">-</span>' +
+        '<strong>' + info.value + '</strong>' +
+        '<span class="climate-plus" aria-hidden="true">+</span></div>';
+      return;
+    }
+    if (info.adjustable) {
       const orientation =
         geometry.spanW > 1 && geometry.spanH === 1
           ? 'climate-slot-control-horizontal'
@@ -926,6 +943,9 @@ void append_climate_scripts(String& html) {
     outerTile?.classList.toggle(
       'climate-mini-selection-active',
       hasSelection);
+    if (outerTile) {
+      outerTile.draggable = !hasSelection;
+    }
     const editor = document.getElementById(
       tab + '_climate_selected_content');
     if (editor) {
@@ -1018,7 +1038,10 @@ void append_climate_scripts(String& html) {
     const setOuterTileDragEnabled = enabled => {
       const outerTile = grid.closest('.tile.climate');
       if (!outerTile) return;
-      outerTile.draggable = !!enabled;
+      outerTile.draggable =
+        !!enabled &&
+        !outerTile.classList.contains(
+          'climate-mini-selection-active');
     };
     const releaseOuterTileDrag = () => {
       if (!climateGridDragState) {
@@ -1165,24 +1188,12 @@ void append_climate_scripts(String& html) {
         ?.classList.add('dragging');
     };
 
-    grid.addEventListener('dragenter', event => {
-      if (!climateGridDragState ||
-          climateGridDragState.tab !== tab) return;
-      event.preventDefault();
-      event.stopPropagation();
-    });
-
-    grid.addEventListener('dragover', event => {
-      const state = climateGridDragState;
+    const updateMiniDragPreview = (
+        state, clientX, clientY) => {
       if (!state || state.tab !== tab) return;
-      event.preventDefault();
-      event.stopPropagation();
-      if (event.dataTransfer) {
-        event.dataTransfer.dropEffect = 'move';
-      }
       const raw = getGridElementCellFromPointer(
         grid, state.columns, state.rows,
-        event.clientX, event.clientY);
+        clientX, clientY);
       if (!raw) return;
       const targetCol = Math.max(
         0, Math.min(
@@ -1209,6 +1220,25 @@ void append_climate_scripts(String& html) {
       applyClimateGridLayouts(
         tab, preview.layouts,
         state.activeIndices, state.baseLayouts);
+    };
+
+    grid.addEventListener('dragenter', event => {
+      if (!climateGridDragState ||
+          climateGridDragState.tab !== tab) return;
+      event.preventDefault();
+      event.stopPropagation();
+    });
+
+    grid.addEventListener('dragover', event => {
+      const state = climateGridDragState;
+      if (!state || state.tab !== tab) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = 'move';
+      }
+      updateMiniDragPreview(
+        state, event.clientX, event.clientY);
     });
 
     grid.addEventListener('drop', event => {
@@ -1224,127 +1254,211 @@ void append_climate_scripts(String& html) {
       notifyClimateGridChanged(tab);
     });
 
+    let pointerMiniDrag = null;
+    let suppressMiniClickUntil = 0;
+
+    const positionPointerDragGhost = (
+        pending, clientX, clientY) => {
+      if (!climateGridDragPreview || !pending) return;
+      climateGridDragPreview.style.left =
+        (clientX - pending.offsetX) + 'px';
+      climateGridDragPreview.style.top =
+        (clientY - pending.offsetY) + 'px';
+    };
+
+    const beginPointerMiniDrag = pending => {
+      if (!pending) return false;
+      const { item, index } = pending;
+      selectClimateEditorItem(tab, index);
+      delete climatePendingEmptyByTab[tab];
+      materializeClimateAutomaticItems(tab);
+      const spanW = document.getElementById(
+        tab + '_tile_span_w')?.value || 1;
+      const spanH = document.getElementById(
+        tab + '_tile_span_h')?.value || 1;
+      const { columns, rows } =
+        climateGridDimensions(spanW, spanH);
+      const capacity = climateSlotCapacity(spanW, spanH);
+      const activeIndices =
+        climateActiveGridIndices(tab, capacity);
+      const baseLayouts =
+        climateGridLayouts(tab, columns, rows);
+      const origin = cloneLayout(baseLayouts[index]);
+      if (!origin || !activeIndices.has(index)) {
+        return false;
+      }
+      const metrics = getGridElementMetrics(
+        grid, columns, rows);
+      const itemRect = item.getBoundingClientRect();
+      const stepX = metrics
+        ? metrics.cellW + metrics.gapX : itemRect.width;
+      const stepY = metrics
+        ? metrics.cellH + metrics.gapY : itemRect.height;
+      const localX = Math.max(
+        0, pending.startX - itemRect.left);
+      const localY = Math.max(
+        0, pending.startY - itemRect.top);
+      const anchorCol = Math.max(
+        0, Math.min(
+          origin.span_w - 1,
+          Math.floor(localX / Math.max(1, stepX))));
+      const anchorRow = Math.max(
+        0, Math.min(
+          origin.span_h - 1,
+          Math.floor(localY / Math.max(1, stepY))));
+      climateGridDragState = {
+        tab,
+        index,
+        columns,
+        rows,
+        activeIndices,
+        baseLayouts,
+        origin,
+        anchorCol,
+        anchorRow,
+        preview: null,
+        previewKey: '',
+        committed: false
+      };
+      pending.started = true;
+      pending.offsetX = Math.max(
+        0, Math.min(
+          itemRect.width,
+          pending.startX - itemRect.left));
+      pending.offsetY = Math.max(
+        0, Math.min(
+          itemRect.height,
+          pending.startY - itemRect.top));
+      item.classList.remove('climate-mini-hover');
+      climateGridDragPreview =
+        createClimateMiniDragGhost(item, itemRect);
+      climateGridDragPreview.style.position = 'fixed';
+      climateGridDragPreview.style.zIndex = '99999';
+      climateGridDragPreview.style.opacity = '.92';
+      item.classList.add('dragging');
+      document.body.classList.add(
+        'climate-mini-pointer-dragging');
+      showDropPlaceholder(
+        climateGridDragState,
+        origin.col, origin.row, true);
+      return true;
+    };
+
+    const finishPointerMiniDrag = (
+        event, cancelled = false) => {
+      const pending = pointerMiniDrag;
+      if (!pending ||
+          event.pointerId !== pending.pointerId) {
+        return;
+      }
+      pointerMiniDrag = null;
+      try {
+        pending.item.releasePointerCapture?.(
+          pending.pointerId);
+      } catch (_) {}
+      if (!pending.started) {
+        setOuterTileDragEnabled(true);
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      suppressMiniClickUntil = performance.now() + 350;
+      const state = climateGridDragState;
+      const committedLayouts =
+        !cancelled && state?.preview?.layouts
+          ? state.preview.layouts
+          : null;
+      clearDropPlaceholder();
+      if (state && !committedLayouts) {
+        restoreDragLayouts(state);
+      }
+      clearDragClasses(state);
+      climateGridDragState = null;
+      climateGridDragPreview?.remove();
+      climateGridDragPreview = null;
+      document.body.classList.remove(
+        'climate-mini-pointer-dragging');
+      setOuterTileDragEnabled(true);
+      if (committedLayouts) {
+        storeClimateGridLayouts(tab, committedLayouts);
+        syncClimateSlotFields(tab);
+        notifyClimateGridChanged(tab);
+      }
+    };
+
+    window.addEventListener('pointermove', event => {
+      const pending = pointerMiniDrag;
+      if (!pending ||
+          event.pointerId !== pending.pointerId) {
+        return;
+      }
+      if (!pending.started) {
+        const distance = Math.hypot(
+          event.clientX - pending.startX,
+          event.clientY - pending.startY);
+        if (distance < 5) return;
+        if (!beginPointerMiniDrag(pending)) {
+          pointerMiniDrag = null;
+          setOuterTileDragEnabled(true);
+          return;
+        }
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      positionPointerDragGhost(
+        pending, event.clientX, event.clientY);
+      updateMiniDragPreview(
+        climateGridDragState,
+        event.clientX, event.clientY);
+    }, true);
+    window.addEventListener(
+      'pointerup',
+      event => finishPointerMiniDrag(event, false),
+      true);
+    window.addEventListener(
+      'pointercancel',
+      event => finishPointerMiniDrag(event, true),
+      true);
+
     for (let index = 0; index < 6; ++index) {
       const item = document.getElementById(
         tab + '_climate_slot_row_' + index);
       if (!item) continue;
 
-      item.draggable = true;
+      item.draggable = false;
       item.addEventListener('pointerdown', event => {
         if (event.target.closest('[data-climate-resize]')) {
           return;
         }
+        if (event.pointerType === 'mouse' &&
+            event.button !== 0) {
+          return;
+        }
+        if (pointerMiniDrag) return;
         event.stopPropagation();
-        selectClimateEditorItem(tab, index);
-        delete climatePendingEmptyByTab[tab];
+        setOuterTileDragEnabled(false);
+        pointerMiniDrag = {
+          pointerId: event.pointerId,
+          item,
+          index,
+          startX: event.clientX,
+          startY: event.clientY,
+          offsetX: 0,
+          offsetY: 0,
+          started: false
+        };
+        try {
+          item.setPointerCapture?.(event.pointerId);
+        } catch (_) {}
       });
       item.addEventListener('click', event => {
         event.stopPropagation();
-        selectClimateEditorItem(tab, index);
-        delete climatePendingEmptyByTab[tab];
-      });
-
-      item.addEventListener('dragstart', event => {
-        if (event.target.closest('[data-climate-resize]')) {
+        if (performance.now() < suppressMiniClickUntil) {
           event.preventDefault();
           return;
         }
-        event.stopPropagation();
-        setOuterTileDragEnabled(false);
         selectClimateEditorItem(tab, index);
         delete climatePendingEmptyByTab[tab];
-        materializeClimateAutomaticItems(tab);
-        const spanW = document.getElementById(
-          tab + '_tile_span_w')?.value || 1;
-        const spanH = document.getElementById(
-          tab + '_tile_span_h')?.value || 1;
-        const { columns, rows } =
-          climateGridDimensions(spanW, spanH);
-        const capacity = climateSlotCapacity(spanW, spanH);
-        const activeIndices =
-          climateActiveGridIndices(tab, capacity);
-        const baseLayouts =
-          climateGridLayouts(tab, columns, rows);
-        const origin = cloneLayout(baseLayouts[index]);
-        if (!origin || !activeIndices.has(index)) {
-          event.preventDefault();
-          return;
-        }
-        const metrics = getGridElementMetrics(
-          grid, columns, rows);
-        const itemRect = item.getBoundingClientRect();
-        const stepX = metrics
-          ? metrics.cellW + metrics.gapX : itemRect.width;
-        const stepY = metrics
-          ? metrics.cellH + metrics.gapY : itemRect.height;
-        const localX = Math.max(
-          0, event.clientX - itemRect.left);
-        const localY = Math.max(
-          0, event.clientY - itemRect.top);
-        const anchorCol = Math.max(
-          0, Math.min(
-            origin.span_w - 1,
-            Math.floor(localX / Math.max(1, stepX))));
-        const anchorRow = Math.max(
-          0, Math.min(
-            origin.span_h - 1,
-            Math.floor(localY / Math.max(1, stepY))));
-        climateGridDragState = {
-          tab,
-          index,
-          columns,
-          rows,
-          activeIndices,
-          baseLayouts,
-          origin,
-          anchorCol,
-          anchorRow,
-          preview: null,
-          previewKey: '',
-          committed: false
-        };
-        if (event.dataTransfer) {
-          event.dataTransfer.effectAllowed = 'move';
-          event.dataTransfer.setData(
-            'text/plain',
-            'climate:' + tab + ':' + index);
-          const rect = item.getBoundingClientRect();
-          climateGridDragPreview =
-            createClimateMiniDragGhost(item, rect);
-          event.dataTransfer.setDragImage(
-            climateGridDragPreview,
-            Math.max(
-              0, Math.min(
-                rect.width,
-                event.clientX - rect.left)),
-            Math.max(
-              0, Math.min(
-                rect.height,
-                event.clientY - rect.top)));
-        }
-        showDropPlaceholder(
-          climateGridDragState, origin.col, origin.row, true);
-        item.classList.add('dragging');
-      });
-
-      item.addEventListener('dragend', event => {
-        event.stopPropagation();
-        clearDropPlaceholder();
-        const state = climateGridDragState;
-        if (!state ||
-            state.tab !== tab ||
-            state.index !== index) {
-          climateGridDragPreview?.remove();
-          climateGridDragPreview = null;
-          setOuterTileDragEnabled(true);
-          return;
-        }
-        if (!state.committed) restoreDragLayouts(state);
-        clearDragClasses(state);
-        climateGridDragState = null;
-        climateGridDragPreview?.remove();
-        climateGridDragPreview = null;
-        setOuterTileDragEnabled(true);
       });
 
       item.querySelectorAll('[data-climate-resize]')
@@ -2099,11 +2213,19 @@ void append_climate_scripts(String& html) {
           slot.spanW +
           ';grid-row:' + row + ' / span ' +
           slot.spanH;
-        if (!slot.adjustable || compact) {
+        if (compact) {
+          return '<div class="climate-slot climate-slot-control ' +
+            'climate-slot-control-compact" ' +
+            'data-climate-preview-item="' +
+            slot.itemIndex + '" style="' + gridStyle + '">' +
+            '<span class="climate-minus" aria-hidden="true">-</span>' +
+            '<strong>' + slot.value + '</strong>' +
+            '<span class="climate-plus" aria-hidden="true">+</span></div>';
+        }
+        if (!slot.adjustable) {
           return '<div class="climate-slot climate-slot-value' +
             (slot.kind === CLIMATE_TILE_CONTENT.HVAC_MODE
               ? ' climate-slot-mode' : '') +
-            (compact ? ' climate-slot-target-compact' : '') +
             '" data-climate-preview-item="' +
             slot.itemIndex + '" style="' +
             gridStyle + '"><strong>' + slot.value + '</strong></div>';

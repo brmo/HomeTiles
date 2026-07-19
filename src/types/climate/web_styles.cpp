@@ -155,6 +155,44 @@ void append_climate_styles(String& html) {
     .tile.climate .climate-slot-control-horizontal .climate-plus {
       grid-column:4;
     }
+    .tile.climate .climate-slot-control-compact {
+      position:relative;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:0;
+    }
+    .tile.climate .climate-slot-control-compact strong {
+      position:relative;
+      z-index:2;
+      width:100%;
+      font-size:var(--fs28, 14px);
+      pointer-events:none;
+    }
+    .tile.climate .climate-slot-control-compact .climate-minus,
+    .tile.climate .climate-slot-control-compact .climate-plus {
+      position:absolute;
+      z-index:1;
+      top:0;
+      bottom:0;
+      width:50%;
+      box-sizing:border-box;
+      display:flex;
+      align-items:center;
+      color:#fff;
+      font-size:var(--fs24, 12px);
+      pointer-events:none;
+    }
+    .tile.climate .climate-slot-control-compact .climate-minus {
+      left:0;
+      justify-content:flex-start;
+      padding-left:12%;
+    }
+    .tile.climate .climate-slot-control-compact .climate-plus {
+      right:0;
+      justify-content:flex-end;
+      padding-right:12%;
+    }
     .tile.climate .climate-slot-control-vertical {
       width:100%;
       grid-template-columns:1fr 1fr;
@@ -280,7 +318,14 @@ void append_climate_styles(String& html) {
       color:#fff;
       cursor:grab;
       user-select:none;
-      touch-action:auto;
+      touch-action:none;
+      pointer-events:auto;
+      -webkit-user-drag:none;
+    }
+    body.climate-mini-pointer-dragging,
+    body.climate-mini-pointer-dragging * {
+      cursor:grabbing !important;
+      user-select:none !important;
     }
     .climate-mini-tile::after {
       content:"";
@@ -307,6 +352,10 @@ void append_climate_styles(String& html) {
     .climate-mini-tile.dragging {
       opacity:.02;
       box-shadow:none;
+    }
+    .climate-mini-tile.dragging::after {
+      border-color:transparent !important;
+      box-shadow:none !important;
     }
     /* Gestricheltes Drop-Ziel analog .tile-drop-placeholder des grossen
        Grids, nur in Mini-Masstab. Wird per JS im Grid positioniert. */
@@ -377,17 +426,21 @@ void append_climate_styles(String& html) {
       border:2px solid #26a69a;
       box-shadow:0 0 0 2px rgba(38,166,154,.42) inset;
     }
-    .climate-mini-tile.active.climate-mini-hover::after {
-      border-style:dashed;
-      box-shadow:
-        0 0 0 2px rgba(38,166,154,.48) inset,
-        0 0 8px rgba(38,166,154,.28);
+    .tile.climate.climate-mini-selection-active.active,
+    .tile.climate.climate-mini-selection-active[data-selected="1"] {
+      border:3px solid transparent;
+      box-shadow:none;
     }
     .tile.climate.climate-mini-selection-active.climate-parent-hover {
       border:3px dashed rgba(38,166,154,.78);
       box-shadow:
         0 0 0 2px rgba(38,166,154,.18) inset,
         0 0 10px rgba(38,166,154,.32);
+    }
+    .tile.climate.climate-mini-selection-active >
+      .tile-resize-handle {
+      opacity:0 !important;
+      pointer-events:none !important;
     }
     .climate-mini-tile > .tile-resize-handle {
       z-index:5;

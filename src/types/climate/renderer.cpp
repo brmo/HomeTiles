@@ -466,6 +466,9 @@ void layout_climate_slots(
     const bool large_target =
         adjustable && geometry.span_w > 1 &&
         geometry.span_h > 1;
+    const bool compact_target =
+        adjustable && geometry.span_w == 1 &&
+        geometry.span_h == 1;
 
     const lv_coord_t root_x =
         track_start(
@@ -492,8 +495,59 @@ void layout_climate_slots(
     lv_obj_t* value = lv_obj_get_child(root, 1);
     lv_obj_t* plus = lv_obj_get_child(root, 2);
     lv_obj_t* caption = lv_obj_get_child(root, 3);
+    auto set_pressed_feedback = [compact_target](lv_obj_t* button) {
+      if (!button) return;
+      lv_obj_set_style_bg_opa(
+          button,
+          compact_target ? LV_OPA_TRANSP : LV_OPA_50,
+          LV_PART_MAIN | LV_STATE_PRESSED);
+    };
+    auto layout_adjust_symbol = [compact_target, root_w](
+        lv_obj_t* button, bool left) {
+      if (!button) return;
+      lv_obj_t* label = lv_obj_get_child(button, 0);
+      if (!label) return;
+      lv_obj_set_style_text_font(
+          label,
+          compact_target
+              ? (root_w < 130 ? &ui_font_16 : &ui_font_20)
+              : &ui_font_24,
+          0);
+      if (compact_target) {
+        lv_obj_align(
+            label,
+            left ? LV_ALIGN_LEFT_MID : LV_ALIGN_RIGHT_MID,
+            left ? 8 : -8, 0);
+      } else {
+        lv_obj_center(label);
+      }
+    };
+    set_pressed_feedback(minus);
+    set_pressed_feedback(plus);
 
-    if (horizontal_target) {
+    if (compact_target) {
+      if (caption) {
+        lv_obj_add_flag(caption, LV_OBJ_FLAG_HIDDEN);
+      }
+      if (minus) {
+        lv_obj_set_size(minus, root_w / 2, root_h);
+        lv_obj_align(minus, LV_ALIGN_LEFT_MID, 0, 0);
+      }
+      if (plus) {
+        lv_obj_set_size(
+            plus, root_w - root_w / 2, root_h);
+        lv_obj_align(plus, LV_ALIGN_RIGHT_MID, 0, 0);
+      }
+      if (value) {
+        lv_obj_set_width(
+            value, std::max<lv_coord_t>(1, root_w - 32));
+        lv_obj_set_style_text_font(
+            value,
+            root_w < 130 ? &ui_font_20 : &ui_font_24,
+            0);
+        lv_obj_align(value, LV_ALIGN_CENTER, 0, 0);
+      }
+    } else if (horizontal_target) {
       const lv_coord_t side_padding = 8;
       const lv_coord_t caption_w = 96;
       const lv_coord_t button_w = 40;
@@ -584,6 +638,8 @@ void layout_climate_slots(
         lv_obj_align(value, LV_ALIGN_CENTER, 0, 0);
       }
     }
+    layout_adjust_symbol(minus, true);
+    layout_adjust_symbol(plus, false);
   }
 }
 
@@ -874,9 +930,7 @@ void refresh_climate_tile_content(
     widget.slot_layouts[i] = static_cast<uint8_t>(layouts[i]);
     widget.slot_geometry[i] = geometry[i];
     const bool adjustable = slot_is_adjustable(kind);
-    const bool interactive_control =
-        adjustable &&
-        (geometry[i].span_w > 1 || geometry[i].span_h > 1);
+    const bool interactive_control = adjustable;
     lv_obj_set_style_bg_opa(
         root, interactive_control ? LV_OPA_COVER : LV_OPA_TRANSP,
         LV_PART_MAIN);
