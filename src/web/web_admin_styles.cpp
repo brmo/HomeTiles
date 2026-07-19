@@ -764,6 +764,7 @@ void appendAdminStyles(String& html) {
     }
     .tile.resizing {
       z-index:24;
+      opacity:.20;
       box-shadow:0 0 0 2px rgba(38,166,154,0.25) inset, 0 0 18px rgba(38,166,154,0.18);
     }
     .tile.resize-invalid {
@@ -805,19 +806,44 @@ void appendAdminStyles(String& html) {
     }
     .tile-resize-placeholder {
       display:none;
-      border:3px dashed #ef4444;
-      background:rgba(239,68,68,0.14);
-      box-shadow:0 0 0 2px rgba(239,68,68,0.18) inset;
+      position:relative;
+      overflow:hidden;
+      padding:0;
+      border:0;
+      background:transparent;
+      box-shadow:none;
       border-radius:var(--tile-radius, 11px);
       box-sizing:border-box;
       pointer-events:none;
-      z-index:22;
+      z-index:26;
       clip-path:inset(0 round var(--tile-radius, 11px));
     }
+    .tile-resize-placeholder::after {
+      content:"";
+      position:absolute;
+      z-index:3;
+      inset:0;
+      box-sizing:border-box;
+      border:3px dashed #26a69a;
+      border-radius:var(--tile-radius, 11px);
+      background:rgba(38,166,154,0.08);
+      box-shadow:0 0 0 2px rgba(38,166,154,0.16) inset;
+      pointer-events:none;
+    }
+    .tile-resize-preview-card {
+      position:absolute !important;
+      z-index:1;
+      inset:0;
+      width:100%;
+      height:100%;
+      opacity:.92;
+      pointer-events:none !important;
+    }
     .tile-resize-placeholder.show { display:block; }
-    .tile-resize-placeholder.invalid {
+    .tile-resize-placeholder.invalid::after {
       border-color:#ef4444;
       background:rgba(239,68,68,0.16);
+      box-shadow:0 0 0 2px rgba(239,68,68,0.18) inset;
     }
     .tile-resize-handle {
       position:absolute;

@@ -4152,16 +4152,69 @@ void appendAdminScripts(String& html) {
     return resizePlaceholder;
   }
 
+  function renderResizePlaceholderPreview(
+      tab, placeholder, layout) {
+    const source = resizeState
+      ? document.getElementById(resizeState.tileId)
+      : null;
+    if (!source) {
+      placeholder.replaceChildren();
+      return;
+    }
+    const preview = source.cloneNode(true);
+    preview.removeAttribute('id');
+    preview.removeAttribute('onclick');
+    preview.removeAttribute('ondblclick');
+    preview.removeAttribute('draggable');
+    delete preview.dataset.selected;
+    preview.classList.remove(
+      'active',
+      'resizing',
+      'resize-invalid',
+      'climate-content-editing',
+      'climate-mini-selection-active',
+      'climate-parent-hover');
+    preview.classList.add('tile-resize-preview-card');
+    preview.style.removeProperty('grid-column');
+    preview.style.removeProperty('grid-row');
+    preview.querySelectorAll(
+      '.tile-resize-handle, .climate-mini-editor-shell')
+      .forEach(element => element.remove());
+    preview.querySelectorAll('[id]')
+      .forEach(element => element.removeAttribute('id'));
+
+    if (resizeState?.climateState &&
+        typeof climateOuterResizePreviewHtml === 'function') {
+      const slots = preview.querySelector(
+        ':scope > .climate-slots');
+      const html = climateOuterResizePreviewHtml(
+        tab,
+        resizeState.climateState,
+        layout.span_w,
+        layout.span_h);
+      if (slots && html) slots.outerHTML = html;
+    }
+    placeholder.replaceChildren(preview);
+  }
+
   function updateResizePlaceholder(tab, layout, valid) {
     const placeholder = ensureResizePlaceholder(tab);
     if (!placeholder || !layout) return;
-    if (valid) {
-      placeholder.classList.remove('show', 'invalid');
-      return;
-    }
     placeholder.classList.add('show');
-    placeholder.classList.add('invalid');
+    placeholder.classList.toggle('invalid', !valid);
     setTileGridPosition(placeholder, layout.col, layout.row, layout.span_w, layout.span_h);
+    const previewKey = [
+      layout.col,
+      layout.row,
+      layout.span_w,
+      layout.span_h,
+      valid ? 1 : 0
+    ].join(':');
+    if (placeholder.dataset.previewKey !== previewKey) {
+      placeholder.dataset.previewKey = previewKey;
+      renderResizePlaceholderPreview(
+        tab, placeholder, layout);
+    }
   }
 
   function buildResizeCandidate(layout, direction, clientX, clientY, tab) {
@@ -4223,6 +4276,15 @@ void appendAdminScripts(String& html) {
           state.tab, state.climateState);
       }
       applyLayoutInputsFromLayout(state.tab, finalLayout, false);
+      if (commit && state.climateState &&
+          typeof previewClimateOuterResize === 'function') {
+        // Die neue Parent- und Mini-Geometrie wird erst beim Loslassen im
+        // selben JavaScript-Schritt angewendet. Dadurch gibt es keinen Frame,
+        // in dem das alte Mini-Raster in die neue Parent-Groesse gequetscht
+        // oder gestreckt wird.
+        previewClimateOuterResize(
+          state.tab, state.climateState);
+      }
       updateLayoutFromInputs(state.tab);
       updateTilePreview(state.tab);
       if (commit && !layoutsEqual(finalLayout, state.originalLayout)) {
@@ -4252,26 +4314,11 @@ void appendAdminScripts(String& html) {
     updateResizePlaceholder(resizeState.tab, candidate, valid);
     if (!valid) return;
 
+    // Beim Ziehen bleibt die echte Kachel unveraendert. Nur der gestrichelte
+    // Resize-Platzhalter zeigt das Ziel. Das verhindert fuer alle Richtungen
+    // und Groessen, dass Mini-Tiles zwischen Pointer-Frames gestreckt oder
+    // zusammengestaucht werden.
     resizeState.lastValidLayout = cloneLayout(candidate);
-    if (resizeState.tab === currentTileTab && resizeState.index === currentTileIndex) {
-      if (resizeState.lastAppliedLayout &&
-          layoutsEqual(
-            resizeState.lastAppliedLayout, candidate)) {
-        return;
-      }
-      applyLayoutInputsFromLayout(resizeState.tab, candidate, false);
-      if (resizeState.climateState &&
-          typeof previewClimateOuterResize === 'function') {
-        // Parent-Geometrie und Mini-Raster werden im selben Pointer-Schritt
-        // umgestellt. Vor jedem Schritt beginnt die Vorschau wieder mit der
-        // gespeicherten Ausgangsgeometrie, damit Verkleinern und anschliessend
-        // Vergroessern keine Mini-Tiles dauerhaft zusammenquetscht.
-        previewClimateOuterResize(
-          resizeState.tab, resizeState.climateState);
-      }
-      updateLayoutFromInputs(resizeState.tab);
-      resizeState.lastAppliedLayout = cloneLayout(candidate);
-    }
   }
 
   function handleTileResizeEnd() {
@@ -4302,7 +4349,6 @@ void appendAdminScripts(String& html) {
       direction,
       originalLayout: cloneLayout(layout),
       lastValidLayout: cloneLayout(layout),
-      lastAppliedLayout: cloneLayout(layout),
       climateState:
         String(tile.dataset.type || '') === '17' &&
         typeof captureClimateOuterResizeState === 'function'

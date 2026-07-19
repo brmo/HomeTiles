@@ -459,6 +459,39 @@ void append_climate_scripts(String& html) {
     syncClimateSlotFields(tab);
   }
 
+  function climateOuterResizePreviewHtml(
+      tab, state, spanW, spanH) {
+    if (!state) return '';
+    const configured = Array.isArray(state.slots)
+      ? state.slots.slice(0, 6)
+      : currentClimateSlotConfig(tab);
+    while (configured.length < 6) {
+      configured.push(CLIMATE_TILE_CONTENT.EMPTY);
+    }
+    const resolved =
+      state.editorSnapshot?.resolvedKinds;
+    if (Array.isArray(resolved)) {
+      for (let index = 0; index < 6; ++index) {
+        if (Number(configured[index]) !==
+            CLIMATE_TILE_CONTENT.AUTO) {
+          continue;
+        }
+        const kind = Number(resolved[index]);
+        configured[index] =
+          Number.isFinite(kind) && kind > 0
+            ? kind
+            : CLIMATE_TILE_CONTENT.EMPTY;
+      }
+    }
+    return climatePreviewSlots(
+      climateEditorState(tab),
+      spanW,
+      spanH,
+      configured,
+      state.layouts,
+      state.geometry);
+  }
+
   function requestClimatePreviewSelection(
       tab, tileIndex, itemIndex = -1, cellIndex = -1) {
     const sameTile =
@@ -495,6 +528,54 @@ void append_climate_scripts(String& html) {
       event.target?.closest?.(
         '[data-climate-preview-item],' +
         '[data-climate-preview-cell]');
+    let hoveredPreview = null;
+    let hoveredEditorItem = null;
+    let hoveredParent = null;
+    const setHoverTarget = (previous, next, className) => {
+      if (previous === next) return previous;
+      previous?.classList.remove(className);
+      next?.classList.add(className);
+      return next;
+    };
+    const clearClimateHover = () => {
+      hoveredPreview =
+        setHoverTarget(
+          hoveredPreview, null, 'climate-preview-hover');
+      hoveredEditorItem =
+        setHoverTarget(
+          hoveredEditorItem, null, 'climate-mini-hover');
+      hoveredParent =
+        setHoverTarget(
+          hoveredParent, null, 'climate-parent-hover');
+    };
+    document.addEventListener('pointermove', event => {
+      const preview = previewTarget(event);
+      const editorItem =
+        event.target?.closest?.('.climate-mini-tile') || null;
+      const tile =
+        event.target?.closest?.('.tile.climate') || null;
+      const overMini =
+        !!preview || !!editorItem ||
+        !!event.target?.closest?.('.tile-resize-handle');
+      const parent =
+        tile?.classList.contains(
+          'climate-mini-selection-active') &&
+        !overMini
+          ? tile
+          : null;
+      hoveredPreview =
+        setHoverTarget(
+          hoveredPreview, preview, 'climate-preview-hover');
+      hoveredEditorItem =
+        setHoverTarget(
+          hoveredEditorItem, editorItem, 'climate-mini-hover');
+      hoveredParent =
+        setHoverTarget(
+          hoveredParent, parent, 'climate-parent-hover');
+    }, true);
+    window.addEventListener('blur', clearClimateHover);
+    document.documentElement.addEventListener(
+      'pointerleave', clearClimateHover);
     document.addEventListener('pointerdown', event => {
       if (previewTarget(event)) event.stopPropagation();
     }, true);

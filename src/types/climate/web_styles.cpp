@@ -72,7 +72,9 @@ void append_climate_styles(String& html) {
       pointer-events:auto;
     }
     .tile.climate:not(.climate-content-editing)
-      .climate-slot[data-climate-preview-item]:hover {
+      .climate-slot[data-climate-preview-item]:hover,
+    .tile.climate:not(.climate-content-editing)
+      .climate-slot.climate-preview-hover {
       outline:2px dashed rgba(38,166,154,.72);
       outline-offset:-2px;
       border-radius:var(--climate-control-radius, 8px);
@@ -90,7 +92,8 @@ void append_climate_styles(String& html) {
       color:transparent;
       cursor:pointer;
     }
-    .climate-preview-cell:hover {
+    .climate-preview-cell:hover,
+    .climate-preview-cell.climate-preview-hover {
       border:2px dashed rgba(38,166,154,.72);
       background:rgba(38,166,154,.06);
     }
@@ -292,10 +295,12 @@ void append_climate_styles(String& html) {
     .climate-mini-tile.hidden {
       display:none;
     }
-    .climate-mini-tile:hover:not(.active):not(.dragging) {
+    .climate-mini-tile:hover:not(.active):not(.dragging),
+    .climate-mini-tile.climate-mini-hover:not(.active):not(.dragging) {
       background:rgba(38,166,154,.08);
     }
-    .climate-mini-tile:hover:not(.active):not(.dragging)::after {
+    .climate-mini-tile:hover:not(.active):not(.dragging)::after,
+    .climate-mini-tile.climate-mini-hover:not(.active):not(.dragging)::after {
       border:2px dashed rgba(38,166,154,.72);
       box-shadow:0 0 0 1px rgba(38,166,154,.18) inset;
     }
@@ -371,6 +376,18 @@ void append_climate_styles(String& html) {
     .climate-mini-tile.active::after {
       border:2px solid #26a69a;
       box-shadow:0 0 0 2px rgba(38,166,154,.42) inset;
+    }
+    .climate-mini-tile.active.climate-mini-hover::after {
+      border-style:dashed;
+      box-shadow:
+        0 0 0 2px rgba(38,166,154,.48) inset,
+        0 0 8px rgba(38,166,154,.28);
+    }
+    .tile.climate.climate-mini-selection-active.climate-parent-hover {
+      border:3px dashed rgba(38,166,154,.78);
+      box-shadow:
+        0 0 0 2px rgba(38,166,154,.18) inset,
+        0 0 10px rgba(38,166,154,.32);
     }
     .climate-mini-tile > .tile-resize-handle {
       z-index:5;
