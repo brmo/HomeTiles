@@ -49,7 +49,26 @@ the whole chain: MQTT broker, bridge integration, and connecting the display.
 - [FAQ & Troubleshooting](docs/faq.md) — common questions and known quirks
 - [BOARD_SETTINGS.md](BOARD_SETTINGS.md) — Arduino IDE build settings per device
 
-## Highlights Of v0.6.0
+## Highlights Of v0.6.1
+
+- WiFi and Ethernet now share one consistent DHCP/static-IP configuration
+  instead of maintaining separate address profiles.
+- Static addressing is applied to WiFi, native Ethernet, and USB Ethernet.
+- When the device actually boots with a static address, the on-device network
+  popup exposes a **Use DHCP** recovery action. It can be undone until restart,
+  then disappears again after a normal DHCP boot.
+- Saving network and MQTT settings in the Web Admin now happens in the
+  background without reloading the complete page.
+- The open on-device network popup is rebuilt cleanly after a Web Admin save,
+  preventing stale blocks and misplaced controls.
+- Navigation controls in the light popup now have more even spacing.
+- Network settings have clearer grouping, persistent Save/Restart actions, and
+  consistent German and English labels.
+
+See the [v0.6.1 release notes](docs/releases/v0.6.1.md) for details.
+
+<details>
+<summary>Highlights of v0.6.0</summary>
 
 - New fully configurable **Climate mini-tile system**: arrange current temperature,
   humidity, heating/cooling targets, target humidity, and mode freely inside a
@@ -68,6 +87,8 @@ the whole chain: MQTT broker, bridge integration, and connecting the display.
   WiFi/Ethernet operation and safer recovery.
 
 See the [v0.6.0 release notes](docs/releases/v0.6.0.md) for details.
+
+</details>
 
 <details>
 <summary>Highlights of the v0.5.x releases</summary>

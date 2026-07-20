@@ -97,7 +97,7 @@ void appendAdminScripts(String& html) {
     });
     return out;
   }
-  const APP_LOCALE = document.documentElement.lang || 'en';
+  let APP_LOCALE = document.documentElement.lang || 'en';
   function formatLocalizedNumber(value, decimals = 0, trimTrailingZeros = false) {
     const numeric = Number(String(value ?? '').trim().replace(',', '.'));
     if (!Number.isFinite(numeric)) return '--';
@@ -230,11 +230,206 @@ void appendAdminScripts(String& html) {
     }
   }
 
-  function toggleStaticWifiFields() {
-    const toggle = document.getElementById('wifi_use_static');
-    const fields = document.getElementById('wifi_static_fields');
-    if (!toggle || !fields) return;
-    fields.classList.toggle('is-hidden', !toggle.checked);
+  function toggleStaticIpFields(checkboxId, fieldsId, noteId) {
+    const checkbox = document.getElementById(checkboxId);
+    const fields = document.getElementById(fieldsId);
+    const note = document.getElementById(noteId);
+    if (!checkbox || !fields) return;
+    const useStatic = checkbox.checked;
+    fields.classList.toggle('is-hidden', !useStatic);
+    if (note) {
+      note.textContent = useStatic
+        ? (note.dataset.staticNote || '')
+        : (note.dataset.dhcpNote || '');
+    }
+  }
+
+  function toggleStaticNetworkFields() {
+    toggleStaticIpFields(
+      'network_use_static', 'network_static_fields',
+      'network_ip_mode_note');
+  }
+
+  function toggleNetworkSettings() {
+    const mode = document.getElementById('network_mode');
+    const wifi = document.getElementById('wifi_network_settings');
+    if (!mode || !wifi) return;
+    const useEthernet = mode.value === 'ethernet';
+    wifi.classList.toggle('is-hidden', useEthernet);
+  }
+
+  let adminRefreshSerial = 0;
+
+  function adminNodesMatch(current, fresh) {
+    return current && fresh &&
+      current.nodeType === fresh.nodeType &&
+      (current.nodeType !== Node.ELEMENT_NODE ||
+       current.tagName === fresh.tagName);
+  }
+
+  function syncAdminNode(current, fresh, preserveSettingsValues) {
+    if (!adminNodesMatch(current, fresh)) return;
+    if (current.nodeType === Node.TEXT_NODE) {
+      if (current.nodeValue !== fresh.nodeValue) {
+        current.nodeValue = fresh.nodeValue;
+      }
+      return;
+    }
+    if (current.nodeType !== Node.ELEMENT_NODE) return;
+
+    const tag = current.tagName;
+    // Die laufenden Scripts und Styles bleiben unangetastet. Insbesondere
+    // bleiben dadurch alle Event-Handler und Timer der Admin-Seite erhalten.
+    if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') return;
+
+    const insideSettingsForm =
+      current.id === 'admin_settings_form' ||
+      Boolean(current.closest && current.closest('#admin_settings_form'));
+    const preserveControl =
+      preserveSettingsValues && insideSettingsForm &&
+      (tag === 'INPUT' || tag === 'SELECT' ||
+       tag === 'TEXTAREA' || tag === 'OPTION');
+
+    Array.from(current.attributes).forEach(attribute => {
+      if (preserveControl &&
+          (attribute.name === 'value' || attribute.name === 'checked' ||
+           attribute.name === 'selected')) {
+        return;
+      }
+      if (!fresh.hasAttribute(attribute.name)) {
+        current.removeAttribute(attribute.name);
+      }
+    });
+    Array.from(fresh.attributes).forEach(attribute => {
+      if (preserveControl &&
+          (attribute.name === 'value' || attribute.name === 'checked' ||
+           attribute.name === 'selected')) {
+        return;
+      }
+      if (current.getAttribute(attribute.name) !== attribute.value) {
+        current.setAttribute(attribute.name, attribute.value);
+      }
+    });
+
+    const currentChildren = Array.from(current.childNodes);
+    const freshChildren = Array.from(fresh.childNodes);
+    if (currentChildren.length === freshChildren.length) {
+      for (let index = 0; index < currentChildren.length; index += 1) {
+        if (adminNodesMatch(currentChildren[index], freshChildren[index])) {
+          syncAdminNode(
+            currentChildren[index], freshChildren[index],
+            preserveSettingsValues);
+        }
+      }
+    } else {
+      // Dynamisch gefuellte Bereiche wie Dateimanager und Tile-Vorschauen
+      // koennen zusaetzliche Kinder besitzen. Dort nur eindeutig per ID
+      // zuordenbare direkte Kinder aktualisieren, niemals den Bereich ersetzen.
+      const currentById = new Map();
+      currentChildren.forEach(child => {
+        if (child.nodeType === Node.ELEMENT_NODE && child.id) {
+          currentById.set(child.id, child);
+        }
+      });
+      freshChildren.forEach(child => {
+        if (child.nodeType !== Node.ELEMENT_NODE || !child.id) return;
+        const existing = currentById.get(child.id);
+        if (adminNodesMatch(existing, child)) {
+          syncAdminNode(existing, child, preserveSettingsValues);
+        }
+      });
+    }
+
+    if (!preserveControl) {
+      if (tag === 'INPUT') {
+        if (current.type !== 'file') current.value = fresh.value;
+        current.checked = fresh.checked;
+      } else if (tag === 'SELECT') {
+        current.value = fresh.value;
+      } else if (tag === 'TEXTAREA') {
+        current.value = fresh.value;
+      }
+    }
+  }
+
+  async function refreshAdminPageInPlace(submittedSnapshot) {
+    const refreshSerial = ++adminRefreshSerial;
+    try {
+      const response = await fetch('/?admin_refresh=' + Date.now(), {
+        cache: 'no-store'
+      });
+      if (!response.ok) throw new Error('Refresh HTTP ' + response.status);
+      const html = await response.text();
+      if (refreshSerial !== adminRefreshSerial) return;
+
+      const freshDocument =
+        new DOMParser().parseFromString(html, 'text/html');
+      if (!freshDocument.getElementById('admin_settings_form')) {
+        throw new Error('Invalid admin page');
+      }
+
+      const activeTab =
+        document.querySelector('.tab-content.active')?.id || 'tab-network';
+      const settingsForm = document.getElementById('admin_settings_form');
+      const currentSnapshot = settingsForm
+        ? new URLSearchParams(new FormData(settingsForm)).toString()
+        : '';
+      const preserveSettingsValues =
+        currentSnapshot !== submittedSnapshot;
+      const formScrollTop = settingsForm ? settingsForm.scrollTop : 0;
+      const pageScrollX = window.scrollX;
+      const pageScrollY = window.scrollY;
+
+      syncAdminNode(
+        document.documentElement, freshDocument.documentElement,
+        preserveSettingsValues);
+      APP_LOCALE = freshDocument.documentElement.lang || APP_LOCALE;
+
+      toggleStaticNetworkFields();
+      toggleNetworkSettings();
+      if (document.getElementById(activeTab)) switchTab(activeTab);
+      const refreshedForm = document.getElementById('admin_settings_form');
+      if (refreshedForm) refreshedForm.scrollTop = formScrollTop;
+      window.scrollTo(pageScrollX, pageScrollY);
+    } catch (error) {
+      // Speichern war bereits erfolgreich. Wenn nur der nachgelagerte
+      // Ansichtsabgleich scheitert, bleibt die funktionierende Seite stehen.
+      console.warn('Admin refresh failed:', error);
+    }
+  }
+
+  function initAdminSettingsSave() {
+    const form = document.getElementById('admin_settings_form');
+    if (!form) return;
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      const submitButton =
+        document.querySelector('button[form="admin_settings_form"][type="submit"]');
+      const originalLabel = submitButton ? submitButton.textContent : '';
+      if (submitButton) submitButton.disabled = true;
+      try {
+        const body = new URLSearchParams(new FormData(form));
+        const submittedSnapshot = body.toString();
+        body.set('_ajax', '1');
+        const response = await fetch('/mqtt', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'},
+          body
+        });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const result = await response.json();
+        if (!result.ok) throw new Error('Save rejected');
+        if (submitButton) submitButton.textContent = '\u2713 ' + originalLabel;
+        refreshAdminPageInPlace(submittedSnapshot);
+        setTimeout(() => {
+          if (submitButton) submitButton.textContent = originalLabel;
+        }, 1800);
+      } catch (error) {
+        showNotification(t('networkErrorSave'), false);
+      } finally {
+        if (submitButton) submitButton.disabled = false;
+      }
+    });
   }
 
   function togglePasswordVisibility(inputId, buttonEl) {
@@ -5142,7 +5337,9 @@ void appendAdminScripts(String& html) {
   }
 
   document.addEventListener('DOMContentLoaded', () => {
-    toggleStaticWifiFields();
+    toggleStaticNetworkFields();
+    toggleNetworkSettings();
+    initAdminSettingsSave();
     initTileTabs();
     loadSelectedTileStates();
     loadDraftsFromStorage();

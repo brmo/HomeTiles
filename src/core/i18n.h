@@ -300,6 +300,18 @@ struct Strings {
   const char* net_mode_restart_note;
   const char* admin_ethernet_mode;
 
+  // Statische Netzwerkadressierung im Display und Web-Admin.
+  const char* ethernet_dhcp_reset;
+  const char* ethernet_static_restore;
+  const char* ethernet_dhcp_selected;
+  const char* ethernet_static_selected;
+  const char* admin_ip_configuration;
+  const char* admin_ip_dhcp;
+  const char* admin_ip_static;
+  const char* admin_ip_dhcp_note;
+  const char* admin_ip_static_note;
+  const char* admin_ip_invalid;
+
 };
 
 // Sprachabhaengige Darstellungsregeln und kurze Laufzeittexte, die sowohl

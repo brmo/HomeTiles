@@ -288,10 +288,21 @@ static const Strings kStringsDe = {
     "Screensaver konnte nicht gespeichert werden",
     "Screensaver konnte nicht geladen werden",
 
-    "Ethernet-Modus aktivieren",
-    "WLAN-Modus aktivieren",
+    "Ethernet aktivieren",
+    "WLAN aktivieren",
     "Netzwerkmodus geändert - gilt nach Neustart",
-    "Ethernet statt WLAN (gilt nach Neustart)"};
+    "Ethernet statt WLAN (gilt nach Neustart)",
+
+    "DHCP verwenden",
+    "DHCP rückgängig",
+    "DHCP ausgewählt - gilt nach Neustart",
+    "Statische IP ausgewählt - gilt nach Neustart",
+    "IP-Konfiguration",
+    "DHCP (automatisch)",
+    "Statische IP",
+    "DHCP ist ausgewählt. Die Adresse wird nach Speichern und Neustart automatisch bezogen.",
+    "Erforderlich: Statische IP, Gateway und Subnetzmaske. DNS ist optional. Fehlt eine Angabe oder ist sie ungültig, wird DHCP verwendet. Gilt nach Speichern und Neustart.",
+    "Die statische IP-Konfiguration ist unvollständig oder ungültig."};
 
 static const Strings kStringsEn = {
     "en",
@@ -574,10 +585,21 @@ static const Strings kStringsEn = {
     "Could not save screensaver",
     "Could not load screensaver",
 
-    "Enable Ethernet mode",
-    "Enable WiFi mode",
+    "Enable Ethernet",
+    "Enable WiFi",
     "Network mode changed - applies after restart",
-    "Ethernet instead of WiFi (applies after restart)"};
+    "Ethernet instead of WiFi (applies after restart)",
+
+    "Use DHCP",
+    "Undo DHCP",
+    "DHCP selected - applies after restart",
+    "Static IP selected - applies after restart",
+    "IP configuration",
+    "DHCP (automatic)",
+    "Static IP",
+    "DHCP is selected. The address is assigned automatically after Save and Restart.",
+    "Required: Static IP, gateway and subnet mask. DNS is optional. If a value is missing or invalid, DHCP is used. Applies after Save and Restart.",
+    "The static IP configuration is incomplete or invalid."};
 
 static const LocaleProfile kLocaleDe = {
     "de",

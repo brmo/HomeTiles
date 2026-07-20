@@ -98,7 +98,9 @@ The screensaver keeps its own independent **Tile borders** option.
 The **Settings** tab configures the device itself — the same options as in the
 on-device settings, plus a few admin-only ones:
 
-- **WiFi** — network credentials, optional static IP, connection status
+- **Network** — connection status, WiFi credentials, and one optional static
+  IP profile shared by WiFi and Ethernet. Ethernet-capable builds also let you
+  choose which connection type is used after restart
 - **MQTT** — broker host, port, credentials, topic base. Normally filled
   automatically by [pairing](home-assistant-setup.md); only touch this for a
   manual setup

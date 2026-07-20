@@ -154,6 +154,7 @@ ConfigManager::ConfigManager() {
   config.status_time_font_size = 48;
   config.status_date_font_size = 24;
   config.ethernet_enabled = false;
+  config.wifi_static_enabled = false;
 }
 
 bool ConfigManager::load() {
@@ -174,12 +175,48 @@ bool ConfigManager::load() {
   }
 
   // Lade Konfigurationsdaten
+  config.ethernet_enabled = prefs.getBool("eth_mode", false);
   prefs.getString("wifi_ssid", config.wifi_ssid, CONFIG_WIFI_SSID_MAX);
   prefs.getString("wifi_pass", config.wifi_pass, CONFIG_WIFI_PASS_MAX);
   prefs.getString("wifi_ip", config.wifi_static_ip, CONFIG_IP_ADDR_MAX);
   prefs.getString("wifi_gw", config.wifi_gateway, CONFIG_IP_ADDR_MAX);
   prefs.getString("wifi_subnet", config.wifi_subnet, CONFIG_IP_ADDR_MAX);
   prefs.getString("wifi_dns", config.wifi_dns, CONFIG_IP_ADDR_MAX);
+  const bool legacy_wifi_static =
+      config.wifi_static_ip[0] || config.wifi_gateway[0] ||
+      config.wifi_subnet[0] || config.wifi_dns[0];
+  char legacy_eth_ip[CONFIG_IP_ADDR_MAX] = {};
+  char legacy_eth_gateway[CONFIG_IP_ADDR_MAX] = {};
+  char legacy_eth_subnet[CONFIG_IP_ADDR_MAX] = {};
+  char legacy_eth_dns[CONFIG_IP_ADDR_MAX] = {};
+  prefs.getString("eth_ip", legacy_eth_ip, sizeof(legacy_eth_ip));
+  prefs.getString("eth_gw", legacy_eth_gateway, sizeof(legacy_eth_gateway));
+  prefs.getString("eth_subnet", legacy_eth_subnet, sizeof(legacy_eth_subnet));
+  prefs.getString("eth_dns", legacy_eth_dns, sizeof(legacy_eth_dns));
+  const bool legacy_ethernet_static =
+      legacy_eth_ip[0] || legacy_eth_gateway[0] ||
+      legacy_eth_subnet[0] || legacy_eth_dns[0];
+  const bool migrate_ethernet_values =
+      legacy_ethernet_static &&
+      (config.ethernet_enabled || !legacy_wifi_static);
+  if (migrate_ethernet_values) {
+    strncpy(config.wifi_static_ip, legacy_eth_ip, CONFIG_IP_ADDR_MAX - 1);
+    strncpy(config.wifi_gateway, legacy_eth_gateway, CONFIG_IP_ADDR_MAX - 1);
+    strncpy(config.wifi_subnet, legacy_eth_subnet, CONFIG_IP_ADDR_MAX - 1);
+    strncpy(config.wifi_dns, legacy_eth_dns, CONFIG_IP_ADDR_MAX - 1);
+    config.wifi_static_ip[CONFIG_IP_ADDR_MAX - 1] = '\0';
+    config.wifi_gateway[CONFIG_IP_ADDR_MAX - 1] = '\0';
+    config.wifi_subnet[CONFIG_IP_ADDR_MAX - 1] = '\0';
+    config.wifi_dns[CONFIG_IP_ADDR_MAX - 1] = '\0';
+  }
+  const bool legacy_static_enabled =
+      migrate_ethernet_values
+          ? prefs.getBool("eth_static", legacy_ethernet_static)
+          : prefs.getBool("wifi_static", legacy_wifi_static);
+  config.wifi_static_enabled =
+      prefs.isKey("net_static")
+          ? prefs.getBool("net_static", legacy_static_enabled)
+          : legacy_static_enabled;
   prefs.getString("mqtt_host", config.mqtt_host, CONFIG_MQTT_HOST_MAX);
   config.mqtt_port = prefs.getUShort("mqtt_port", 1883);
   prefs.getString("mqtt_user", config.mqtt_user, CONFIG_MQTT_USER_MAX);
@@ -203,7 +240,6 @@ bool ConfigManager::load() {
   // Display & Power Settings laden
   config.display_brightness = prefs.getUChar("disp_bright", 200);
   config.tile_borders = prefs.getBool("tile_border", true);
-  config.ethernet_enabled = prefs.getBool("eth_mode", false);
   bool rot_180 = prefs.getBool("disp_rot180", false);
   uint8_t rot_mode = rot_180 ? kDisplayRotationFlipped : kDisplayRotationNormal;
   if (prefs.isKey("disp_rot_mode")) {
@@ -261,6 +297,7 @@ bool ConfigManager::load() {
   if (config.status_date_font_size != 20 && config.status_date_font_size != 24) config.status_date_font_size = 24;
 
   apply_device_capability_limits(config);
+  boot_static_enabled = config.wifi_static_enabled;
 
   if (config.display_brightness < 121 || config.display_brightness > 255) {
     config.display_brightness = 200;
@@ -308,6 +345,14 @@ bool ConfigManager::save(const DeviceConfig& cfg) {
   prefs.putString("wifi_gw", normalized.wifi_gateway);
   prefs.putString("wifi_subnet", normalized.wifi_subnet);
   prefs.putString("wifi_dns", normalized.wifi_dns);
+  prefs.putBool("wifi_static", normalized.wifi_static_enabled);
+  prefs.putBool("net_static", normalized.wifi_static_enabled);
+  // Alte Test-Builds mit getrennten Profilen lesen weiterhin dieselben Werte.
+  prefs.putString("eth_ip", normalized.wifi_static_ip);
+  prefs.putString("eth_gw", normalized.wifi_gateway);
+  prefs.putString("eth_subnet", normalized.wifi_subnet);
+  prefs.putString("eth_dns", normalized.wifi_dns);
+  prefs.putBool("eth_static", normalized.wifi_static_enabled);
   prefs.putString("mqtt_host", normalized.mqtt_host);
   prefs.putUShort("mqtt_port", normalized.mqtt_port);
   prefs.putString("mqtt_user", normalized.mqtt_user);
@@ -497,6 +542,48 @@ bool ConfigManager::saveEthernetEnabled(bool enabled) {
   return true;
 }
 
+bool ConfigManager::saveStaticAddressingEnabled(bool enabled) {
+  Preferences prefs;
+  if (!prefs.begin(PREF_NAMESPACE, false)) {
+    Serial.println("ConfigManager: IP-Modus-Preferences oeffnen fehlgeschlagen");
+    return false;
+  }
+  prefs.putBool("net_static", enabled);
+  prefs.putBool("wifi_static", enabled);
+  prefs.putBool("eth_static", enabled);
+  prefs.end();
+
+  config.wifi_static_enabled = enabled;
+  return true;
+}
+
+bool ConfigManager::clearStaticAddressing() {
+  Preferences prefs;
+  if (!prefs.begin(PREF_NAMESPACE, false)) {
+    Serial.println("ConfigManager: DHCP-Preferences oeffnen fehlgeschlagen");
+    return false;
+  }
+  prefs.putBool("net_static", false);
+  prefs.putBool("wifi_static", false);
+  prefs.putString("wifi_ip", "");
+  prefs.putString("wifi_gw", "");
+  prefs.putString("wifi_subnet", "");
+  prefs.putString("wifi_dns", "");
+  prefs.putBool("eth_static", false);
+  prefs.putString("eth_ip", "");
+  prefs.putString("eth_gw", "");
+  prefs.putString("eth_subnet", "");
+  prefs.putString("eth_dns", "");
+  prefs.end();
+
+  config.wifi_static_enabled = false;
+  config.wifi_static_ip[0] = '\0';
+  config.wifi_gateway[0] = '\0';
+  config.wifi_subnet[0] = '\0';
+  config.wifi_dns[0] = '\0';
+  return true;
+}
+
 void ConfigManager::clear() {
   Preferences prefs;
 
@@ -522,6 +609,8 @@ void ConfigManager::clear() {
   config.display_rotation_quarters = Device::kRotationDefault;
   config.display_rotation_mode = kDisplayRotationNormal;
   config.status_time_font_size = 48;
+  config.wifi_static_enabled = false;
+  boot_static_enabled = false;
   config.status_date_font_size = 24;
 
   Serial.println("✓ ConfigManager: Konfiguration gelöscht");

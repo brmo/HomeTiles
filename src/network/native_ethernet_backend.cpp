@@ -1,5 +1,6 @@
 #include "src/network/native_ethernet_backend.h"
 
+#include "src/core/config_manager.h"
 #include "src/devices/device.h"
 
 #if defined(CONFIG_IDF_TARGET_ESP32P4) && CONFIG_ETH_ENABLED
@@ -18,6 +19,45 @@ constexpr int kRoutePriority = 160;
 
 std::atomic<bool> g_started{false};
 std::atomic<bool> g_attempted{false};
+
+bool parseConfiguredIp(const char* value, IPAddress& out) {
+  if (!value || !value[0]) return false;
+  String text = value;
+  text.trim();
+  return text.length() && out.fromString(text);
+}
+
+void applyAddressing() {
+  const DeviceConfig& cfg = configManager.getConfig();
+  if (!cfg.wifi_static_enabled) return;
+
+  IPAddress ip;
+  IPAddress gateway;
+  IPAddress subnet;
+  IPAddress dns;
+
+  const bool has_ip = parseConfiguredIp(cfg.wifi_static_ip, ip);
+  const bool has_gateway = parseConfiguredIp(cfg.wifi_gateway, gateway);
+  const bool has_subnet = parseConfiguredIp(cfg.wifi_subnet, subnet);
+  const bool has_dns = parseConfiguredIp(cfg.wifi_dns, dns);
+  if (!has_ip && !has_gateway && !has_subnet && !has_dns) return;
+
+  if (!has_ip || !has_gateway || !has_subnet) {
+    Serial.println(
+        "[ETH] Incomplete static IP configuration; using DHCP");
+    ETH.config(IPAddress(), IPAddress(), IPAddress());
+    return;
+  }
+  if (!has_dns) dns = gateway;
+  if (ETH.config(ip, gateway, subnet, dns)) {
+    Serial.printf("[ETH] Static IP %s / GW %s / MASK %s / DNS %s\n",
+                  ip.toString().c_str(), gateway.toString().c_str(),
+                  subnet.toString().c_str(), dns.toString().c_str());
+  } else {
+    Serial.println("[ETH] Static IP configuration failed; using DHCP");
+    ETH.config(IPAddress(), IPAddress(), IPAddress());
+  }
+}
 
 }  // namespace
 #endif
@@ -39,6 +79,7 @@ bool NativeEthernetBackend::begin() {
     return false;
   }
 
+  applyAddressing();
   ETH.setRoutePrio(kRoutePriority);
   g_started.store(true);
   Serial.println("[ETH] Native IP101GRI backend started");

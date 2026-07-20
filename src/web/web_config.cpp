@@ -209,6 +209,7 @@ void WebConfigServer::handleSave() {
   // Captive portal always resets WiFi addressing back to DHCP.
   // This prevents stale static IP settings from locking the device out
   // when the user only wants to reconnect it to a network.
+  cfg.wifi_static_enabled = false;
   cfg.wifi_static_ip[0] = '\0';
   cfg.wifi_gateway[0] = '\0';
   cfg.wifi_subnet[0] = '\0';

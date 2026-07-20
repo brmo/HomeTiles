@@ -29,6 +29,7 @@
 
 #include "src/network/usb_ethernet_backend.h"
 
+#include "src/core/config_manager.h"
 #include "src/devices/device.h"
 
 #if defined(CONFIG_IDF_TARGET_ESP32P4)
@@ -87,6 +88,72 @@ constexpr uint16_t kPlaSuspendFlag = 0xd38a;
 constexpr uint16_t kPlaIndicateFlag = 0xd38c;
 constexpr uint16_t kPlaExtraStatus = 0xd398;
 constexpr uint16_t kPlaBootCtrl = 0xe004;
+
+bool parseConfiguredIp(const char* value, IPAddress& out) {
+  if (!value || !value[0]) return false;
+  String text = value;
+  text.trim();
+  return text.length() && out.fromString(text);
+}
+
+bool applyConfiguredAddressing(esp_netif_t* netif) {
+  if (!netif) return false;
+
+  const DeviceConfig& cfg = configManager.getConfig();
+  if (!cfg.wifi_static_enabled) return false;
+
+  IPAddress ip;
+  IPAddress gateway;
+  IPAddress subnet;
+  IPAddress dns;
+  const bool has_ip = parseConfiguredIp(cfg.wifi_static_ip, ip);
+  const bool has_gateway = parseConfiguredIp(cfg.wifi_gateway, gateway);
+  const bool has_subnet = parseConfiguredIp(cfg.wifi_subnet, subnet);
+  const bool has_dns = parseConfiguredIp(cfg.wifi_dns, dns);
+  if (!has_ip && !has_gateway && !has_subnet && !has_dns) return false;
+
+  if (!has_ip || !has_gateway || !has_subnet) {
+    Serial.println(
+        "[USB-ETH] Incomplete static IP configuration; using DHCP");
+    esp_netif_dhcpc_start(netif);
+    return false;
+  }
+  if (!has_dns) dns = gateway;
+
+  const esp_err_t stop_err = esp_netif_dhcpc_stop(netif);
+  if (stop_err != ESP_OK &&
+      stop_err != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED) {
+    Serial.printf("[USB-ETH] Cannot stop DHCP: %s\n",
+                  esp_err_to_name(stop_err));
+    return false;
+  }
+
+  esp_netif_ip_info_t ip_info = {};
+  ip_info.ip.addr = static_cast<uint32_t>(ip);
+  ip_info.gw.addr = static_cast<uint32_t>(gateway);
+  ip_info.netmask.addr = static_cast<uint32_t>(subnet);
+  const esp_err_t ip_err = esp_netif_set_ip_info(netif, &ip_info);
+  if (ip_err != ESP_OK) {
+    Serial.printf("[USB-ETH] Cannot configure static IP: %s\n",
+                  esp_err_to_name(ip_err));
+    esp_netif_dhcpc_start(netif);
+    return false;
+  }
+
+  esp_netif_dns_info_t dns_info = {};
+  dns_info.ip.type = ESP_IPADDR_TYPE_V4;
+  dns_info.ip.u_addr.ip4.addr = static_cast<uint32_t>(dns);
+  const esp_err_t dns_err =
+      esp_netif_set_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns_info);
+  if (dns_err != ESP_OK) {
+    Serial.printf("[USB-ETH] Cannot configure DNS: %s\n",
+                  esp_err_to_name(dns_err));
+  }
+  Serial.printf("[USB-ETH] Static IP %s / GW %s / MASK %s / DNS %s\n",
+                ip.toString().c_str(), gateway.toString().c_str(),
+                subnet.toString().c_str(), dns.toString().c_str());
+  return true;
+}
 constexpr uint16_t kPlaMacPwrCtrl = 0xe0c0;
 constexpr uint16_t kPlaMacPwrCtrl2 = 0xe0ca;
 constexpr uint16_t kPlaMacPwrCtrl3 = 0xe0cc;
@@ -661,6 +728,7 @@ private:
     }
 
     esp_netif_action_start(netif_, nullptr, 0, nullptr);
+    static_ip_active_ = applyConfiguredAddressing(netif_);
     netif_started_ = true;
     attached_.store(true);
     next_link_poll_ms_ = 0;
@@ -1547,7 +1615,9 @@ private:
 
     netif_connect_pending_.store(false);
     esp_netif_action_connected(netif_, nullptr, 0, nullptr);
-    Serial.println("[USB-ETH] Ethernet DHCP gestartet");
+    Serial.println(static_ip_active_
+                       ? "[USB-ETH] Ethernet with static IP connected"
+                       : "[USB-ETH] Ethernet DHCP started");
   }
 
   void cleanupDevice(bool device_gone) {
@@ -1642,6 +1712,7 @@ private:
   bool adapter_data_path_ready_ = false;
 
   esp_netif_t* netif_ = nullptr;
+  bool static_ip_active_ = false;
   NetifGlue glue_;
   bool netif_started_ = false;
 

@@ -91,6 +91,7 @@ static lv_obj_t *wifi_list_container = nullptr;
 static lv_obj_t *wifi_manual_row = nullptr;
 static lv_obj_t *wifi_manual_gap = nullptr;
 static lv_obj_t *wifi_ap_qr = nullptr;
+static lv_obj_t *wifi_info_box = nullptr;
 // AP-Infobox: Zugangsdaten als buendig ausgerichtete Beschriftung/Wert-Zeilen
 // statt Fliesstext; der QR-Code waechst einmalig auf den freien Platz (der
 // Spacer der Listen-Ansicht dient dabei als Mass).
@@ -160,6 +161,10 @@ static lv_obj_t *wifi_disconnect_btn = nullptr;
 static lv_obj_t *net_mode_btn = nullptr;
 static lv_obj_t *net_mode_btn_label = nullptr;
 static lv_obj_t *net_mode_hint_label = nullptr;
+static lv_obj_t *ip_mode_hint_label = nullptr;
+static lv_obj_t *net_mode_row = nullptr;
+static lv_obj_t *ethernet_dhcp_btn = nullptr;
+static lv_obj_t *ethernet_dhcp_btn_label = nullptr;
 static lv_obj_t *ap_confirm_row = nullptr;
 static lv_obj_t *ap_confirm_yes_btn = nullptr;
 static lv_obj_t *ap_confirm_no_btn = nullptr;
@@ -981,6 +986,10 @@ static void reset_popup_refs() {
   net_mode_btn = nullptr;
   net_mode_btn_label = nullptr;
   net_mode_hint_label = nullptr;
+  ip_mode_hint_label = nullptr;
+  net_mode_row = nullptr;
+  ethernet_dhcp_btn = nullptr;
+  ethernet_dhcp_btn_label = nullptr;
 
   wifi_ssid_ta = nullptr;
   wifi_pass_ta = nullptr;
@@ -993,6 +1002,7 @@ static void reset_popup_refs() {
   wifi_manual_row = nullptr;
   wifi_manual_gap = nullptr;
   wifi_ap_qr = nullptr;
+  wifi_info_box = nullptr;
   wifi_ap_info_rows = nullptr;
   wifi_ap_ssid_val = nullptr;
   wifi_ap_pw_val = nullptr;
@@ -1042,10 +1052,14 @@ static void on_settings_popup_close_clicked(lv_event_t*) {
   // In der WLAN-Eingabe-Ansicht ist der Kopf-Button ein Zurueck-Pfeil (Icon
   // wird in wifi_show_entry_view getauscht) und fuehrt zur Liste zurueck -
   // erst von dort schliesst er das Popup wirklich.
-  if (settings_popup_kind == SettingsPopupKind::Wifi && wifi_entry_view &&
-      !lv_obj_has_flag(wifi_entry_view, LV_OBJ_FLAG_HIDDEN)) {
-    wifi_show_list_view();
-    return;
+  if (settings_popup_kind == SettingsPopupKind::Wifi) {
+    const bool entry_visible =
+        wifi_entry_view &&
+        !lv_obj_has_flag(wifi_entry_view, LV_OBJ_FLAG_HIDDEN);
+    if (entry_visible) {
+      wifi_show_list_view();
+      return;
+    }
   }
   close_settings_popup();
 }
@@ -1300,6 +1314,11 @@ static void wifi_update_conn_status_label() {
     else lv_obj_add_flag(wifi_disconnect_btn, LV_OBJ_FLAG_HIDDEN);
   }
 
+  if (wifi_list_spacer) {
+    lv_obj_clear_flag(wifi_list_spacer, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (wifi_info_box) lv_obj_clear_flag(wifi_info_box, LV_OBJ_FLAG_HIDDEN);
+
   // Im AP-Modus sind Scan und Netzwerkliste nutzlos (Scans sind waehrend des
   // Portal-Betriebs abgeschaltet, siehe wifi_start_scan) - die Liste weicht
   // der grossen Infobox mit Zugangsdaten + QR-Code.
@@ -1391,23 +1410,90 @@ static void wifi_update_conn_status_label() {
   }
 }
 
-// Button-Text folgt dem GESPEICHERTEN Modus (zeigt die jeweils andere
-// Option als Aktion an); der Hinweis erscheint, sobald gespeicherter und
-// laufender Modus auseinanderliegen - also bis zum naechsten Neustart.
+// WLAN und Ethernet verwenden denselben IP-Modus und dieselben Adresswerte.
+// Der Umschalter aendert nur den gemeinsamen Modus; die Werte bleiben
+// gespeichert und koennen vor dem Neustart wieder aktiviert werden.
+static bool selected_static_addressing_saved() {
+  return configManager.getConfig().wifi_static_enabled;
+}
+
+static bool valid_static_ip_value(const char* value) {
+  if (!value || !value[0]) return false;
+  IPAddress parsed;
+  String text(value);
+  text.trim();
+  return text.length() && parsed.fromString(text);
+}
+
+static bool selected_static_addressing_available() {
+  const DeviceConfig& cfg = configManager.getConfig();
+  return valid_static_ip_value(cfg.wifi_static_ip) &&
+         valid_static_ip_value(cfg.wifi_gateway) &&
+         valid_static_ip_value(cfg.wifi_subnet);
+}
+
+static void update_ethernet_dhcp_button_ui() {
+  if (!ethernet_dhcp_btn) return;
+  const bool static_enabled = selected_static_addressing_saved();
+  const bool boot_static_enabled =
+      configManager.bootStaticAddressingEnabled();
+  // Im normalen DHCP-Betrieb bleibt die Zeile unsichtbar. Sie dient nur als
+  // Rettung, solange eine statische Adresse aktiv ist, und nach dem Umschalten
+  // auf DHCP bis zum Neustart einmalig zum Rueckgaengigmachen.
+  const bool show_toggle =
+      boot_static_enabled &&
+      (static_enabled || selected_static_addressing_available());
+  if (show_toggle) {
+    lv_obj_clear_flag(ethernet_dhcp_btn, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(ethernet_dhcp_btn, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (net_mode_row) {
+    if (net_mode_btn || show_toggle) {
+      lv_obj_clear_flag(net_mode_row, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_add_flag(net_mode_row, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+  if (ethernet_dhcp_btn_label) {
+    lv_label_set_text(
+        ethernet_dhcp_btn_label,
+        static_enabled ? tr().ethernet_dhcp_reset
+                       : tr().ethernet_static_restore);
+  }
+  style_settings_button(ethernet_dhcp_btn, 0x424242);
+}
+
 static void net_mode_update_ui() {
-  if (!net_mode_btn) return;
-  const bool eth_saved = configManager.getConfig().ethernet_enabled;
+  const DeviceConfig& cfg = configManager.getConfig();
+  const bool eth_saved = cfg.ethernet_enabled;
   if (net_mode_btn_label) {
     lv_label_set_text(net_mode_btn_label,
                       eth_saved ? tr().net_mode_to_wifi : tr().net_mode_to_ethernet);
   }
   if (net_mode_hint_label) {
     if (eth_saved != networkTransport.isEthernetMode()) {
+      lv_label_set_text(net_mode_hint_label, tr().net_mode_restart_note);
       lv_obj_clear_flag(net_mode_hint_label, LV_OBJ_FLAG_HIDDEN);
     } else {
       lv_obj_add_flag(net_mode_hint_label, LV_OBJ_FLAG_HIDDEN);
     }
   }
+  if (ip_mode_hint_label) {
+    const bool static_enabled = cfg.wifi_static_enabled;
+    const bool boot_static_enabled =
+        configManager.bootStaticAddressingEnabled();
+    if (static_enabled != boot_static_enabled) {
+      lv_label_set_text(
+          ip_mode_hint_label,
+          static_enabled ? tr().ethernet_static_selected
+                         : tr().ethernet_dhcp_selected);
+      lv_obj_clear_flag(ip_mode_hint_label, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_add_flag(ip_mode_hint_label, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+  update_ethernet_dhcp_button_ui();
 }
 
 static void on_net_mode_clicked(lv_event_t*) {
@@ -1415,6 +1501,16 @@ static void on_net_mode_clicked(lv_event_t*) {
   if (!configManager.saveEthernetEnabled(to_ethernet)) return;
   Serial.printf("[Settings] Netzwerkmodus gespeichert: %s (gilt nach Neustart)\n",
                 to_ethernet ? "Ethernet" : "WLAN");
+  net_mode_update_ui();
+}
+
+static void on_ethernet_dhcp_clicked(lv_event_t*) {
+  const bool enable_static = !selected_static_addressing_saved();
+  if (enable_static && !selected_static_addressing_available()) return;
+  if (!configManager.saveStaticAddressingEnabled(enable_static)) return;
+  Serial.printf(
+      "[Settings] Gemeinsamer IP-Modus gespeichert: %s (gilt nach Neustart)\n",
+      enable_static ? "statisch" : "DHCP");
   net_mode_update_ui();
 }
 
@@ -1545,6 +1641,7 @@ static void wifi_do_connect() {
     // Netzwechsel setzt auf DHCP zurueck, damit eine alte statische IP das
     // Geraet im neuen Netz nicht aussperrt (statische IP gibt's nur noch im
     // Web-Admin).
+    cfg.wifi_static_enabled = false;
     cfg.wifi_static_ip[0] = '\0';
     cfg.wifi_gateway[0] = '\0';
     cfg.wifi_subnet[0] = '\0';
@@ -1996,20 +2093,20 @@ static void build_wifi_popup(lv_obj_t* parent) {
 
   // Infobox: abgesetzte Karte mit Verbindungsstatus; im AP-Modus zusaetzlich
   // QR-Code zum direkten Verbinden mit dem Hotspot.
-  lv_obj_t* info_box = lv_obj_create(wifi_list_view);
-  style_plain_container(info_box);
-  lv_obj_set_width(info_box, LV_PCT(100));
-  lv_obj_set_height(info_box, LV_SIZE_CONTENT);
-  lv_obj_set_style_bg_color(info_box, lv_color_hex(0x333333), 0);
-  lv_obj_set_style_bg_opa(info_box, LV_OPA_COVER, 0);
-  lv_obj_set_style_radius(info_box, 20, 0);
-  lv_obj_set_style_pad_all(info_box, 18, 0);
-  lv_obj_set_style_pad_row(info_box, 16, 0);
-  lv_obj_set_flex_flow(info_box, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(info_box, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+  wifi_info_box = lv_obj_create(wifi_list_view);
+  style_plain_container(wifi_info_box);
+  lv_obj_set_width(wifi_info_box, LV_PCT(100));
+  lv_obj_set_height(wifi_info_box, LV_SIZE_CONTENT);
+  lv_obj_set_style_bg_color(wifi_info_box, lv_color_hex(0x333333), 0);
+  lv_obj_set_style_bg_opa(wifi_info_box, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(wifi_info_box, 20, 0);
+  lv_obj_set_style_pad_all(wifi_info_box, 18, 0);
+  lv_obj_set_style_pad_row(wifi_info_box, 16, 0);
+  lv_obj_set_flex_flow(wifi_info_box, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(wifi_info_box, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER);
 
-  wifi_conn_status_label = lv_label_create(info_box);
+  wifi_conn_status_label = lv_label_create(wifi_info_box);
   lv_obj_set_width(wifi_conn_status_label, LV_PCT(100));
   lv_label_set_long_mode(wifi_conn_status_label, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_align(wifi_conn_status_label, LV_TEXT_ALIGN_CENTER, 0);
@@ -2018,7 +2115,7 @@ static void build_wifi_popup(lv_obj_t* parent) {
   // Nach einem Wechsel steht der Neustart-Hinweis direkt beim aktuellen
   // Verbindungsstatus in der Infobox statt losgeloest unter den Buttons.
   if (NetworkTransportManager::deviceSupportsEthernet()) {
-    net_mode_hint_label = lv_label_create(info_box);
+    net_mode_hint_label = lv_label_create(wifi_info_box);
     lv_obj_set_width(net_mode_hint_label, LV_PCT(100));
     lv_label_set_long_mode(net_mode_hint_label, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_align(net_mode_hint_label, LV_TEXT_ALIGN_CENTER, 0);
@@ -2028,10 +2125,22 @@ static void build_wifi_popup(lv_obj_t* parent) {
     lv_obj_add_flag(net_mode_hint_label, LV_OBJ_FLAG_HIDDEN);
   }
 
+  // Eigene dritte Statuszeile fuer den IP-Modus. Dadurch koennen ein
+  // vorgemerkter Netzwerkwechsel und DHCP/Static gleichzeitig sichtbar sein.
+  ip_mode_hint_label = lv_label_create(wifi_info_box);
+  lv_obj_set_width(ip_mode_hint_label, LV_PCT(100));
+  lv_label_set_long_mode(ip_mode_hint_label, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_align(ip_mode_hint_label, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_text_font(ip_mode_hint_label, &ui_font_20, 0);
+  lv_obj_set_style_text_color(
+      ip_mode_hint_label, lv_color_hex(0xFFC04D), 0);
+  lv_label_set_text(ip_mode_hint_label, tr().ethernet_dhcp_selected);
+  lv_obj_add_flag(ip_mode_hint_label, LV_OBJ_FLAG_HIDDEN);
+
   // Zugangsdaten im AP-Modus: Beschriftungsspalte fest, Werte dahinter -
   // SSID/Passwort/IP stehen dadurch buendig untereinander. Block selbst ist
   // SIZE_CONTENT und wird von der Infobox mittig gesetzt.
-  wifi_ap_info_rows = lv_obj_create(info_box);
+  wifi_ap_info_rows = lv_obj_create(wifi_info_box);
   style_plain_container(wifi_ap_info_rows);
   lv_obj_set_size(wifi_ap_info_rows, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
   lv_obj_set_flex_flow(wifi_ap_info_rows, LV_FLEX_FLOW_COLUMN);
@@ -2042,7 +2151,7 @@ static void build_wifi_popup(lv_obj_t* parent) {
   wifi_ap_ip_val = create_info_value_row(wifi_ap_info_rows, tr().ip_label);
 
 #if LV_USE_QRCODE
-  wifi_ap_qr = lv_qrcode_create(info_box);
+  wifi_ap_qr = lv_qrcode_create(wifi_info_box);
   lv_qrcode_set_size(wifi_ap_qr, 320);
   lv_qrcode_set_dark_color(wifi_ap_qr, lv_color_black());
   lv_qrcode_set_light_color(wifi_ap_qr, lv_color_white());
@@ -2079,21 +2188,45 @@ static void build_wifi_popup(lv_obj_t* parent) {
   ap_mode_btn_label = lv_obj_get_child(ap_mode_btn, 0);
   if (ap_mode_btn_label) lv_obj_set_style_text_font(ap_mode_btn_label, &ui_font_28, 0);
 
-  // Netzwerkmodus-Schalter: fester Modus WLAN ODER Ethernet, gilt ab dem
-  // naechsten Boot. Nur auf Builds sichtbar, die Ethernet ueberhaupt koennen
-  // (ETH-2RO: natives Ethernet; 8-Zoll: RTL8156 ueber USB-Host).
+  // Der DHCP-Reset gilt fuer das ausgewaehlte Netzwerkprofil und ist deshalb
+  // auch auf reinen WLAN-Geraeten verfuegbar. Der Ethernet-Schalter wird nur
+  // auf Builds mit Ethernet-Unterstuetzung daneben eingefuegt.
+  net_mode_row = lv_obj_create(wifi_list_view);
+  style_plain_container(net_mode_row);
+  lv_obj_clear_flag(net_mode_row, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_width(net_mode_row, LV_PCT(100));
+  lv_obj_set_height(net_mode_row, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(net_mode_row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_style_pad_column(net_mode_row, 12, 0);
+
   if (NetworkTransportManager::deviceSupportsEthernet()) {
-    net_mode_btn = create_popup_button(wifi_list_view, "", 0x424242,
+    net_mode_btn = create_popup_button(net_mode_row, "", 0x424242,
                                        on_net_mode_clicked);
-    lv_obj_set_width(net_mode_btn, LV_PCT(100));
+    lv_obj_set_width(net_mode_btn, 1);
+    lv_obj_set_flex_grow(net_mode_btn, 1);
     lv_obj_set_height(net_mode_btn, 76);
     net_mode_btn_label = lv_obj_get_child(net_mode_btn, 0);
     if (net_mode_btn_label) {
       lv_obj_set_style_text_font(net_mode_btn_label, &ui_font_28, 0);
     }
-
-    net_mode_update_ui();
   }
+
+  ethernet_dhcp_btn = create_popup_button(
+      net_mode_row, "", 0x424242, on_ethernet_dhcp_clicked);
+  lv_obj_set_width(ethernet_dhcp_btn, 1);
+  lv_obj_set_flex_grow(ethernet_dhcp_btn, 1);
+  lv_obj_set_height(ethernet_dhcp_btn, 76);
+  ethernet_dhcp_btn_label = lv_obj_get_child(ethernet_dhcp_btn, 0);
+  if (ethernet_dhcp_btn_label) {
+    lv_obj_set_width(ethernet_dhcp_btn_label, LV_PCT(94));
+    lv_label_set_long_mode(ethernet_dhcp_btn_label, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(
+        ethernet_dhcp_btn_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(
+        ethernet_dhcp_btn_label, &ui_font_28, 0);
+  }
+
+  net_mode_update_ui();
 
   // ===== Eingabe-Ansicht: SSID-/Passwort-Zeilen, Verbinden-Button unten =====
   wifi_entry_view = lv_obj_create(parent);
@@ -3004,6 +3137,7 @@ void build_settings_tab(lv_obj_t *tab, hotspot_callback_t hotspot_cb) {
   net_mode_btn = nullptr;
   net_mode_btn_label = nullptr;
   net_mode_hint_label = nullptr;
+  ip_mode_hint_label = nullptr;
   ap_confirm_row = nullptr;
   ap_confirm_yes_btn = nullptr;
   ap_confirm_no_btn = nullptr;
@@ -3108,5 +3242,18 @@ void settings_refresh_language() {
   update_wake_button(battery_wake_label, battery_wake_sub_label, kWakeModeTouch);
   // Aktualisiert auch die Infobox im ggf. offenen WLAN-Popup
   settings_update_ap_mode(ap_mode_active);
+  if (ethernet_dhcp_btn) net_mode_update_ui();
   update_settings_tile_summaries();
+
+  // Web-Admin-Speichern kann gleichzeitig Sichtbarkeit, Text und Hoehe der
+  // Statuszeilen sowie die beiden unteren Buttons aendern. Das bestehende
+  // Flex-Layout dabei nur stueckweise umzubauen hinterliess auf dem Display
+  // alte Bildbereiche. Deshalb das offene WLAN-Popup ohne Zwischen-Refresh
+  // komplett neu erzeugen; open_settings_popup zeichnet erst den fertigen
+  // Zustand.
+  if (settings_popup_kind == SettingsPopupKind::Wifi &&
+      settings_popup_overlay) {
+    close_settings_popup();
+    open_settings_popup(SettingsPopupKind::Wifi);
+  }
 }

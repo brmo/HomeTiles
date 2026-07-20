@@ -823,8 +823,9 @@ String WebAdminServer::getAdminPage() {
   const DeviceConfig& cfg = configManager.getConfig();
   const auto& tr = i18n::strings(cfg.language);
   const bool is_german = strcmp(tr.html_lang, "de") == 0;
-  const bool use_static_wifi =
-      cfg.wifi_static_ip[0] || cfg.wifi_gateway[0] || cfg.wifi_subnet[0] || cfg.wifi_dns[0];
+  const bool supports_ethernet =
+      NetworkTransportManager::deviceSupportsEthernet();
+  const bool use_static = cfg.wifi_static_enabled;
   const String admin_panel_title =
       String(Device::displayName()) + (is_german ? " Admin-Panel" : " Admin Panel");
   const String admin_heading_title = is_german ? "HomeTiles Admin-Panel" : "HomeTiles Admin Panel";
@@ -1119,11 +1120,13 @@ String WebAdminServer::getAdminPage() {
   html += R"html(
       <!-- Tab 3: Settings (Network/MQTT Configuration) -->
       <div id="tab-network" class="tab-content">
-        <form id="admin_settings_form" action="/mqtt" method="POST">
+        <form id="admin_settings_form" action="/mqtt" method="POST" autocomplete="on">
           <div class="settings-section">
             <div class="section-title-row">
               <div class="section-title">)html";
-  html += tr.admin_settings_wifi;
+  html += supports_ethernet
+              ? (is_german ? "Netzwerk" : "Network")
+              : tr.admin_settings_wifi;
   html += R"html(</div>
               <div class="wifi-inline-status"><span class="wifi-inline-dot)html";
   if (!networkTransport.isConnected()) {
@@ -1143,16 +1146,53 @@ String WebAdminServer::getAdminPage() {
   }
   html += R"html(</div>
             </div>
-            <div class="settings-grid">
-              <div>
+            <div class="settings-grid">)html";
+  if (supports_ethernet) {
+    html += R"html(
+              <div class="settings-full">
+                <label for="network_mode">)html";
+    html += is_german ? "Verbindungsart" : "Connection type";
+    html += R"html(:</label>
+                <select id="network_mode" name="network_mode" onchange="toggleNetworkSettings()">
+                  <option value="wifi")html";
+    if (!cfg.ethernet_enabled) {
+      html += " selected";
+    }
+    html += R"html(>WiFi</option>
+                  <option value="ethernet")html";
+    if (cfg.ethernet_enabled) {
+      html += " selected";
+    }
+    html += R"html(>Ethernet</option>
+                </select>
+                <div class="settings-note">)html";
+    html += is_german
+                ? "Die Verbindungsart wird nach dem Neustart verwendet."
+                : "The connection type is used after restart.";
+    html += R"html(</div>
+              </div>)html";
+  }
+  html += R"html(
+              <div id="wifi_network_settings" class="network-settings-group settings-full )html";
+  if (supports_ethernet && cfg.ethernet_enabled) {
+    html += "is-hidden";
+  }
+  html += R"html(">)html";
+  if (supports_ethernet) {
+    html += R"html(
+                <div class="network-settings-heading">WiFi</div>)html";
+  }
+  html += R"html(
+                <div class="settings-subgrid">
+                  <div>
                 <label for="wifi_ssid">)html";
   html += tr.ssid_label;
   html += R"html(:</label>
                 <input type="text" id="wifi_ssid" name="wifi_ssid" value=")html";
   html += cfg.wifi_ssid;
   html += R"html(">
-              </div>
-              <div>
+                  </div>
+                  <div>
                 <label for="wifi_pass">)html";
   html += tr.wifi_password_label;
   html += R"html(:</label>
@@ -1168,77 +1208,69 @@ String WebAdminServer::getAdminPage() {
   html += is_german ? "Anzeigen" : "Show";
   html += R"html(</button>
                 </div>
+                  </div>
+                </div>
               </div>
-              <div class="settings-full">
-                <label class="settings-checkbox" for="wifi_use_static">
-                  <input type="checkbox" id="wifi_use_static" name="wifi_use_static" onchange="toggleStaticWifiFields()" )html";
-  if (use_static_wifi) {
-    html += "checked";
-  }
+
+              <div id="network_ip_settings" class="network-settings-group settings-full">
+                <div class="network-settings-heading">)html";
+  html += is_german ? "IP-Konfiguration" : "IP configuration";
+  html += R"html(</div>
+                <label class="settings-checkbox">
+                  <input type="checkbox" id="network_use_static" name="network_use_static" onchange="toggleStaticNetworkFields()")html";
+  if (use_static) html += " checked";
   html += R"html(>
                   <span>)html";
-  html += is_german ? "Statische IP-Adresse verwenden" : "Use static IP address";
+  html += is_german ? "Statische IP verwenden" : "Use static IP address";
   html += R"html(</span>
                 </label>
-              </div>
-              <div id="wifi_static_fields" class="settings-subgrid settings-full )html";
-  if (!use_static_wifi) {
+                <div id="network_ip_mode_note" class="settings-note"
+                     data-dhcp-note=")html";
+  html += tr.admin_ip_dhcp_note;
+  html += R"html(" data-static-note=")html";
+  html += tr.admin_ip_static_note;
+  html += R"html(">)html";
+  html += use_static ? tr.admin_ip_static_note : tr.admin_ip_dhcp_note;
+  html += R"html(</div>
+                <div id="network_static_fields" class="settings-subgrid )html";
+  if (!use_static) {
     html += "is-hidden";
   }
   html += R"html(">
                 <div>
-                <label for="wifi_static_ip">)html";
+                <label for="network_static_ip">)html";
   html += tr.wifi_static_ip_label;
   html += R"html(:</label>
-                <input type="text" id="wifi_static_ip" name="wifi_static_ip" value=")html";
+                <input type="text" id="network_static_ip" name="network_static_ip" inputmode="decimal" autocomplete="on" value=")html";
   html += cfg.wifi_static_ip;
   html += R"html(">
                 </div>
                 <div>
-                <label for="wifi_gateway">)html";
+                <label for="network_gateway">)html";
   html += tr.wifi_gateway_label;
   html += R"html(:</label>
-                <input type="text" id="wifi_gateway" name="wifi_gateway" value=")html";
+                <input type="text" id="network_gateway" name="network_gateway" inputmode="decimal" autocomplete="on" value=")html";
   html += cfg.wifi_gateway;
   html += R"html(">
                 </div>
                 <div>
-                <label for="wifi_subnet">)html";
+                <label for="network_subnet">)html";
   html += tr.wifi_subnet_label;
   html += R"html(:</label>
-                <input type="text" id="wifi_subnet" name="wifi_subnet" value=")html";
+                <input type="text" id="network_subnet" name="network_subnet" inputmode="decimal" autocomplete="on" value=")html";
   html += cfg.wifi_subnet;
   html += R"html(">
                 </div>
                 <div>
-                <label for="wifi_dns">)html";
+                <label for="network_dns">)html";
   html += tr.wifi_dns_label;
   html += R"html(:</label>
-                <input type="text" id="wifi_dns" name="wifi_dns" value=")html";
+                <input type="text" id="network_dns" name="network_dns" inputmode="decimal" autocomplete="on" value=")html";
   html += cfg.wifi_dns;
   html += R"html(">
                 </div>
-              </div>
-              <div class="settings-note settings-full">)html";
-  html += tr.wifi_dhcp_hint;
-  html += R"html(</div>)html";
-  // Netzwerkmodus-Schalter nur auf Ethernet-faehigen Builds (ETH-2RO:
-  // natives Ethernet; 8-Zoll: RTL8156 ueber USB-Host).
-  if (NetworkTransportManager::deviceSupportsEthernet()) {
-    html += R"html(
-              <div class="settings-full">
-                <label class="settings-checkbox" for="ethernet_mode">
-                  <input type="checkbox" id="ethernet_mode" name="ethernet_mode" )html";
-    if (cfg.ethernet_enabled) {
-      html += "checked";
-    }
-    html += R"html(>
-                  <span>)html";
-    html += tr.admin_ethernet_mode;
-    html += R"html(</span>
-                </label>
+                </div>
               </div>)html";
-  }
   html += R"html(
             </div>
           </div>

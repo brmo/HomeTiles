@@ -278,10 +278,19 @@ void appendAdminStyles(String& html) {
       flex:1 1 auto;
       min-height:0;
       max-height:none;
+      display:flex;
+      flex-direction:column;
+      overflow:hidden;
+      overscroll-behavior:contain;
+    }
+    #admin_settings_form {
+      flex:1 1 auto;
+      min-height:0;
       overflow-y:auto;
       overscroll-behavior:contain;
-      margin-right:-12px;
+      margin:0 -12px 0 0;
       padding-right:12px;
+      padding-bottom:16px;
     }
 
     /* Forms */
@@ -300,6 +309,18 @@ void appendAdminStyles(String& html) {
       transition:border-color 0.15s, box-shadow 0.15s;
     }
     input::placeholder, textarea::placeholder { color:var(--muted); }
+    /* Chrome may offer previously entered IP values, but its default blue
+       autofill background must not replace the HomeTiles field styling. */
+    input:-webkit-autofill,
+    input:-webkit-autofill:hover,
+    input:-webkit-autofill:focus,
+    input:-webkit-autofill:active {
+      -webkit-text-fill-color:var(--text);
+      caret-color:var(--text);
+      -webkit-box-shadow:0 0 0 1000px var(--well) inset;
+      box-shadow:0 0 0 1000px var(--well) inset;
+      transition:background-color 9999s ease-out 0s;
+    }
     input:not([type="checkbox"]):not([type="radio"]):focus,
     select:focus, textarea:focus {
       outline:none;
@@ -381,6 +402,14 @@ void appendAdminStyles(String& html) {
     .settings-subgrid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:16px; }
     .settings-full { grid-column:1 / -1; }
     .settings-note { font-size:12px; color:var(--text-3); margin-top:4px; }
+    .network-settings-group { display:flex; flex-direction:column; gap:16px; padding-top:2px; }
+    .network-settings-heading {
+      text-transform:uppercase;
+      font-size:12px;
+      font-weight:700;
+      letter-spacing:.1em;
+      color:var(--text-3);
+    }
     .settings-actions { display:flex; gap:10px; flex-wrap:wrap; }
     /* Alle Buttons in Settings-Aktionszeilen einheitlich kompakt (gleiches
        Mass wie .file-picker), sonst mischen sich grosse .btn, versetzte
@@ -531,10 +560,24 @@ void appendAdminStyles(String& html) {
     .btn-go:active { background:var(--go-active); }
 
     .admin-hidden-form { display:none; }
-    .admin-footer-actions { display:flex; align-items:center; justify-content:flex-end; gap:12px; flex-wrap:wrap; margin-top:24px; }
+    .admin-footer-actions {
+      display:flex;
+      flex:0 0 auto;
+      align-items:center;
+      justify-content:flex-end;
+      gap:12px;
+      flex-wrap:wrap;
+      margin-top:0;
+      padding:16px 12px 0 0;
+      border-top:1px solid var(--line);
+      background:var(--card);
+    }
     .admin-footer-actions .btn { width:auto; min-width:180px; margin-top:0; padding:11px 16px; font-size:14px; }
     .section-title { margin:32px 0 12px; text-transform:uppercase; font-size:12px; font-weight:700; letter-spacing:.1em; color:var(--text-3); }
     .settings-section .section-title { margin:0 0 14px; }
+    /* In the title/status row the row itself owns the bottom spacing. Without
+       this override NETWORK received the title margin a second time. */
+    .settings-section .section-title-row .section-title { margin:0; }
     .hint { color:var(--text-3); font-size:14px; margin:8px 0 16px; }
     .list-block { background:var(--panel); border:1px solid #232323; border-radius:16px; padding:16px; }
     .list-block strong { display:block; margin:12px 0 6px; color:var(--text); }
@@ -1094,7 +1137,19 @@ void appendAdminStyles(String& html) {
       body { height:auto; overflow:auto; }
       .wrapper { height:auto; padding:16px; }
       .card { height:auto; min-height:calc(100vh - 32px); }
-      #tab-network.active { flex:none; overflow:visible; margin-right:0; padding-right:0; }
+      #tab-network.active { flex:none; overflow:visible; }
+      #admin_settings_form {
+        flex:none;
+        overflow:visible;
+        margin:0;
+        padding:0;
+      }
+      .admin-footer-actions {
+        position:sticky;
+        bottom:0;
+        z-index:5;
+        padding:12px 0;
+      }
       .settings-grid { grid-template-columns:1fr; }
       .settings-subgrid { grid-template-columns:1fr; }
       .settings-full { grid-column:auto; }

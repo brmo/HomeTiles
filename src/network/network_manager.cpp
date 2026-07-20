@@ -330,6 +330,11 @@ static bool parseConfiguredIp(const char* value, IPAddress& out) {
 }
 
 static void applyWifiAddressing(const DeviceConfig& cfg) {
+  if (!cfg.wifi_static_enabled) {
+    WiFi.config(IPAddress(), IPAddress(), IPAddress());
+    return;
+  }
+
   IPAddress ip;
   IPAddress gateway;
   IPAddress subnet;

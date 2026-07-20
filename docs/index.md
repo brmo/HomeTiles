@@ -58,18 +58,18 @@ Looking for something specific? [Tile Types](tiles.md) ·
 [FAQ & Troubleshooting](faq.md) ·
 [GitHub](https://github.com/GalusPeres/HomeTiles)
 
-## New In v0.6.0
+## New In v0.6.1
 
-Climate controls are now a first-class part of the dashboard. Climate tiles have
-a configurable mini-tile grid for current values, targets, humidity, and mode,
-while the on-device popup exposes the temperature, preset, fan, and swing controls
-that the selected Home Assistant entity actually supports.
+Network configuration is now consistent across WiFi and Ethernet. Both
+transports share the same DHCP/static-IP profile, and static addressing is
+supported by WiFi, native Ethernet, and USB Ethernet.
 
-The web preview and device renderer share the same layout rules across the
-M5Stack Tab5, Waveshare 4B, and Waveshare 8-inch display. This release also
-improves network transport recovery and hardens the ESP-Hosted SDIO path.
+The on-device network popup provides a DHCP recovery action only when the device
+actually started with a static address. Web Admin saves no longer reload the
+complete page, and an open network popup refreshes cleanly without stale display
+artifacts. Navigation controls in the light popup now have more even spacing.
 
-[Read the v0.6.0 release notes :octicons-arrow-right-24:](releases/v0.6.0.md)
+[Read the v0.6.1 release notes :octicons-arrow-right-24:](releases/v0.6.1.md)
 
 ## Supported Devices
 

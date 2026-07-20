@@ -1264,6 +1264,8 @@ static bool parseFolderIdArg(WebServer& server, uint16_t& out) {
 }  // namespace
 
 void WebAdminServer::handleSaveMQTT() {
+  const bool ajax_save =
+      server.hasArg("_ajax") && server.arg("_ajax") == "1";
   DeviceConfig cfg{};
   if (configManager.isConfigured()) {
     cfg = configManager.getConfig();
@@ -1282,31 +1284,50 @@ void WebAdminServer::handleSaveMQTT() {
     copyToBuffer(dest, max_len, value);
   };
 
-  auto copyMaybeEmpty = [this](char* dest, size_t max_len, const char* field) {
-    if (!server.hasArg(field)) return;
-    copyToBuffer(dest, max_len, server.arg(field));
-  };
+  auto copySharedIpField =
+      [this](char* dest, size_t max_len, const char* shared_field,
+             const char* wifi_legacy_field, const char* ethernet_legacy_field) {
+        const char* selected = nullptr;
+        if (server.hasArg(shared_field)) selected = shared_field;
+        else if (server.hasArg(wifi_legacy_field)) selected = wifi_legacy_field;
+        else if (server.hasArg(ethernet_legacy_field)) selected = ethernet_legacy_field;
+        if (!selected) return;
+        String value = server.arg(selected);
+        value.trim();
+        copyToBuffer(dest, max_len, value);
+      };
+
+  const bool use_static =
+      server.hasArg("network_use_static") ||
+      server.hasArg("wifi_use_static") ||
+      server.hasArg("ethernet_use_static") ||
+      (server.hasArg("network_ip_mode") &&
+       server.arg("network_ip_mode").equalsIgnoreCase("static"));
 
   if (server.hasArg("mqtt_host")) {
     copyToBuffer(cfg.mqtt_host, sizeof(cfg.mqtt_host), server.arg("mqtt_host"));
   }
   copyIfNonEmpty(cfg.wifi_ssid, sizeof(cfg.wifi_ssid), "wifi_ssid");
   copyIfNonEmpty(cfg.wifi_pass, sizeof(cfg.wifi_pass), "wifi_pass");
-  if (server.hasArg("wifi_use_static")) {
-    copyIfNonEmpty(cfg.wifi_static_ip, sizeof(cfg.wifi_static_ip), "wifi_static_ip");
-    copyIfNonEmpty(cfg.wifi_gateway, sizeof(cfg.wifi_gateway), "wifi_gateway");
-    copyIfNonEmpty(cfg.wifi_subnet, sizeof(cfg.wifi_subnet), "wifi_subnet");
-    copyIfNonEmpty(cfg.wifi_dns, sizeof(cfg.wifi_dns), "wifi_dns");
-  } else {
-    cfg.wifi_static_ip[0] = '\0';
-    cfg.wifi_gateway[0] = '\0';
-    cfg.wifi_subnet[0] = '\0';
-    cfg.wifi_dns[0] = '\0';
+  cfg.wifi_static_enabled = use_static;
+  if (use_static) {
+    copySharedIpField(cfg.wifi_static_ip, sizeof(cfg.wifi_static_ip),
+                      "network_static_ip", "wifi_static_ip",
+                      "ethernet_static_ip");
+    copySharedIpField(cfg.wifi_gateway, sizeof(cfg.wifi_gateway),
+                      "network_gateway", "wifi_gateway",
+                      "ethernet_gateway");
+    copySharedIpField(cfg.wifi_subnet, sizeof(cfg.wifi_subnet),
+                      "network_subnet", "wifi_subnet",
+                      "ethernet_subnet");
+    copySharedIpField(cfg.wifi_dns, sizeof(cfg.wifi_dns),
+                      "network_dns", "wifi_dns", "ethernet_dns");
   }
-  // Checkbox wird nur auf Ethernet-faehigen Builds gerendert; dort heisst
-  // ein fehlendes Arg "abgewaehlt". Gilt erst nach dem naechsten Neustart.
   if (NetworkTransportManager::deviceSupportsEthernet()) {
-    cfg.ethernet_enabled = server.hasArg("ethernet_mode");
+    if (server.hasArg("network_mode")) {
+      cfg.ethernet_enabled =
+          server.arg("network_mode").equalsIgnoreCase("ethernet");
+    }
   }
   if (server.hasArg("mqtt_port")) {
     cfg.mqtt_port = server.arg("mqtt_port").toInt();
@@ -1358,8 +1379,12 @@ void WebAdminServer::handleSaveMQTT() {
     uiManager.scheduleNtpSync(0);
     // Reload grids im Loop (nicht im Web-Handler)
     tiles_request_reload_all();
-    server.sendHeader("Location", "/");
-    server.send(303, "text/plain", "");
+    if (ajax_save) {
+      server.send(200, "application/json", "{\"ok\":true}");
+    } else {
+      server.sendHeader("Location", "/");
+      server.send(303, "text/plain", "");
+    }
     // Erst antworten (wie handleRestart()), dann die bis zu 500ms blockierende
     // Anfrage an den MQTT-Worker -- damit haengt der Browser beim Speichern
     // nicht. Verbindet MQTT live mit den neuen Einstellungen, kein
@@ -1367,7 +1392,11 @@ void WebAdminServer::handleSaveMQTT() {
     networkManager.requestMqttReconfigure();
   } else {
     const auto& tr = i18n::strings(cfg.language);
-    server.send(500, "text/html", String("<h1>") + tr.save_failed + "</h1>");
+    if (ajax_save) {
+      server.send(500, "application/json", "{\"ok\":false}");
+    } else {
+      server.send(500, "text/html", String("<h1>") + tr.save_failed + "</h1>");
+    }
   }
 }
 

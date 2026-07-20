@@ -36,6 +36,9 @@ struct DeviceConfig {
   char wifi_gateway[CONFIG_IP_ADDR_MAX];
   char wifi_subnet[CONFIG_IP_ADDR_MAX];
   char wifi_dns[CONFIG_IP_ADDR_MAX];
+  // Gemeinsame IP-Konfiguration fuer WLAN und Ethernet. Die wifi_-
+  // Feldnamen bleiben aus Kompatibilitaetsgruenden zu bestehenden Daten.
+  bool wifi_static_enabled;
   char mqtt_host[CONFIG_MQTT_HOST_MAX];
   uint16_t mqtt_port;
   char mqtt_user[CONFIG_MQTT_USER_MAX];
@@ -98,6 +101,10 @@ public:
   bool saveScreensaverTimeout(bool enabled, uint16_t seconds);
   bool saveTileBorders(bool enabled);
   bool saveEthernetEnabled(bool enabled);
+  bool saveStaticAddressingEnabled(bool enabled);
+
+  // Entfernt die gemeinsame statische Adressierung. Der Netzwerkmodus bleibt.
+  bool clearStaticAddressing();
 
   void setRuntimeDisplayRotation(bool rotate_180);
   void setRuntimeDisplayRotationQuarters(uint8_t rotation_quarters);
@@ -109,12 +116,14 @@ public:
   bool isConfigured() const { return config.configured; }
   bool hasWifiCredentials() const { return config.wifi_ssid[0] != '\0'; }
   bool hasMqttConfig() const { return config.mqtt_host[0] != '\0'; }
+  bool bootStaticAddressingEnabled() const { return boot_static_enabled; }
 
   // Getter für Config-Daten
   const DeviceConfig& getConfig() const { return config; }
 
 private:
   DeviceConfig config;
+  bool boot_static_enabled = false;
 };
 
 // Globale Instanz
