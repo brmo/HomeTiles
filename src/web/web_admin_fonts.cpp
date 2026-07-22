@@ -14,8 +14,18 @@ static const uint8_t kInterSemiboldWoff2[] PROGMEM = {
 
 void sendFont(WebServer& server, const uint8_t* data, size_t size) {
   server.sendHeader("Cache-Control", "public, max-age=31536000, immutable");
-  server.send_P(200, PSTR("font/woff2"),
-                reinterpret_cast<PGM_P>(data), size);
+  server.sendHeader("Connection", "close");
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "font/woff2", "");
+
+  constexpr size_t kFontChunk = 4096;
+  for (size_t offset = 0; offset < size; offset += kFontChunk) {
+    const size_t n = (kFontChunk < size - offset) ? kFontChunk : (size - offset);
+    server.sendContent_P(reinterpret_cast<PGM_P>(data + offset), n);
+    delay(2);
+    yield();
+  }
+  server.sendContent("");
 }
 
 }  // namespace

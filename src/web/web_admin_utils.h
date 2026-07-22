@@ -45,6 +45,6 @@ void sendChunkedResponse(WebServer& server,
                          int code,
                          const char* content_type,
                          const String& body,
-                         size_t chunk_size = 512);
+                         size_t chunk_size = 4096);
 
 #endif // WEB_ADMIN_UTILS_H

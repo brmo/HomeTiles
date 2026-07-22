@@ -902,7 +902,7 @@ String WebAdminServer::getAdminPage() {
   }
 
   String html;
-  html.reserve(12000);
+  html.reserve(200000);
   html += "<!DOCTYPE html>\n<html lang=\"";
   html += tr.html_lang;
   html += R"html(">

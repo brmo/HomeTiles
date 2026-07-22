@@ -148,10 +148,11 @@ void sendChunkedResponse(WebServer& server,
   server.setContentLength(CONTENT_LENGTH_UNKNOWN);
   server.send(code, content_type, "");
 
+  const char* data = body.c_str();
   const size_t len = body.length();
   for (size_t offset = 0; offset < len; offset += chunk_size) {
-    const size_t end = std::min(offset + chunk_size, len);
-    server.sendContent(body.substring(offset, end));
+    const size_t n = std::min(chunk_size, len - offset);
+    server.sendContent(data + offset, n);
     delay(2);
     yield();
   }
