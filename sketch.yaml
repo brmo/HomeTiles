@@ -63,4 +63,4 @@ profiles:
 
       - WebSockets (2.7.2)
 
-default_profile: jc8012p4a1
+default_profile: waveshare_8
