@@ -90,3 +90,33 @@ Arduino IDE:
 - Upload Mode: `UART0 / Hardware CDC`
 - Upload Speed: `921600`
 - USB Mode: `USB-OTG (TinyUSB)`
+
+## Guition JC8012P4A1
+
+Used for:
+- `src/devices/jc8012p4a1`
+
+Important:
+- 10.1" 1280x800 MIPI DSI display with GSL3680 touch controller
+- ESP32-P4 with ESP32-C6 co-processor for WiFi
+- Leave `Partition Scheme` on the normal 32MB ESP32-P4 setting.
+- The actual partition layout still comes from the shared repo `partitions.csv`.
+- The `Chip Variant` must be set to `Before v3.00` for this hardware.
+
+Arduino IDE:
+- Board: `ESP32P4 Dev Module`
+- USB CDC On Boot: `Disabled`
+- Chip Variant: `Before v3.00`
+- Core Debug Level: `None`
+- USB DFU On Boot: `Disabled`
+- Erase All Flash Before Sketch Upload: `Disabled`
+- Flash Frequency: `80MHz`
+- Flash Mode: `QIO`
+- Flash Size: `32MB (256Mb)`
+- JTAG Adapter: `Disabled`
+- USB Firmware MSC On Boot: `Disabled`
+- Partition Scheme: `32M Flash (13MB APP/6.75MB SPIFFS)`
+- PSRAM: `Enabled`
+- Upload Mode: `UART0 / Hardware CDC`
+- Upload Speed: `921600`
+- USB Mode: `USB-OTG (TinyUSB)`

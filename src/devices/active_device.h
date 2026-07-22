@@ -11,6 +11,9 @@ namespace DeviceImpl = DeviceWaveshareTouchLCD8;
 #elif defined(DEVICE_WAVESHARE_4B)
 #include "src/devices/waveshare_4b/device_waveshare_4b.h"
 namespace DeviceImpl = DeviceWaveshare4B;
+#elif defined(DEVICE_JC8012P4A1)
+#include "src/devices/jc8012p4a1/device_jc8012p4a1.h"
+namespace DeviceImpl = DeviceJC8012P4A1;
 #else
 #error "No supported device target selected."
 #endif
